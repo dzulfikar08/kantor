@@ -14,6 +14,7 @@
 
 pub mod agent;
 mod code_track;
+pub mod columns;
 mod comment_thread;
 mod document;
 pub mod docx;
@@ -45,6 +46,7 @@ mod track;
 mod track_table;
 mod xml;
 
+pub use columns::{COLUMN_BREAK, Column, ColumnPreset, Columns, ColumnsApply};
 pub use document::{
     Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle, is_import_path,
 };

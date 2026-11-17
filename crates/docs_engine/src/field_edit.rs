@@ -171,7 +171,11 @@ impl Document {
                 Position::new(s.end.para, s.end.offset + OBJ)
             });
         let after = Selection::caret(end);
+        let rev = self.revision();
         self.commit_paras(paras, sel, after);
+        if kind == "INDEX" {
+            self.index_columns(self.revision() != rev);
+        }
         after
     }
 

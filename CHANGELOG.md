@@ -24,6 +24,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   shapes, notes, slicers and Page Break Preview all zoom, and the cell editor matches. The zoom is
   saved in the file and a sheet opens at its saved zoom; Page Break Preview keeps a zoom of its own
   and starts at 60 %, as in Excel. Printing and PDFs don't change with the zoom.
+- Docs lays out section columns as Word does: text runs down one column and on into the next,
+  columns can have their own widths and a line between them, a column break (`Ctrl Shift Enter`,
+  or *Insert Column Break*) moves on to the next column, and a continuous section break balances
+  the columns above it. Footnotes sit under their column, and floating objects placed relative to
+  their column follow it. Files with columns now have about as many pages as in Word.
+- Docs: the toolbar's Columns button sets One, Two, Three, Left or Right columns, and *More
+  Columns…* sets the number of columns, each one's width and spacing, Line between, and whether
+  they apply to the whole document, this section, this point forward or the selected text
+  (adding continuous section breaks as Word does). Saving writes the columns back, and files keep
+  their own column settings.
+- Docs: an index with `\c` (`INDEX \c "2"`) lays out in that many columns, in a section of its
+  own as Word makes it.
+- `.doc` and `.rtf` imports keep their sections' columns: unequal widths and the line between
+  (`.doc`), the number and spacing of columns (`.rtf`), and column breaks.
 
 ### Fixed
 

@@ -1390,8 +1390,9 @@ impl BodyParser<'_> {
                 match attr(e, b"type").as_deref() {
                     None | Some("textWrapping") => self.push_char(LINE_BREAK),
                     Some("page") => self.push_char(PAGE_BREAK),
+                    Some("column") => self.push_char(crate::columns::COLUMN_BREAK),
                     Some(_) => {
-                        // Column breaks: kept as an opaque run element.
+                        // Other breaks: kept as an opaque run element.
                         if empty {
                             let xml = self.src[before..after].to_owned();
                             let o = Self::opaque(Level::Run, &xml, "Column break");
@@ -2832,6 +2833,7 @@ fn text_content(out: &mut String, text: &str, deleted: bool) {
             '\t' => "<w:tab/>",
             LINE_BREAK => "<w:br/>",
             PAGE_BREAK => "<w:br w:type=\"page\"/>",
+            crate::columns::COLUMN_BREAK => "<w:br w:type=\"column\"/>",
             '\u{AD}' => "<w:softHyphen/>",
             '\u{2011}' => "<w:noBreakHyphen/>",
             OBJECT => continue,

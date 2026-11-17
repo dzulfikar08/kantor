@@ -270,12 +270,30 @@ fn sect_pr(sep: &super::sprm::Sep, refs: &str) -> String {
         let _ = write!(x, "<w:pgNumType w:start=\"{n}\"/>");
     }
     if sep.columns > 1 {
-        let _ = write!(
-            x,
-            "<w:cols w:num=\"{}\" w:space=\"{}\"/>",
-            sep.columns.min(45),
-            sep.column_space
-        );
+        let n = sep.columns.min(45) as usize;
+        let line = if sep.line_between { " w:sep=\"1\"" } else { "" };
+        let widths = &sep.column_widths;
+        if !sep.evenly && widths.len() >= n && widths[..n].iter().all(|c| c.0 > 0) {
+            let _ = write!(
+                x,
+                "<w:cols w:num=\"{n}\"{line} w:space=\"{}\" w:equalWidth=\"0\">",
+                sep.column_space
+            );
+            for (i, (w, s)) in widths[..n].iter().enumerate() {
+                if i + 1 < n {
+                    let _ = write!(x, "<w:col w:w=\"{w}\" w:space=\"{s}\"/>");
+                } else {
+                    let _ = write!(x, "<w:col w:w=\"{w}\"/>");
+                }
+            }
+            x.push_str("</w:cols>");
+        } else {
+            let _ = write!(
+                x,
+                "<w:cols w:num=\"{n}\"{line} w:space=\"{}\"/>",
+                sep.column_space
+            );
+        }
     }
     if sep.title_page {
         x.push_str("<w:titlePg/>");
@@ -718,6 +736,7 @@ impl W<'_> {
                 '\t' => "<w:tab/>",
                 LINE_BREAK => "<w:br/>",
                 PAGE_BREAK => "<w:br w:type=\"page\"/>",
+                crate::columns::COLUMN_BREAK => "<w:br w:type=\"column\"/>",
                 '\u{2011}' => "<w:noBreakHyphen/>",
                 '\u{AD}' => "<w:softHyphen/>",
                 _ => {
@@ -1484,4 +1503,35 @@ fn rels_xml(rels: &[Rel]) -> String {
     }
     x.push_str("</Relationships>");
     x
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[std::prelude::v1::test]
+    fn section_columns_come_over_from_doc() {
+        let mut sep = super::super::sprm::Sep::default();
+        // Two columns, 0.5" apart by default, a line between, unequal:
+        // 2000 twips + 500 spacing, then 6000.
+        sep.apply(&[
+            0x0B, 0x50, 0x01, 0x00, // sprmSCcolumns: 2 - 1
+            0x0C, 0x90, 0xD0, 0x02, // sprmSDxaColumns: 720
+            0x19, 0x30, 0x01, // sprmSLBetween
+            0x05, 0x30, 0x00, // sprmSFEvenlySpaced off
+            0x03, 0xF2, 0x00, 0xD0, 0x07, // sprmSDxaColWidth col 0: 2000
+            0x04, 0xF2, 0x00, 0xF4, 0x01, // sprmSDxaColSpacing col 0: 500
+            0x03, 0xF2, 0x01, 0x70, 0x17, // sprmSDxaColWidth col 1: 6000
+        ]);
+        let x = sect_pr(&sep, "");
+        let cols = crate::columns::Columns::parse(&x);
+        assert_eq!(cols.count(), 2, "{x}");
+        assert!(cols.sep && !cols.equal);
+        assert_eq!(cols.layout(9000), vec![(0, 2000), (2500, 6000)]);
+        // Evenly spaced: just the number and the space.
+        let mut even = super::super::sprm::Sep::default();
+        even.apply(&[0x0B, 0x50, 0x02, 0x00, 0x0C, 0x90, 0x6C, 0x02]);
+        let c = crate::columns::Columns::parse(&sect_pr(&even, ""));
+        assert_eq!((c.count(), c.space, c.equal), (3, 620, true));
+    }
 }

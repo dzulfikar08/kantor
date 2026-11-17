@@ -614,3 +614,17 @@ Sign in with your organisation	Masuk dengan akun organisasi
 Account removed: signed out, and its sign-in deleted from the keychain.	Akun dihapus: sesi masuk diakhiri dan dihapus dari keychain.
 Signed in. Opening your drive… The first time can take a minute.	Sudah masuk. Membuka drive Anda… Pertama kali bisa memakan waktu semenit.
 Saving the sign-in in the system keychain… If your computer asks for the keyring password, enter it.	Menyimpan sesi masuk di keychain sistem… Jika komputer meminta kata sandi keyring, masukkan kata sandinya.
+Columns: One	Kolom: Satu
+Columns: Two	Kolom: Dua
+Columns: Three	Kolom: Tiga
+Columns: Left	Kolom: Kiri
+Columns: Right	Kolom: Kanan
+Docs · the caret's section (or the selected text) in one column	Docs · bagian di posisi kursor (atau teks yang dipilih) dalam satu kolom
+Docs · two columns of equal width	Docs · dua kolom dengan lebar sama
+Docs · three columns of equal width	Docs · tiga kolom dengan lebar sama
+Docs · two columns, the left one narrower	Docs · dua kolom, kolom kiri lebih sempit
+Docs · two columns, the right one narrower	Docs · dua kolom, kolom kanan lebih sempit
+More Columns…	Kolom Lainnya…
+Docs · number of columns, widths and spacing, line between, apply to	Docs · jumlah kolom, lebar dan spasi, garis di antara, terapkan ke
+Insert Column Break	Sisipkan Pemisah Kolom
+Docs · the text after the caret starts the next column	Docs · teks setelah kursor memulai kolom berikutnya

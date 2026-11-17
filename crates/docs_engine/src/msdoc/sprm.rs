@@ -557,6 +557,12 @@ pub struct Sep {
     pub title_page: bool,
     pub columns: u16,
     pub column_space: u32,
+    /// Columns of equal width (`sprmSFEvenlySpaced`), else `column_widths`.
+    pub evenly: bool,
+    /// Per column (unequal columns): width and the space after it.
+    pub column_widths: Vec<(u32, u32)>,
+    /// A line between columns (`sprmSLBetween`).
+    pub line_between: bool,
     pub pgn_start: Option<u16>,
     pub pgn_restart: bool,
 }
@@ -578,6 +584,9 @@ impl Default for Sep {
             title_page: false,
             columns: 1,
             column_space: 720,
+            evenly: true,
+            column_widths: Vec::new(),
+            line_between: false,
             pgn_start: None,
             pgn_restart: false,
         }
@@ -605,6 +614,24 @@ impl Sep {
                 0x300A => self.title_page = b != 0,
                 0x500B => self.columns = u16_at(op, 0).unwrap_or(0).saturating_add(1),
                 0x900C => self.column_space = w.unwrap_or(self.column_space),
+                0x3005 => self.evenly = b != 0,
+                0x3019 => self.line_between = b != 0,
+                // sprmSDxaColWidth / sprmSDxaColSpacing: column index, then twips.
+                0xF203 | 0xF204 => {
+                    let i = b as usize;
+                    let v = u16_at(op, 1).map_or(0, u32::from);
+                    if i < 45 {
+                        if self.column_widths.len() <= i {
+                            self.column_widths.resize(i + 1, (0, self.column_space));
+                        }
+                        let c = &mut self.column_widths[i];
+                        if id == 0xF203 {
+                            c.0 = v;
+                        } else {
+                            c.1 = v;
+                        }
+                    }
+                }
                 0x501C => self.pgn_start = u16_at(op, 0),
                 0x3011 => self.pgn_restart = b != 0,
                 _ => {}

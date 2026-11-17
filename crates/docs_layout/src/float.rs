@@ -151,6 +151,9 @@ pub struct AnchorAt {
     pub line_top: f32,
     /// x of the anchor character.
     pub char_x: f32,
+    /// The text column holding the anchor (left edge and width, page
+    /// coordinates), when the section has columns; else the margins.
+    pub column: Option<(f32, f32)>,
 }
 
 /// An object's box on a page with geometry `setup`, page number `number`
@@ -167,7 +170,10 @@ pub fn float_rect(
     let right_margin = (setup.width - setup.margin_right, setup.margin_right);
     let (rx, rw) = match spec.h.0 {
         FloatRefH::Page => (0.0, setup.width),
-        FloatRefH::Margin | FloatRefH::Column => (setup.margin_left, setup.content_width()),
+        FloatRefH::Margin => (setup.margin_left, setup.content_width()),
+        FloatRefH::Column => at
+            .column
+            .unwrap_or((setup.margin_left, setup.content_width())),
         FloatRefH::Character => (at.char_x, 0.0),
         FloatRefH::LeftMargin => left_margin,
         FloatRefH::RightMargin => right_margin,
@@ -431,6 +437,7 @@ mod tests {
             para_top: 300.0,
             line_top: 320.0,
             char_x: 210.0,
+            column: None,
         };
         let rect = |h, v| float_rect(&spec(h, v), &s, 1, at);
         // Offsets from each horizontal reference.
@@ -439,6 +446,12 @@ mod tests {
         assert_eq!(rect((FloatRefH::Page, off), top)[0], 10.0);
         assert_eq!(rect((FloatRefH::Margin, off), top)[0], s.margin_left + 10.0);
         assert_eq!(rect((FloatRefH::Column, off), top)[0], s.margin_left + 10.0);
+        let in_col = AnchorAt {
+            column: Some((400.0, 200.0)),
+            ..at
+        };
+        let r = float_rect(&spec((FloatRefH::Column, off), top), &s, 1, in_col);
+        assert_eq!(r[0], 410.0, "relative to its column");
         assert_eq!(rect((FloatRefH::Character, off), top)[0], 220.0);
         assert_eq!(rect((FloatRefH::LeftMargin, off), top)[0], 10.0);
         let rm = s.width - s.margin_right;
@@ -863,24 +876,29 @@ mod note_tests {
         let first = &doc.pages[0];
         // The reference stays on the first page with the note's start.
         assert!(first.lines.iter().any(|l| l.para == 1));
-        assert_eq!(first.note_parts.len(), 1);
-        let a = first.note_parts[0];
+        assert_eq!(first.note_columns.len(), 1);
+        let nc = &first.note_columns[0];
+        assert_eq!(nc.parts.len(), 1);
+        let a = nc.parts[0];
         assert!(a.more && a.from == 0.0 && a.to > 0.0);
         assert_eq!(a.to % 20.0, 0.0, "breaks at a line");
         // The rest of the first page's text area is the note's.
         let bottom = s.height - s.margin_bottom;
-        assert!(first.notes_height + NOTE_SEPARATOR >= a.to);
+        assert!(nc.height + NOTE_SEPARATOR >= a.to);
+        assert_eq!(nc.bottom, bottom);
         assert!(
             first
                 .lines
                 .iter()
-                .all(|l| l.top + l.height <= bottom - first.notes_height + 0.01)
+                .all(|l| l.top + l.height <= bottom - nc.height + 0.01)
         );
         // It goes on (continued) on the next pages until it's all shown.
         let mut shown = a.to;
         for page in &doc.pages[1..] {
-            for part in &page.note_parts {
-                assert!(page.continued);
+            for part in page.note_columns.iter().flat_map(|c| {
+                assert!(c.continued);
+                c.parts.iter()
+            }) {
                 assert_eq!(part.from, shown);
                 shown = part.to;
             }

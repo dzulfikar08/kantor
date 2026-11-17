@@ -22,6 +22,7 @@ extern crate gpui_kit as gpui;
 mod agent;
 mod ai;
 mod code_inline;
+mod columns_menu;
 mod field_menu;
 mod fields;
 mod find;
@@ -152,6 +153,7 @@ actions!(
         ToggleFieldCodes,
         ToggleFieldCode,
         InsertFieldChars,
+        InsertColumnBreak,
         PopoverKey,
         ZoomIn,
         ZoomOut,
@@ -234,6 +236,11 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("alt-f9", ToggleFieldCodes, c),
         KeyBinding::new("shift-f9", ToggleFieldCode, c),
         KeyBinding::new(kantor_ui::keys::primary("ctrl-f9"), InsertFieldChars, c),
+        KeyBinding::new(
+            kantor_ui::keys::primary("ctrl-shift-enter"),
+            InsertColumnBreak,
+            c,
+        ),
     ];
     // Shortcuts with the primary modifier: Ctrl, and Super as Mac-style Cmd.
     macro_rules! primary {
@@ -504,6 +511,9 @@ pub struct DocsView {
     /// (so that click on the toolbar control doesn't reopen it).
     page_menu: Option<page_menu::PageMenu>,
     page_menu_closed: Option<std::time::Instant>,
+    /// The Columns popover, and when it was last closed by a click outside.
+    columns_menu: Option<columns_menu::ColumnsMenu>,
+    columns_menu_closed: Option<std::time::Instant>,
     /// The Header & Footer bar's fields (while one is edited).
     hf_menu: Option<hf_menu::HfMenu>,
     /// A comment being written or edited in its card.
@@ -637,6 +647,8 @@ impl DocsView {
             table_picker: None,
             page_menu: None,
             page_menu_closed: None,
+            columns_menu: None,
+            columns_menu_closed: None,
             hf_menu: None,
             comment_edit: None,
             comments_visible: true,
@@ -2750,6 +2762,7 @@ impl Render for DocsView {
                 }
                 this.table_picker = None;
                 this.page_menu = None;
+                this.columns_menu = None;
                 this.tab_menu = None;
                 this.table_menu = None;
                 this.split_menu = None;
@@ -2826,6 +2839,7 @@ impl Render for DocsView {
             ToggleFieldCodes => |this, _w, cx| this.toggle_field_codes_doc(cx),
             ToggleFieldCode => |this, _w, cx| this.toggle_field_code_doc(cx),
             InsertFieldChars => |this, w, cx| this.new_field_code_doc(w, cx),
+            InsertColumnBreak => |this, w, cx| this.insert_column_break_doc(w, cx),
             Redo => |this, w, cx| this.redo_doc(w, cx),
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),
@@ -2848,6 +2862,7 @@ impl Render for DocsView {
             .child(area)
             .children(self.render_table_picker(cx))
             .children(self.render_page_menu(cx))
+            .children(self.render_columns_menu(cx))
             .children(self.render_tab_menu(cx))
             .children(self.render_table_menu(cx))
             .children(self.render_split_menu(cx))

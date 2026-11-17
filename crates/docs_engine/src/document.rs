@@ -804,7 +804,7 @@ impl Document {
                 out.push('\n');
             }
         }
-        out.replace([LINE_BREAK, PAGE_BREAK], "\n")
+        out.replace([LINE_BREAK, PAGE_BREAK, crate::columns::COLUMN_BREAK], "\n")
             .replace(OBJECT, "")
     }
 
@@ -918,6 +918,50 @@ impl Document {
 
     /// Record a step that replaced paragraphs `start..start + old.len()`
     /// with `new` (already applied) and changed headers/footers.
+    /// Make the last two undo steps one (an edit that needed two
+    /// commands, like an index update and the section breaks around it).
+    pub(crate) fn squash_last_two(&mut self) {
+        let h = &mut self.history;
+        if h.undo.len() < 2 {
+            return;
+        }
+        let b = h.undo.pop().expect("two steps");
+        let a = h.undo.pop().expect("two steps");
+        if a.tables.is_some() || b.tables.is_some() || a.page.is_some() || b.page.is_some() {
+            h.undo.push(a);
+            h.undo.push(b);
+            return;
+        }
+        // The paragraphs before both.
+        let mut before = self.paragraphs.clone();
+        before.splice(b.start..b.start + b.new.len(), b.old.iter().cloned());
+        before.splice(a.start..a.start + a.new.len(), a.old.iter().cloned());
+        let now = &self.paragraphs;
+        let start = before.iter().zip(now).take_while(|(x, y)| x == y).count();
+        let tail = before[start..]
+            .iter()
+            .rev()
+            .zip(now[start..].iter().rev())
+            .take_while(|(x, y)| x == y)
+            .count();
+        let hf = match (a.hf, b.hf) {
+            (Some(x), Some(y)) => Some(Box::new((x.0, y.1))),
+            (x, y) => x.or(y),
+        };
+        h.undo.push(Command {
+            id: b.id,
+            start,
+            old: before[start..before.len() - tail].to_vec(),
+            new: now[start..now.len() - tail].to_vec(),
+            before: a.before,
+            after: b.after,
+            kind: Kind::Other,
+            tables: None,
+            page: None,
+            hf,
+        });
+    }
+
     pub(crate) fn push_command(
         &mut self,
         start: usize,

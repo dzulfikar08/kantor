@@ -44,6 +44,8 @@ pub const MM: f32 = 96.0 / 25.4;
 pub const OBJECT: char = '\u{FFFC}';
 /// The model's page-break character.
 pub const PAGE_BREAK: char = '\u{000C}';
+/// The model's column-break character.
+pub const COLUMN_BREAK: char = '\u{000E}';
 
 /// Straight sRGB colour, the brush type stored in parley layouts.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -287,6 +289,8 @@ pub struct GapBlock {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GapPart {
     pub id: usize,
+    /// Left edge of its column (page coordinates).
+    pub x: f32,
     pub y: f32,
     pub from: f32,
     pub to: f32,
@@ -398,7 +402,7 @@ impl Paragraph {
                 // Tabs are inline boxes sized to reach their stop; the
                 // space standing in for the tab is shrunk to nothing.
                 '\t' => " ".to_owned(),
-                PAGE_BREAK => "\n".to_owned(),
+                PAGE_BREAK | COLUMN_BREAK => "\n".to_owned(),
                 OBJECT => "\u{200B}".to_owned(),
                 c => c.to_string(),
             })
@@ -427,6 +431,9 @@ pub struct ParaLayout {
     /// `dx`): lines broken again around floating objects use them.
     pub alignment: Alignment,
     pub avail: f32,
+    /// The column width it was laid out for (a column of another width
+    /// breaks its lines again).
+    pub width: f32,
 }
 
 impl ParaLayout {
@@ -805,6 +812,7 @@ impl Engine {
                 .collect(),
             alignment,
             avail,
+            width,
         }
     }
 
@@ -964,6 +972,29 @@ pub struct Page {
     /// Room taken by its wrapping objects whose position doesn't depend on
     /// the text (relative to the page or margins), for a second pass.
     pub fixed: Vec<WrapArea>,
+    /// Its stretches of text in columns (sections with more than one):
+    /// each one's columns as `[x, y, w, h]`, left to right.
+    pub columns: Vec<Vec<[f32; 4]>>,
+    /// Its footnotes by column, once the page is laid out (a page without
+    /// columns has one, the text area's width).
+    pub note_columns: Vec<NoteColumn>,
+}
+
+/// The footnotes at the bottom of one column of a page (Word puts a
+/// column's notes under it).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NoteColumn {
+    /// The column's left edge and width.
+    pub x: f32,
+    pub width: f32,
+    /// Where the notes end (the bottom of the text area, above any notes
+    /// already there), and their height with the separator.
+    pub bottom: f32,
+    pub height: f32,
+    pub parts: Vec<NotePart>,
+    /// It starts with a note continued from the column or page before
+    /// (under a full-width continuation separator).
+    pub continued: bool,
 }
 
 /// How a section starts.
@@ -972,13 +1003,15 @@ pub enum SectionBreak {
     #[default]
     NextPage,
     Continuous,
+    /// At the top of the next column (the next page after the last).
+    NextColumn,
     EvenPage,
     OddPage,
 }
 
 /// A section for [`PagedDocument::paginate_sections`]: where it starts and
 /// its pages' geometry.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SectionFlow {
     /// Index into `blocks` of the section's first block.
     pub first_block: usize,
@@ -991,6 +1024,11 @@ pub struct SectionFlow {
     pub start: SectionBreak,
     /// Restart page numbering at this number.
     pub restart: Option<u32>,
+    /// Its text columns: each one's left edge (from the left margin) and
+    /// width, px. Empty or one: the whole text width.
+    pub columns: Vec<(f32, f32)>,
+    /// A line between the columns.
+    pub sep: bool,
 }
 
 /// What a glyph run's text comes from.
@@ -1277,6 +1315,45 @@ struct Flow<'a> {
     section_pages: usize,
     /// Number of the next page.
     number: u32,
+    /// The current stretch of columns: the column being filled, the top
+    /// of the columns on this page, and the lowest any column reached.
+    col: usize,
+    col_top: f32,
+    col_max: f32,
+    /// The columns of that stretch (empty: one, the text width).
+    cols: Vec<(f32, f32)>,
+    sep: bool,
+    /// Height of the footnotes at the page bottom from before the stretch
+    /// of columns began (its columns' notes sit above them).
+    notes_base: f32,
+    /// Balancing columns: on page `.0`, the text goes no lower than `.1`.
+    limit: Option<(usize, f32)>,
+    /// The layouts as given (balancing restores them).
+    orig: Vec<Arc<ParaLayout>>,
+    /// Where balancing may start again from (block boundaries).
+    snaps: Vec<Snap>,
+}
+
+/// The flow's state at the start of a block, to lay the rest of a
+/// section out again from there (balancing columns).
+#[derive(Clone)]
+struct Snap {
+    block: usize,
+    /// Paragraphs from this one on aren't placed yet.
+    first_para: usize,
+    pages: usize,
+    last: Page,
+    setup: PageSetup,
+    excl: Vec<WrapArea>,
+    floats_placed: Option<usize>,
+    carry: Vec<(usize, usize, f32)>,
+    y: f32,
+    section_pages: usize,
+    number: u32,
+    col: usize,
+    col_top: f32,
+    col_max: f32,
+    notes_base: f32,
 }
 
 /// A cell's lines in its own coordinates: paragraph, line, top, height.
@@ -1290,11 +1367,131 @@ impl Flow<'_> {
     /// Bottom of the text area: the margin, less the page's footnotes.
     fn bottom(&self) -> f32 {
         let notes = self.pages.last().map_or(0.0, |p| p.notes_height);
-        self.setup.height - self.setup.margin_bottom - notes
+        let b = self.setup.height - self.setup.margin_bottom - notes;
+        match self.limit {
+            Some((page, l)) if page + 1 == self.pages.len() => b.min(l),
+            _ => b,
+        }
     }
 
     fn at_top(&self) -> bool {
+        // The top of a page (its other columns start there too).
         self.y <= self.setup.margin_top
+    }
+
+    /// Columns in the current stretch.
+    fn ncols(&self) -> usize {
+        self.cols.len().max(1)
+    }
+
+    /// The current column: left edge and width.
+    fn column(&self) -> (f32, f32) {
+        match self.cols.get(self.col) {
+            Some(&(x, w)) if self.cols.len() > 1 => (self.setup.margin_left + x, w),
+            _ => (self.setup.margin_left, self.setup.content_width()),
+        }
+    }
+
+    /// The current column when the section has several (for objects
+    /// placed relative to their column).
+    fn anchor_column(&self) -> Option<(f32, f32)> {
+        (self.cols.len() > 1).then(|| self.column())
+    }
+
+    /// Text that doesn't fit goes on in the next column, or on the next
+    /// page after the last one.
+    fn next_column(&mut self) {
+        if self.col + 1 >= self.ncols() {
+            self.new_page();
+            return;
+        }
+        self.end_column();
+        self.col += 1;
+        self.y = self.col_top;
+        let page = self.pages.len() - 1;
+        self.pages[page].notes_height = self.notes_base;
+        self.continue_notes();
+    }
+
+    /// The current column is done: note how low it went and move its
+    /// footnotes into the page's columns of notes.
+    fn end_column(&mut self) {
+        self.col_max = self.col_max.max(self.y);
+        let Some(page) = self.pages.len().checked_sub(1) else {
+            return;
+        };
+        let (x, width) = self.column();
+        let s = self.setup;
+        let base = self.notes_base;
+        let p = &mut self.pages[page];
+        if p.note_parts.is_empty() {
+            p.continued = false;
+            return;
+        }
+        p.note_columns.push(NoteColumn {
+            x,
+            width,
+            bottom: s.height - s.margin_bottom - base,
+            height: (p.notes_height - base).max(0.0),
+            parts: std::mem::take(&mut p.note_parts),
+            continued: std::mem::take(&mut p.continued),
+        });
+    }
+
+    /// The stretch of columns on this page ends (at the page's end, or
+    /// where a continuous section break starts others): its column boxes
+    /// and the lines between them.
+    fn close_region(&mut self) {
+        self.end_column();
+        let Some(page) = self.pages.len().checked_sub(1) else {
+            return;
+        };
+        if self.cols.len() > 1 {
+            let (top, bottom) = (self.col_top, self.col_max.max(self.col_top));
+            let left = self.setup.margin_left;
+            let boxes: Vec<[f32; 4]> = self
+                .cols
+                .iter()
+                .map(|&(x, w)| [left + x, top, w, bottom - top])
+                .collect();
+            if self.sep && bottom > top + 0.5 {
+                // Lines between the columns that have text.
+                for i in 1..=self.col.min(self.cols.len() - 1) {
+                    let (ax, aw) = self.cols[i - 1];
+                    let (bx, _) = self.cols[i];
+                    let mid = left + (ax + aw + bx) / 2.0;
+                    self.pages[page].rules.push(RuleRect {
+                        rect: [mid - 0.375, top, 0.75, bottom - top],
+                        color: Rgba::BLACK,
+                    });
+                }
+            }
+            self.pages[page].columns.push(boxes);
+        }
+        // What follows on the page sits above every column's notes.
+        let page_bottom = self.setup.height - self.setup.margin_bottom;
+        let p = &mut self.pages[page];
+        let stack = p
+            .note_columns
+            .iter()
+            .map(|n| page_bottom - n.bottom + n.height)
+            .fold(p.notes_height, f32::max);
+        p.notes_height = stack;
+        self.notes_base = stack;
+    }
+
+    /// The current section's columns become the stretch's, from `top`.
+    fn open_region(&mut self, top: f32) {
+        let s = &self.sections[self.section];
+        self.cols = if s.columns.len() > 1 {
+            s.columns.clone()
+        } else {
+            Vec::new()
+        };
+        self.sep = s.sep;
+        self.col = 0;
+        self.col_top = top;
+        self.col_max = top;
     }
 
     /// The geometry of the section's next page.
@@ -1314,7 +1511,9 @@ impl Flow<'_> {
     }
 
     fn new_page(&mut self) {
+        self.close_region();
         self.setup = self.next_setup();
+        self.notes_base = 0.0;
         self.pages.push(Page {
             setup: self.setup,
             section: self.section,
@@ -1324,6 +1523,7 @@ impl Flow<'_> {
         self.number += 1;
         self.section_pages += 1;
         self.y = self.setup.margin_top;
+        self.open_region(self.y);
         self.excl = self
             .pre
             .get(self.pages.len() - 1)
@@ -1346,7 +1546,8 @@ impl Flow<'_> {
         }
         let carry = std::mem::take(&mut self.carry);
         let page = self.pages.len() - 1;
-        let max = (self.setup.content_height() - CONTINUED_TEXT).max(NOTE_SEPARATOR * 2.0);
+        let room = self.setup.height - self.setup.margin_bottom - self.notes_base - self.col_top;
+        let max = (room - CONTINUED_TEXT).max(NOTE_SEPARATOR * 2.0);
         let mut used = NOTE_SEPARATOR;
         let mut parts = Vec::new();
         for (pi, index, from) in carry {
@@ -1393,7 +1594,7 @@ impl Flow<'_> {
         }
         let p = &mut self.pages[page];
         p.continued = true;
-        p.notes_height = used;
+        p.notes_height = self.notes_base + used;
         p.note_parts = parts;
     }
 
@@ -1433,8 +1634,10 @@ impl Flow<'_> {
             let avail = self.bottom() - self.y;
             let page = self.pages.len() - 1;
             if total - from <= avail + 0.01 || guard > 1000 {
+                let x = self.column().0;
                 self.pages[page].gaps.push(GapPart {
                     id: g.id,
+                    x,
                     y: self.y,
                     from,
                     to: total,
@@ -1455,8 +1658,10 @@ impl Flow<'_> {
                 None => None,
             };
             if let Some(to) = to {
+                let x = self.column().0;
                 self.pages[page].gaps.push(GapPart {
                     id: g.id,
+                    x,
                     y: self.y,
                     from,
                     to,
@@ -1467,7 +1672,7 @@ impl Flow<'_> {
                     return;
                 }
             }
-            self.new_page();
+            self.next_column();
         }
     }
 
@@ -1489,6 +1694,7 @@ impl Flow<'_> {
                 para_top: top,
                 line_top: top + g.y0 as f32,
                 char_x: x + layout.dx + g.x0 as f32,
+                column: self.anchor_column(),
             };
             let rect = float_rect(spec, &self.setup, number, at);
             let key = (pi, spec.index);
@@ -1521,14 +1727,19 @@ impl Flow<'_> {
     }
 
     /// Whether paragraph `pi`, about to be placed, has lines to break
-    /// around floating objects.
+    /// around floating objects, or for columns of another width than the
+    /// one it was laid out for.
     fn needs_wrap(&self, pi: usize) -> bool {
-        if !self.has_floats {
+        let para = &self.paras[pi];
+        let text = para.text.trim_end_matches([PAGE_BREAK, COLUMN_BREAK]);
+        if para.no_wrap || text.contains([PAGE_BREAK, COLUMN_BREAK]) {
             return false;
         }
-        let para = &self.paras[pi];
-        let text = para.text.trim_end_matches(PAGE_BREAK);
-        if para.no_wrap || text.contains(PAGE_BREAK) {
+        let laid_for = self.layouts[pi].width;
+        if self.cols.len() > 1 && self.cols.iter().any(|c| (c.1 - laid_for).abs() > 0.5) {
+            return true;
+        }
+        if !self.has_floats {
             return false;
         }
         if para.floats.iter().any(|f| f.wrap != FloatWrap::None) {
@@ -1548,7 +1759,8 @@ impl Flow<'_> {
 
     /// A body paragraph whose lines are broken again around floating
     /// objects: each line gets the free stretches beside the objects at
-    /// its height (one line per stretch), or moves below them. Widow and
+    /// its height (one line per stretch), or moves below them; in a column
+    /// of another width each line gets that column's width. Widow and
     /// orphan control doesn't apply here.
     fn place_para_wrapped(&mut self, pi: usize) {
         let para = &self.paras[pi];
@@ -1564,15 +1776,22 @@ impl Flow<'_> {
             .get(0)
             .map_or(para.size_pt * PT * 1.2, |l| l.metrics().line_height);
         if self.y + first_h > self.bottom() && !self.at_top() {
-            self.new_page();
+            self.next_column();
         }
-        self.place_floats(pi, self.y, self.setup.margin_left);
+        self.place_floats(pi, self.y, self.column().0);
+        // The text width from the indent in a column `w` wide.
+        let avail_in = |w: f32| (base.avail + w - base.width).max(8.0);
+        let widest = self
+            .cols
+            .iter()
+            .map(|c| avail_in(c.1))
+            .fold(avail_in(self.column().1), f32::max);
         let mut laid = (*base).clone();
         // (page, line, top, segment)
         let mut placed: Vec<(usize, usize, f32, (f32, f32))> = Vec::new();
         {
             let mut br = laid.layout.break_lines();
-            br.state_mut().set_layout_max_advance(base.avail.max(1.0));
+            br.state_mut().set_layout_max_advance(widest.max(1.0));
             let mut k = 0usize;
             let mut guard = 0usize;
             'lines: while !br.is_done() {
@@ -1584,16 +1803,18 @@ impl Flow<'_> {
                     .layout
                     .get(k.min(base.len().saturating_sub(1)))
                     .map_or(first_h, |l| l.metrics().line_height);
-                let segs = loop {
-                    let x0 = self.setup.margin_left + base.dx;
-                    let area = (x0, x0 + base.avail);
+                let (segs, avail) = loop {
+                    let (cx, cw) = self.column();
+                    let avail = avail_in(cw);
+                    let x0 = cx + base.dx;
+                    let area = (x0, x0 + avail);
                     if self.y + est > self.bottom() && !self.at_top() {
-                        self.new_page();
+                        self.next_column();
                         continue;
                     }
                     match free_segments(&self.excl, area, self.y, self.y + est) {
-                        Ok(s) => break s,
-                        Err(_) if guard > 50_000 => break vec![area],
+                        Ok(s) => break (s, avail),
+                        Err(_) if guard > 50_000 => break (vec![area], avail),
                         Err(y) => {
                             guard += 1;
                             self.y = y.max(self.y + 1.0);
@@ -1606,12 +1827,12 @@ impl Flow<'_> {
                     // ignore a line's own x): the stretch's left edge goes
                     // in the placed line's origin instead.
                     br.state_mut()
-                        .set_line_max_advance((b - a).min(base.avail).max(1.0));
+                        .set_line_max_advance((b - a).min(avail).max(1.0));
                     if let Some(parley::layout::YieldData::LineBreak(d)) = br.break_next() {
                         let h = d.metrics.line_height;
                         if row_h == 0.0 && self.y + h > self.bottom() + 0.01 && !self.at_top() {
                             br.revert();
-                            self.new_page();
+                            self.next_column();
                             continue 'lines;
                         }
                         placed.push((self.pages.len() - 1, k, self.y, (a, b)));
@@ -1634,35 +1855,49 @@ impl Flow<'_> {
             self.push_line_on(page, pi, k, top, (a, b - a), a);
         }
         if let Some(&(_, k, _, _)) = placed.last()
-            && self.breaks_after(pi, k)
+            && let Some(c) = self.break_after(pi, k)
         {
-            self.new_page();
+            self.take_break(c);
         }
         self.y += para.space_after_pt * PT;
     }
 
     /// Start section `i` (its first block is about to be placed).
     fn start_section(&mut self, i: usize) {
-        let s = self.sections[i];
-        let continuous = s.start == SectionBreak::Continuous
-            && !self.pages.is_empty()
+        let s = &self.sections[i];
+        let same_size = !self.pages.is_empty()
             && s.setup.width == self.setup.width
             && s.setup.height == self.setup.height;
+        let continuous = s.start == SectionBreak::Continuous && same_size;
+        // "New column": on in the next column of the same stretch.
+        let next_col =
+            s.start == SectionBreak::NextColumn && same_size && self.col + 1 < self.ncols();
+        let (start, restart) = (s.start, s.restart);
         self.section = i;
-        if continuous {
+        self.snaps.clear();
+        if continuous || next_col {
             // Same page: the new section's margins apply from here on.
             self.section_pages = 1;
-            if let Some(n) = s.restart {
+            if let Some(n) = restart {
                 self.number = n;
             }
+            if next_col {
+                self.next_column();
+                return;
+            }
+            // Its columns start below the longest column of the ones before.
+            self.close_region();
+            let top = self.col_max.max(self.y);
+            self.y = top;
+            self.open_region(top);
             return;
         }
         self.section_pages = 0;
-        if let Some(n) = s.restart {
+        if let Some(n) = restart {
             self.number = n;
         }
         // Even/odd page starts leave a blank page when needed.
-        let parity = match s.start {
+        let parity = match start {
             SectionBreak::EvenPage => Some(0),
             SectionBreak::OddPage => Some(1),
             _ => None,
@@ -1677,16 +1912,29 @@ impl Flow<'_> {
         self.new_page();
     }
 
-    /// Whether line `k` of paragraph `pi` ends with a page break.
-    fn breaks_after(&self, pi: usize, k: usize) -> bool {
-        let Some(line) = self.layouts[pi].layout.get(k) else {
-            return false;
-        };
+    /// The break (page or column) line `k` of paragraph `pi` ends with.
+    fn break_after(&self, pi: usize, k: usize) -> Option<char> {
+        let line = self.layouts[pi].layout.get(k)?;
         // The empty line after a break that ends the paragraph doesn't
         // break again (its range is empty, right after the break).
         let r = line.text_range();
-        r.end > r.start
-            && self.paras[pi].text.as_bytes().get(r.end - 1) == Some(&(PAGE_BREAK as u8))
+        if r.end <= r.start {
+            return None;
+        }
+        match self.paras[pi].text.as_bytes().get(r.end - 1).copied() {
+            Some(b) if b == PAGE_BREAK as u8 => Some(PAGE_BREAK),
+            Some(b) if b == COLUMN_BREAK as u8 => Some(COLUMN_BREAK),
+            _ => None,
+        }
+    }
+
+    /// Go on after a page or column break.
+    fn take_break(&mut self, c: char) {
+        if c == COLUMN_BREAK {
+            self.next_column();
+        } else {
+            self.new_page();
+        }
     }
 
     /// Height of the footnotes referenced from line `k` of paragraph `pi`.
@@ -1846,7 +2094,6 @@ impl Flow<'_> {
         }
         let para = &self.paras[pi];
         let layout = self.layouts[pi].clone();
-        let column = (self.setup.margin_left, self.setup.content_width());
         if para.page_break_before && !self.at_top() {
             self.new_page();
         }
@@ -1857,8 +2104,8 @@ impl Flow<'_> {
             .collect();
         let n = heights.len();
         let notes: Vec<f32> = (0..n).map(|k| self.line_notes(pi, k)).collect();
-        let forced: Vec<bool> = (0..n).map(|k| self.breaks_after(pi, k)).collect();
-        let keep_together = !forced.iter().any(|&f| f);
+        let forced: Vec<Option<char>> = (0..n).map(|k| self.break_after(pi, k)).collect();
+        let keep_together = !forced.iter().any(|f| f.is_some());
         // Space before is dropped at the top of a page, as in Word.
         if !self.at_top() {
             self.y += para.space_before_pt * PT;
@@ -1884,7 +2131,7 @@ impl Flow<'_> {
                 h += heights[k];
                 nh += notes[k];
                 fit += 1;
-                if forced[k] {
+                if forced[k].is_some() {
                     break;
                 }
             }
@@ -1907,15 +2154,17 @@ impl Flow<'_> {
                 // A line taller than the page, or nothing fits: force one line.
                 take = 1;
             }
+            let column = self.column();
             for (k, h) in heights.iter().enumerate().skip(i).take(take) {
                 let top = self.y;
                 self.push_line(pi, k, top, column);
                 self.y += h;
             }
             i += take;
-            let broke = take > 0 && forced[i - 1];
-            if i < n || broke {
-                self.new_page();
+            match forced.get(i.wrapping_sub(1)).copied().flatten() {
+                Some(c) if take > 0 => self.take_break(c),
+                _ if i < n => self.next_column(),
+                _ => {}
             }
         }
         self.y += para.space_after_pt * PT;
@@ -2019,7 +2268,7 @@ impl Flow<'_> {
         repeat: bool,
     ) {
         let [pad_t, pad_r, _, pad_l] = t.padding;
-        let x0 = self.setup.margin_left + t.x;
+        let x0 = self.column().0 + t.x;
         let top = self.y;
         for (cell, lines) in row.cells.iter().zip(cells) {
             let cx = x0 + t.col_x(cell.col);
@@ -2060,7 +2309,7 @@ impl Flow<'_> {
         let headers = t.rows.iter().take_while(|r| r.header).count();
         let headers = if headers < t.rows.len() { headers } else { 0 };
         let new_page = |f: &mut Self, ri: usize| {
-            f.new_page();
+            f.next_column();
             if headers > 0 && ri >= headers {
                 f.repeat_headers(t, headers);
             }
@@ -2115,7 +2364,7 @@ impl Flow<'_> {
         new_page: &dyn Fn(&mut Self, usize),
     ) {
         let [pad_t, pad_r, pad_b, pad_l] = t.padding;
-        let x0 = self.setup.margin_left + t.x;
+        let x0 = self.column().0 + t.x;
         let mut next = vec![0usize; cells.len()];
         let mut used = 0.0f32;
         loop {
@@ -2182,6 +2431,132 @@ impl Flow<'_> {
     }
 }
 
+impl Flow<'_> {
+    /// Place blocks `range`, remembering where balancing could start
+    /// again (`snap`).
+    fn run(&mut self, blocks: &[Block], range: Range<usize>, snap: bool) {
+        for bi in range {
+            if snap && self.limit.is_none() {
+                self.snapshot(blocks, bi);
+            }
+            match &blocks[bi] {
+                Block::Para(pi) => self.place_para(*pi),
+                Block::Table(t) => self.place_table(t),
+                Block::Gap(g) => self.place_gap(g),
+            }
+        }
+    }
+
+    /// Remember the state before block `bi` (the first block starting on
+    /// each page, and the section's first).
+    fn snapshot(&mut self, blocks: &[Block], bi: usize) {
+        let pages = self.pages.len();
+        if self.snaps.last().is_some_and(|s| s.pages == pages) {
+            return;
+        }
+        let first_para = blocks[bi..]
+            .iter()
+            .find_map(|b| match b {
+                Block::Para(i) => Some(*i),
+                Block::Table(t) => t
+                    .rows
+                    .first()
+                    .and_then(|r| r.cells.first())
+                    .map(|c| c.paras.start),
+                Block::Gap(_) => None,
+            })
+            .unwrap_or(self.paras.len());
+        self.snaps.push(Snap {
+            block: bi,
+            first_para,
+            pages,
+            last: self.pages[pages - 1].clone(),
+            setup: self.setup,
+            excl: self.excl.clone(),
+            floats_placed: self.floats_placed,
+            carry: self.carry.clone(),
+            y: self.y,
+            section_pages: self.section_pages,
+            number: self.number,
+            col: self.col,
+            col_top: self.col_top,
+            col_max: self.col_max,
+            notes_base: self.notes_base,
+        });
+        // The section's first and the last two pages' are enough.
+        if self.snaps.len() > 3 {
+            self.snaps.remove(1);
+        }
+    }
+
+    fn restore(&mut self, s: &Snap) {
+        self.pages.truncate(s.pages);
+        if let Some(last) = self.pages.last_mut() {
+            *last = s.last.clone();
+        }
+        for pi in s.first_para..self.line_pages.len() {
+            self.line_pages[pi].clear();
+            if let Some(o) = self.orig.get(pi)
+                && !Arc::ptr_eq(&self.layouts[pi], o)
+            {
+                self.layouts[pi] = o.clone();
+            }
+        }
+        self.setup = s.setup;
+        self.excl = s.excl.clone();
+        self.floats_placed = s.floats_placed;
+        self.carry = s.carry.clone();
+        self.y = s.y;
+        self.section_pages = s.section_pages;
+        self.number = s.number;
+        self.col = s.col;
+        self.col_top = s.col_top;
+        self.col_max = s.col_max;
+        self.notes_base = s.notes_base;
+    }
+
+    /// Balance the columns of the section just placed (blocks up to
+    /// `end`) on its last page, as Word does before a continuous section
+    /// break: the lowest bottom at which the rest still fits on the page.
+    fn balance(&mut self, blocks: &[Block], end: usize) {
+        let target = self.pages.len() - 1;
+        let snaps = std::mem::take(&mut self.snaps);
+        let Some(snap) = snaps
+            .iter()
+            .rev()
+            .find(|s| s.pages - 1 < target)
+            .or(snaps.first())
+            .cloned()
+        else {
+            return;
+        };
+        let top = self.col_top;
+        let page_bottom = self.setup.height - self.setup.margin_bottom;
+        let fits = |f: &mut Self, limit: f32| {
+            f.restore(&snap);
+            f.limit = Some((target, limit));
+            f.run(blocks, snap.block..end, false);
+            f.limit = None;
+            f.pages.len() - 1 == target && f.carry.is_empty()
+        };
+        let (mut lo, mut hi) = (top, page_bottom);
+        for _ in 0..16 {
+            if hi - lo < 0.5 {
+                break;
+            }
+            let mid = (lo + hi) / 2.0;
+            if fits(self, mid) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        if !fits(self, hi) {
+            fits(self, page_bottom);
+        }
+    }
+}
+
 impl PagedDocument {
     /// Flows already broken body paragraphs onto pages.
     pub fn paginate(paras: &[Paragraph], layouts: Vec<Arc<ParaLayout>>, setup: PageSetup) -> Self {
@@ -2204,6 +2579,8 @@ impl PagedDocument {
             even_setup: None,
             start: SectionBreak::NextPage,
             restart: None,
+            columns: Vec::new(),
+            sep: false,
         }];
         Self::paginate_sections(paras, layouts, blocks, &one)
     }
@@ -2224,6 +2601,8 @@ impl PagedDocument {
             even_setup: None,
             start: SectionBreak::NextPage,
             restart: None,
+            columns: Vec::new(),
+            sep: false,
         }];
         let sections = if sections.is_empty() {
             &fallback[..]
@@ -2250,9 +2629,11 @@ impl PagedDocument {
         has_floats: bool,
     ) -> Self {
         let n = layouts.len();
+        let columns = sections.iter().any(|s| s.columns.len() > 1);
         let mut flow = Flow {
             setup: sections[0].setup,
             paras,
+            orig: if columns { layouts.clone() } else { Vec::new() },
             layouts,
             excl: Vec::new(),
             pre,
@@ -2266,26 +2647,44 @@ impl PagedDocument {
             section: 0,
             section_pages: 0,
             number: sections[0].restart.unwrap_or(1),
+            col: 0,
+            col_top: 0.0,
+            col_max: 0.0,
+            cols: Vec::new(),
+            sep: false,
+            notes_base: 0.0,
+            limit: None,
+            snaps: Vec::new(),
         };
         flow.new_page();
-        let mut next = 1;
-        for (bi, block) in blocks.iter().enumerate() {
-            while next < sections.len() && sections[next].first_block <= bi {
-                flow.start_section(next);
-                next += 1;
+        let first = |si: usize| {
+            if si == 0 {
+                0
+            } else {
+                sections[si].first_block.min(blocks.len())
             }
-            match block {
-                Block::Para(pi) => flow.place_para(*pi),
-                Block::Table(t) => {
-                    flow.place_table(t);
-                }
-                Block::Gap(g) => flow.place_gap(g),
+        };
+        for si in 0..sections.len() {
+            if si > 0 {
+                flow.start_section(si);
             }
-        }
-        // Sections with no blocks still get their page.
-        while next < sections.len() {
-            flow.start_section(next);
-            next += 1;
+            let start = first(si);
+            let end = sections
+                .get(si + 1)
+                .map_or(blocks.len(), |_| first(si + 1))
+                .max(start);
+            // Word balances a section's columns on its last page when a
+            // continuous section break follows it.
+            let balance = flow.cols.len() > 1
+                && sections.get(si + 1).is_some_and(|next| {
+                    next.start == SectionBreak::Continuous
+                        && next.setup.width == flow.setup.width
+                        && next.setup.height == flow.setup.height
+                });
+            flow.run(blocks, start..end, balance);
+            if balance {
+                flow.balance(blocks, end);
+            }
         }
         // A footnote still going on gets the pages it needs.
         let mut guard = 0;
@@ -2293,6 +2692,7 @@ impl PagedDocument {
             flow.new_page();
             guard += 1;
         }
+        flow.close_region();
         let Flow {
             pages,
             line_pages,
@@ -2658,6 +3058,21 @@ impl PagedDocument {
         Some((page, i))
     }
 
+    /// The stretch of columns and the column on `page` holding line `l`.
+    pub fn column_of(&self, page: usize, l: &PlacedLine) -> Option<(usize, usize)> {
+        let p = self.pages.get(page)?;
+        p.columns.iter().enumerate().find_map(|(r, cols)| {
+            cols.iter()
+                .position(|c| {
+                    l.x + 0.5 >= c[0]
+                        && l.x < c[0] + c[2]
+                        && l.top + 0.5 >= c[1]
+                        && l.top < c[1] + c[3] + 0.5
+                })
+                .map(|j| (r, j))
+        })
+    }
+
     /// The position on the line above (`down == false`) or below the caret
     /// at `para`/`index`, nearest to `x` (page coordinates): the next line
     /// in the same column (table cells stack vertically). Crosses pages;
@@ -2672,7 +3087,67 @@ impl PagedDocument {
         let (mut page, i) = self.placed_line(para, index)?;
         let cur = self.pages[page].lines[i];
         let in_col = |l: &PlacedLine| x >= l.x - 0.5 && x <= l.x + l.width + 0.5;
-        // Same page first.
+        let from = if down { cur.top + cur.height } else { cur.top };
+        // In columns: past a column's last line Down goes to the top of the
+        // next column, Up from its first line to the bottom of the one
+        // before (as in Word); off the page, to the first or last column.
+        let mut x = x;
+        if let Some((r, j)) = self.column_of(page, &cur) {
+            let region = &self.pages[page].columns[r];
+            let inside = |l: &PlacedLine, c: &[f32; 4]| {
+                !l.repeat
+                    && l.x + 0.5 >= c[0]
+                    && l.x < c[0] + c[2]
+                    && l.top + 0.5 >= c[1]
+                    && l.top < c[1] + c[3] + 0.5
+            };
+            let col = region[j];
+            let lines = &self.pages[page].lines;
+            let more = lines.iter().any(|l| {
+                inside(l, &col)
+                    && in_col(l)
+                    && if down {
+                        l.top >= from - 0.5
+                    } else {
+                        l.top + l.height <= from + 0.5
+                    }
+                    && !(l.para == cur.para && l.line == cur.line)
+            });
+            if !more {
+                let next = if down {
+                    region.get(j + 1)
+                } else {
+                    j.checked_sub(1).and_then(|k| region.get(k))
+                };
+                if let Some(nc) = next {
+                    let best = lines
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, l)| inside(l, nc))
+                        .min_by(|(_, a), (_, b)| {
+                            let (ka, kb) = if down {
+                                (a.top, b.top)
+                            } else {
+                                (-a.top, -b.top)
+                            };
+                            ka.total_cmp(&kb)
+                        })
+                        .map(|(k, _)| k);
+                    if let Some(k) = best {
+                        return self.hit_placed(page, k, x - col[0] + nc[0]);
+                    }
+                }
+                // Leaving the columns: as if from the first (down) or last
+                // (up) column, so the next page's first column is next.
+                let edge = if down {
+                    region[0]
+                } else {
+                    region[region.len() - 1]
+                };
+                x = x - col[0] + edge[0];
+            }
+        }
+        let in_col = |l: &PlacedLine| x >= l.x - 0.5 && x <= l.x + l.width + 0.5;
         let pick = |lines: &[PlacedLine], from: Option<f32>| -> Option<usize> {
             let mut best: Option<(usize, f32)> = None;
             for (k, l) in lines.iter().enumerate() {
@@ -2684,7 +3159,6 @@ impl PagedDocument {
                 if !ok || l.repeat || (l.para == cur.para && l.line == cur.line && from.is_some()) {
                     continue;
                 }
-                // Prefer the column under x; else any line.
                 let score = if down { l.top } else { -l.top } + if in_col(l) { 0.0 } else { 1e6 };
                 if best.is_none_or(|(_, s)| score < s) {
                     best = Some((k, score));
@@ -2692,7 +3166,6 @@ impl PagedDocument {
             }
             best.map(|(k, _)| k)
         };
-        let from = if down { cur.top + cur.height } else { cur.top };
         if let Some(k) = pick(&self.pages[page].lines, Some(from)) {
             let l = self.pages[page].lines[k];
             // Only accept an out-of-column line if no in-column one exists on
@@ -3049,6 +3522,8 @@ mod section_tests {
             even_setup: None,
             start,
             restart: None,
+            columns: Vec::new(),
+            sep: false,
         };
         let sections = [
             flow(0, portrait, SectionBreak::NextPage),
@@ -3087,6 +3562,8 @@ mod section_tests {
                 even_setup: None,
                 start: SectionBreak::NextPage,
                 restart: None,
+                columns: Vec::new(),
+                sep: false,
             },
             SectionFlow {
                 first_block: 1,
@@ -3095,6 +3572,8 @@ mod section_tests {
                 even_setup: None,
                 start: SectionBreak::Continuous,
                 restart: None,
+                columns: Vec::new(),
+                sep: false,
             },
         ];
         let doc = PagedDocument::paginate_sections(&paras, layouts, &blocks, &sections);
@@ -3915,5 +4394,258 @@ mod tab_tests {
         p.tabs = vec![TabStop::new(60.0 * MM, TabAlign::Left)];
         let (doc, col) = one(&p);
         assert!((x_of(&doc, 3) - col - 18.0 * PT).abs() < 0.6);
+    }
+}
+
+#[cfg(test)]
+mod column_tests {
+    use super::*;
+
+    const GAP: f32 = 40.0;
+
+    /// A4 split into two columns `GAP` px apart (or the widths given).
+    fn two_columns(widths: Option<(f32, f32)>) -> Vec<(f32, f32)> {
+        let w = PageSetup::a4().content_width();
+        let (a, b) = widths.unwrap_or(((w - GAP) / 2.0, (w - GAP) / 2.0));
+        vec![(0.0, a), (a + GAP, b)]
+    }
+
+    fn section(first_block: usize, start: SectionBreak, columns: Vec<(f32, f32)>) -> SectionFlow {
+        SectionFlow {
+            first_block,
+            setup: PageSetup::a4(),
+            first_setup: None,
+            even_setup: None,
+            start,
+            restart: None,
+            columns,
+            sep: true,
+        }
+    }
+
+    /// Lays `paras` out, each at the width of the column its section
+    /// starts with.
+    fn lay(paras: &[Paragraph], sections: &[SectionFlow]) -> PagedDocument {
+        let mut engine = Engine::new();
+        let full = PageSetup::a4().content_width();
+        let width_of = |i: usize| {
+            let s = sections.iter().rev().find(|s| s.first_block <= i).unwrap();
+            s.columns.first().map_or(full, |c| c.1)
+        };
+        let layouts = paras
+            .iter()
+            .enumerate()
+            .map(|(i, p)| Arc::new(engine.layout_paragraph(p, width_of(i))))
+            .collect();
+        let blocks: Vec<Block> = (0..paras.len()).map(Block::Para).collect();
+        PagedDocument::paginate_sections(paras, layouts, &blocks, sections)
+    }
+
+    fn short(n: usize) -> Vec<Paragraph> {
+        (0..n).map(|i| Paragraph::new(format!("p{i}"))).collect()
+    }
+
+    fn left(page: &Page, para: usize) -> f32 {
+        page.lines.iter().find(|l| l.para == para).unwrap().x
+    }
+
+    #[test]
+    fn text_fills_one_column_then_the_next() {
+        let s = PageSetup::a4();
+        let cols = two_columns(None);
+        let doc = lay(
+            &short(200),
+            &[section(0, SectionBreak::NextPage, cols.clone())],
+        );
+        let page = &doc.pages[0];
+        let in_first = page.lines.iter().filter(|l| l.x == s.margin_left).count();
+        let in_second = page
+            .lines
+            .iter()
+            .filter(|l| l.x == s.margin_left + cols[1].0)
+            .count();
+        assert!(in_first > 10 && in_second > 10, "{in_first} {in_second}");
+        assert_eq!(in_first, in_second, "a full page has two full columns");
+        assert_eq!(in_first + in_second, page.lines.len());
+        // The second column starts at the top, right after the first.
+        let first_of_second = page.lines.iter().find(|l| l.x > s.margin_left).unwrap();
+        assert_eq!(first_of_second.top, s.margin_top);
+        assert_eq!(first_of_second.para, in_first);
+        // Twice as much text per page as without columns.
+        let one = lay(
+            &short(200),
+            &[section(0, SectionBreak::NextPage, Vec::new())],
+        );
+        assert!(doc.pages.len() * 2 <= one.pages.len() + 1);
+        // The column boxes and the line between them.
+        assert_eq!(page.columns.len(), 1);
+        assert_eq!(page.columns[0].len(), 2);
+        let mid = s.margin_left + cols[0].1 + GAP / 2.0;
+        assert!(
+            page.rules
+                .iter()
+                .any(|r| (r.rect[0] + r.rect[2] / 2.0 - mid).abs() < 0.5 && r.rect[3] > 100.0)
+        );
+    }
+
+    #[test]
+    fn column_break_moves_to_the_next_column() {
+        let s = PageSetup::a4();
+        let cols = two_columns(None);
+        let mut paras = short(3);
+        paras[1] = Paragraph::new(format!("a{COLUMN_BREAK}b"));
+        let doc = lay(&paras, &[section(0, SectionBreak::NextPage, cols.clone())]);
+        assert_eq!(doc.pages.len(), 1);
+        let page = &doc.pages[0];
+        let b = page
+            .lines
+            .iter()
+            .find(|l| l.para == 1 && l.line == 1)
+            .unwrap();
+        assert_eq!(b.x, s.margin_left + cols[1].0);
+        assert_eq!(b.top, s.margin_top);
+        assert_eq!(left(page, 2), s.margin_left + cols[1].0);
+        // From the last column it goes to the next page.
+        let mut paras = short(2);
+        paras[0] = Paragraph::new(format!("a{COLUMN_BREAK}b{COLUMN_BREAK}c"));
+        let doc = lay(&paras, &[section(0, SectionBreak::NextPage, cols)]);
+        assert_eq!(doc.pages.len(), 2);
+        assert_eq!(doc.caret(0, 4).unwrap().page, 1);
+        // Without columns a column break acts as a page break.
+        let mut paras = short(2);
+        paras[0] = Paragraph::new(format!("a{COLUMN_BREAK}"));
+        let doc = lay(&paras, &[section(0, SectionBreak::NextPage, Vec::new())]);
+        assert_eq!(doc.pages.len(), 2);
+    }
+
+    #[test]
+    fn continuous_break_balances_the_columns_before_it() {
+        let s = PageSetup::a4();
+        let cols = two_columns(None);
+        let mut paras = short(11);
+        paras.push(Paragraph::new("after"));
+        let doc = lay(
+            &paras,
+            &[
+                section(0, SectionBreak::NextPage, cols.clone()),
+                section(11, SectionBreak::Continuous, Vec::new()),
+            ],
+        );
+        assert_eq!(doc.pages.len(), 1);
+        let page = &doc.pages[0];
+        let firsts = page
+            .lines
+            .iter()
+            .filter(|l| l.para < 11 && l.x == s.margin_left)
+            .count();
+        let seconds = page
+            .lines
+            .iter()
+            .filter(|l| l.para < 11 && l.x > s.margin_left)
+            .count();
+        assert_eq!(
+            (firsts, seconds),
+            (6, 5),
+            "balanced, the first column longer"
+        );
+        // The next section starts under the longer column, full width.
+        let bottom = page
+            .lines
+            .iter()
+            .filter(|l| l.para < 11)
+            .map(|l| l.top + l.height)
+            .fold(0.0f32, f32::max);
+        let after = page.lines.iter().find(|l| l.para == 11).unwrap();
+        assert!(after.top >= bottom - 0.01 && after.top < bottom + 30.0);
+        assert_eq!(after.x, s.margin_left);
+        assert_eq!(after.width, s.content_width());
+        // The line between the columns is as long as the longer column.
+        let rule = page.rules.iter().find(|r| r.rect[2] < 1.0).unwrap();
+        assert!((rule.rect[1] + rule.rect[3] - bottom).abs() < 30.0);
+    }
+
+    #[test]
+    fn continuous_columns_start_mid_page() {
+        let cols = two_columns(None);
+        let doc = lay(
+            &short(5),
+            &[
+                section(0, SectionBreak::NextPage, Vec::new()),
+                section(2, SectionBreak::Continuous, cols.clone()),
+            ],
+        );
+        assert_eq!(doc.pages.len(), 1);
+        let page = &doc.pages[0];
+        let p1 = page.lines.iter().find(|l| l.para == 1).unwrap();
+        let p2 = page.lines.iter().find(|l| l.para == 2).unwrap();
+        assert!(p2.top >= p1.top + p1.height - 0.01);
+        assert_eq!(p2.width, cols[0].1);
+        let top = page.columns[0][0][1];
+        assert!(top >= p1.top + p1.height && top <= p2.top + 0.01);
+    }
+
+    #[test]
+    fn unequal_columns_break_lines_at_their_own_width() {
+        let s = PageSetup::a4();
+        let cols = two_columns(Some((150.0, s.content_width() - 150.0 - GAP)));
+        let words = "word ".repeat(1500);
+        let doc = lay(
+            &[Paragraph::new(words)],
+            &[section(0, SectionBreak::NextPage, cols.clone())],
+        );
+        let page = &doc.pages[0];
+        let narrow: Vec<&PlacedLine> = page
+            .lines
+            .iter()
+            .filter(|l| l.x < s.margin_left + 100.0)
+            .collect();
+        let wide: Vec<&PlacedLine> = page
+            .lines
+            .iter()
+            .filter(|l| l.x > s.margin_left + 100.0)
+            .collect();
+        assert!(!narrow.is_empty() && !wide.is_empty());
+        assert!(narrow.iter().all(|l| l.width <= 150.5));
+        assert!(wide.iter().all(|l| l.width > 300.0));
+        // Each wide line holds more text than a narrow one.
+        let range = |l: &PlacedLine| {
+            let r = doc.layouts[0].layout.get(l.line).unwrap().text_range();
+            r.end - r.start
+        };
+        assert!(range(wide[0]) > range(narrow[0]) * 2);
+    }
+
+    #[test]
+    fn down_and_up_move_between_columns() {
+        let s = PageSetup::a4();
+        let cols = two_columns(None);
+        let doc = lay(
+            &short(200),
+            &[section(0, SectionBreak::NextPage, cols.clone())],
+        );
+        let page = &doc.pages[0];
+        let last_first = page
+            .lines
+            .iter()
+            .rfind(|l| l.x == s.margin_left)
+            .unwrap()
+            .para;
+        let x = s.margin_left + 2.0;
+        let down = doc.vertical(last_first, 0, x, true).unwrap();
+        assert_eq!(down.0, last_first + 1, "top of the next column");
+        assert_eq!(doc.caret(down.0, down.1).unwrap().page, 0);
+        let up = doc
+            .vertical(last_first + 1, 0, x + cols[1].0, false)
+            .unwrap();
+        assert_eq!(up.0, last_first);
+        // Off the last column, on to the next page's first column.
+        let last = page.lines.last().unwrap().para;
+        let next = doc.vertical(last, 0, x + cols[1].0, true).unwrap();
+        assert_eq!(next.0, last + 1);
+        let c = doc.caret(next.0, next.1).unwrap();
+        assert_eq!((c.page, c.x < s.margin_left + cols[0].1), (1, true));
+        // Clicking in the second column hits its text.
+        let (para, _) = doc.hit_test(0, x + cols[1].0, s.margin_top + 2.0).unwrap();
+        assert_eq!(para, last_first + 1);
     }
 }

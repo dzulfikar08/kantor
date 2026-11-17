@@ -1503,6 +1503,72 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Columns: One"),
+        detail: tk("Docs · the caret's section (or the selected text) in one column"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.column_preset_doc(docs_engine::ColumnPreset::One, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Columns: Two"),
+        detail: tk("Docs · two columns of equal width"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.column_preset_doc(docs_engine::ColumnPreset::Two, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Columns: Three"),
+        detail: tk("Docs · three columns of equal width"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.column_preset_doc(docs_engine::ColumnPreset::Three, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Columns: Left"),
+        detail: tk("Docs · two columns, the left one narrower"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.column_preset_doc(docs_engine::ColumnPreset::Left, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Columns: Right"),
+        detail: tk("Docs · two columns, the right one narrower"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.column_preset_doc(docs_engine::ColumnPreset::Right, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("More Columns…"),
+        detail: tk("Docs · number of columns, widths and spacing, line between, apply to"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.toggle_columns_menu(None, true, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Insert Column Break"),
+        detail: tk("Docs · the text after the caret starts the next column"),
+        keys: "Ctrl Shift Enter",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_column_break_doc(w, cx)),
+    },
+    Command {
         title: tk("Track Changes"),
         detail: tk("Docs · turn on or off: your typing and deletions are marked for review"),
         keys: "Ctrl Shift E",

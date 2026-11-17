@@ -72,7 +72,7 @@ SECT = (
 )
 
 
-def package(body, media=(), numbering=None, header=None):
+def package(body, media=(), numbering=None, header=None, sect=None):
     """A .docx's bytes: `body` inside w:body, `media` = [(rId, name, bytes)]."""
     rels = [
         '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
@@ -85,7 +85,7 @@ def package(body, media=(), numbering=None, header=None):
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
         '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
     )
-    sect = SECT
+    sect = sect or SECT
     if header:
         rels.append(
             '<Relationship Id="rIdHeader1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>'
@@ -333,7 +333,61 @@ def styleref_index():
     return package(body, header=header)
 
 
-FILES = {"textboxes.docx": textboxes, "formulas.docx": formulas, "styleref_index.docx": styleref_index}
+# ── columns.docx ───────────────────────────────────────────────────────────
+# Lines of exactly 14 pt and no paragraph spacing, short enough never to
+# wrap: page counts don't depend on fonts (49 lines fit a column of A4
+# with 2.54 cm margins), so Kantor's can be checked against LibreOffice's.
+
+
+def col_sect(cols, kind=None):
+    """A section's properties: A4, 2.54 cm margins, `cols` (a w:cols)."""
+    t = f'<w:type w:val="{kind}"/>' if kind else ""
+    return (
+        f'<w:sectPr>{t}<w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1440" w:right="1440" '
+        f'w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>{cols}</w:sectPr>'
+    )
+
+
+def line(t, before="", sect=""):
+    ppr = f'<w:pPr><w:spacing w:before="0" w:after="0" w:line="280" w:lineRule="exact"/>{sect}</w:pPr>'
+    return f'<w:p>{ppr}{before}<w:r><w:t xml:space="preserve">{esc(t)}</w:t></w:r></w:p>'
+
+
+def columns():
+    one = '<w:cols w:space="720"/>'
+    two = '<w:cols w:num="2" w:sep="1" w:space="720"/>'
+    left = (
+        '<w:cols w:num="2" w:space="720" w:equalWidth="0">'
+        '<w:col w:w="2600" w:space="720"/><w:col w:w="5706"/></w:cols>'
+    )
+    col_break = '<w:r><w:br w:type="column"/></w:r>'
+    # 1: a title and two lines, one column.
+    body = line("Columns") + line("One column first.")
+    body += line("Then two, continuously.", sect=col_sect(one))
+    # 2: 130 items in two columns with a line between; a column break
+    # before item 21 (at the start of its paragraph: LibreOffice drops the
+    # empty line Word and Kantor show for a break ending a paragraph).
+    # Balanced on its last page before the continuous break.
+    for i in range(1, 131):
+        extra = col_break if i == 21 else ""
+        sect = col_sect(two, "continuous") if i == 130 else ""
+        body += line(f"Item {i}", extra, sect)
+    # 3: five lines in one column, under the balanced columns.
+    for i in range(1, 6):
+        sect = col_sect(one, "continuous") if i == 5 else ""
+        body += line(f"After {i}", sect=sect)
+    # 4 (the body's): a new page, a narrow left column and a wide one.
+    for i in range(1, 61):
+        body += line(f"Left {i}")
+    return package(body, sect=col_sect(left))
+
+
+FILES = {
+    "textboxes.docx": textboxes,
+    "formulas.docx": formulas,
+    "styleref_index.docx": styleref_index,
+    "columns.docx": columns,
+}
 
 
 def main():
