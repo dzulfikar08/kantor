@@ -51,26 +51,85 @@ pub enum Family {
     /// Labeled Hierarchy: a tree top down over a band per level, the
     /// level's label at its left (the document's later top-level items).
     LabeledHierarchy,
+    /// Horizontal Bullet List: a column per item, its header over a box
+    /// with its sub-items.
+    HorizontalBullets,
+    /// Continuous Block Process: boxes left to right on a wide arrow.
+    ContinuousBlock,
+    /// Step Up Process: steps rising left to right, each item's text on
+    /// its step.
+    StepUp,
+    /// Basic Pyramid: a triangle cut into a level per item, top down.
+    Pyramid,
+    /// Basic Matrix: the items in quadrants, two to a row.
+    Matrix,
+    /// Basic Venn: overlapping circles round a circle.
+    Venn,
+    /// Radial Cycle: the first item in a circle at the centre, its
+    /// sub-items round it, a spoke to each.
+    RadialCycle,
 }
+
+/// The SmartArt layouts Kantor lays out: family, layout id (`loTypeId`),
+/// category (`loCatId`, PowerPoint's gallery groups) and name, in gallery
+/// order.
+pub const LAYOUTS: &[(Family, &str, &str, &str)] = &[
+    (Family::Blocks, "urn:microsoft.com/office/officeart/2005/8/layout/default", "list", "Basic Block List"),
+    (Family::Bullets, "urn:microsoft.com/office/officeart/2005/8/layout/vList2", "list", "Vertical Bullet List"),
+    (Family::HorizontalBullets, "urn:microsoft.com/office/officeart/2005/8/layout/hList1", "list", "Horizontal Bullet List"),
+    (Family::Process, "urn:microsoft.com/office/officeart/2005/8/layout/process1", "process", "Basic Process"),
+    (Family::ContinuousBlock, "urn:microsoft.com/office/officeart/2005/8/layout/hProcess9", "process", "Continuous Block Process"),
+    (Family::StepUp, "urn:microsoft.com/office/officeart/2009/3/layout/StepUpProcess", "process", "Step Up Process"),
+    (Family::Cycle, "urn:microsoft.com/office/officeart/2005/8/layout/cycle2", "cycle", "Basic Cycle"),
+    (Family::RadialCycle, "urn:microsoft.com/office/officeart/2005/8/layout/radial6", "cycle", "Radial Cycle"),
+    (Family::OrgChart, "urn:microsoft.com/office/officeart/2005/8/layout/orgChart1", "hierarchy", "Organization Chart"),
+    (Family::Hierarchy, "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy1", "hierarchy", "Hierarchy"),
+    (Family::HorizontalHierarchy, "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy2", "hierarchy", "Horizontal Hierarchy"),
+    (Family::LabeledHierarchy, "urn:microsoft.com/office/officeart/2005/8/layout/hierarchy6", "hierarchy", "Labeled Hierarchy"),
+    (Family::Venn, "urn:microsoft.com/office/officeart/2005/8/layout/venn1", "relationship", "Basic Venn"),
+    (Family::Matrix, "urn:microsoft.com/office/officeart/2005/8/layout/matrix3", "matrix", "Basic Matrix"),
+    (Family::Pyramid, "urn:microsoft.com/office/officeart/2005/8/layout/pyramid1", "pyramid", "Basic Pyramid"),
+];
 
 impl Family {
     fn of(lo_type: &str) -> Option<Self> {
         let id = lo_type.rsplit('/').next()?;
-        Some(match id {
-            "default" => Family::Blocks,
-            "vList2" => Family::Bullets,
-            "process1" => Family::Process,
-            "cycle2" => Family::Cycle,
-            "orgChart1" => Family::OrgChart,
-            "hierarchy1" => Family::Hierarchy,
-            "hierarchy2" => Family::HorizontalHierarchy,
-            "hierarchy6" => Family::LabeledHierarchy,
-            _ => return None,
-        })
+        LAYOUTS
+            .iter()
+            .find(|l| l.1.rsplit('/').next() == Some(id))
+            .map(|l| l.0)
+    }
+
+    fn entry(self) -> &'static (Family, &'static str, &'static str, &'static str) {
+        LAYOUTS
+            .iter()
+            .find(|l| l.0 == self)
+            .expect("every family is in LAYOUTS")
+    }
+
+    /// The layout's id (`loTypeId`, the layout definition's `uniqueId`).
+    pub fn layout_id(self) -> &'static str {
+        self.entry().1
+    }
+
+    /// The layout's category (`loCatId`).
+    pub fn category(self) -> &'static str {
+        self.entry().2
+    }
+
+    /// The layout's name, as PowerPoint's gallery shows it.
+    pub fn name(self) -> &'static str {
+        self.entry().3
     }
 
     fn arrows(self) -> bool {
         matches!(self, Family::Process | Family::Cycle)
+    }
+
+    /// Items' sub-items go in a box of their own (else they're bullets in
+    /// the item's shape).
+    fn sub_boxes(self) -> bool {
+        matches!(self, Family::Bullets | Family::HorizontalBullets)
     }
 
     /// A hierarchy (laid out by the `tree` module).
@@ -81,6 +140,7 @@ impl Family {
                 | Family::Hierarchy
                 | Family::HorizontalHierarchy
                 | Family::LabeledHierarchy
+                | Family::RadialCycle
         )
     }
 }
@@ -100,6 +160,8 @@ struct Item {
     id: String,
     /// Its sibling transition (the arrow after it).
     sib: Option<String>,
+    /// Its parent transition (a Step Up Process draws its step for it).
+    par: Option<String>,
     /// Its sub-items, depth first.
     subs: Vec<String>,
 }
@@ -113,8 +175,9 @@ struct View {
     pres: HashMap<String, (String, String)>,
 }
 
-/// Each item's children: `(srcOrd, child, its sibling transition)`.
-type Kids<'a> = HashMap<&'a str, Vec<(i64, &'a str, Option<&'a str>)>>;
+/// Each item's children: `(srcOrd, child, its sibling and parent
+/// transitions)`.
+type Kids<'a> = HashMap<&'a str, Vec<(i64, &'a str, Option<&'a str>, Option<&'a str>)>>;
 
 fn view(data: &str) -> anyhow::Result<View> {
     let doc = Document::parse(data).context("SmartArt data")?;
@@ -139,6 +202,7 @@ fn view(data: &str) -> anyhow::Result<View> {
             attr_i64(c, "srcOrd").unwrap_or(0),
             dst,
             c.attribute("sibTransId"),
+            c.attribute("parTransId"),
         ));
     }
     for v in kids.values_mut() {
@@ -146,7 +210,7 @@ fn view(data: &str) -> anyhow::Result<View> {
     }
     let doc_id = root.attribute("modelId").unwrap_or_default().to_owned();
     fn subtree<'a>(kids: &Kids<'a>, id: &'a str, out: &mut Vec<String>) {
-        for (_, k, _) in kids.get(id).into_iter().flatten() {
+        for (_, k, _, _) in kids.get(id).into_iter().flatten() {
             if out.len() < 10_000 && !out.iter().any(|o| o == k) {
                 out.push((*k).to_owned());
                 subtree(kids, k, out);
@@ -157,12 +221,13 @@ fn view(data: &str) -> anyhow::Result<View> {
         .get(doc_id.as_str())
         .into_iter()
         .flatten()
-        .map(|(_, id, sib)| {
+        .map(|(_, id, sib, par)| {
             let mut subs = Vec::new();
             subtree(&kids, id, &mut subs);
             Item {
                 id: (*id).to_owned(),
                 sib: sib.map(str::to_owned),
+                par: par.map(str::to_owned),
                 subs,
             }
         })
@@ -200,14 +265,21 @@ pub fn family(drawing: &str, data: &str) -> Option<Family> {
     }
     let v = view(data).ok()?;
     let (list, _) = shapes(drawing, &v).ok()?;
+    let count = |want: Role| list.iter().filter(|s| s.role == want).count();
     for i in 0..v.items.len() {
-        let count = |want: Role| list.iter().filter(|s| s.role == want).count();
-        if count(Role::Node(i)) > 1 || count(Role::Sub(i)) > 1 || count(Role::Arrow(i)) > 1 {
+        if count(Role::Node(i)) > 1
+            || count(Role::Sub(i)) > 1
+            || count(Role::Arrow(i)) > 1
+            || count(Role::Deco(i)) > 1
+        {
             return None;
         }
-        if v.family != Family::Bullets && count(Role::Sub(i)) > 0 {
+        if !v.family.sub_boxes() && count(Role::Sub(i)) > 0 {
             return None;
         }
+    }
+    if count(Role::Back) > 1 {
+        return None;
     }
     Some(v.family)
 }
@@ -218,6 +290,10 @@ enum Role {
     Node(usize),
     Sub(usize),
     Arrow(usize),
+    /// Drawn for the item's parent transition: a Step Up Process's step.
+    Deco(usize),
+    /// Drawn for the whole diagram: a Continuous Block Process's arrow.
+    Back,
     Other,
 }
 
@@ -227,7 +303,13 @@ impl View {
             Some((a, n)) => (a.as_str(), n.as_str()),
             None => (model_id, ""),
         };
+        if target == self.doc {
+            return Role::Back;
+        }
         for (i, it) in self.items.iter().enumerate() {
+            if it.par.as_deref() == Some(target) {
+                return Role::Deco(i);
+            }
             if it.id == target {
                 return if name.to_ascii_lowercase().contains("child") {
                     Role::Sub(i)
@@ -248,8 +330,8 @@ impl View {
     /// The top-level item a shape belongs to.
     fn item_of(&self, model_id: &str) -> Option<usize> {
         match self.role(model_id) {
-            Role::Node(i) | Role::Sub(i) | Role::Arrow(i) => Some(i),
-            Role::Other => None,
+            Role::Node(i) | Role::Sub(i) | Role::Arrow(i) | Role::Deco(i) => Some(i),
+            Role::Back | Role::Other => None,
         }
     }
 }
@@ -260,6 +342,8 @@ struct DShape {
     model: String,
     xfrm: Option<(Range<usize>, Xfrm)>,
     tx: Option<(Range<usize>, Xfrm)>,
+    /// Its preset geometry: where, the preset, the DrawingML prefix.
+    geom: Option<(Range<usize>, String, String)>,
     role: Role,
 }
 
@@ -273,6 +357,9 @@ fn xfrm_of(n: Node) -> Option<Xfrm> {
         attr_i64(ext, "cy")?,
     );
     x.rot = attr_i64(n, "rot").unwrap_or(0) as i32;
+    let on = |k: &str| matches!(n.attribute(k), Some("1" | "true"));
+    x.flip_h = on("flipH");
+    x.flip_v = on("flipV");
     Some(x)
 }
 
@@ -293,24 +380,52 @@ fn shapes(drawing: &str, v: &View) -> anyhow::Result<(Vec<DShape>, usize)> {
                 .and_then(|s| child(s, NS_A, "xfrm"))
                 .and_then(|x| Some((x.range(), xfrm_of(x)?)));
             let tx = child(n, NS_DSP, "txXfrm").and_then(|x| Some((x.range(), xfrm_of(x)?)));
+            let geom = child(n, NS_DSP, "spPr")
+                .and_then(|s| child(s, NS_A, "prstGeom"))
+                .and_then(|g| {
+                    let tag = tag_name(start_tag(drawing, g));
+                    let a = tag
+                        .split_once(':')
+                        .map(|(p, _)| format!("{p}:"))
+                        .unwrap_or_default();
+                    Some((g.range(), g.attribute("prst")?.to_owned(), a))
+                });
             DShape {
                 range: n.range(),
                 role: v.role(&model),
                 model,
                 xfrm,
                 tx,
+                geom,
             }
         })
         .collect();
     Ok((out, end))
 }
 
-/// Boxes of item `i`: its shape, its sub-items' text box, the arrow after it.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+/// Boxes of item `i`: its shape, its sub-items' text box, the arrow after
+/// it, the step drawn for it; and adjust values for its shape and step
+/// (`a:gd` name and value).
+#[derive(Clone, Debug, Default, PartialEq)]
 struct Boxes {
     node: Xfrm,
     sub: Option<Xfrm>,
     arrow: Option<Xfrm>,
+    deco: Option<Xfrm>,
+    node_adj: Vec<(&'static str, i64)>,
+    deco_adj: Vec<(&'static str, i64)>,
+}
+
+/// The box of the shape drawn for the whole diagram, if the family has one.
+fn back_box(family: Family, w: f64, h: f64) -> Option<Xfrm> {
+    (family == Family::ContinuousBlock).then(|| Xfrm::new(0, 0, r(w), r(h)))
+}
+
+/// An adjust value of `len` EMU on a shape `b`: a share of its shorter
+/// side, in 100 000ths.
+fn adj_of(len: f64, b: &Xfrm) -> i64 {
+    let ss = b.cx.min(b.cy).max(1) as f64;
+    (len / ss * 100_000.0).round() as i64
 }
 
 fn r(v: f64) -> Emu {
@@ -377,7 +492,7 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                     Boxes {
                         node,
                         sub,
-                        arrow: None,
+                        ..Boxes::default()
                     }
                 })
                 .collect()
@@ -395,7 +510,6 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                     let x = x0 + i as f64 * 1.45 * bw;
                     Boxes {
                         node: Xfrm::new(r(x), r(y), r(bw), r(bh)),
-                        sub: None,
                         arrow: (i + 1 < n).then(|| {
                             Xfrm::new(
                                 r(x + 1.1 * bw),
@@ -404,6 +518,7 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                                 r(0.3 * bw),
                             )
                         }),
+                        ..Boxes::default()
                     }
                 })
                 .collect()
@@ -412,7 +527,152 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
         Family::OrgChart
         | Family::Hierarchy
         | Family::HorizontalHierarchy
-        | Family::LabeledHierarchy => Vec::new(),
+        | Family::LabeledHierarchy
+        | Family::RadialCycle => Vec::new(),
+        Family::HorizontalBullets => {
+            // A column per item; the headers over the sub-item boxes
+            // (headers alone, without sub-items, are centred).
+            let cw = w / (nf + 0.08 * (nf - 1.0));
+            let any = subs.iter().any(|s| *s);
+            let hh = if any {
+                (h * 0.25).min(cw * 0.8)
+            } else {
+                h.min(cw * 0.6)
+            };
+            let y0 = if any { 0.0 } else { (h - hh) / 2.0 };
+            subs.iter()
+                .enumerate()
+                .map(|(i, &has)| {
+                    let x = i as f64 * cw * 1.08;
+                    Boxes {
+                        node: Xfrm::new(r(x), r(y0), r(cw), r(hh)),
+                        sub: has.then(|| Xfrm::new(r(x), r(hh), r(cw), r(h - hh))),
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
+        Family::ContinuousBlock => {
+            // Boxes in a row over the middle of the arrow (back_box), the
+            // arrow's head clear of the last one.
+            let margin = w * 0.04;
+            let avail = w * 0.84;
+            let bw = avail / (nf + 0.12 * (nf - 1.0));
+            let bh = (h * 0.4).min(bw * 1.2);
+            let y = (h - bh) / 2.0;
+            (0..n)
+                .map(|i| Boxes {
+                    node: Xfrm::new(r(margin + i as f64 * bw * 1.12), r(y), r(bw), r(bh)),
+                    ..Boxes::default()
+                })
+                .collect()
+        }
+        Family::StepUp => {
+            // Steps rising left to right: an L (`corner`, flipped: tread
+            // on top, riser at the left), the item's text under the tread.
+            let pitch = w / nf;
+            let sw = pitch * 0.96;
+            let sh = (h * 0.5).min(h / nf.max(1.0) * 2.0).min(sw * 1.4);
+            let rise = if n > 1 { (h - sh) / (nf - 1.0) } else { 0.0 };
+            let t = sw.min(sh) * 0.18;
+            (0..n)
+                .map(|i| {
+                    let x = i as f64 * pitch;
+                    let y = h - sh - i as f64 * rise;
+                    let deco = Xfrm {
+                        flip_v: true,
+                        ..Xfrm::new(r(x), r(y), r(sw), r(sh))
+                    };
+                    let a = adj_of(t, &deco);
+                    Boxes {
+                        node: Xfrm::new(r(x + t), r(y + t), r(sw - t), r(sh - t)),
+                        deco: Some(deco),
+                        deco_adj: vec![("adj1", a), ("adj2", a)],
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
+        Family::Pyramid => {
+            // A triangle (base 1.3 × its height at most) cut in levels;
+            // each level a trapezoid whose sides follow the triangle's.
+            let base = w.min(h * 1.3);
+            let x0 = (w - base) / 2.0;
+            let lh = h / nf;
+            let gap = lh * 0.03;
+            (0..n)
+                .map(|i| {
+                    let bottom = base * (i as f64 + 1.0) / nf;
+                    let top = base * i as f64 / nf;
+                    let b = Xfrm::new(
+                        r(x0 + (base - bottom) / 2.0),
+                        r(i as f64 * lh + gap / 2.0),
+                        r(bottom),
+                        r(lh - gap),
+                    );
+                    let inset = (bottom - top) / 2.0;
+                    Boxes {
+                        node_adj: vec![("adj", adj_of(inset, &b))],
+                        node: b,
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
+        Family::Matrix => {
+            // Quadrants in a square, two to a row (PowerPoint shows the
+            // first four; Kantor adds rows for more).
+            let rows = n.div_ceil(2).max(2) as f64;
+            let side = w.min(h);
+            let gap = side * 0.02;
+            let cw = (side - gap) / 2.0;
+            let ch = (side - gap * (rows - 1.0)) / rows;
+            let (x0, y0) = ((w - side) / 2.0, (h - side) / 2.0);
+            (0..n)
+                .map(|i| Boxes {
+                    node: Xfrm::new(
+                        r(x0 + (i % 2) as f64 * (cw + gap)),
+                        r(y0 + (i / 2) as f64 * (ch + gap)),
+                        r(cw),
+                        r(ch),
+                    ),
+                    ..Boxes::default()
+                })
+                .collect()
+        }
+        Family::Venn => {
+            // Circles round a circle (two side by side), overlapping
+            // their neighbours by about a third.
+            let m = w.min(h);
+            let (cx, cy) = (w / 2.0, h / 2.0);
+            if n == 1 {
+                let d = m * 0.8;
+                return vec![Boxes {
+                    node: Xfrm::new(r(cx - d / 2.0), r(cy - d / 2.0), r(d), r(d)),
+                    ..Boxes::default()
+                }];
+            }
+            let chord = 2.0 * (std::f64::consts::PI / nf).sin();
+            let k = 1.5 * chord;
+            // Ring radius `rr`, circles `k * rr` across; all inside the frame.
+            let rr = if n == 2 {
+                (w / (2.0 + k)).min(h / k)
+            } else {
+                m / (2.0 + k)
+            };
+            let d = k * rr;
+            let start = if n == 2 { 180.0 } else { -90.0 };
+            (0..n)
+                .map(|i| {
+                    let a = (start + 360.0 * i as f64 / nf).to_radians();
+                    let (x, y) = (cx + rr * a.cos(), cy + rr * a.sin());
+                    Boxes {
+                        node: Xfrm::new(r(x - d / 2.0), r(y - d / 2.0), r(d), r(d)),
+                        ..Boxes::default()
+                    }
+                })
+                .collect()
+        }
         Family::Cycle => {
             let m = w.min(h);
             let k = if n == 1 {
@@ -433,12 +693,12 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                     let s = d * 0.3;
                     Boxes {
                         node: Xfrm::new(r(x - d / 2.0), r(y - d / 2.0), r(d), r(d)),
-                        sub: None,
                         arrow: (n > 1).then(|| {
                             let (ax, ay) = at(i as f64 + 0.5);
                             Xfrm::new(r(ax - s / 2.0), r(ay - s / 2.0), r(s), r(s))
                                 .with_degrees(360.0 * (i as f64 + 0.5) / nf)
                         }),
+                        ..Boxes::default()
                     }
                 })
                 .collect()
@@ -462,11 +722,17 @@ fn write_box(src: &str, old: &Range<usize>, x: &Xfrm) -> String {
                 .and_then(|i| inner[..i].rfind('<').map(|s| inner[s + 1..i].to_owned()))
                 .unwrap_or_else(|| "a:".into())
         });
-    let rot = if x.rot != 0 {
+    let mut rot = if x.rot != 0 {
         format!(" rot=\"{}\"", x.rot)
     } else {
         String::new()
     };
+    if x.flip_h {
+        rot.push_str(" flipH=\"1\"");
+    }
+    if x.flip_v {
+        rot.push_str(" flipV=\"1\"");
+    }
     format!(
         "<{tag}{rot}><{a}off x=\"{}\" y=\"{}\"/><{a}ext cx=\"{}\" cy=\"{}\"/></{tag}>",
         x.x, x.y, x.cx, x.cy
@@ -574,36 +840,41 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
         _ => 1.4,
     };
     let lay = boxes(v.family, &subs, ratio, w as f64, h as f64);
+    let back = back_box(v.family, w as f64, h as f64);
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let mut arrow_drawn = vec![false; n];
+    let mut deco_drawn = vec![false; n];
+    let mut back_drawn = false;
     // Shapes the layout no longer has (an arrow after the last process
     // step) go.
     for s in &list {
+        let once = |b: Option<Xfrm>, drawn: &mut bool| match b {
+            Some(_) if !*drawn => {
+                *drawn = true;
+                b
+            }
+            _ => None,
+        };
         let target = match s.role {
             Role::Node(i) => lay.get(i).map(|b| b.node),
             Role::Sub(i) => lay.get(i).and_then(|b| b.sub),
-            Role::Arrow(i) => {
-                let b = lay.get(i).and_then(|b| b.arrow);
-                if b.is_some() {
-                    if arrow_drawn[i] {
-                        None
-                    } else {
-                        arrow_drawn[i] = true;
-                        b
-                    }
-                } else {
-                    None
-                }
-            }
+            Role::Arrow(i) => once(lay.get(i).and_then(|b| b.arrow), &mut arrow_drawn[i]),
+            Role::Deco(i) => once(lay.get(i).and_then(|b| b.deco), &mut deco_drawn[i]),
+            Role::Back => once(back, &mut back_drawn),
             Role::Other => continue,
         };
         // Items' shapes keep a turn given them; arrows turn with the layout.
         let target = target.map(|b| match (s.role, &s.xfrm) {
-            (Role::Node(_) | Role::Sub(_), Some((_, old))) => Xfrm { rot: old.rot, ..b },
+            (Role::Node(_) | Role::Sub(_), Some((_, old))) => Xfrm {
+                rot: old.rot,
+                flip_h: old.flip_h,
+                flip_v: old.flip_v,
+                ..b
+            },
             _ => b,
         });
         let Some(new) = target else {
-            if matches!(s.role, Role::Arrow(_) | Role::Sub(_)) {
+            if !matches!(s.role, Role::Node(_)) {
                 edits.push((s.range.clone(), String::new()));
             }
             continue;
@@ -617,30 +888,107 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
             }
             edits.push((range.clone(), write_box(drawing, range, &new)));
         }
+        let adj = match s.role {
+            Role::Node(i) => lay.get(i).map(|b| &b.node_adj),
+            Role::Deco(i) => lay.get(i).map(|b| &b.deco_adj),
+            _ => None,
+        };
+        if let (Some(adj), Some((grange, prst, a))) = (adj, &s.geom)
+            && !adj.is_empty()
+        {
+            edits.push((grange.clone(), prst_geom(a, prst, adj)));
+        }
     }
-    // Arrows the layout needs that aren't drawn: copies of one that is.
-    if v.family.arrows()
-        && let Some(t) = list
-            .iter()
-            .find(|s| matches!(s.role, Role::Arrow(_)) && s.xfrm.is_some())
-    {
-        let mut add = String::new();
+    // Arrows and steps the layout needs that aren't drawn: copies of one
+    // that is.
+    // Arrows go last (as drawn before), steps first (behind the text).
+    let (mut arrows, mut steps) = (String::new(), String::new());
+    type Want = fn(&Boxes) -> Option<Xfrm>;
+    type Model = fn(&Item) -> Option<&str>;
+    let kinds: [(fn(Role) -> bool, &[bool], Want, Model, bool); 2] = [
+        (
+            |r| matches!(r, Role::Arrow(_)),
+            &arrow_drawn,
+            |b| b.arrow,
+            |it| it.sib.as_deref(),
+            v.family.arrows(),
+        ),
+        (
+            |r| matches!(r, Role::Deco(_)),
+            &deco_drawn,
+            |b| b.deco,
+            |it| it.par.as_deref(),
+            true,
+        ),
+    ];
+    for (is_kind, drawn, want, model, on) in kinds {
+        let Some(t) = list.iter().find(|s| is_kind(s.role) && s.xfrm.is_some()) else {
+            continue;
+        };
+        if !on {
+            continue;
+        }
+        let (_, old) = t.xfrm.clone().expect("checked");
         for (i, b) in lay.iter().enumerate() {
-            let (Some(abox), false, Some(sib)) =
-                (b.arrow, arrow_drawn[i], v.items[i].sib.as_deref())
-            else {
+            let (Some(abox), false, Some(m)) = (want(b), drawn[i], model(&v.items[i])) else {
                 continue;
             };
-            let (_, old) = t.xfrm.clone().expect("checked");
             let tx = t.tx.as_ref().map(|(_, told)| follow(&old, &abox, told));
-            let xml = rebox(&copy_shape(&drawing[t.range.clone()], sib), &abox, tx);
-            add.push_str(&xml);
-        }
-        if !add.is_empty() {
-            edits.push((tree_end..tree_end, add));
+            let mut xml = rebox(&copy_shape(&drawing[t.range.clone()], m), &abox, tx);
+            if is_kind(Role::Deco(0)) && !b.deco_adj.is_empty() {
+                xml = set_geom_adj(&xml, &b.deco_adj);
+            }
+            if is_kind(Role::Deco(0)) {
+                steps.push_str(&xml);
+            } else {
+                arrows.push_str(&xml);
+            }
         }
     }
+    if !steps.is_empty() {
+        let at = list.first().map_or(tree_end, |s| s.range.start);
+        edits.push((at..at, steps));
+    }
+    if !arrows.is_empty() {
+        edits.push((tree_end..tree_end, arrows));
+    }
     Ok(apply(drawing, edits))
+}
+
+/// A preset geometry `prst` with adjust values `adj` (prefix `a`).
+fn prst_geom(a: &str, prst: &str, adj: &[(&str, i64)]) -> String {
+    let gds: String = adj
+        .iter()
+        .map(|(k, v)| format!("<{a}gd name=\"{k}\" fmla=\"val {v}\"/>"))
+        .collect();
+    format!("<{a}prstGeom prst=\"{prst}\"><{a}avLst>{gds}</{a}avLst></{a}prstGeom>")
+}
+
+/// `xml` (one drawing shape) with adjust values `adj` on its preset
+/// geometry.
+fn set_geom_adj(xml: &str, adj: &[(&str, i64)]) -> String {
+    let full = wrap_ns(xml);
+    let pre = wrap_pre();
+    let Ok(doc) = Document::parse(&full) else {
+        return xml.to_owned();
+    };
+    let Some(g) = doc.descendants().find(|n| is(*n, NS_A, "prstGeom")) else {
+        return xml.to_owned();
+    };
+    let Some(prst) = g.attribute("prst") else {
+        return xml.to_owned();
+    };
+    let a = prefix_of(start_tag(&full, g));
+    let r = g.range();
+    apply(xml, vec![(r.start - pre..r.end - pre, prst_geom(&a, prst, adj))])
+}
+
+/// The DrawingML prefix (with its colon) of element source `src`.
+fn prefix_of(src: &str) -> String {
+    let tag = tag_name(src.trim_start());
+    tag.split_once(':')
+        .map(|(p, _)| format!("{p}:"))
+        .unwrap_or_default()
 }
 
 /// `xml` (one drawing shape) with its `a:xfrm` set to `b` and its
@@ -907,9 +1255,13 @@ fn set_attr(src: &str, n: Node, k: &str, val: &str) -> (Range<usize>, String) {
     (st..st + tag.len(), out)
 }
 
+#[path = "smartart_convert.rs"]
+mod convert;
+pub use convert::{change_layout, layout_def};
+
 #[path = "smartart_tree.rs"]
 mod tree;
-pub use tree::{LABEL_LEVELS, TOP_ALONE, TOP_KEEP};
+pub use tree::{LABEL_LEVELS, RADIAL_CENTRE, RADIAL_KEEP, RADIAL_LEVELS, TOP_ALONE, TOP_KEEP};
 
 #[cfg(test)]
 mod tests {

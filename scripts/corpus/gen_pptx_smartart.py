@@ -15,7 +15,7 @@ slide, in the layout families Kantor lays out itself:
 - Slide 4 "Cycle": Basic Cycle (`layout/cycle2`), "Spring", "Summer",
   "Autumn", "Winter" round a circle, arrows between them.
 - Slide 5 "Other layout": a layout Kantor doesn't lay out
-  (`layout/pyramid1`, two items), drawn from its saved drawing.
+  (`layout/funnel1`, two items), drawn from its saved drawing.
 - Slides 6-8: the hierarchies, each the tree CEO → (CFO, CTO → (Dev, Ops)):
   "Org chart" (`layout/orgChart1`, a box per item), "Hierarchy"
   (`layout/hierarchy1`, a background and a text box per item, as
@@ -395,7 +395,7 @@ SLIDES = [
     ("Bullet list", "vList2", "list", [("North", ["Oslo", "Bergen"]), ("South", ["Rome"])], bullets),
     ("Process", "process1", "process", [("Plan", []), ("Build", []), ("Ship", [])], process),
     ("Cycle", "cycle2", "cycle", [("Spring", []), ("Summer", []), ("Autumn", []), ("Winter", [])], cycle),
-    ("Other layout", "pyramid1", "pyramid", [("Boss", []), ("Team", [])], pyramid),
+    ("Other layout", "funnel1", "relationship", [("Boss", []), ("Team", [])], pyramid),
     ("Org chart", "orgChart1", "org", None, None),
     ("Hierarchy", "hierarchy1", "hier", None, None),
     ("Horizontal hierarchy", "hierarchy2", "horiz", None, None),

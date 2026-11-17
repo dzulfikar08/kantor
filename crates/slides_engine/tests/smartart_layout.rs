@@ -480,3 +480,59 @@ fn labeled_hierarchy_lays_out_bands_and_takes_shapes() {
     let back = Presentation::from_bytes(bytes).unwrap();
     assert_eq!(items(&back, frame(&back, 8)), b);
 }
+
+#[test]
+fn layouts_change_keeping_items_and_text() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    // The process (Plan, Build, Ship) becomes a pyramid, then a Venn.
+    let f = frame(&p, 2);
+    let before = drawn(&p, f);
+    p.smartart_change_layout(f, SmartArtFamily::Pyramid).unwrap();
+    assert_eq!(p.smartart_family(f), Some(SmartArtFamily::Pyramid));
+    let d = items(&p, f);
+    assert_eq!(d.len(), 3, "{d:?}");
+    assert!(d["Plan"].y < d["Build"].y && d["Build"].y < d["Ship"].y);
+    assert!(d["Plan"].cx < d["Ship"].cx);
+    // Typed into and added to as a pyramid.
+    p.smartart_add_shape(find(&p, f, "Ship"), AddPlace::After)
+        .unwrap();
+    assert_eq!(drawn(&p, f).len(), 4);
+    p.smartart_change_layout(f, SmartArtFamily::Venn).unwrap();
+    assert_eq!(p.smartart_family(f), Some(SmartArtFamily::Venn));
+    let saved = parts(&p.to_bytes().unwrap());
+    assert!(saved["ppt/diagrams/data3.xml"].contains("layout/venn1"));
+    let lo = &saved["ppt/diagrams/layout3.xml"];
+    assert!(lo.contains("uniqueId=\"urn:microsoft.com/office/officeart/2005/8/layout/venn1\""));
+    assert!(saved["ppt/diagrams/drawing3.xml"].contains("prst=\"ellipse\""));
+    // Undo goes back to the pyramid, then to the process as it was.
+    p.undo();
+    assert_eq!(p.smartart_family(f), Some(SmartArtFamily::Pyramid));
+    p.undo();
+    p.undo();
+    assert_eq!(p.smartart_family(f), Some(SmartArtFamily::Process));
+    assert_eq!(drawn(&p, f), before);
+    // A hierarchy as a Radial Cycle: the top in the centre, its children
+    // round it (the rest of the tree isn't drawn, as in PowerPoint).
+    let o = frame(&p, 5);
+    p.smartart_change_layout(o, SmartArtFamily::RadialCycle)
+        .unwrap();
+    let r = items(&p, o);
+    assert!(r.contains_key("CEO") && r.contains_key("CFO") && r.contains_key("CTO"));
+    assert!(!r.contains_key("Dev"), "{r:?}");
+    // A layout Kantor doesn't lay out changes too, and then lays out.
+    let h = frame(&p, 4);
+    p.smartart_change_layout(h, SmartArtFamily::Blocks).unwrap();
+    assert_eq!(p.smartart_family(h), Some(SmartArtFamily::Blocks));
+    p.smartart_add_shape(find(&p, h, "Team"), AddPlace::After)
+        .unwrap();
+    // Saved and read back. For a look (and the Office validator):
+    // KANTOR_SMARTART_LAYOUTS_OUT=/path/out.pptx.
+    let bytes = p.to_bytes().unwrap();
+    if let Ok(out) = std::env::var("KANTOR_SMARTART_LAYOUTS_OUT") {
+        std::fs::write(out, &bytes).unwrap();
+    }
+    let back = Presentation::from_bytes(bytes).unwrap();
+    assert_eq!(back.smartart_family(frame(&back, 5)), Some(SmartArtFamily::RadialCycle));
+    assert_eq!(items(&back, frame(&back, 5)), r);
+    assert_eq!(drawn(&back, frame(&back, 4)).len(), 3);
+}

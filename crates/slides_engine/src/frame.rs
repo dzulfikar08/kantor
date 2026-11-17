@@ -105,6 +105,8 @@ pub struct Group {
 #[derive(Clone, Debug)]
 pub struct DiagramRef {
     pub data: Option<String>,
+    /// The layout definition part (`r:lo`).
+    pub layout: Option<String>,
     pub drawing: Option<Arc<DiagramDrawing>>,
 }
 
@@ -128,6 +130,8 @@ pub struct DiagramDrawing {
     /// the part's: both are saved even when no shape was edited since.
     pub(crate) data_xml: Option<Arc<str>>,
     pub(crate) rebuilt: bool,
+    /// The layout definition Kantor wrote when its layout was changed.
+    pub(crate) layout_xml: Option<Arc<str>>,
 }
 
 /// A chart frame: the chart part (`c:chart r:id`).
@@ -974,6 +978,7 @@ pub(crate) fn parse_graphic_frame(
     if let Some(ids) = child(data, NS_DGM, "relIds") {
         return Some(FrameContent::Diagram(DiagramRef {
             data: rel_part(r_attr(ids, "dm")),
+            layout: rel_part(r_attr(ids, "lo")),
             drawing: None,
         }));
     }
