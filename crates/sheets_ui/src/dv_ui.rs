@@ -63,6 +63,21 @@ const OPERATORS: [(ValidationOperator, &str); 8] = [
     ),
 ];
 
+/// Excel's IME mode labels, in [`IME_MODES`] order.
+const IME_LABELS: [&str; 11] = [
+    tk("No Control"),
+    tk("On"),
+    tk("Off (English mode)"),
+    tk("Disable"),
+    tk("Hiragana"),
+    tk("Full-width katakana"),
+    tk("Half-width katakana"),
+    tk("Full-width alphanumeric"),
+    tk("Half-width alphanumeric"),
+    tk("Full-width hangul"),
+    tk("Half-width hangul"),
+];
+
 /// The messages `sheets_engine::validation_edit` gives back, translated
 /// where the dialog shows them.
 #[cfg(test)]
@@ -604,10 +619,10 @@ impl SheetsView {
                 let ime = Button::new("dv-ime")
                     .outline()
                     .small()
-                    .label(t_dyn(IME_MODES[d.ime].1))
+                    .label(t_dyn(IME_LABELS[d.ime]))
                     .dropdown_caret(true)
                     .dropdown_menu(move |mut m, _, _| {
-                        for (n, (_, label)) in IME_MODES.iter().enumerate() {
+                        for (n, label) in IME_LABELS.iter().enumerate() {
                             let v = ime_view.clone();
                             m = m.item(
                                 PopupMenuItem::new(t_dyn(label))

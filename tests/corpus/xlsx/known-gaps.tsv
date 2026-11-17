@@ -3,7 +3,6 @@
 # file  check  location  reason. A location of * matches the whole check for that file.
 # A finding not listed here fails the test; a listed gap that no longer happens fails too.
 01_formulas.xlsx	import-formula	Calc!B13	IronCalc shows INDEX(...) as @INDEX(...) (implicit-intersection marker added to the formula text); value is right
-02_multi_sheet.xlsx	import-value	Q1 Summary!B6	3-D references (SUM(Jan:Mar!B2:B4)) are not supported: evaluates to #ERROR! instead of 776.25
 03_number_formats.xlsx	expect	Formats!B12 display	deliberate: Kantor takes separators from the locale tag (0x421, Indonesian) and shows Rp1.500.000, as an Indonesian Excel does; Excel on an en-US system shows Rp1,500,000
 08_defined_names.xlsx	import-value	Report!B3	defined names holding a constant (Ten = 10) don't evaluate: =Ten*2 gives #NAME? (the name itself is kept)
 09_unicode.xlsx	export-formula	Emoji 🎉!B1	quotes around a non-ASCII sheet name are dropped ('数据'!B2 -> 数据!B2); still valid for Excel, text differs
