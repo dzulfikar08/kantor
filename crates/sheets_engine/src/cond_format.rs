@@ -405,6 +405,11 @@ fn lerp(a: Rgb, b: Rgb, t: f64) -> Rgb {
     mix(16) | mix(8) | mix(0)
 }
 
+/// [`icon_of`] for the filters and sorts by icon.
+pub(crate) fn icon_of_pub(model: &Model, icon: &IcIcon, color: &ironcalc_base::types::Color) -> CfIcon {
+    icon_of(model, icon, color)
+}
+
 fn icon_of(model: &Model, icon: &IcIcon, color: &ironcalc_base::types::Color) -> CfIcon {
     let shape = match icon {
         IcIcon::ArrowUp => IconShape::ArrowUp,

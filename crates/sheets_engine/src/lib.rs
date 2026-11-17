@@ -23,6 +23,7 @@ pub mod drawing;
 mod edits;
 mod file_chart;
 mod filter;
+mod filter_by;
 mod hide;
 mod icons;
 mod import;
@@ -279,6 +280,7 @@ pub use print::{
     PrintColumns, PrintComments, PrintOptions, SheetPrint, join_sections, split_sections,
 };
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
+pub use filter_by::{ColumnLooks, SortLevel, SortOn};
 pub use sort::SortKey;
 pub use table::{Elem as TableElementFormat, FillPattern, TableCellLook, TableInfo};
 pub use table_style_edit::{

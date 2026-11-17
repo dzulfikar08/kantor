@@ -107,7 +107,7 @@ fn bar_layers(bar: DataBar) -> Vec<AnyElement> {
     out
 }
 
-fn icon_element(icon: CfIcon) -> impl IntoElement {
+pub(crate) fn icon_element(icon: CfIcon) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |b, _, window, _| paint_icon(icon, b, window),

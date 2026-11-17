@@ -420,6 +420,19 @@ impl<'a> UserModel<'a> {
         self.send_queue = Vec::new();
     }
 
+    /// KANTOR PATCH (filter and sort by colour): the index of a differential
+    /// format equal to `dxf`, added at the end of the workbook's list if
+    /// there is none. Not an edit: an unused format changes nothing (Excel
+    /// keeps them too), so undo leaves it. See KANTOR_PATCHES.md §30.
+    pub fn kantor_dxf_index(&mut self, dxf: crate::types::Dxf) -> u32 {
+        let dxfs = &mut self.model.workbook.styles.dxfs;
+        if let Some(i) = dxfs.iter().position(|d| *d == dxf) {
+            return i as u32;
+        }
+        dxfs.push(dxf);
+        dxfs.len() as u32 - 1
+    }
+
     /// KANTOR PATCH (data validation): drop what redo would bring back, for
     /// an edit taken back with `undo` that must not be redone (a value data
     /// validation rejected).

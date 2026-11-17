@@ -845,6 +845,20 @@ Inserting or deleting rows and columns leaves it as it is. Partial recalc
 Tests: `test/test_kantor_3d.rs`; vendor/ironcalc
 `export/test/test_kantor_3d.rs` (saved as Excel writes it and read back).
 
+## 30. Differential formats for filters and sorts by colour
+
+Why: Excel's AutoFilter by colour (`<colorFilter dxfId>`) and sort by colour
+(`<sortCondition sortBy="cellColor" dxfId>`) name the colour by a
+differential format. Kantor makes these filters and sorts, so it needs to add
+one.
+
+What: `UserModel::kantor_dxf_index` (`user_model/common.rs`) returns an equal
+format's index or appends one to `styles.dxfs`. Not an undoable edit: an unused
+format changes nothing. Kantor saves the formats it added after the file's own
+(as for conditional formats it makes).
+
+Tests: Kantor's `crates/sheets_engine/tests/filter_by.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

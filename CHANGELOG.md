@@ -17,6 +17,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   last. A sheet inserted or moved between them is counted, renaming either end renames it in the
   formula, and deleting an end sheet moves the reference to the next sheet in. They are saved as
   Excel writes them.
+- Sheets: the filter menu filters by colour and icon (Filter by Color: cell colours, font colours and
+  conditional formatting icons the column shows), by top or bottom N items or percent, above or below
+  average, and by Excel's dynamic dates (today, this week, last month, a quarter, a month...), and
+  these filters from files can now be changed. Custom Sort sorts by cell colour, font colour or icon
+  (on top or on bottom) and by Excel's custom lists of days and months, and Reapply sorts by them
+  again, as Excel does.
 - Sheets: workbooks with macros (`.xlsm`) keep their macros when saved, as `.xlsm`. Kantor doesn't
   run them and says so when the workbook opens. Save As `.xlsx` warns, as Excel does, that a
   macro-free workbook can't hold them, and offers to save as `.xlsm` instead. A workbook saved as
