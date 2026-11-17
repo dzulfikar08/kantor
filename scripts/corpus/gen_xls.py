@@ -53,6 +53,15 @@ Files:
   and line combination, a column and scatter combination and a column and
   pie combination (LibreOffice puts the pie on the secondary axes).
   `--chartopts-xls` writes only this file.
+* excel95.xls: an Excel 5/95 (BIFF5) workbook, written record by record
+  by this script (LibreOffice no longer saves BIFF5) in a compound file
+  whose stream is "Book": sheet "Report" with fonts (A1 bold red Arial 14,
+  B1 italic underlined), number formats (a built-in one and a custom
+  "#,##0.00 kg"), a solid yellow fill and a 50 % grey pattern, borders
+  (thin, medium red, dashed), wrapped, centred and turned text, column
+  widths (a hidden column) and row heights; sheet "Plain" (default
+  formatting, an accented name). `--biff5` writes only this file
+  (`--biff5 --check` compares).
 * dates1904.xls: a workbook in the 1904 date system.
 * xlwt.xls: written directly as BIFF8 by xlwt (headless LibreOffice drops
   view settings): frozen rows and columns, the second sheet active, pattern
@@ -833,6 +842,137 @@ def cf12_book(path: Path) -> None:
         sheet_class.get_biff_data = original
 
 
+def _cfb(stream_name: str, data: bytes) -> bytes:
+    """A compound file holding one stream (padded to 4096 bytes so it lives
+    in ordinary sectors, without a mini stream)."""
+    import struct
+
+    data = data + bytes(max(0, 4096 - len(data)))
+    data += bytes(-len(data) % 512)
+    n = len(data) // 512
+    # Sectors: the stream, then the FAT, then the directory.
+    fat_sectors = 1
+    while (n + fat_sectors + 1) > fat_sectors * 128:
+        fat_sectors += 1
+    fat = [i + 1 for i in range(n - 1)] + [0xFFFFFFFE]
+    fat += [0xFFFFFFFD] * fat_sectors + [0xFFFFFFFE]
+    fat += [0xFFFFFFFF] * (fat_sectors * 128 - len(fat))
+    dir_sector = n + fat_sectors
+
+    def entry(name, typ, child, start, size):
+        raw = name.encode("utf-16-le") + b"\0\0" if name else b""
+        return (raw.ljust(64, b"\0") + struct.pack("<HBB", len(raw), typ, 1)
+                + struct.pack("<III", 0xFFFFFFFF, 0xFFFFFFFF, child) + bytes(16)
+                + struct.pack("<I", 0) + bytes(16) + struct.pack("<III", start, size, 0))
+
+    directory = (entry("Root Entry", 5, 1, 0xFFFFFFFE, 0)
+                 + entry(stream_name, 2, 0xFFFFFFFF, 0, len(data.rstrip(b"\0")) if False else len(data))
+                 + bytes(256))
+    difat = [n + i for i in range(fat_sectors)] + [0xFFFFFFFF] * (109 - fat_sectors)
+    header = (bytes.fromhex("D0CF11E0A1B11AE1") + bytes(16)
+              + struct.pack("<HHHHH", 0x3E, 3, 0xFFFE, 9, 6) + bytes(6)
+              + struct.pack("<IIIIIIIII", 0, fat_sectors, dir_sector, 0, 4096,
+                            0xFFFFFFFE, 0, 0xFFFFFFFE, 0)
+              + struct.pack("<109I", *difat))
+    return header + data + struct.pack(f"<{len(fat)}I", *fat) + directory
+
+
+def biff5_book() -> bytes:
+    """excel95.xls's Book stream (BIFF5 records, Windows-1252 strings)."""
+    import struct
+
+    def rec(typ, body):
+        return struct.pack("<HH", typ, len(body)) + body
+
+    def s8(text):
+        raw = text.encode("cp1252")
+        return struct.pack("<B", len(raw)) + raw
+
+    def bof(dt):
+        return rec(0x0809, struct.pack("<HHHH", 0x0500, dt, 0x0DBB, 0x07CC))
+
+    def font(height=200, bold=False, italic=False, underline=False, icv=0x7FFF, name="Arial"):
+        grbit = (0x2 if italic else 0) | (0x1 if bold else 0)
+        return rec(0x0031, struct.pack("<HHHHHBBBB", height, grbit, icv, 700 if bold else 400,
+                                       0, 1 if underline else 0, 2, 0, 0) + s8(name))
+
+    def xf(ifnt=0, ifmt=0, style=False, halign=0, wrap=False, valign=2, ori=0,
+           fore=64, back=65, fls=0, bottom=(0, 0), top=(0, 0), left=(0, 0), right=(0, 0)):
+        flags = 0x1 | (0xFFF4 if style else 0)
+        align = halign | (0x8 if wrap else 0) | (valign << 4)
+        used = ori | (0 if style else 0xFC)
+        b1 = fore | (back << 7) | (fls << 16) | (bottom[0] << 22) | (bottom[1] << 25)
+        b2 = (top[0] | (left[0] << 3) | (right[0] << 6) | (top[1] << 9) | (left[1] << 16)
+              | (right[1] << 23))
+        return rec(0x00E0, struct.pack("<HHHBBII", ifnt, ifmt, flags, align, used, b1, b2))
+
+    def cell(typ, row, col, ixfe, rest):
+        return rec(typ, struct.pack("<HHH", row, col, ixfe) + rest)
+
+    def label(row, col, ixfe, text):
+        raw = text.encode("cp1252")
+        return cell(0x0204, row, col, ixfe, struct.pack("<H", len(raw)) + raw)
+
+    def number(row, col, ixfe, v):
+        return cell(0x0203, row, col, ixfe, struct.pack("<d", v))
+
+    def window2(selected):
+        return rec(0x023E, struct.pack("<HHHI", 0x06B6 if selected else 0x00B6, 0, 0, 0))
+
+    # Fonts: four defaults, then (index 5, the fifth record) bold red 14 pt
+    # and (6) italic underlined.
+    fonts = b"".join(font() for _ in range(4))
+    fonts += font(280, bold=True, icv=10) + font(italic=True, underline=True)
+    formats = rec(0x041E, struct.pack("<H", 164) + s8('#,##0.00" kg"'))
+    xfs = b"".join(xf(style=True) for _ in range(15)) + xf()
+    report_xfs = [
+        xf(ifnt=5),                                    # 16 A1: title font
+        xf(ifnt=6),                                    # 17 B1: italic underlined
+        xf(ifmt=164),                                  # 18 custom format
+        xf(ifmt=10),                                   # 19 0.00%
+        xf(fore=13, fls=1),                            # 20 solid yellow
+        xf(fore=8, back=9, fls=2),                     # 21 50 % grey
+        xf(bottom=(1, 8), top=(2, 10), left=(3, 8), right=(3, 8)),  # 22 borders
+        xf(halign=2, wrap=True, valign=1),             # 23 wrap + centre
+        xf(ori=2),                                     # 24 turned up
+    ]
+    globals_ = (bof(0x0005) + rec(0x0042, struct.pack("<H", 1252))
+                + rec(0x003D, struct.pack("<HHHHHHHHH", 0, 0, 0x3000, 0x2000, 0x38, 0, 0, 1, 0x258))
+                + fonts + formats + xfs + b"".join(report_xfs))
+
+    def sheet(cells, cols=b"", rows=b"", selected=False):
+        return (bof(0x0010) + rec(0x0055, struct.pack("<H", 8)) + cols
+                + rec(0x0000, struct.pack("<HHHHH", 0, 10, 0, 6, 0)) + rows + cells
+                + window2(selected) + rec(0x000A, b""))
+
+    report = sheet(
+        label(0, 0, 16, "Title") + label(0, 1, 17, "Note")
+        + number(1, 0, 18, 1234.5) + number(1, 1, 19, 0.25)
+        + label(2, 0, 20, "Yellow") + label(2, 1, 21, "Grey")
+        + label(3, 0, 22, "Boxed") + label(3, 1, 23, "Wrapped and centred text")
+        + label(4, 0, 24, "Up"),
+        cols=(rec(0x007D, struct.pack("<HHHHHH", 1, 1, 20 * 256, 15, 0, 0))
+              + rec(0x007D, struct.pack("<HHHHHH", 3, 3, 10 * 256, 15, 1, 0))),
+        rows=rec(0x0208, struct.pack("<HHHHHHHH", 3, 0, 2, 600, 0, 0, 0x0140, 15)),
+        selected=True,
+    )
+    plain = sheet(label(0, 0, 15, "Plain text") + number(1, 0, 15, 42))
+    names = ["Report", "Plainé"]
+    # BOUNDSHEETs point at the sheets' BOFs: their size is known first.
+    bounds_len = sum(4 + 6 + len(s8(n)) for n in names)
+    start = len(globals_) + bounds_len + 4
+    out = globals_
+    for name, body in zip(names, [report, plain]):
+        out += rec(0x0085, struct.pack("<IH", start, 0) + s8(name))
+        start += len(body)
+    out += rec(0x000A, b"") + report + plain
+    return out
+
+
+def biff5_file(path: Path) -> None:
+    path.write_bytes(_cfb("Book", biff5_book()))
+
+
 def convert(lo: Path, src: Path, filt: str, ext: str, outdir: Path) -> Path:
     profile = Path.home() / ".cache" / "ktmp" / "lo-gen-xls"
     cmd = [
@@ -873,6 +1013,15 @@ def main() -> None:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     lo = Path(args[0] if args else Path.home() / ".cache/lo/lo.AppImage")
     OUT.mkdir(parents=True, exist_ok=True)
+    if "--biff5" in sys.argv:
+        out = OUT / "excel95.xls"
+        if "--check" in sys.argv:
+            if _cfb("Book", biff5_book()) != out.read_bytes():
+                sys.exit(f"{out} is out of date: run {sys.argv[0]} --biff5")
+            return
+        biff5_file(out)
+        print(out)
+        return
     if "--chartopts-xls" in sys.argv:
         tmp = Path(tempfile.mkdtemp(dir=Path.home() / ".cache" / "ktmp"))
         try:
@@ -926,6 +1075,7 @@ def main() -> None:
         src = tmp / "dates1904.xlsx"
         dates1904(src)
         shutil.copy(convert(lo, src, "MS Excel 97", "xls", tmp), OUT / "dates1904.xls")
+        biff5_file(OUT / "excel95.xls")
         xlwt_book(OUT / "xlwt.xls")
         cf12_book(OUT / "cf12.xls")
     finally:

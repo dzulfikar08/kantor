@@ -95,6 +95,9 @@ jobs:
       - name: Chart sheets fixture matches its generator
         run: uv run --with xlsxwriter==3.3.1 scripts/corpus/gen_chartsheets_xlsx.py --check
 
+      - name: Excel 5/95 fixture matches its generator
+        run: uv run --with openpyxl==3.1.5 scripts/corpus/gen_xls.py --biff5 --check
+
       - name: Shapes fixture matches its generator
         run: python3 scripts/corpus/gen_shapes_xlsx.py --check
 

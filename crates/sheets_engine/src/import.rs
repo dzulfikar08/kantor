@@ -19,8 +19,10 @@
 //!   row heights, frozen panes, gridlines, hidden and coloured tabs,
 //!   hyperlinks, page setup, sheet-local and print names, the 1904 date
 //!   system), notes, data validation and conditional formatting, and
-//!   [`crate::xls_drawing`] its pictures and charts. Older BIFF5 files (Excel 5/95) get values
-//!   only.
+//!   [`crate::xls_drawing`] its pictures and charts. Older BIFF5 files (Excel 5/95) get their
+//!   cell formats, column widths, row heights and page setup the same way
+//!   (their notes and drawing objects, which BIFF5 stores differently, are
+//!   left out).
 //! * **ODS** keeps its look too: [`crate::ods`] reads the cell styles,
 //!   number formats, merges, column widths, row heights, hidden rows,
 //!   columns and sheets, tab colours and frozen panes.

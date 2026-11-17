@@ -32,6 +32,12 @@
 //! * pictures and charts (`MSODRAWINGGROUP`, `MSODRAWING`, `OBJ` and chart
 //!   substreams), read by [`crate::xls_drawing`].
 //!
+//! Excel 5/95 files (BIFF5, the stream called `Book`) are read the same
+//! way for what they share with BIFF8: strings are a count and bytes in the
+//! file's code page (`CODEPAGE`, see [`BIFF5`]), `FORMAT` counts are 8-bit,
+//! and `XF`s use the older packing ([`Xf::parse5`]). Their notes, objects
+//! and links (other records in BIFF5) are left out.
+//!
 //! Not read: named cell styles (`STYLE`; cells keep the formats they show),
 //! shapes and text boxes. Every read is bounds-checked: a malformed
 //! record is skipped, never a panic.
@@ -126,6 +132,59 @@ impl<'a> Records<'a> {
     }
 }
 
+thread_local! {
+    /// While an Excel 5/95 (BIFF5) file is read: the code page its strings
+    /// are in. Its strings are a count and bytes in that code page, without
+    /// BIFF8's flags byte; [`Bytes::chars`] reads them so.
+    static BIFF5: std::cell::Cell<Option<&'static encoding_rs::Encoding>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Sets [`BIFF5`] until dropped.
+struct Biff5Guard;
+
+impl Biff5Guard {
+    fn set(enc: Option<&'static encoding_rs::Encoding>) -> Self {
+        BIFF5.with(|b| b.set(enc));
+        Biff5Guard
+    }
+}
+
+impl Drop for Biff5Guard {
+    fn drop(&mut self) {
+        BIFF5.with(|b| b.set(None));
+    }
+}
+
+/// Whether a BIFF5 file is being read.
+fn biff5() -> bool {
+    BIFF5.with(|b| b.get().is_some())
+}
+
+/// The encoding of a `CODEPAGE` value (Windows code pages; others as
+/// Windows-1252).
+fn code_page(cp: u16) -> &'static encoding_rs::Encoding {
+    use encoding_rs::*;
+    match cp {
+        874 => WINDOWS_874,
+        932 => SHIFT_JIS,
+        936 => GBK,
+        949 => EUC_KR,
+        950 => BIG5,
+        1200 => UTF_16LE,
+        1250 => WINDOWS_1250,
+        1251 => WINDOWS_1251,
+        1253 => WINDOWS_1253,
+        1254 => WINDOWS_1254,
+        1255 => WINDOWS_1255,
+        1256 => WINDOWS_1256,
+        1257 => WINDOWS_1257,
+        1258 => WINDOWS_1258,
+        10000 | 32768 => MACINTOSH,
+        _ => WINDOWS_1252,
+    }
+}
+
 /// Little-endian reads that return `None` past the end.
 pub(crate) struct Bytes<'a> {
     data: &'a [u8],
@@ -167,6 +226,10 @@ impl<'a> Bytes<'a> {
     /// (bit 0: two bytes per character; bit 2: extended data; bit 3: rich
     /// text runs), then the characters.
     fn chars(&mut self, cch: usize) -> Option<String> {
+        if let Some(enc) = BIFF5.with(|b| b.get()) {
+            let raw = self.take(cch)?;
+            return Some(enc.decode_without_bom_handling(raw).0.into_owned());
+        }
         let flags = self.u8()?;
         let runs = if flags & 0x08 != 0 { self.u16()? } else { 0 };
         let ext = if flags & 0x04 != 0 { self.u32()? } else { 0 };
@@ -327,6 +390,54 @@ impl Xf {
     }
 }
 
+impl Xf {
+    /// An Excel 5/95 `XF` (16 bytes): fonts, formats and alignment as in
+    /// BIFF8, an orientation instead of a rotation, and the fill and the
+    /// borders packed in two words (3-bit line styles).
+    fn parse5(d: &[u8]) -> Option<Self> {
+        let mut b = Bytes::new(d);
+        let ifnt = b.u16()?;
+        let ifmt = b.u16()?;
+        let flags = b.u16()?;
+        let align = b.u8()?;
+        let ori = b.u8()?;
+        let b1 = b.u32()?;
+        let b2 = b.u32()?;
+        Some(Self {
+            ifnt,
+            ifmt,
+            locked: flags & 0x1 != 0,
+            hidden: flags & 0x2 != 0,
+            quote_prefix: false,
+            halign: align & 0x7,
+            wrap: align & 0x8 != 0,
+            valign: (align >> 4) & 0x7,
+            // Stacked, 90° up, 90° down.
+            rotation: match ori & 0x3 {
+                1 => 255,
+                2 => 90,
+                3 => 180,
+                _ => 0,
+            },
+            indent: 0,
+            shrink: false,
+            // Left, right, top, bottom: (style, colour).
+            border: [
+                (((b2 >> 3) & 0x7) as u8, ((b2 >> 16) & 0x7F) as u16),
+                (((b2 >> 6) & 0x7) as u8, ((b2 >> 23) & 0x7F) as u16),
+                ((b2 & 0x7) as u8, ((b2 >> 9) & 0x7F) as u16),
+                (((b1 >> 22) & 0x7) as u8, ((b1 >> 25) & 0x7F) as u16),
+            ],
+            diag: (0, 0),
+            diag_down: false,
+            diag_up: false,
+            pattern: ((b1 >> 16) & 0x3F) as u8,
+            fore: (b1 & 0x7F) as u16,
+            back: ((b1 >> 7) & 0x7F) as u16,
+        })
+    }
+}
+
 /// A defined name as the `LBL` record has it (calamine decodes the formula).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Label {
@@ -422,6 +533,8 @@ impl PrintRaw {
 /// The workbook-level part of the stream.
 pub(crate) struct Globals {
     pub date1904: bool,
+    /// An Excel 5/95 file (BIFF5): the code page of its strings.
+    biff5: Option<&'static encoding_rs::Encoding>,
     /// Sheets in tab order: (name, stream offset, visibility, type: 0
     /// worksheet, 1 macro sheet, 2 chart sheet...).
     pub(crate) sheets: Vec<(String, usize, SheetState, u8)>,
@@ -452,7 +565,12 @@ impl XlsFormat {
     pub(crate) fn read(path: &Path) -> Result<Self> {
         let mut file = cfb::open(path).map_err(|e| anyhow!("{e}"))?;
         let mut stream = Vec::new();
-        file.open_stream("/Workbook")
+        // Excel 5/95 files call the stream "Book".
+        let mut found = file.open_stream("/Workbook");
+        if found.is_err() {
+            found = file.open_stream("/Book");
+        }
+        found
             .map_err(|e| anyhow!("no Workbook stream: {e}"))?
             .read_to_end(&mut stream)?;
         let globals = read_globals(&stream)?;
@@ -470,6 +588,7 @@ impl XlsFormat {
     /// go into the model; print settings and data validation come back.
     pub(crate) fn apply(&self, model: &mut Model<'_>, names: &[String]) -> Applied {
         let g = &self.globals;
+        let _biff5 = Biff5Guard::set(g.biff5);
         let mut styles = StyleMap::new(g, model);
         let mut prints = Vec::with_capacity(names.len());
         let mut cleared = false;
@@ -1062,17 +1181,19 @@ impl RawCf {
 
 fn read_globals(stream: &[u8]) -> Result<Globals> {
     let mut rec = Records::at(stream, 0);
-    match rec.next() {
-        Some((0x0809, d)) if d.len() >= 4 => {
-            let version = u16::from_le_bytes([d[0], d[1]]);
-            if version != 0x0600 {
-                bail!("not BIFF8 (version {version:#x})");
-            }
-        }
+    let five = match rec.next() {
+        Some((0x0809, d)) if d.len() >= 4 => match u16::from_le_bytes([d[0], d[1]]) {
+            0x0600 => false,
+            // Excel 5 and 95.
+            0x0500 => true,
+            version => bail!("not BIFF5 or BIFF8 (version {version:#x})"),
+        },
         _ => bail!("no BOF record"),
-    }
+    };
+    let guard = Biff5Guard::set(five.then_some(encoding_rs::WINDOWS_1252));
     let mut g = Globals {
         date1904: false,
+        biff5: None,
         sheets: Vec::new(),
         labels: Vec::new(),
         active: 0,
@@ -1092,6 +1213,11 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
             0x000A => break, // EOF
             0x002F => bail!("the file is encrypted"),
             0x0022 => g.date1904 = b.u16() == Some(1),
+            0x0042 if five => {
+                if let Some(cp) = b.u16() {
+                    BIFF5.with(|b| b.set(Some(code_page(cp))));
+                }
+            }
             0x003D => {
                 // WINDOW1: itabCur at offset 10.
                 if b.skip(10).is_some()
@@ -1136,13 +1262,17 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
                 }));
             }
             0x041E => {
-                if let (Some(id), Some(code)) = (b.u16(), b.string16()) {
+                let id = b.u16();
+                // BIFF5: an 8-bit count.
+                let code = if five { b.string8() } else { b.string16() };
+                if let (Some(id), Some(code)) = (id, code) {
                     g.formats.push(NumFmt {
                         num_fmt_id: id as i32,
                         format_code: code,
                     });
                 }
             }
+            0x00E0 if five => g.xfs.push(Xf::parse5(d).unwrap_or_default()),
             0x00E0 => g.xfs.push(Xf::parse(d).unwrap_or_default()),
             0x0092 => {
                 if let Some(n) = b.u16() {
@@ -1193,6 +1323,8 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
     if g.sheets.is_empty() {
         bail!("no sheets");
     }
+    g.biff5 = BIFF5.with(|b| b.get());
+    drop(guard);
     g.xti = raw_xti
         .into_iter()
         .map(|(sb, first, last)| {
@@ -1515,6 +1647,7 @@ fn read_sheet(
         _ => return print,
     }
     let mut depth = 1;
+    let five = biff5();
     let mut cols: Vec<Col> = Vec::new();
     let mut rows: Vec<Row> = Vec::new();
     let mut merges: Vec<MergedCell> = Vec::new();
@@ -1579,7 +1712,17 @@ fn read_sheet(
         let mut b = Bytes::new(d);
         match typ {
             // BLANK, NUMBER, LABEL, BOOLERR, RK, LABELSST, FORMULA
-            0x0201 | 0x0203 | 0x0204 | 0x0205 | 0x027E | 0x00FD | 0x0006 => {
+            // BIFF8's objects, notes, links, validation and conditional
+            // formats; BIFF5 has other records under some of these ids.
+            0x001C | 0x005D | 0x00EC | 0x01B6 | 0x01B8 | 0x0800 | 0x01BE | 0x01B2 | 0x01B0
+            | 0x01B1 | 0x0879 | 0x087A | 0x087B
+                if five =>
+            {
+                continue;
+            }
+            // BLANK, NUMBER, LABEL, BOOLERR, RK, LABELSST, FORMULA, and
+            // BIFF5's RSTRING.
+            0x0201 | 0x0203 | 0x0204 | 0x0205 | 0x027E | 0x00FD | 0x0006 | 0x00D6 => {
                 if let (Some(r), Some(c), Some(x)) = (b.u16(), b.u16(), b.u16()) {
                     set(model, r, c, x);
                 }
@@ -1863,6 +2006,9 @@ fn read_sheet(
             0x002B => print.grid = b.u16() == Some(1),
             0x002A => print.headings = b.u16() == Some(1),
             0x0081 => print.fit_to_page = b.u16().is_some_and(|f| f & 0x100 != 0),
+            // BIFF5: an 8-bit count.
+            0x0014 if five => print.header = b.string8().unwrap_or_default(),
+            0x0015 if five => print.footer = b.string8().unwrap_or_default(),
             0x0014 => print.header = b.string16().unwrap_or_default(),
             0x0015 => print.footer = b.string16().unwrap_or_default(),
             0x001B | 0x001A => {
