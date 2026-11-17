@@ -148,9 +148,7 @@ pub(crate) type ReadViews = (
 /// Sheet views of a package, by `sheetId`: the sheets shown in Page Break
 /// Preview (`sheetView@view="pageBreakPreview"`) and each sheet's zoom
 /// attributes.
-pub(crate) fn read_views(
-    skeletons: &std::result::Result<Vec<(u32, String)>, String>,
-) -> ReadViews {
+pub(crate) fn read_views(skeletons: &std::result::Result<Vec<(u32, String)>, String>) -> ReadViews {
     let mut breaks = std::collections::HashSet::new();
     let mut zooms = HashMap::new();
     let Ok(list) = skeletons else {
