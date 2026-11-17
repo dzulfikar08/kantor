@@ -18,6 +18,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - `.ods` imports bring GIF and SVG pictures too.
 - `.xls` imports bring shapes, lines and text boxes with their text, fill and outline (LibreOffice's
   freeform shapes too).
+- `.xlsb` imports bring cell formatting (number formats, fonts, fills, borders, alignment), merged
+  cells, column widths and row heights, not just values and formulas.
 - `.doc` imports bring grouped shapes as groups, and LibreOffice's rounded rectangles, ellipses and
   other shapes with arcs keep their curves instead of becoming rectangles.
 

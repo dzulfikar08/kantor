@@ -58,6 +58,7 @@ mod validation_edit;
 mod xls;
 mod xls_drawing;
 mod xls_formula;
+mod xlsb;
 mod xls_ftab;
 
 pub use cf_edit::{

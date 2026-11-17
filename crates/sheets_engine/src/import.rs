@@ -318,7 +318,7 @@ pub(crate) struct Imported {
 }
 
 /// Read an `.ods` / `.xls` / `.xlsb` file via calamine (and `.xls`
-/// formatting via [`crate::xls`]). Returns the evaluated model.
+/// formatting via [`crate::xls`], `.xlsb` formatting via [`crate::xlsb`]). Returns the evaluated model.
 ///
 /// An `.ods` whose `content.xml` is indented (whitespace between cells, as
 /// some generators and hand-edited test files have; LibreOffice reads them)
@@ -390,7 +390,7 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
     }
     let date1904 = xls.as_ref().is_some_and(|x| x.globals.date1904);
     // With the file's own formats coming, dates need no format of ours.
-    let styled = xls.is_some();
+    let styled = xls.is_some() || format == SourceFormat::Xlsb;
     let mut model = empty_model("Untitled")?;
     // Formula cells and their cached values, for the check below.
     let mut formulas: Vec<(u32, i32, i32, Data, bool)> = Vec::new();
@@ -519,6 +519,15 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
             .and_then(|s| names.iter().position(|n| *n == s.0))
             .map(|i| i as u32);
         replaced |= applied.cleared;
+    }
+    if format == SourceFormat::Xlsb {
+        match crate::xlsb::apply(path, &mut model, &names) {
+            Ok(c) => replaced |= c,
+            Err(e) => {
+                log::warn!("{}: formatting not read: {e}", path.display());
+                imported.notes.push(ImportNote::FormattingNotImported);
+            }
+        }
     }
     if format == SourceFormat::Ods {
         match crate::ods::apply(path, &mut model, &names) {
