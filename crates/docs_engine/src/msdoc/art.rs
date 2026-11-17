@@ -163,7 +163,9 @@ pub(crate) fn drawing(dgg: &[u8], word: &[u8]) -> Drawing {
             b = &b[1..];
             let Some(len) = u32_at(b, 4) else { break };
             let end = 8usize.saturating_add(len as usize).min(b.len());
-            if label == 0 && u16_at(b, 2) == Some(0xF002) {
+            // dgglbl 0: the main text's drawing, 1: the headers' (shape
+            // ids are unique across both).
+            if label <= 1 && u16_at(b, 2) == Some(0xF002) {
                 let mut order = 0;
                 shapes(&b[8..end], &mut d.shapes, &mut order);
             }

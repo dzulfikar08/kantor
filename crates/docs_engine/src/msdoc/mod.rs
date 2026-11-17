@@ -32,7 +32,7 @@
 //!   in SttbfAtnBkmk) and dates (AtrdExtra, Word 2002 and later).
 //!
 //! Not imported (listed in [`Imported::notes`]): floating objects in
-//! headers, footers and text boxes, grouped shapes, freeform shapes drawn
+//! text boxes and notes, grouped shapes, freeform shapes drawn
 //! with guide formulas, WMF/EMF pictures and embedded objects, hidden text.
 //!
 //! Tracked insertions and deletions (`sprmCFRMarkIns` / `sprmCFRMarkDel`
@@ -148,6 +148,7 @@ const PLCF_ATN_BKL: usize = 43;
 const DGG_INFO: usize = 50;
 const STTBF_RMARK: usize = 51;
 const PLCFTXBX_TXT: usize = 56;
+const PLCF_HDRTXBX_TXT: usize = 58;
 const PLCFEND_REF: usize = 46;
 const PLCFEND_TXT: usize = 47;
 const PLF_LST: usize = 73;
@@ -429,8 +430,12 @@ struct Reader {
     /// Floating objects of the main text by anchor CP, their shapes and
     /// the text box ranges.
     spas: HashMap<u32, art::Spa>,
+    hdr_spas: HashMap<u32, art::Spa>,
     drawing: art::Drawing,
     text_boxes: Vec<(u32, u32, u32)>,
+    hdr_text_boxes: Vec<(u32, u32, u32)>,
+    /// Reading a header's or footer's floating object.
+    in_header: bool,
     /// Media index of each BLIP store picture already added.
     blip_media: HashMap<usize, usize>,
     /// Text box stories being read (no floating objects in them).
@@ -457,8 +462,11 @@ impl Reader {
             media: Vec::new(),
             notes: BTreeSet::new(),
             spas: HashMap::new(),
+            hdr_spas: HashMap::new(),
             drawing: art::Drawing::default(),
             text_boxes: Vec::new(),
+            hdr_text_boxes: Vec::new(),
+            in_header: false,
             blip_media: HashMap::new(),
             in_text_box: 0,
             comment_refs: HashMap::new(),
@@ -638,17 +646,21 @@ impl Reader {
     fn read(&mut self) -> Result<Doc> {
         let ccp = self.fib.ccp;
         let main_end = (ccp[0] as usize).min(self.units.len());
-        if ccp[6] > 0 || self.tbl(PLC_SPA_HDR).is_some() {
-            self.note("floating objects in headers and footers not imported");
-        }
         self.spas = self.tbl(PLC_SPA_MOM).map(art::spas).unwrap_or_default();
-        if !self.spas.is_empty() {
+        // Headers' and footers' objects: their CPs count from the start of
+        // the header text.
+        self.hdr_spas = self.tbl(PLC_SPA_HDR).map(art::spas).unwrap_or_default();
+        if !self.spas.is_empty() || !self.hdr_spas.is_empty() {
             self.drawing = self
                 .tbl(DGG_INFO)
                 .map(|d| art::drawing(d, &self.word))
                 .unwrap_or_default();
             self.text_boxes = self
                 .tbl(PLCFTXBX_TXT)
+                .map(art::text_boxes)
+                .unwrap_or_default();
+            self.hdr_text_boxes = self
+                .tbl(PLCF_HDRTXBX_TXT)
                 .map(art::text_boxes)
                 .unwrap_or_default();
         }
@@ -1132,19 +1144,26 @@ impl Reader {
                 tail: shape.prop(0x1D1).and_then(art::arrowhead),
             });
             // The text box story: by shape id, or by the id's index.
-            let range = self
-                .text_boxes
+            let boxes = if self.in_header {
+                &self.hdr_text_boxes
+            } else {
+                &self.text_boxes
+            };
+            let range = boxes
                 .iter()
                 .find(|t| t.2 == spa.spid)
                 .or_else(|| {
                     let i = (shape.txid? >> 16) as usize;
-                    self.text_boxes.get(i.checked_sub(1)?)
+                    boxes.get(i.checked_sub(1)?)
                 })
                 .copied()
                 .filter(|_| shape.txid.is_some() || text_box);
             let text = range.map(|(a, b, _)| {
                 let c = self.fib.ccp;
-                let base = (c[0] + c[1] + c[2] + c[3] + c[4]) as usize;
+                let mut base = (c[0] + c[1] + c[2] + c[3] + c[4]) as usize;
+                if self.in_header {
+                    base += c[5] as usize;
+                }
                 self.in_text_box += 1;
                 let mut blocks = self.story(base + a as usize, base + b as usize, false);
                 self.in_text_box -= 1;
@@ -1349,14 +1368,25 @@ impl Reader {
                     }
                 }
                 0x08 if chp.special => {
-                    let spa = self.spas.get(&(cp as u32)).copied();
+                    let c = self.fib.ccp;
+                    let hdr = (c[0] + c[1]) as usize..(c[0] + c[1] + c[2]) as usize;
+                    let spa = if main {
+                        self.spas.get(&(cp as u32)).copied()
+                    } else if hdr.contains(&cp) {
+                        self.hdr_spas.get(&((cp - hdr.start) as u32)).copied()
+                    } else {
+                        None
+                    };
                     match spa {
-                        Some(spa) if main && self.in_text_box == 0 => {
-                            if let Some(f) = self.floating(spa) {
+                        Some(spa) if self.in_text_box == 0 => {
+                            self.in_header = !main;
+                            let f = self.floating(spa);
+                            self.in_header = false;
+                            if let Some(f) = f {
                                 items.push(Item::Float(vis, Box::new(f)));
                             }
                         }
-                        _ => self.note("floating objects in headers and footers not imported"),
+                        _ => self.note("floating objects in text boxes and notes not imported"),
                     }
                 }
                 0x28 if chp.special && chp.symbol.is_some() => {

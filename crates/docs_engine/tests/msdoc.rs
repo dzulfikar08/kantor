@@ -578,3 +578,52 @@ fn nested_tables_are_kept_nested() {
     assert!(xml[outer..inner].contains("<w:tc>"), "nested");
     assert!(xml[inner..].contains(">In B2<"));
 }
+
+/// hdrfloat.doc: a floating picture in the header comes in, in the
+/// header, its picture in the header's own relationships.
+#[test]
+fn header_floating_objects_come_in() {
+    let doc = open("hdrfloat.doc");
+    assert!(
+        !doc.import_notes().iter().any(|n| n.contains("header")),
+        "{:?}",
+        doc.import_notes()
+    );
+    let st = doc
+        .stories()
+        .iter()
+        .find(|s| {
+            s.kind == HfKind::Header
+                && s.doc
+                    .paragraphs()
+                    .iter()
+                    .any(|p| p.text.contains("Header text"))
+        })
+        .expect("the header");
+    let floats: Vec<_> = st
+        .doc
+        .paragraphs()
+        .iter()
+        .flat_map(|p| p.objects())
+        .filter_map(|(_, o)| match o {
+            Object::Float(f) => Some(f.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(floats.len(), 1, "the logo");
+    let docs_engine::FloatKind::Picture { rel_id, .. } = &floats[0].kind else {
+        panic!("{:?}", floats[0].kind);
+    };
+    assert!(st.doc.image_bytes(rel_id).is_some(), "its picture");
+    let mut doc = doc;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("hdrfloat.docx");
+    doc.save_as(&out).unwrap();
+    let again = Document::open(&out).unwrap();
+    assert!(again.stories().iter().any(|s| {
+        s.doc
+            .paragraphs()
+            .iter()
+            .any(|p| p.objects().any(|(_, o)| matches!(o, Object::Float(_))))
+    }));
+}
