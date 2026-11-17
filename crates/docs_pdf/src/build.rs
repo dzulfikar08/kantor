@@ -663,9 +663,12 @@ pub fn build_marked(
         .iter()
         .map(|s| {
             let g = s.props.page;
-            g.width
+            let text = g
+                .width
                 .saturating_sub(g.margin_left + g.margin_right)
-                .max(1440)
+                .max(1440);
+            // Text in columns is laid out for the first column's width.
+            s.props.columns.layout(text).first().map_or(text, |c| c.1)
         })
         .collect();
     let section_of = |i: usize| {

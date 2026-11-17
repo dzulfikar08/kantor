@@ -25,7 +25,12 @@ fn long_footnote_continues_and_endnotes_end_their_sections() {
     let parts: Vec<(usize, &docs_layout::NotePart)> = pages
         .iter()
         .enumerate()
-        .flat_map(|(i, p)| p.note_parts.iter().map(move |n| (i, n)))
+        .flat_map(|(i, p)| {
+            p.note_columns
+                .iter()
+                .flat_map(|c| c.parts.iter())
+                .map(move |n| (i, n))
+        })
         .collect();
     let first = parts
         .iter()
@@ -35,7 +40,7 @@ fn long_footnote_continues_and_endnotes_end_their_sections() {
         .iter()
         .find(|(i, p)| *i == first.0 + 1 && p.from == first.1.to)
         .expect("its continuation on the next page");
-    assert!(pages[next.0].continued);
+    assert!(pages[next.0].note_columns[0].continued);
     // On screen and in the PDF: the part shown, the notice under it, and
     // the continuation separator spanning the text column.
     let placed: Vec<_> = laid.furniture[first.0]

@@ -489,13 +489,33 @@ fn with_endnotes(
     (out, out_flows)
 }
 
-/// A section's text width, px.
+/// A section's text width, px: its first column's when it has columns
+/// (footnotes and endnotes are as wide as their column).
 fn section_width(sections: &[Section], si: usize) -> f32 {
     sections
         .get(si)
         .map_or(PageSetup::a4().content_width(), |s| {
-            build::geometry_setup(&s.props.page).content_width()
+            match section_columns(s).first() {
+                Some(&(_, w)) => w,
+                None => build::geometry_setup(&s.props.page).content_width(),
+            }
         })
+}
+
+/// A section's columns (left edge from the margin, width; px), empty
+/// for one column.
+pub fn section_columns(s: &Section) -> Vec<(f32, f32)> {
+    if s.props.columns.count() <= 1 {
+        return Vec::new();
+    }
+    let g = s.props.page;
+    let text = g.width.saturating_sub(g.margin_left + g.margin_right).max(1440);
+    s.props
+        .columns
+        .layout(text)
+        .into_iter()
+        .map(|(x, w)| (twips(x), twips(w)))
+        .collect()
 }
 
 /// Footnote numbers restarted on each page (sections set to "each page"),
@@ -589,6 +609,8 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
                 SectionStart::OddPage => SectionBreak::OddPage,
             },
             restart: s.props.page_start,
+            columns: section_columns(s),
+            sep: s.props.columns.sep,
         });
         stories.push(st);
     }
@@ -892,6 +914,7 @@ fn place_floats(
                         para_top: top,
                         line_top: line.map_or(top, |c| placed.y + c.top),
                         char_x: line.map_or(placed.x, |c| placed.x + c.x),
+                        column: None,
                     };
                     let rect = floats::place(f, index, &page.setup, page.number, at);
                     if let Some(it) =
@@ -946,25 +969,23 @@ fn place_notes(
     };
     for (pi, page) in paged.pages.iter_mut().enumerate() {
         let s = page.setup;
-        if !page.note_parts.is_empty() {
-            let mut y = s.height - s.margin_bottom - page.notes_height;
-            let rule = if page.continued {
+        // Each column's notes under it (the whole text width without
+        // columns).
+        let columns = std::mem::take(&mut page.note_columns);
+        for nc in &columns {
+            let mut y = nc.bottom - nc.height;
+            let rule = if nc.continued {
                 // Word's continuation separator: the text column's width.
                 RuleRect {
-                    rect: [
-                        s.margin_left,
-                        y + NOTE_SEPARATOR / 2.0,
-                        s.content_width(),
-                        0.75,
-                    ],
+                    rect: [nc.x, y + NOTE_SEPARATOR / 2.0, nc.width, 0.75],
                     color: Rgba::BLACK,
                 }
             } else {
-                separator(s.margin_left, y, s.content_width())
+                separator(nc.x, y, nc.width)
             };
             page.rules.push(rule);
             y += NOTE_SEPARATOR;
-            for part in &page.note_parts {
+            for part in &nc.parts {
                 let Some(r) = find(part.para, part.index) else {
                     continue;
                 };
@@ -978,7 +999,7 @@ fn place_notes(
                 out[pi].push(Placed {
                     kind: HfKind::Footer,
                     layout: l,
-                    x: s.margin_left,
+                    x: nc.x,
                     y,
                     note: Some((r.kind, r.id.clone())),
                 });
@@ -990,7 +1011,7 @@ fn place_notes(
                     out[pi].push(Placed {
                         kind: HfKind::Footer,
                         layout: n,
-                        x: s.margin_left,
+                        x: nc.x,
                         y,
                         note: None,
                     });
@@ -998,10 +1019,11 @@ fn place_notes(
                 }
             }
         }
+        page.note_columns = columns;
         for g in &page.gaps {
             if g.id == SEPARATOR_GAP {
-                page.rules
-                    .push(separator(s.margin_left, g.y, s.content_width()));
+                let width = section_width(sections, page.section);
+                page.rules.push(separator(g.x, g.y, width));
                 continue;
             }
             let Some(r) = refs.get(g.id) else { continue };
@@ -1019,7 +1041,7 @@ fn place_notes(
             out[pi].push(Placed {
                 kind: HfKind::Footer,
                 layout: note_part(l, g.from, g.to),
-                x: s.margin_left,
+                x: g.x,
                 y: g.y,
                 note: Some((r.kind, r.id.clone())),
             });
