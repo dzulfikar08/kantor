@@ -2250,7 +2250,10 @@ impl Document {
             })
             .map(|s| s.id())
             .collect();
-        self.update_targets(sel, targets, cx, lay_out)
+        let rev = self.revision();
+        let out = self.update_targets(sel, targets, cx, lay_out);
+        self.index_columns(self.revision() != rev);
+        out
     }
 
     /// Rebuild the table of contents around the caret, or every one in the
@@ -2408,6 +2411,41 @@ impl Document {
         let after = Selection::caret(sel.head);
         self.replace(start, count, new, (sel, after), Kind::Other, true);
         self.clamp_selection(after)
+    }
+
+    /// An index with `\c N` lays out in N columns: as Word does, it gets a
+    /// section of its own with that many columns (continuous breaks around
+    /// it), unless its section has them already. Same undo step as the
+    /// update (`squash`: the update was the last step). Only on the
+    /// document itself, never on a snapshot fields are worked out in.
+    pub(crate) fn index_columns(&mut self, squash: bool) {
+        let wanted: Vec<(Position, Position, u16)> = spans(&self.paragraphs)
+            .iter()
+            .filter(|s| s.kind() == "INDEX")
+            .filter_map(|s| {
+                let n: u16 = Instr::parse(&s.instr).arg("c")?.trim().parse().ok()?;
+                (2..=crate::columns::MAX_COLUMNS)
+                    .contains(&n)
+                    .then_some((s.begin, s.end, n))
+            })
+            .collect();
+        for (begin, end, n) in wanted.into_iter().rev() {
+            if self.section_columns(begin.para).count() == n as usize
+                && self.section_of(begin.para) == self.section_of(end.para)
+            {
+                continue;
+            }
+            let sel = Selection {
+                anchor: begin,
+                head: end,
+            };
+            let cols = crate::columns::Columns::equal(n, crate::columns::DEFAULT_SPACE);
+            let top = self.revision();
+            self.set_columns(sel, &cols, crate::columns::ColumnsApply::SelectedText);
+            if self.revision() != top && squash {
+                self.squash_last_two();
+            }
+        }
     }
 
     /// Where the hyperlink at `pos` goes: a hyperlink's run, or a

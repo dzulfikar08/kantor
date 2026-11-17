@@ -923,3 +923,49 @@ fn formulas_conditions_and_more_fields_are_worked_out() {
     );
     assert_eq!(shown(&doc, p), "Rate is 0.11 / tax 11many62.5");
 }
+
+#[test]
+fn an_index_with_columns_gets_a_section_of_its_own() {
+    let mut doc = Document::new();
+    doc.insert_text(
+        Selection::caret(Position::new(0, 0)),
+        "Apples here\nBananas there\nIndex follows\n\nThe end",
+        None,
+    );
+    doc.insert_field(
+        Selection::caret(Position::new(0, 6)),
+        "XE \"Apples\"",
+        &cx(),
+        &mut lay_out,
+    );
+    doc.insert_field(
+        Selection::caret(Position::new(1, 7)),
+        "XE \"Bananas\"",
+        &cx(),
+        &mut lay_out,
+    );
+    assert_eq!(doc.sections().len(), 1);
+    doc.insert_field(
+        Selection::caret(Position::new(3, 0)),
+        "INDEX \\c \"2\"",
+        &cx(),
+        &mut lay_out,
+    );
+    // Continuous breaks around the index's paragraph, two columns inside.
+    let s = doc.sections();
+    assert_eq!(s.len(), 3);
+    assert_eq!(s[1].paras, 3..4);
+    assert_eq!(
+        s.iter().map(|s| s.props.columns.count()).collect::<Vec<_>>(),
+        vec![1, 2, 1]
+    );
+    assert_eq!(s[1].props.start, docs_engine::SectionStart::Continuous);
+    assert_eq!(s[2].props.start, docs_engine::SectionStart::Continuous);
+    // Updating again changes nothing more.
+    doc.update_fields(all(&doc), &cx(), &mut lay_out);
+    assert_eq!(doc.sections().len(), 3);
+    // One undo step takes the index and its section away.
+    doc.undo();
+    assert_eq!(doc.sections().len(), 1);
+    assert!(!doc.paragraph(3).text.contains(docs_engine::OBJECT));
+}
