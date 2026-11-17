@@ -45,6 +45,12 @@ pub(crate) struct FieldCard {
     pub family: Option<FilterFamily>,
     pub v1: Entity<InputState>,
     pub v2: Entity<InputState>,
+    /// Which of the field's two filters is being edited (with "Allow
+    /// multiple filters per field"): the editor shows `settings.filter`,
+    /// and while the second is edited the two are swapped (`other` holds
+    /// the other's typed values).
+    pub second: bool,
+    pub other: (String, String),
     _subs: Vec<Subscription>,
 }
 
@@ -262,15 +268,58 @@ impl SheetsView {
             .and_then(|f| sheets_engine::filter_family(&f.kind));
         self.close_pivot_cards();
         if let Some(p) = self.pivot_panel.as_mut() {
+            let other = settings
+                .filter2
+                .as_ref()
+                .map(|x| (x.value1.clone(), x.value2.clone()))
+                .unwrap_or_default();
             p.field_card = Some(FieldCard {
                 field,
                 settings,
                 family,
                 v1,
                 v2,
+                second: false,
+                other,
                 _subs: subs,
             });
         }
+        cx.notify();
+    }
+
+    /// Edit the field's other filter (Filter 1 / Filter 2).
+    fn switch_field_filter(&mut self, second: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(c) = self
+            .pivot_panel
+            .as_mut()
+            .and_then(|p| p.field_card.as_mut())
+        else {
+            return;
+        };
+        if c.second == second {
+            return;
+        }
+        let now = (
+            c.v1.read(cx).value().to_string(),
+            c.v2.read(cx).value().to_string(),
+        );
+        if let Some(f) = c.settings.filter.as_mut() {
+            (f.value1, f.value2) = now.clone();
+        }
+        if c.family.is_none() {
+            c.settings.filter = None;
+        }
+        std::mem::swap(&mut c.settings.filter, &mut c.settings.filter2);
+        let (a, b) = std::mem::replace(&mut c.other, now);
+        c.second = second;
+        c.family = c
+            .settings
+            .filter
+            .as_ref()
+            .and_then(|f| sheets_engine::filter_family(&f.kind));
+        let (v1, v2) = (c.v1.clone(), c.v2.clone());
+        v1.update(cx, |i, cx| i.set_value(a, window, cx));
+        v2.update(cx, |i, cx| i.set_value(b, window, cx));
         cx.notify();
     }
 
@@ -296,6 +345,16 @@ impl SheetsView {
         }
         if card.family.is_none() {
             settings.filter = None;
+        }
+        if let Some(f) = settings.filter2.as_mut() {
+            f.value1 = card.other.0.trim().to_owned();
+            f.value2 = card.other.1.trim().to_owned();
+        }
+        if card.second {
+            std::mem::swap(&mut settings.filter, &mut settings.filter2);
+        }
+        if settings.filter.is_none() {
+            settings.filter = settings.filter2.take();
         }
         let field = card.field;
         let Some(mut layout) = self.panel_layout() else {
@@ -578,6 +637,32 @@ impl SheetsView {
                     }),
             )
             .child(kantor_ui::components::section_label(i18n::t("Filter"), cx))
+            .when(l.multiple_filters, |d| {
+                let pick = |second: bool, label: &'static str| {
+                    let v = view.clone();
+                    Button::new(if second { "pivot-fs-filter2" } else { "pivot-fs-filter1" })
+                        .xsmall()
+                        .label(label)
+                        .when_else(c.second == second, |b| b.primary(), |b| b.outline())
+                        .on_click(move |_, window, cx| {
+                            let _ = v.update(cx, |this, cx| {
+                                this.switch_field_filter(second, window, cx)
+                            });
+                        })
+                };
+                d.child(
+                    h_flex()
+                        .gap(SPACE_2)
+                        .child(pick(false, i18n::t("Filter 1")))
+                        .child(pick(true, i18n::t("Filter 2")))
+                        .child(
+                            div()
+                                .text_size(FONT_SMALL)
+                                .text_color(t.fg_muted)
+                                .child(i18n::t("one by label or date, one by value")),
+                        ),
+                )
+            })
             .child(
                 h_flex()
                     .gap(SPACE_2)

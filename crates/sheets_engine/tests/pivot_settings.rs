@@ -634,6 +634,52 @@ fn field_settings_subtotals_and_layout() {
     assert_eq!(grid(&back, s, (2, 0, 9, 2)), grid(&wb, s, (2, 0, 9, 2)));
 }
 
+/// PivotTable Options' "Allow multiple filters per field": a label filter
+/// and a value filter on one field at once, saved as Excel writes them.
+#[test]
+fn multiple_filters_per_field() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = data_book();
+    let s = new_pivot(&mut wb);
+    arrange(&mut wb, s, &["Region"]);
+    assert!(!layout(&wb, s).multiple_filters, "Excel's default: off");
+    let mut l = layout(&wb, s);
+    l.fields[1].settings.filter = Some(filter("captionNotEqual", None, "North", ""));
+    l.fields[1].settings.filter2 = Some(filter("valueGreaterThan", Some(0), "300", ""));
+    assert!(
+        wb.set_pivot_layout(s, 2, 0, &l).is_err(),
+        "two filters need the option"
+    );
+    l.multiple_filters = true;
+    let mut two_labels = l.clone();
+    two_labels.fields[1].settings.filter2 = Some(filter("captionBeginsWith", None, "E", ""));
+    assert!(wb.set_pivot_layout(s, 2, 0, &two_labels).is_err());
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    // Not North, and more than 300: East only.
+    assert_eq!(labels(&wb, s), ["Row Labels", "East", "Grand Total"]);
+    let got = layout(&wb, s);
+    assert!(got.multiple_filters);
+    assert_eq!(got.fields[1].settings.filter2, l.fields[1].settings.filter2);
+    let (path, p) = save(&mut wb, dir.path(), "multiple-filters.xlsx");
+    let table = &p["xl/pivotTables/pivotTable1.xml"];
+    assert!(table.contains("multipleFieldFilters=\"1\""), "{table}");
+    assert!(table.contains("<filters count=\"2\">"), "{table}");
+    let back = Workbook::open(&path).unwrap();
+    let bl = back.pivot_layout(s, 2, 0).unwrap();
+    assert!(bl.multiple_filters);
+    assert_eq!(bl.fields[1].settings, got.fields[1].settings);
+    assert_eq!(labels(&back, s), labels(&wb, s));
+    // Off again: one filter per field is written.
+    let mut l = layout(&wb, s);
+    l.multiple_filters = false;
+    l.fields[1].settings.filter2 = None;
+    wb.set_pivot_layout(s, 2, 0, &l).unwrap();
+    let (_, p) = save(&mut wb, dir.path(), "multiple-filters-off.xlsx");
+    assert!(p["xl/pivotTables/pivotTable1.xml"].contains("multipleFieldFilters=\"0\""));
+    assert!(wb.undo().unwrap());
+    assert!(layout(&wb, s).multiple_filters);
+}
+
 #[test]
 fn sorting_and_filters() {
     let dir = tempfile::tempdir().unwrap();
