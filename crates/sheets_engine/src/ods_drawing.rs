@@ -1065,6 +1065,16 @@ struct Run {
     font: Option<String>,
 }
 
+/// An outline for [`Shape::simple`].
+pub(crate) struct SimpleLine {
+    pub color: u32,
+    /// EMU.
+    pub width: i64,
+    pub dash: bool,
+    pub head: Option<&'static str>,
+    pub tail: Option<&'static str>,
+}
+
 /// A shape, line or text box to write as `xdr:sp` / `xdr:cxnSp`.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Shape {
@@ -1091,6 +1101,60 @@ fn solid(c: u32) -> String {
 }
 
 impl Shape {
+    /// A shape from another importer (`.xls`): a preset, solid fill,
+    /// outline and plain text (lines split at `\n`), sized by its anchor.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn simple(
+        prst: &str,
+        line_shape: bool,
+        flip: (bool, bool),
+        tx_box: bool,
+        fill: Option<u32>,
+        line: Option<SimpleLine>,
+        text: &str,
+        align: Option<&'static str>,
+        anchor: &'static str,
+        rot: f64,
+    ) -> Self {
+        let text = if text.is_empty() {
+            Vec::new()
+        } else {
+            text.trim_end_matches('\n')
+                .split('\n')
+                .map(|l| Para {
+                    align,
+                    runs: vec![Run {
+                        text: l.to_owned(),
+                        size: None,
+                        bold: false,
+                        italic: false,
+                        color: None,
+                        font: None,
+                    }],
+                })
+                .collect()
+        };
+        Shape {
+            prst: prst.to_owned(),
+            adj: Vec::new(),
+            line_shape,
+            flip,
+            tx_box,
+            fill: fill.map_or(Fill::None, Fill::Solid),
+            line: line.map(|l| Line {
+                color: l.color,
+                width: l.width,
+                dash: l.dash,
+                head: l.head,
+                tail: l.tail,
+            }),
+            text,
+            anchor,
+            size: (0, 0),
+            rot,
+        }
+    }
+
     /// The `xdr:sp` (or `xdr:cxnSp`) element.
     pub(crate) fn xml(&self, id: usize, name: &str, descr: &str, hidden: &str) -> String {
         let rot = (self.rot * 60_000.0).round() as i64;
@@ -1150,11 +1214,16 @@ impl Shape {
                     .unwrap_or_default(),
             ),
         };
+        // A custom path (`a:custGeom`, from `.xls` freeforms) or a preset.
+        let geom = if self.prst.starts_with('<') {
+            self.prst.clone()
+        } else {
+            format!("<a:prstGeom prst=\"{}\">{av}</a:prstGeom>", esc(&self.prst))
+        };
         let sppr = format!(
-            "<xdr:spPr><a:xfrm{rot}{flips}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm><a:prstGeom prst=\"{}\">{av}</a:prstGeom>{fill}{ln}</xdr:spPr>",
+            "<xdr:spPr><a:xfrm{rot}{flips}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>{geom}{fill}{ln}</xdr:spPr>",
             self.size.0.max(0),
             self.size.1.max(0),
-            esc(&self.prst)
         );
         if self.line_shape {
             return format!(

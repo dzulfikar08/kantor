@@ -286,3 +286,51 @@ fn metafile_pictures_are_imported() {
         }
     }
 }
+
+/// Shapes and text boxes of an `.xls` (shapes.xls: 23_shapes.xlsx as
+/// LibreOffice saves it in Excel 97 format, from scripts/corpus/gen_xls.py).
+#[test]
+fn xls_shapes_and_text_boxes() {
+    let wb = Workbook::open(corpus("shapes.xls")).unwrap();
+    let shapes = wb.drawings(0);
+    let xml = |d: &Drawing| match &*d.kind {
+        DrawingKind::Shape { xml, .. } => xml.to_string(),
+        k => panic!("not a shape: {k:?}"),
+    };
+    let names: Vec<&str> = shapes.iter().map(|d| d.name.as_str()).collect();
+    for want in [
+        "Revenue box",
+        "Gradient oval",
+        "Dashed frame",
+        "Arrow line",
+        "Turned arrow",
+        "Notes box",
+        "Note callout",
+        "Hidden shape",
+    ] {
+        assert!(names.contains(&want), "{want} in {names:?}");
+    }
+    let by = |n: &str| shapes.iter().find(|d| d.name == n).unwrap();
+    let revenue = xml(by("Revenue box"));
+    assert!(revenue.contains("prst=\"rect\""), "{revenue}");
+    assert!(revenue.contains("<a:t>Revenue</a:t>"), "{revenue}");
+    // LibreOffice writes its shapes as freeforms: the oval's path, curved.
+    let oval = xml(by("Gradient oval"));
+    assert!(
+        oval.contains("<a:custGeom>") && oval.contains("<a:cubicBezTo>"),
+        "{oval}"
+    );
+    assert!(oval.contains("<a:t>Gradient</a:t>"), "{oval}");
+    let frame = xml(by("Dashed frame"));
+    assert!(frame.contains("<a:prstDash val=\"dash\"/>"), "{frame}");
+    let line = xml(by("Arrow line"));
+    assert!(line.starts_with("<xdr:cxnSp"), "{line}");
+    let turned = xml(by("Turned arrow"));
+    assert!(turned.contains(" rot=\""), "{turned}");
+    assert!(by("Hidden shape").hidden);
+    // The group (shapes inside it) is still left out.
+    assert_eq!(
+        wb.import_notes(),
+        ["1 shape, text box or control not imported"]
+    );
+}

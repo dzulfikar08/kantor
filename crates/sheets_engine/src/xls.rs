@@ -1688,16 +1688,31 @@ fn read_sheet(
                 rules.objects.push(crate::xls_drawing::RawObj {
                     ot: cmo.map(|c| c.0),
                     chart: None,
+                    text: None,
                 });
             }
             0x00EC => rules.drawing.extend_from_slice(d),
             0x01B6 => {
                 let data = d.to_vec();
                 let bounds = rec.bounds().to_vec();
-                if let Some(id) = note_obj.take()
-                    && let Some(text) = txo_text(&data, &bounds)
+                if let Some(id) = note_obj.take() {
+                    if let Some(text) = txo_text(&data, &bounds) {
+                        texts.insert(id, text);
+                    }
+                } else if let Some(obj) = rules.objects.last_mut()
+                    && obj.text.is_none()
                 {
-                    texts.insert(id, text);
+                    // A text box's or shape's text, and its alignment
+                    // (grbit: horizontal in bits 1-3, vertical in 4-6).
+                    let grbit = u16::from_le_bytes([
+                        data.first().copied().unwrap_or(0),
+                        data.get(1).copied().unwrap_or(0),
+                    ]);
+                    obj.text = txo_text(&data, &bounds).map(|t| crate::xls_drawing::ObjText {
+                        text: t,
+                        h_align: ((grbit >> 1) & 7) as u8,
+                        v_align: ((grbit >> 4) & 7) as u8,
+                    });
                 }
             }
             0x001C => {

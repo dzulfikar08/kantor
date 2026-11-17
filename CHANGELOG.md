@@ -16,6 +16,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   `.xlsx` files and from `.doc`, `.ppt`, `.xls`, `.ods` and `.rtf` imports (which used to leave
   them out). The file keeps the original picture.
 - `.ods` imports bring GIF and SVG pictures too.
+- `.xls` imports bring shapes, lines and text boxes with their text, fill and outline (LibreOffice's
+  freeform shapes too).
 - `.doc` imports bring grouped shapes as groups, and LibreOffice's rounded rectangles, ellipses and
   other shapes with arcs keep their curves instead of becoming rectangles.
 

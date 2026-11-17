@@ -34,6 +34,8 @@ use std::io::Write as _;
 
 use ironcalc_base::types::Worksheet;
 
+use kantor_ooxml::officeart::{arrowhead, color, cust_geom, preset};
+
 use crate::drawing::{Anchor, EMU_PER_PX, EditAs, Marker, RefData, RefValue};
 use crate::xls::{Bytes, Records};
 use crate::xls_formula::{Context, decompile};
@@ -43,6 +45,16 @@ use crate::xls_formula::{Context, decompile};
 pub(crate) struct RawObj {
     pub ot: Option<u16>,
     pub chart: Option<Vec<(u16, Vec<u8>)>>,
+    /// The `TXO` after a text box's or shape's `OBJ`.
+    pub text: Option<ObjText>,
+}
+
+/// A text box's text (`TXO`) and its alignment: horizontal 1 left,
+/// 2 centre, 3 right, 4 justify; vertical 1 top, 2 middle, 3 bottom.
+pub(crate) struct ObjText {
+    pub text: String,
+    pub h_align: u8,
+    pub v_align: u8,
 }
 
 /// A sheet's column widths and row heights in Excel's pixels.
@@ -226,6 +238,13 @@ struct Shape {
     hidden: bool,
     /// Inside a group (placed relative to it): not shown.
     grouped: bool,
+    /// The shape type (`msosptX`, the `FSP`'s instance) and its flags.
+    typ: u16,
+    flags: u32,
+    /// Simple properties by id (fill, line, rotation…) and complex ones'
+    /// data (name, vertices…).
+    props: HashMap<u16, u32>,
+    complex: HashMap<u16, Vec<u8>>,
 }
 
 /// The shapes with client data in the order of their `OBJ`s.
@@ -246,6 +265,15 @@ fn shapes(drawing: &[u8]) -> Vec<Shape> {
                     let mut data = false;
                     for c in art(r.body) {
                         match c.typ {
+                            0xF00A => {
+                                s.typ = c.inst;
+                                s.flags = u32::from_le_bytes(
+                                    c.body
+                                        .get(4..8)
+                                        .and_then(|b| b.try_into().ok())
+                                        .unwrap_or([0; 4]),
+                                );
+                            }
                             0xF00B | 0xF122 => properties(&c, &mut s),
                             0xF010 => {
                                 let mut b = Bytes::new(c.body);
@@ -274,48 +302,32 @@ fn shapes(drawing: &[u8]) -> Vec<Shape> {
 /// What `shape` takes from an `OfficeArtFOPT`: the picture, cropping,
 /// name, description and whether it is hidden.
 fn properties(r: &Art<'_>, shape: &mut Shape) {
-    let n = r.inst as usize;
-    let Some(table) = r.body.get(..n * 6) else {
-        return;
+    kantor_ooxml::officeart::read_fopt(
+        r.inst as usize,
+        r.body,
+        &mut shape.props,
+        &mut shape.complex,
+    );
+    let text = |id: u16| {
+        let units: Vec<u16> = shape
+            .complex
+            .get(&id)?
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .take_while(|&u| u != 0)
+            .collect();
+        Some(String::from_utf16_lossy(&units)).filter(|s| !s.trim().is_empty())
     };
-    let mut complex = n * 6;
-    for p in table.as_chunks::<6>().0 {
-        let opid = u16::from_le_bytes([p[0], p[1]]);
-        let op = u32::from_le_bytes([p[2], p[3], p[4], p[5]]);
-        let id = opid & 0x3FFF;
-        if opid & 0x8000 != 0 {
-            // Complex: `op` bytes after the table, in order.
-            let data = r.body.get(complex..complex.saturating_add(op as usize));
-            complex = complex.saturating_add(op as usize);
-            let text = || {
-                let units: Vec<u16> = data?
-                    .as_chunks::<2>()
-                    .0
-                    .iter()
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
-                    .take_while(|&u| u != 0)
-                    .collect();
-                Some(String::from_utf16_lossy(&units)).filter(|s| !s.is_empty())
-            };
-            match id {
-                0x0380 => shape.name = text(),
-                0x0381 => shape.descr = text(),
-                _ => {}
-            }
-            continue;
-        }
-        let frac = || (op as i32) as f32 / 65536.0;
-        match id {
-            0x0100 => shape.crop[1] = frac(),
-            0x0101 => shape.crop[3] = frac(),
-            0x0102 => shape.crop[0] = frac(),
-            0x0103 => shape.crop[2] = frac(),
-            0x0104 => shape.pib = Some(op),
-            // Group shape booleans: fHidden with its "use" bit.
-            0x03BF => shape.hidden = op & 0x0002_0000 != 0 && op & 0x2 != 0,
-            _ => {}
-        }
-    }
+    shape.name = text(0x0380);
+    shape.descr = text(0x0381);
+    let prop = |id: u16| shape.props.get(&id).copied();
+    let frac = |id: u16| prop(id).map_or(0.0, |op| (op as i32) as f32 / 65536.0);
+    shape.crop = [frac(0x0102), frac(0x0100), frac(0x0103), frac(0x0101)];
+    shape.pib = prop(0x0104);
+    // Group shape booleans: fHidden with its "use" bit.
+    shape.hidden = prop(0x03BF).is_some_and(|op| op & 0x0002_0000 != 0 && op & 0x2 != 0);
 }
 
 /// An object of a sheet, read.
@@ -420,6 +432,14 @@ pub(crate) fn sheet_objects(
                     continue;
                 }
             },
+            // Line, rectangle, oval, arc, text box, AutoShape.
+            0x01..=0x04 | 0x06 | 0x1E => match office_shape(&shape, ot, obj.text.as_ref()) {
+                Some(s) => ObjectKind::Shape(Box::new(s)),
+                None => {
+                    skipped.shapes += 1;
+                    continue;
+                }
+            },
             _ => {
                 skipped.shapes += 1;
                 continue;
@@ -434,6 +454,78 @@ pub(crate) fn sheet_objects(
         });
     }
     out
+}
+
+/// A drawing object (`OBJ` type `ot`) as a DrawingML shape: its
+/// geometry from the object type (or the AutoShape's type), its fill,
+/// outline, flips, turn and text from the OfficeArt properties and `TXO`.
+fn office_shape(
+    shape: &Shape,
+    ot: u16,
+    text: Option<&ObjText>,
+) -> Option<crate::ods_drawing::Shape> {
+    let prop = |id: u16| shape.props.get(&id).copied();
+    // A boolean property set: the value bit and its "use" bit 16 above.
+    let flag = |id: u16, bit: u32| {
+        prop(id).and_then(|v| (v & (1 << (bit + 16)) != 0).then_some(v & (1 << bit) != 0))
+    };
+    let custom;
+    let prst = match ot {
+        0x01 => "line",
+        0x02 | 0x06 => "rect",
+        0x03 => "ellipse",
+        0x04 => "arc",
+        _ => match preset(shape.typ) {
+            Some(p) => p,
+            // Freeforms (LibreOffice writes all its shapes that way): their
+            // path as `a:custGeom`.
+            None => {
+                custom = cust_geom(&shape.props, &shape.complex)?;
+                custom.as_str()
+            }
+        },
+    };
+    let line_shape = prst == "line" || prst == "straightConnector1";
+    let tx_box = ot == 0x06 || shape.typ == 202;
+    let filled = flag(0x1BF, 4).unwrap_or(!line_shape && prst != "arc");
+    let fill = filled.then(|| prop(0x181).and_then(color).unwrap_or(0xFFFFFF));
+    let lined = flag(0x1FF, 3).unwrap_or(true);
+    let line = lined.then(|| crate::ods_drawing::SimpleLine {
+        color: prop(0x1C0).and_then(color).unwrap_or(0),
+        width: prop(0x1CB).map_or(9525, i64::from),
+        dash: prop(0x1CE).is_some_and(|d| d != 0),
+        head: prop(0x1D0).and_then(arrowhead),
+        tail: prop(0x1D1).and_then(arrowhead),
+    });
+    let rot = prop(0x04).map_or(0.0, |v| f64::from(v as i32) / 65536.0);
+    let (align, anchor) = match text {
+        Some(t) => (
+            match t.h_align {
+                2 => Some("ctr"),
+                3 => Some("r"),
+                4 => Some("just"),
+                _ => None,
+            },
+            match t.v_align {
+                2 => "ctr",
+                3 => "b",
+                _ => "t",
+            },
+        ),
+        None => (None, "t"),
+    };
+    Some(crate::ods_drawing::Shape::simple(
+        prst,
+        line_shape,
+        (shape.flags & 0x40 != 0, shape.flags & 0x80 != 0),
+        tx_box,
+        fill,
+        line,
+        text.map_or("", |t| t.text.as_str()),
+        align,
+        anchor,
+        rot,
+    ))
 }
 
 /// The records of the substream starting at `offset` (a chart sheet's),

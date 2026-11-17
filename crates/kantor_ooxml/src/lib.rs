@@ -24,6 +24,7 @@
 //! are left alone: Transitional allows them too and the readers take them.
 
 mod layout;
+pub mod officeart;
 
 pub use layout::{needs_spreadsheet_layout, spreadsheet_layout};
 
