@@ -22,9 +22,16 @@
 //!   `draw:line`, `draw:connector` and text frames (`draw:text-box`):
 //!   preset geometry, fill (solid, two-colour gradient, none), outline
 //!   (colour, width, dashes, arrowheads), rotation and plain text with its
-//!   size, weight, slant, colour and alignment. Groups are brought in as
-//!   their shapes. Freeform shapes (paths, polygons), form controls and
-//!   unknown custom shapes are left out with a note.
+//!   size, weight, slant, colour and alignment; freeforms (`draw:path`,
+//!   `draw:polygon`, `draw:polyline`, `draw:regular-polygon`) as their path
+//!   (`a:custGeom`; arcs become lines), callouts (`draw:caption`), shapes
+//!   inside hyperlinks (`draw:a`) and dimension lines (`draw:measure`, as
+//!   lines). Groups (`draw:g`) stay groups (`xdr:grpSp`; charts inside them
+//!   are left out). Form controls (`draw:control` with their
+//!   `office:forms` element) are drawn the way Excel draws its form
+//!   controls (a button, a check box with its label, a list box with its
+//!   value...), not run. An embedded object that isn't a chart shows its
+//!   replacement picture. Unknown custom shapes are left out with a note.
 
 use std::collections::HashMap;
 use std::io::Read as _;
@@ -33,7 +40,8 @@ use roxmltree::{Document, Node};
 
 use crate::drawing::{Anchor, EMU_PER_PX, EditAs, Marker};
 use crate::xls_drawing::{
-    Blip, Chart, Labels, Object, ObjectKind, Plot, PlotKind, Scale, Series, Skipped, Text, esc,
+    Blip, Chart, Labels, Member, Object, ObjectKind, Plot, PlotKind, Scale, Series, Skipped, Text,
+    esc,
 };
 
 pub(crate) const NS_DRAW: &str = "urn:oasis:names:tc:opendocument:xmlns:drawing:1.0";
@@ -45,6 +53,8 @@ const NS_FO: &str = "urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0
 const NS_TEXT: &str = "urn:oasis:names:tc:opendocument:xmlns:text:1.0";
 const NS_CHART: &str = "urn:oasis:names:tc:opendocument:xmlns:chart:1.0";
 const NS_DRAWOOO: &str = "http://openoffice.org/2010/draw";
+const NS_FORM: &str = "urn:oasis:names:tc:opendocument:xmlns:form:1.0";
+const NS_XML: &str = "http://www.w3.org/XML/1998/namespace";
 const NS_LOEXT: &str = "urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0";
 
 /// A length (`1.85in`, `2.5cm`, `10pt`...) in px (96 per inch).
@@ -305,6 +315,8 @@ pub(crate) struct Reader<'a, 'i, R: std::io::Read + std::io::Seek> {
     zip: zip::ZipArchive<R>,
     styles: StyleSet<'a, 'i>,
     rename: &'a dyn Fn(&str) -> String,
+    /// Form controls (`office:forms`) by id, for `draw:control`.
+    controls: HashMap<&'a str, Node<'a, 'i>>,
     pub out: OdsDrawings,
 }
 
@@ -394,6 +406,18 @@ impl Spans {
 }
 
 /// A drawing object found in a table, with the cell it is anchored to.
+/// A drawing element read by [`Reader::member`].
+struct Item {
+    kind: ObjectKind,
+    /// `[x, y, w, h]`, px.
+    rect: [f64; 4],
+    /// Degrees.
+    turned: f64,
+    name: Option<String>,
+    descr: Option<String>,
+    hidden: bool,
+}
+
 pub(crate) struct Found<'a, 'i> {
     pub node: Node<'a, 'i>,
     pub cell: Option<(u32, u32)>,
@@ -405,10 +429,25 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
         docs: &[&'a Document<'i>],
         rename: &'a dyn Fn(&str) -> String,
     ) -> Self {
+        let mut controls = HashMap::new();
+        for d in docs {
+            for n in d
+                .descendants()
+                .filter(|n| n.is_element() && n.tag_name().namespace() == Some(NS_FORM))
+            {
+                for id in [n.attribute((NS_XML, "id")), n.attribute((NS_FORM, "id"))]
+                    .into_iter()
+                    .flatten()
+                {
+                    controls.insert(id, n);
+                }
+            }
+        }
         Self {
             zip,
             styles: StyleSet::read(docs),
             rename,
+            controls,
             out: OdsDrawings::default(),
         }
     }
@@ -452,50 +491,18 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
         out: &mut Vec<Object>,
         top: bool,
     ) {
-        let tag = n.tag_name();
-        if tag.namespace() != Some(NS_DRAW) {
-            return;
-        }
-        if tag.name() == "g" {
-            for c in n.children().filter(|c| c.is_element()) {
-                self.object(c, in_cell, origin, geometry, out, false);
-            }
-            return;
-        }
-        let name = n.attribute((NS_DRAW, "name")).map(str::to_owned);
-        let descr = n
-            .children()
-            .find(|c| c.has_tag_name((NS_SVG, "desc")) || c.has_tag_name((NS_SVG, "title")))
-            .and_then(|c| c.text())
-            .map(str::to_owned);
-        let hidden = [
-            n.attribute((NS_DRAWOOO, "display")),
-            n.attribute((NS_DRAW, "display")),
-        ]
-        .contains(&Some("none"));
-        let place = Place::of(n);
-        let kind = match tag.name() {
-            "frame" => self.frame(n, &place),
-            "custom-shape" | "rect" | "ellipse" | "circle" | "line" | "connector" => {
-                self.shape(n, &place)
-            }
-            _ => {
-                self.out.skipped.shapes += 1;
-                return;
-            }
-        };
-        let Some((kind, size)) = kind else {
+        let Some(item) = self.member(n, false) else {
             return;
         };
-        let (x, y) = (origin.0 + place.x, origin.1 + place.y);
-        let (w, h) = size;
+        let [ix, iy, w, h] = item.rect;
+        let (x, y) = (origin.0 + ix, origin.1 + iy);
         let from = geometry.marker_at(x, y);
-        // The end cell is only right for the outermost object.
+        // The end cell is only right for the outermost, unturned object.
         let end = top
             .then(|| n.attribute((NS_TABLE, "end-cell-address")))
             .flatten()
             .and_then(cell)
-            .filter(|_| place.rot == 0.0);
+            .filter(|_| item.turned == 0.0);
         let to = match end {
             Some((c, r)) => {
                 let ex = n.attribute((NS_TABLE, "end-x")).and_then(px).unwrap_or(0.0);
@@ -524,11 +531,117 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
                     EditAs::Absolute
                 },
             },
+            name: item.name,
+            descr: item.descr,
+            hidden: item.hidden,
+            kind: item.kind,
+        });
+    }
+
+    /// One drawing element as an object with its box (`[x, y, w, h]` px,
+    /// in its table's or cell's coordinates); `None` when it's left out
+    /// (counted in `skipped`). `inner`: inside a group, where charts aren't
+    /// drawn.
+    fn member(&mut self, n: Node<'a, 'i>, inner: bool) -> Option<Item> {
+        let tag = n.tag_name();
+        if tag.namespace() != Some(NS_DRAW) {
+            return None;
+        }
+        // A hyperlink around a shape: the shape.
+        if tag.name() == "a" {
+            let c = n
+                .children()
+                .find(|c| c.is_element() && c.tag_name().namespace() == Some(NS_DRAW))?;
+            return self.member(c, inner);
+        }
+        let name = n.attribute((NS_DRAW, "name")).map(str::to_owned);
+        let descr = n
+            .children()
+            .find(|c| c.has_tag_name((NS_SVG, "desc")) || c.has_tag_name((NS_SVG, "title")))
+            .and_then(|c| c.text())
+            .map(str::to_owned);
+        let hidden = [
+            n.attribute((NS_DRAWOOO, "display")),
+            n.attribute((NS_DRAW, "display")),
+        ]
+        .contains(&Some("none"));
+        if tag.name() == "g" {
+            // A group: its members in the sheet's coordinates (EMU), the
+            // group's box around them.
+            let members: Vec<Item> = n
+                .children()
+                .filter(|c| c.is_element())
+                .filter_map(|c| self.member(c, true))
+                .collect();
+            if members.is_empty() {
+                return None;
+            }
+            let x0 = members
+                .iter()
+                .map(|m| m.rect[0])
+                .fold(f64::INFINITY, f64::min);
+            let y0 = members
+                .iter()
+                .map(|m| m.rect[1])
+                .fold(f64::INFINITY, f64::min);
+            let x1 = members
+                .iter()
+                .map(|m| m.rect[0] + m.rect[2])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let y1 = members
+                .iter()
+                .map(|m| m.rect[1] + m.rect[3])
+                .fold(f64::NEG_INFINITY, f64::max);
+            let r = |v: [f64; 4]| v.map(emu);
+            let members = members
+                .into_iter()
+                .map(|m| Member {
+                    name: m.name,
+                    descr: m.descr,
+                    hidden: m.hidden,
+                    rect: r(m.rect),
+                    kind: m.kind,
+                })
+                .collect();
+            let rect = [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)];
+            return Some(Item {
+                kind: ObjectKind::Group {
+                    ch: r(rect),
+                    members,
+                },
+                rect,
+                turned: 0.0,
+                name,
+                descr,
+                hidden,
+            });
+        }
+        let place = Place::of(n);
+        let kind = match tag.name() {
+            "frame" => self.frame(n, &place),
+            "custom-shape" | "rect" | "ellipse" | "circle" | "line" | "connector" | "path"
+            | "polygon" | "polyline" | "regular-polygon" | "caption" | "measure" => {
+                self.shape(n, &place)
+            }
+            "control" => self.control(n, &place),
+            _ => {
+                self.out.skipped.shapes += 1;
+                return None;
+            }
+        };
+        let (kind, (w, h)) = kind?;
+        if inner && matches!(kind, ObjectKind::Chart(_)) {
+            self.out.skipped.charts += 1;
+            return None;
+        }
+        Some(Item {
+            kind,
+            rect: [place.x, place.y, w, h],
+            turned: place.rot,
             name,
             descr,
             hidden,
-            kind,
-        });
+        })
     }
 
     /// A `draw:frame`: picture, chart or text box, and its size.
@@ -600,7 +713,13 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
                         };
                         Some((ObjectKind::Chart(Box::new(chart)), size))
                     }
+                    // An embedded object that isn't a chart Kantor draws
+                    // (or a chart Kantor doesn't draw): the picture saved
+                    // for it, when there is one.
                     _ => {
+                        if let Some(p) = self.replacement(n, place) {
+                            return Some(p);
+                        }
                         if parsed.is_none() && xml.is_none() {
                             self.out.skipped.shapes += 1;
                         } else {
@@ -621,6 +740,23 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
                 None
             }
         }
+    }
+
+    /// The replacement picture of an embedded object's frame (a
+    /// `draw:image` beside its `draw:object`).
+    fn replacement(&mut self, n: Node<'a, 'i>, place: &Place) -> Option<(ObjectKind, (f64, f64))> {
+        let img = n.children().find(|c| c.has_tag_name((NS_DRAW, "image")))?;
+        let href = img.attribute((NS_XLINK, "href"))?;
+        let data = self.bytes(href)?;
+        let ext = picture_ext(&data)?;
+        self.out.blips.push(Some(Blip::Image { ext, data }));
+        Some((
+            ObjectKind::Picture {
+                blip: self.out.blips.len() - 1,
+                crop: [0.0; 4],
+            },
+            (place.w, place.h),
+        ))
     }
 
     /// The common part of a shape: fill, outline, rotation, text anchor.
@@ -686,6 +822,7 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
             line,
             text: Vec::new(),
             anchor,
+            off: (0, 0),
             size: (emu(place.w), emu(place.h)),
             rot: place.rot,
         }
@@ -712,7 +849,46 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
     /// A shape element, and its size.
     fn shape(&mut self, n: Node<'a, 'i>, place: &Place) -> Option<(ObjectKind, (f64, f64))> {
         let tag = n.tag_name().name();
-        if tag == "line" || tag == "connector" {
+        // Freeforms: their path as `a:custGeom`.
+        if matches!(tag, "path" | "polygon" | "polyline" | "regular-polygon") {
+            let open = tag == "polyline";
+            let geom = match tag {
+                "path" => n
+                    .attribute((NS_SVG, "d"))
+                    .and_then(|d| svg_path_geom(d, view_box(n)?)),
+                "regular-polygon" => {
+                    let corners = n
+                        .attribute((NS_DRAW, "corners"))
+                        .and_then(|c| c.parse::<usize>().ok())
+                        .unwrap_or(3);
+                    let sharp = n
+                        .attribute((NS_DRAW, "sharpness"))
+                        .and_then(|v| v.trim_end_matches('%').parse::<f64>().ok());
+                    let concave = n.attribute((NS_DRAW, "concave")) == Some("true");
+                    regular_polygon_geom(corners, concave.then(|| sharp.unwrap_or(0.0)))
+                }
+                _ => n
+                    .attribute((NS_DRAW, "points"))
+                    .and_then(|pts| points_geom(pts, view_box(n)?, !open)),
+            };
+            let Some(geom) = geom else {
+                self.out.skipped.shapes += 1;
+                return None;
+            };
+            let mut shape = self.base_shape(n, place, geom, Vec::new());
+            if open {
+                shape.fill = Fill::None;
+            }
+            shape.text = self.paragraphs(n);
+            return Some((ObjectKind::Shape(Box::new(shape)), (place.w, place.h)));
+        }
+        // A callout: a box with a pointer, its text inside.
+        if tag == "caption" {
+            let mut shape = self.base_shape(n, place, "wedgeRectCallout".into(), Vec::new());
+            shape.text = self.paragraphs(n);
+            return Some((ObjectKind::Shape(Box::new(shape)), (place.w, place.h)));
+        }
+        if tag == "line" || tag == "connector" || tag == "measure" {
             let p = |a: &str| n.attribute((NS_SVG, a)).and_then(px);
             let (Some(x1), Some(y1), Some(x2), Some(y2)) = (p("x1"), p("y1"), p("x2"), p("y2"))
             else {
@@ -785,6 +961,111 @@ impl<'a, 'i, R: std::io::Read + std::io::Seek> Reader<'a, 'i, R> {
             let flip = |a: &str| geom.attribute((NS_DRAW, a)) == Some("true");
             shape.flip = (flip("mirror-horizontal"), flip("mirror-vertical"));
         }
+        Some((ObjectKind::Shape(Box::new(shape)), (place.w, place.h)))
+    }
+
+    /// A form control (`draw:control` and its `office:forms` element),
+    /// drawn as Excel draws its form controls: a button, a check box or
+    /// option button with its label, a list or combo box, a text field, a
+    /// label or a group box. It isn't run.
+    fn control(&mut self, n: Node<'a, 'i>, place: &Place) -> Option<(ObjectKind, (f64, f64))> {
+        let Some(form) = n
+            .attribute((NS_DRAW, "control"))
+            .and_then(|id| self.controls.get(id).copied())
+        else {
+            self.out.skipped.shapes += 1;
+            return None;
+        };
+        let attr = |a: &str| form.attribute((NS_FORM, a)).unwrap_or_default();
+        let label = attr("label");
+        let grey = 0xF0F0F0;
+        let edge = SimpleLine {
+            color: 0xA0A0A0,
+            width: 9525,
+            dash: false,
+            head: None,
+            tail: None,
+        };
+        let list_value = || {
+            let v = attr("current-value");
+            let v = if v.is_empty() { attr("value") } else { v };
+            if v.is_empty() {
+                form.children()
+                    .find(|c| {
+                        c.has_tag_name((NS_FORM, "option"))
+                            && c.attribute((NS_FORM, "current-selected")) == Some("true")
+                    })
+                    .and_then(|c| c.attribute((NS_FORM, "label")))
+                    .unwrap_or_default()
+                    .to_owned()
+            } else {
+                v.to_owned()
+            }
+        };
+        let (prst, fill, line, text, align, anchor) = match form.tag_name().name() {
+            "button" => (
+                "rect",
+                Some(grey),
+                Some(edge),
+                label.to_owned(),
+                Some("ctr"),
+                "ctr",
+            ),
+            "checkbox" => {
+                let on = matches!(attr("current-state"), "checked")
+                    || matches!(attr("state"), "checked");
+                let mark = if on { '\u{2611}' } else { '\u{2610}' };
+                ("rect", None, None, format!("{mark} {label}"), None, "ctr")
+            }
+            "radio" => {
+                let on = attr("current-selected") == "true" || attr("selected") == "true";
+                let mark = if on { '\u{25C9}' } else { '\u{25CB}' };
+                ("rect", None, None, format!("{mark} {label}"), None, "ctr")
+            }
+            "combobox" | "listbox" => (
+                "rect",
+                Some(0xFFFFFF),
+                Some(edge),
+                format!("{}  \u{25BE}", list_value()),
+                None,
+                "ctr",
+            ),
+            "text" | "formatted-text" | "number" | "date" | "time" => (
+                "rect",
+                Some(0xFFFFFF),
+                Some(edge),
+                {
+                    let v = attr("current-value");
+                    if v.is_empty() { attr("value") } else { v }
+                }
+                .to_owned(),
+                None,
+                "ctr",
+            ),
+            "fixed-text" => ("rect", None, None, label.to_owned(), None, "t"),
+            "frame" => ("rect", None, Some(edge), label.to_owned(), None, "t"),
+            _ => (
+                "rect",
+                Some(grey),
+                Some(edge),
+                label.to_owned(),
+                Some("ctr"),
+                "ctr",
+            ),
+        };
+        let mut shape = Shape::simple(
+            prst,
+            false,
+            (false, false),
+            true,
+            fill,
+            line,
+            &text,
+            align,
+            anchor,
+            place.rot,
+        );
+        shape.size = (emu(place.w), emu(place.h));
         Some((ObjectKind::Shape(Box::new(shape)), (place.w, place.h)))
     }
 
@@ -1090,7 +1371,8 @@ pub(crate) struct Shape {
     text: Vec<Para>,
     /// `bodyPr anchor`.
     anchor: &'static str,
-    /// EMU.
+    /// EMU (in a group, the group's coordinates).
+    off: (i64, i64),
     size: (i64, i64),
     /// Degrees clockwise.
     rot: f64,
@@ -1150,9 +1432,17 @@ impl Shape {
             }),
             text,
             anchor,
+            off: (0, 0),
             size: (0, 0),
             rot,
         }
+    }
+
+    /// Placed at `[x, y, w, h]` (inside a group).
+    pub(crate) fn placed(mut self, r: [i64; 4]) -> Self {
+        self.off = (r[0], r[1]);
+        self.size = (r[2], r[3]);
+        self
     }
 
     /// The `xdr:sp` (or `xdr:cxnSp`) element.
@@ -1221,7 +1511,9 @@ impl Shape {
             format!("<a:prstGeom prst=\"{}\">{av}</a:prstGeom>", esc(&self.prst))
         };
         let sppr = format!(
-            "<xdr:spPr><a:xfrm{rot}{flips}><a:off x=\"0\" y=\"0\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>{geom}{fill}{ln}</xdr:spPr>",
+            "<xdr:spPr><a:xfrm{rot}{flips}><a:off x=\"{}\" y=\"{}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>{geom}{fill}{ln}</xdr:spPr>",
+            self.off.0,
+            self.off.1,
             self.size.0.max(0),
             self.size.1.max(0),
         );
@@ -1282,6 +1574,261 @@ impl Shape {
             if self.tx_box { " txBox=\"1\"" } else { "" }
         )
     }
+}
+
+/// A shape's `svg:viewBox` (`minx miny w h`).
+fn view_box(n: Node) -> Option<[f64; 4]> {
+    let v: Vec<f64> = n
+        .attribute((NS_SVG, "viewBox"))?
+        .split(|c: char| c.is_whitespace() || c == ',')
+        .filter(|t| !t.is_empty())
+        .filter_map(|t| t.parse().ok())
+        .collect();
+    (v.len() == 4).then(|| [v[0], v[1], v[2].max(1.0), v[3].max(1.0)])
+}
+
+/// `a:custGeom` with one path (`body`: its commands) `w` × `h` units.
+fn cust_geom(w: f64, h: f64, body: &str, closed_fill: bool) -> String {
+    format!(
+        "<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst><a:path w=\"{}\" h=\"{}\"{}>{body}</a:path></a:pathLst></a:custGeom>",
+        w.round().max(1.0) as i64,
+        h.round().max(1.0) as i64,
+        if closed_fill { "" } else { " fill=\"none\"" }
+    )
+}
+
+fn pt(x: f64, y: f64) -> String {
+    format!(
+        "<a:pt x=\"{}\" y=\"{}\"/>",
+        x.round() as i64,
+        y.round() as i64
+    )
+}
+
+/// `draw:points` (`x,y x,y …` in the view box) as a closed polygon or an
+/// open polyline.
+fn points_geom(points: &str, vb: [f64; 4], closed: bool) -> Option<String> {
+    let pts: Vec<(f64, f64)> = points
+        .split_whitespace()
+        .filter_map(|p| {
+            let (x, y) = p.split_once(',')?;
+            Some((
+                x.parse::<f64>().ok()? - vb[0],
+                y.parse::<f64>().ok()? - vb[1],
+            ))
+        })
+        .collect();
+    if pts.len() < 2 {
+        return None;
+    }
+    let mut body = format!("<a:moveTo>{}</a:moveTo>", pt(pts[0].0, pts[0].1));
+    for (x, y) in &pts[1..] {
+        body.push_str(&format!("<a:lnTo>{}</a:lnTo>", pt(*x, *y)));
+    }
+    if closed {
+        body.push_str("<a:close/>");
+    }
+    Some(cust_geom(vb[2], vb[3], &body, closed))
+}
+
+/// A regular polygon with `corners` corners (a star when `concave` gives
+/// its sharpness in percent), in a 21600 square.
+fn regular_polygon_geom(corners: usize, concave: Option<f64>) -> Option<String> {
+    let n = corners.clamp(3, 100);
+    let r = 10_800.0;
+    let mut pts = Vec::new();
+    let steps = if concave.is_some() { 2 * n } else { n };
+    let inner = concave.map(|s| r * (1.0 - s.clamp(0.0, 100.0) / 100.0).max(0.05));
+    for k in 0..steps {
+        let a = std::f64::consts::PI * 2.0 * k as f64 / steps as f64 - std::f64::consts::FRAC_PI_2;
+        let rr = match inner {
+            Some(i) if k % 2 == 1 => i,
+            _ => r,
+        };
+        pts.push((r + rr * a.cos(), r + rr * a.sin()));
+    }
+    let mut body = format!("<a:moveTo>{}</a:moveTo>", pt(pts[0].0, pts[0].1));
+    for (x, y) in &pts[1..] {
+        body.push_str(&format!("<a:lnTo>{}</a:lnTo>", pt(*x, *y)));
+    }
+    body.push_str("<a:close/>");
+    Some(cust_geom(21_600.0, 21_600.0, &body, true))
+}
+
+/// An SVG path (`svg:d`) in the view box `vb` as `a:custGeom`: moves,
+/// lines, cubic and quadratic curves (their smooth forms too), closes;
+/// arcs become lines to their end. The path is filled unless it is open.
+fn svg_path_geom(d: &str, vb: [f64; 4]) -> Option<String> {
+    // Tokens: command letters and numbers.
+    let mut toks: Vec<Result<char, f64>> = Vec::new();
+    let b = d.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        let c = b[i] as char;
+        if c.is_ascii_alphabetic() && c != 'e' && c != 'E' {
+            toks.push(Ok(c));
+            i += 1;
+        } else if c.is_ascii_digit() || c == '-' || c == '+' || c == '.' {
+            let start = i;
+            i += 1;
+            let mut dot = c == '.';
+            while i < b.len() {
+                let ch = b[i] as char;
+                if ch.is_ascii_digit() {
+                    i += 1;
+                } else if ch == '.' && !dot {
+                    dot = true;
+                    i += 1;
+                } else if (ch == 'e' || ch == 'E') && i + 1 < b.len() {
+                    i += 1;
+                    if b[i] == b'-' || b[i] == b'+' {
+                        i += 1;
+                    }
+                } else {
+                    break;
+                }
+            }
+            toks.push(Err(d[start..i].parse().ok()?));
+        } else {
+            i += 1;
+        }
+    }
+    let (ox, oy) = (vb[0], vb[1]);
+    let mut body = String::new();
+    let (mut x, mut y) = (0.0, 0.0);
+    let (mut sx, mut sy) = (0.0, 0.0);
+    // The last control point, for S and T.
+    let mut last_c: Option<(f64, f64)> = None;
+    let mut last_q: Option<(f64, f64)> = None;
+    let mut closed = false;
+    let mut cmd = 'M';
+    let mut k = 0;
+    let p = |x: f64, y: f64| pt(x - ox, y - oy);
+    loop {
+        match toks.get(k) {
+            None => break,
+            Some(Ok(c)) => {
+                cmd = *c;
+                k += 1;
+                if matches!(cmd, 'Z' | 'z') {
+                    body.push_str("<a:close/>");
+                    closed = true;
+                    (x, y) = (sx, sy);
+                    last_c = None;
+                    last_q = None;
+                    continue;
+                }
+            }
+            Some(Err(_)) => {}
+        }
+        let rel = cmd.is_ascii_lowercase();
+        let arity = match cmd.to_ascii_uppercase() {
+            'M' | 'L' | 'T' => 2,
+            'H' | 'V' => 1,
+            'C' => 6,
+            'S' | 'Q' => 4,
+            'A' => 7,
+            'Z' => 0,
+            _ => return None,
+        };
+        if arity == 0 {
+            continue;
+        }
+        let mut v = [0.0f64; 7];
+        for slot in v.iter_mut().take(arity) {
+            match toks.get(k) {
+                Some(Err(n)) => *slot = *n,
+                _ => {
+                    return if body.is_empty() {
+                        None
+                    } else {
+                        Some(cust_geom(vb[2], vb[3], &body, closed))
+                    };
+                }
+            }
+            k += 1;
+        }
+        let (bx, by) = if rel { (x, y) } else { (0.0, 0.0) };
+        let mut cubic = None;
+        let mut quad = None;
+        match cmd.to_ascii_uppercase() {
+            'M' => {
+                (x, y) = (bx + v[0], by + v[1]);
+                (sx, sy) = (x, y);
+                body.push_str(&format!("<a:moveTo>{}</a:moveTo>", p(x, y)));
+                // Pairs after a move are lines.
+                cmd = if rel { 'l' } else { 'L' };
+            }
+            'L' => {
+                (x, y) = (bx + v[0], by + v[1]);
+                body.push_str(&format!("<a:lnTo>{}</a:lnTo>", p(x, y)));
+            }
+            'H' => {
+                x = if rel { x + v[0] } else { v[0] };
+                body.push_str(&format!("<a:lnTo>{}</a:lnTo>", p(x, y)));
+            }
+            'V' => {
+                y = if rel { y + v[0] } else { v[0] };
+                body.push_str(&format!("<a:lnTo>{}</a:lnTo>", p(x, y)));
+            }
+            'C' => {
+                let c1 = (bx + v[0], by + v[1]);
+                let c2 = (bx + v[2], by + v[3]);
+                let e = (bx + v[4], by + v[5]);
+                body.push_str(&format!(
+                    "<a:cubicBezTo>{}{}{}</a:cubicBezTo>",
+                    p(c1.0, c1.1),
+                    p(c2.0, c2.1),
+                    p(e.0, e.1)
+                ));
+                (x, y) = e;
+                cubic = Some(c2);
+            }
+            'S' => {
+                let c1 = last_c.map_or((x, y), |(cx, cy)| (2.0 * x - cx, 2.0 * y - cy));
+                let c2 = (bx + v[0], by + v[1]);
+                let e = (bx + v[2], by + v[3]);
+                body.push_str(&format!(
+                    "<a:cubicBezTo>{}{}{}</a:cubicBezTo>",
+                    p(c1.0, c1.1),
+                    p(c2.0, c2.1),
+                    p(e.0, e.1)
+                ));
+                (x, y) = e;
+                cubic = Some(c2);
+            }
+            'Q' => {
+                let c = (bx + v[0], by + v[1]);
+                let e = (bx + v[2], by + v[3]);
+                body.push_str(&format!(
+                    "<a:quadBezTo>{}{}</a:quadBezTo>",
+                    p(c.0, c.1),
+                    p(e.0, e.1)
+                ));
+                (x, y) = e;
+                quad = Some(c);
+            }
+            'T' => {
+                let c = last_q.map_or((x, y), |(cx, cy)| (2.0 * x - cx, 2.0 * y - cy));
+                let e = (bx + v[0], by + v[1]);
+                body.push_str(&format!(
+                    "<a:quadBezTo>{}{}</a:quadBezTo>",
+                    p(c.0, c.1),
+                    p(e.0, e.1)
+                ));
+                (x, y) = e;
+                quad = Some(c);
+            }
+            // Arcs: a line to the end.
+            _ => {
+                (x, y) = (bx + v[5], by + v[6]);
+                body.push_str(&format!("<a:lnTo>{}</a:lnTo>", p(x, y)));
+            }
+        }
+        last_c = cubic;
+        last_q = quad;
+    }
+    (!body.is_empty()).then(|| cust_geom(vb[2], vb[3], &body, closed))
 }
 
 /// Why a chart isn't brought in.
@@ -1512,11 +2059,13 @@ fn read_chart(
                 .then_some(labels),
             points: Vec::new(),
             bubbles,
+            label_fmt: None,
         };
         match plots.iter_mut().find(|p| p.kind == kind) {
             Some(p) => p.series.push(series),
             None => plots.push(Plot {
                 kind,
+                secondary: false,
                 varied: matches!(kind, PlotKind::Pie { .. }),
                 series: vec![series],
             }),
@@ -1565,6 +2114,7 @@ fn read_chart(
             gridlines: [grid(x_axis), grid(y_axis)],
             three_d,
             scales: [scale(x_axis), scale(y_axis)],
+            extra: Default::default(),
         },
         size,
     ))

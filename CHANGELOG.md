@@ -38,6 +38,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   with their own colours; `.ods` imports bring radar, bubble and stock charts.
 - `.xlsb` imports bring cell formatting (number formats, fonts, fills, borders, alignment), merged
   cells, column widths and row heights, not just values and formulas.
+- `.xls` imports bring grouped shapes as groups, data label and axis number formats, date axes
+  with their own bounds and units, and combination charts with scatter or pie plots or a
+  secondary axis (they used to be left out).
+- Excel 5/95 `.xls` files keep their cell formatting (fonts, number formats, fills, borders,
+  alignment), column widths, row heights and page setup, not just their values.
+- Cells with a patterned fill (stripes, dots, grids) are drawn with their pattern on the grid, not
+  as one mixed colour; `.xls` and `.xlsb` imports keep their patterns too (PDFs already printed
+  them from `.xlsx`).
+- `.ods` imports bring freehand shapes (paths, polygons, polylines, regular polygons and stars),
+  groups as groups, callouts, shapes inside links, form controls (drawn as Excel draws its form
+  controls; they aren't run) and the picture of an embedded object that isn't a chart.
+- `.xlsb` imports bring charts and pictures, defined names and data validation.
+- Charts on a date axis leave out the points outside the axis's own minimum and maximum, as
+  Excel does, and a pie in a combination chart is drawn over the other plots instead of alone.
 - `.doc` imports bring grouped shapes as groups, and LibreOffice's rounded rectangles, ellipses and
   other shapes with arcs keep their curves instead of becoming rectangles.
 - Slides and Docs: Change Layout for SmartArt (right-click in Slides, the SmartArt button beside a

@@ -104,6 +104,17 @@ pub fn slots(
     base: Option<TimeUnit>,
     major: Option<(f64, Option<TimeUnit>)>,
 ) -> Option<DateSlots> {
+    slots_within(dates, base, major, (None, None))
+}
+
+/// [`slots`] between the axis' own bounds (`c:min`, `c:max`, serials)
+/// where it has them: a point outside them isn't drawn (its place is NaN).
+pub fn slots_within(
+    dates: &[Option<f64>],
+    base: Option<TimeUnit>,
+    major: Option<(f64, Option<TimeUnit>)>,
+    (lo, hi): (Option<f64>, Option<f64>),
+) -> Option<DateSlots> {
     let ds: Vec<f64> = dates.iter().copied().collect::<Option<Vec<f64>>>()?;
     if ds.is_empty() || ds.iter().any(|d| !d.is_finite() || *d < 61.0) {
         return None;
@@ -111,14 +122,26 @@ pub fn slots(
     let mut sorted = ds.clone();
     sorted.sort_by(f64::total_cmp);
     let unit = base.unwrap_or_else(|| auto_unit(&sorted));
-    let first = sorted[0];
-    let count = units_between(first, *sorted.last()?, unit) + 1;
+    let ok = |v: &f64| v.is_finite() && *v >= 61.0;
+    let first = lo.filter(ok).unwrap_or(sorted[0]).floor();
+    let last = hi.filter(ok).unwrap_or(*sorted.last()?);
+    if last < first {
+        return None;
+    }
+    let count = units_between(first, last, unit) + 1;
     if !(1..=MAX_UNITS).contains(&count) {
         return None;
     }
     let at = ds
         .iter()
-        .map(|d| units_between(first, *d, unit) as f64 + 0.5)
+        .map(|d| {
+            let k = units_between(first, *d, unit);
+            if *d < first || k >= count {
+                f64::NAN
+            } else {
+                k as f64 + 0.5
+            }
+        })
         .collect();
     let starts: Vec<f64> = (0..count).map(|k| unit_start(first, k, unit)).collect();
     let labelled = match major {
@@ -147,6 +170,24 @@ pub fn slots(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bounds_cut_and_extend_the_axis() {
+        // Weekly dates from 2025-01-01; the axis from 2025-01-05 to
+        // 2025-01-31 in days.
+        let d: Vec<Option<f64>> = (0..4).map(|k| Some(45_658.0 + 7.0 * k as f64)).collect();
+        let s = slots_within(
+            &d,
+            Some(TimeUnit::Days),
+            None,
+            (Some(45_662.0), Some(45_688.0)),
+        )
+        .unwrap();
+        assert_eq!(s.count, 27);
+        assert!(s.at[0].is_nan(), "before the minimum");
+        assert_eq!(s.at[1], 3.5);
+        assert_eq!(s.at[3], 17.5);
+    }
 
     #[test]
     fn serials_and_dates() {

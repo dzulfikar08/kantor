@@ -19,8 +19,10 @@
 //!   row heights, frozen panes, gridlines, hidden and coloured tabs,
 //!   hyperlinks, page setup, sheet-local and print names, the 1904 date
 //!   system), notes, data validation and conditional formatting, and
-//!   [`crate::xls_drawing`] its pictures and charts. Older BIFF5 files (Excel 5/95) get values
-//!   only.
+//!   [`crate::xls_drawing`] its pictures and charts. Older BIFF5 files (Excel 5/95) get their
+//!   cell formats, column widths, row heights and page setup the same way
+//!   (their notes and drawing objects, which BIFF5 stores differently, are
+//!   left out).
 //! * **ODS** keeps its look too: [`crate::ods`] reads the cell styles,
 //!   number formats, merges, column widths, row heights, hidden rows,
 //!   columns and sheets, tab colours and frozen panes.
@@ -315,6 +317,8 @@ pub(crate) struct Imported {
     pub validations: Vec<(u32, Vec<crate::Validation>)>,
     /// Pictures and charts (`.xls`, `.ods`).
     pub drawings: crate::xls_drawing::XlsDrawings,
+    /// Patterned cell fills by the model's fill index (`.xls`, `.xlsb`).
+    pub patterns: Vec<Option<crate::FillPattern>>,
 }
 
 /// Read an `.ods` / `.xls` / `.xlsb` file via calamine (and `.xls`
@@ -418,6 +422,29 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
     if let Some(x) = &xls {
         add_xls_names(&mut model, &book, x, &names, &mut imported);
     }
+    if format == SourceFormat::Xlsb {
+        for n in crate::xlsb::defined_names(path, &names) {
+            if n.formula.contains("#REF!") {
+                continue;
+            }
+            match (n.builtin, n.name.as_str(), n.sheet) {
+                (true, "Print_Area" | "Print_Titles", Some(sheet)) => {
+                    let entry = imported.print_names.entry(sheet).or_default();
+                    if n.name == "Print_Area" {
+                        entry.0 = Some(n.formula);
+                    } else {
+                        entry.1 = Some(n.formula);
+                    }
+                }
+                (true, ..) => {}
+                _ => {
+                    if let Err(e) = model.new_defined_name(&n.name, n.sheet, &n.formula) {
+                        log::info!("name {} = {}: {e}", n.name, n.formula);
+                    }
+                }
+            }
+        }
+    }
     if format == SourceFormat::Ods {
         let rename = |n: &str| {
             names
@@ -511,6 +538,7 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
         imported.validations = applied.validations;
         imported.notes.extend(applied.notes);
         imported.drawings = applied.drawings;
+        imported.patterns = applied.patterns;
         // The active tab counts every sheet; the model has worksheets only.
         imported.active_sheet = x
             .globals
@@ -522,7 +550,16 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
     }
     if format == SourceFormat::Xlsb {
         match crate::xlsb::apply(path, &mut model, &names) {
-            Ok(c) => replaced |= c,
+            Ok(a) => {
+                replaced |= a.cleared;
+                imported.patterns = a.patterns;
+                imported.validations = a.validations;
+                if a.skipped_validations > 0 {
+                    imported
+                        .notes
+                        .push(ImportNote::ValidationsSkipped(a.skipped_validations));
+                }
+            }
             Err(e) => {
                 log::warn!("{}: formatting not read: {e}", path.display());
                 imported.notes.push(ImportNote::FormattingNotImported);

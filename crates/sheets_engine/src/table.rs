@@ -1274,6 +1274,9 @@ impl Workbook {
     /// The pattern of the cell's fill, when the file gave it a patterned
     /// fill (Excel prints it as a pattern; IronCalc keeps one colour).
     pub fn fill_pattern(&self, sheet: u32, row: u32, col: u32) -> Option<FillPattern> {
+        if self.table_styles.patterns.is_empty() {
+            return None;
+        }
         let index = self.style_index(sheet, row, col);
         let xf = self
             .model

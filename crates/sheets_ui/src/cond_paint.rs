@@ -139,3 +139,53 @@ fn paint_icon(icon: CfIcon, b: Bounds<Pixels>, window: &mut Window) {
         }
     }
 }
+
+/// A patterned cell fill (`FillPattern`): its 8 × 8 tile's dots in its
+/// foreground colour, `unit` px each, over the whole cell (the cell draws
+/// the background colour itself).
+pub(crate) fn pattern_layer(pattern: sheets_engine::FillPattern, unit: f32) -> AnyElement {
+    let color = hsla(pattern.fg);
+    let tile = pattern.tile();
+    let unit = unit.max(0.25);
+    canvas(
+        |_, _, _| {},
+        move |b, _, window, _| {
+            let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+            let cols = (w / unit).ceil() as usize;
+            let rows = (h / unit).ceil() as usize;
+            for y in 0..rows.min(4096) {
+                let bits = tile[y % 8];
+                if bits == 0 {
+                    continue;
+                }
+                let top = b.origin.y + px(y as f32 * unit);
+                // Runs of set bits along the row, the tile repeated.
+                let mut x = 0;
+                while x < cols.min(8192) {
+                    if bits & (0x80 >> (x % 8)) == 0 {
+                        x += 1;
+                        continue;
+                    }
+                    let start = x;
+                    while x < cols && bits & (0x80 >> (x % 8)) != 0 {
+                        x += 1;
+                    }
+                    let left = start as f32 * unit;
+                    let right = (x as f32 * unit).min(w);
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            point(b.origin.x + px(left), top),
+                            size(px(right - left), px(unit.min(h - y as f32 * unit))),
+                        ),
+                        color,
+                    ));
+                }
+            }
+        },
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}

@@ -20,11 +20,16 @@ pub(crate) struct Context<'a> {
     pub xti: &'a [Option<(u16, u16)>],
     /// Defined names by `LBL` index (1-based in tokens).
     pub names: &'a [String],
+    /// The workbook's number formats (`FORMAT`), for charts' `IFmt`s.
+    pub formats: &'a [ironcalc_base::types::NumFmt],
 }
 
 /// BIFF8's grid: 65,536 rows by 256 columns.
 const ROWS: i64 = 65_536;
 const COLS: i64 = 256;
+/// BIFF12's (`.xlsb`): 1,048,576 rows by 16,384 columns.
+const ROWS12: i64 = 1_048_576;
+const COLS12: i64 = 16_384;
 
 fn col_name(mut col: u32) -> String {
     let mut s = Vec::new();
@@ -40,20 +45,34 @@ fn col_name(mut col: u32) -> String {
 }
 
 /// A cell from a token's row and column fields. `rel` makes relative parts
-/// offsets from the base (`PtgRefN`, `PtgAreaN`).
-fn cell(rw: u16, col: u16, rel: bool, base: (u32, u32)) -> (u32, u32, bool, bool) {
+/// offsets from the base (`PtgRefN`, `PtgAreaN`): BIFF8, or (`b12`)
+/// BIFF12, whose rows are 32-bit and whose relative
+/// column offsets are 14-bit.
+fn cell_in(rw: u32, col: u16, rel: bool, base: (u32, u32), b12: bool) -> (u32, u32, bool, bool) {
     let col_rel = col & 0x4000 != 0;
     let row_rel = col & 0x8000 != 0;
     let c = col & 0x3FFF;
+    let (rows, cols) = if b12 { (ROWS12, COLS12) } else { (ROWS, COLS) };
     let row = if rel && row_rel {
-        (base.0 as i64 + rw as i16 as i64).rem_euclid(ROWS) as u32
+        let off = if b12 {
+            i64::from(rw as i32)
+        } else {
+            i64::from(rw as u16 as i16)
+        };
+        (base.0 as i64 + off).rem_euclid(rows) as u32
     } else {
-        rw as u32
+        rw
     };
     let column = if rel && col_rel {
-        (base.1 as i64 + (c & 0xFF) as u8 as i8 as i64).rem_euclid(COLS) as u32
+        let off = if b12 {
+            // 14-bit two's complement.
+            (i64::from(c) ^ 0x2000) - 0x2000
+        } else {
+            i64::from((c & 0xFF) as u8 as i8)
+        };
+        (base.1 as i64 + off).rem_euclid(cols) as u32
     } else {
-        c as u32
+        u32::from(c)
     };
     (row, column, row_rel, col_rel)
 }
@@ -68,15 +87,16 @@ fn a1((row, col, row_rel, col_rel): (u32, u32, bool, bool)) -> String {
     )
 }
 
-fn area(first: (u32, u32, bool, bool), last: (u32, u32, bool, bool)) -> String {
+fn area_in(first: (u32, u32, bool, bool), last: (u32, u32, bool, bool), b12: bool) -> String {
+    let (rows, cols) = if b12 { (ROWS12, COLS12) } else { (ROWS, COLS) };
     // Every row: a whole-column reference; every column: whole rows.
-    if first.0 == 0 && last.0 as i64 == ROWS - 1 {
+    if first.0 == 0 && last.0 as i64 == rows - 1 {
         let c = |(_, c, _, rel): (u32, u32, bool, bool)| {
             format!("{}{}", if rel { "" } else { "$" }, col_name(c))
         };
         return format!("{}:{}", c(first), c(last));
     }
-    if first.1 == 0 && last.1 as i64 == COLS - 1 {
+    if first.1 == 0 && last.1 as i64 == cols - 1 {
         let r = |(r, _, rel, _): (u32, u32, bool, bool)| {
             format!("{}{}", if rel { "" } else { "$" }, r + 1)
         };
@@ -147,7 +167,21 @@ impl Reader<'_> {
 /// The formula `rgce` spells, without `=`; `None` if a token isn't
 /// supported or the tokens don't make one expression.
 pub(crate) fn decompile(rgce: &[u8], ctx: &Context) -> Option<String> {
+    decompile_in(rgce, ctx, false)
+}
+
+/// [`decompile`] for BIFF12 tokens (`.xlsb`): 32-bit rows, UTF-16 strings
+/// without a flags byte, larger error references.
+pub(crate) fn decompile12(rgce: &[u8], ctx: &Context) -> Option<String> {
+    decompile_in(rgce, ctx, true)
+}
+
+fn decompile_in(rgce: &[u8], ctx: &Context, b12: bool) -> Option<String> {
     let mut r = Reader { d: rgce, pos: 0 };
+    let row =
+        |r: &mut Reader| -> Option<u32> { if b12 { r.u32() } else { r.u16().map(u32::from) } };
+    let cell = |rw: u32, col: u16, rel: bool, base: (u32, u32)| cell_in(rw, col, rel, base, b12);
+    let area = |a, b| area_in(a, b, b12);
     let mut stack: Vec<String> = Vec::new();
     while r.pos < rgce.len() {
         let raw = r.u8()?;
@@ -183,6 +217,18 @@ pub(crate) fn decompile(rgce: &[u8], ctx: &Context) -> Option<String> {
                 stack.push(format!("({a})"));
             }
             0x16 => stack.push(String::new()),
+            0x17 if b12 => {
+                let cch = r.u16()? as usize;
+                let raw = r.take(cch.checked_mul(2)?)?;
+                let units: Vec<u16> = raw
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect();
+                let s = String::from_utf16_lossy(&units);
+                stack.push(format!("\"{}\"", s.replace('"', "\"\"")));
+            }
             0x17 => {
                 let cch = r.u8()? as usize;
                 let flags = r.u8()?;
@@ -262,11 +308,11 @@ pub(crate) fn decompile(rgce: &[u8], ctx: &Context) -> Option<String> {
                 stack.push(name.clone());
             }
             0x24 | 0x2C => {
-                let (rw, col) = (r.u16()?, r.u16()?);
+                let (rw, col) = (row(&mut r)?, r.u16()?);
                 stack.push(a1(cell(rw, col, ptg == 0x2C, ctx.base)));
             }
             0x25 | 0x2D => {
-                let (r1, r2, c1, c2) = (r.u16()?, r.u16()?, r.u16()?, r.u16()?);
+                let (r1, r2, c1, c2) = (row(&mut r)?, row(&mut r)?, r.u16()?, r.u16()?);
                 let rel = ptg == 0x2D;
                 stack.push(area(
                     cell(r1, c1, rel, ctx.base),
@@ -281,11 +327,11 @@ pub(crate) fn decompile(rgce: &[u8], ctx: &Context) -> Option<String> {
                 r.take(2)?;
             }
             0x2A => {
-                r.take(4)?;
+                r.take(if b12 { 6 } else { 4 })?;
                 stack.push("#REF!".into());
             }
             0x2B => {
-                r.take(8)?;
+                r.take(if b12 { 12 } else { 8 })?;
                 stack.push("#REF!".into());
             }
             0x3A | 0x3B => {
@@ -306,17 +352,22 @@ pub(crate) fn decompile(rgce: &[u8], ctx: &Context) -> Option<String> {
                     }
                 };
                 let text = if ptg == 0x3A {
-                    let (rw, col) = (r.u16()?, r.u16()?);
+                    let (rw, col) = (row(&mut r)?, r.u16()?);
                     a1(cell(rw, col, false, ctx.base))
                 } else {
-                    let (r1, r2, c1, c2) = (r.u16()?, r.u16()?, r.u16()?, r.u16()?);
+                    let (r1, r2, c1, c2) = (row(&mut r)?, row(&mut r)?, r.u16()?, r.u16()?);
                     area(cell(r1, c1, false, ctx.base), cell(r2, c2, false, ctx.base))
                 };
                 stack.push(format!("{prefix}{text}"));
             }
             0x3C | 0x3D => {
                 // Ref3dErr / Area3dErr
-                r.take(if ptg == 0x3C { 6 } else { 10 })?;
+                r.take(match (ptg == 0x3C, b12) {
+                    (true, false) => 6,
+                    (false, false) => 10,
+                    (true, true) => 8,
+                    (false, true) => 14,
+                })?;
                 stack.push("#REF!".into());
             }
             _ => return None,
@@ -336,6 +387,7 @@ mod tests {
             sheets: &SHEETS,
             xti: &[],
             names: &[],
+            formats: &[],
         }
     }
 

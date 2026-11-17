@@ -149,8 +149,7 @@ fn ods_shapes_are_imported() {
         "Arrow line",
         "Turned arrow",
         "Notes box",
-        "Square",
-        "Circle",
+        "Pair",
         "Note callout",
         "Hidden shape",
     ] {
@@ -182,6 +181,13 @@ fn ods_shapes_are_imported() {
     assert!(callout.contains("prst=\"wedgeRectCallout\""), "{callout}");
     assert!(callout.contains("name=\"adj1\""), "{callout}");
     assert!(by("Hidden shape").hidden);
+    // The group stays a group, with its two shapes.
+    let pair = shape_xml(by("Pair"));
+    assert!(pair.starts_with("<xdr:grpSp"), "{pair}");
+    assert!(
+        pair.contains("name=\"Square\"") && pair.contains("name=\"Circle\""),
+        "{pair}"
+    );
     assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
 }
 

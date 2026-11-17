@@ -255,8 +255,16 @@ fn frozen_panes_active_tab_and_patterns() {
     assert!(head.bold);
     assert_eq!(head.font_color, Some(0xFFFFFF));
     assert_eq!(head.fill, Some(0x000080));
-    // A 25 % grey pattern, black on white, shows as one mixed colour.
+    // A 25 % grey pattern, black on white: one mixed colour for what
+    // draws fills as colours, and the pattern itself for the grid and PDF.
     assert_eq!(wb.cell_style(0, 1, 4).fill, Some(0xBFBFBF));
+    let p = wb.fill_pattern(0, 1, 4).expect("a pattern");
+    assert_eq!(
+        (p.kind.as_str(), p.fg, p.bg),
+        ("lightGray", 0, Some(0xFFFFFF))
+    );
+    assert!(wb.fill_pattern(0, 0, 1).is_none(), "a solid fill");
+    assert!(wb.fill_pattern(0, 2, 2).is_none());
     assert!(wb.show_gridlines(0));
     assert!(!wb.show_gridlines(1));
     assert!(wb.column_width(0, 0) > wb.column_width(0, 1));
@@ -631,4 +639,34 @@ fn xls_conditional_formats_keep_their_priority_order() {
     assert_eq!(cf_ranges(&wb), ["C2:C5", "B2:B5", "F2:F5"]);
     assert!(wb.undo().unwrap());
     assert_eq!(cf_ranges(&wb), ["C2:C5", "B2:B5", "A2:A5", "F2:F5"]);
+}
+
+/// An Excel 5/95 (BIFF5) workbook keeps its formatting
+/// (tests/corpus/xls/excel95.xls, from `gen_xls.py --biff5`).
+#[test]
+fn excel95_formatting() {
+    let wb = Workbook::open(corpus("excel95.xls")).unwrap();
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+    assert_eq!(wb.sheet_names(), ["Report", "Plainé"]);
+    let title = wb.cell_style(0, 0, 0);
+    assert!(title.bold);
+    assert_eq!(title.font_color, Some(0xFF0000));
+    let note = wb.cell_style(0, 0, 1);
+    assert!(note.italic && note.underline);
+    assert_eq!(wb.display_value(0, 1, 0), "1,234.50 kg");
+    assert_eq!(wb.display_value(0, 1, 1), "25.00%");
+    assert_eq!(wb.cell_style(0, 2, 0).fill, Some(0xFFFF00));
+    let boxed = wb.cell_style(0, 3, 0);
+    assert!(boxed.borders.bottom.is_some() && boxed.borders.top.is_some());
+    assert!(boxed.borders.left.is_some() && boxed.borders.right.is_some());
+    let wrapped = wb.cell_style(0, 3, 1);
+    assert!(wrapped.wrap);
+    assert_eq!(wb.cell_style(0, 4, 0).rotation, 90);
+    let grey = wb.fill_pattern(0, 2, 1).expect("a pattern");
+    assert_eq!(grey.kind, "mediumGray");
+    let (a, b) = (wb.column_width(0, 0), wb.column_width(0, 1));
+    assert!(b > 1.5 * a, "{a} {b}");
+    assert!(wb.is_column_hidden(0, 3));
+    assert!(wb.row_height(0, 3) > 1.5 * wb.row_height(0, 2));
+    assert_eq!(wb.display_value(1, 0, 0), "Plain text");
 }

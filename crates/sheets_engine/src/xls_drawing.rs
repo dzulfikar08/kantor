@@ -236,8 +236,15 @@ struct Shape {
     /// Left, top, right, bottom, as fractions.
     crop: [f32; 4],
     hidden: bool,
-    /// Inside a group (placed relative to it): not shown.
-    grouped: bool,
+    /// The group it is inside (an index into the list of shapes), placed
+    /// in that group's coordinates by `child`.
+    parent: Option<usize>,
+    /// A group's own coordinates (`OfficeArtFSPGR`: left, top, right,
+    /// bottom).
+    group: Option<[i32; 4]>,
+    /// Where a shape inside a group is (`OfficeArtChildAnchor`, in the
+    /// group's coordinates: left, top, right, bottom).
+    child: Option<[i32; 4]>,
     /// The shape type (`msosptX`, the `FSP`'s instance) and its flags.
     typ: u16,
     flags: u32,
@@ -247,55 +254,98 @@ struct Shape {
     complex: HashMap<u16, Vec<u8>>,
 }
 
-/// The shapes with client data in the order of their `OBJ`s.
+/// Four `i32`s (a rectangle) from the start of `body`.
+fn rect(body: &[u8]) -> Option<[i32; 4]> {
+    let mut out = [0i32; 4];
+    for (i, v) in out.iter_mut().enumerate() {
+        *v = i32::from_le_bytes(body.get(i * 4..i * 4 + 4)?.try_into().ok()?);
+    }
+    Some(out)
+}
+
+/// The shapes with client data in the order of their `OBJ`s, each with
+/// the group it is in.
 fn shapes(drawing: &[u8]) -> Vec<Shape> {
-    /// `level` 1 is the sheet's group; a group inside it (level 2) is an
-    /// object of the sheet through its first shape, its other shapes are
-    /// inside it, as is everything deeper.
-    fn walk(records: Vec<Art<'_>>, level: u32, out: &mut Vec<Shape>) {
-        for (i, r) in records.into_iter().enumerate() {
+    /// One `OfficeArtSpContainer`; pushed when it has client data.
+    fn shape(r: &Art<'_>, parent: Option<usize>, out: &mut Vec<Shape>) -> Option<usize> {
+        let mut s = Shape {
+            parent,
+            ..Default::default()
+        };
+        let mut data = false;
+        for c in art(r.body) {
+            match c.typ {
+                0xF00A => {
+                    s.typ = c.inst;
+                    s.flags = u32::from_le_bytes(
+                        c.body
+                            .get(4..8)
+                            .and_then(|b| b.try_into().ok())
+                            .unwrap_or([0; 4]),
+                    );
+                }
+                0xF009 => s.group = rect(c.body),
+                0xF00F => s.child = rect(c.body),
+                0xF00B | 0xF122 => properties(&c, &mut s),
+                0xF010 => {
+                    let mut b = Bytes::new(c.body);
+                    let mut a = [0u16; 9];
+                    if a.iter_mut().all(|v| b.u16().map(|x| *v = x).is_some()) {
+                        s.anchor = Some(a);
+                    }
+                }
+                0xF011 => data = true,
+                _ => {}
+            }
+        }
+        data.then(|| {
+            out.push(s);
+            out.len() - 1
+        })
+    }
+    /// The records of a level: shapes, and groups (`OfficeArtSpgrContainer`,
+    /// whose first shape is the group itself). `patriarch`: the sheet's
+    /// own group, whose shapes are the sheet's.
+    fn walk(records: Vec<Art<'_>>, parent: Option<usize>, patriarch: bool, out: &mut Vec<Shape>) {
+        for r in records {
             match r.typ {
-                0xF002 => walk(art(r.body), level, out),
-                0xF003 => walk(art(r.body), level + 1, out),
-                0xF004 => {
-                    let mut s = Shape {
-                        grouped: level >= 3 || (level == 2 && i > 0),
-                        ..Default::default()
+                0xF002 => walk(art(r.body), parent, true, out),
+                0xF003 if patriarch => {
+                    let mut inner = art(r.body).into_iter();
+                    // The patriarch's own shape (no client data).
+                    if let Some(first) = inner.next() {
+                        shape(&first, parent, out);
+                    }
+                    walk(inner.collect(), parent, false, out);
+                }
+                0xF003 => {
+                    let mut inner = art(r.body).into_iter();
+                    let Some(first) = inner.next() else {
+                        continue;
                     };
-                    let mut data = false;
-                    for c in art(r.body) {
-                        match c.typ {
-                            0xF00A => {
-                                s.typ = c.inst;
-                                s.flags = u32::from_le_bytes(
-                                    c.body
-                                        .get(4..8)
-                                        .and_then(|b| b.try_into().ok())
-                                        .unwrap_or([0; 4]),
-                                );
+                    let group = shape(&first, parent, out);
+                    // A group without an `OBJ` of its own: its shapes
+                    // still need theirs, as orphans of an unknown group.
+                    let rest: Vec<Art<'_>> = inner.collect();
+                    match group {
+                        Some(g) => {
+                            if out[g].group.is_none() {
+                                out[g].group = Some([0, 0, 1, 1]);
                             }
-                            0xF00B | 0xF122 => properties(&c, &mut s),
-                            0xF010 => {
-                                let mut b = Bytes::new(c.body);
-                                let mut a = [0u16; 9];
-                                if a.iter_mut().all(|v| b.u16().map(|x| *v = x).is_some()) {
-                                    s.anchor = Some(a);
-                                }
-                            }
-                            0xF011 => data = true,
-                            _ => {}
+                            walk(rest, Some(g), false, out)
                         }
+                        None => walk(rest, Some(usize::MAX), false, out),
                     }
-                    if data {
-                        out.push(s);
-                    }
+                }
+                0xF004 => {
+                    shape(&r, parent, out);
                 }
                 _ => {}
             }
         }
     }
     let mut out = Vec::new();
-    walk(art(drawing), 0, &mut out);
+    walk(art(drawing), None, true, &mut out);
     out
 }
 
@@ -348,6 +398,22 @@ pub(crate) enum ObjectKind {
     Chart(Box<Chart>),
     /// A shape, line or text box (`.ods`).
     Shape(Box<crate::ods_drawing::Shape>),
+    /// A group: its own coordinates (`[x, y, w, h]`, which its members'
+    /// rectangles are in) and members.
+    Group {
+        ch: [i64; 4],
+        members: Vec<Member>,
+    },
+}
+
+/// An object inside a group.
+pub(crate) struct Member {
+    pub name: Option<String>,
+    pub descr: Option<String>,
+    pub hidden: bool,
+    /// `[x, y, w, h]` in the group's coordinates.
+    pub rect: [i64; 4],
+    pub kind: ObjectKind,
 }
 
 /// What could not be brought in, for the import notes.
@@ -392,68 +458,154 @@ pub(crate) fn sheet_objects(
     ctx: &Context,
     skipped: &mut Skipped,
 ) -> Vec<Object> {
-    let shapes = shapes(drawing);
-    let mut out = Vec::new();
-    for (shape, obj) in shapes.into_iter().zip(objs) {
-        let ot = obj.ot.unwrap_or(u16::MAX);
+    let pairs: Vec<(Shape, RawObj)> = shapes(drawing).into_iter().zip(objs).collect();
+    let mut children: Vec<Vec<usize>> = vec![Vec::new(); pairs.len()];
+    for (i, (shape, obj)) in pairs.iter().enumerate() {
         // Notes are read with their NOTE records.
-        if ot == 0x19 {
+        if obj.ot == Some(0x19) {
             continue;
         }
-        // Objects inside a group count as the group.
-        if shape.grouped {
+        match shape.parent {
+            Some(p) if p < pairs.len() => children[p].push(i),
+            // Inside a group that has no `OBJ`.
+            Some(_) => skipped.shapes += 1,
+            None => {}
+        }
+    }
+    let b = Build {
+        pairs: &pairs,
+        children: &children,
+        blips,
+        ctx,
+    };
+    let mut out = Vec::new();
+    for (i, (shape, obj)) in pairs.iter().enumerate() {
+        if shape.parent.is_some() || obj.ot == Some(0x19) {
             continue;
         }
         let Some(anchor) = shape.anchor else {
             skipped.shapes += 1;
             continue;
         };
-        let kind = match ot {
+        let Some(kind) = b.kind(i, false, skipped) else {
+            continue;
+        };
+        out.push(Object {
+            anchor: geometry.anchor(&anchor),
+            name: shape.name.clone(),
+            descr: shape.descr.clone(),
+            hidden: shape.hidden,
+            kind,
+        });
+    }
+    out
+}
+
+/// What [`sheet_objects`] reads objects from.
+struct Build<'a> {
+    pairs: &'a [(Shape, RawObj)],
+    /// The shapes inside each group, by index.
+    children: &'a [Vec<usize>],
+    blips: &'a [Option<Blip>],
+    ctx: &'a Context<'a>,
+}
+
+impl Build<'_> {
+    /// Shape `i` as an object (`None`: left out and counted in `skipped`).
+    /// `inner`: inside a group, where charts aren't drawn.
+    fn kind(&self, i: usize, inner: bool, skipped: &mut Skipped) -> Option<ObjectKind> {
+        let (shape, obj) = &self.pairs[i];
+        if let Some(ch) = shape.group {
+            let mut members = Vec::new();
+            for &c in &self.children[i] {
+                let (cs, _) = &self.pairs[c];
+                let Some(rect) = cs.child.map(|r| child_rect(r, cs)) else {
+                    skipped.shapes += 1;
+                    continue;
+                };
+                let Some(kind) = self.kind(c, true, skipped) else {
+                    continue;
+                };
+                members.push(Member {
+                    name: cs.name.clone(),
+                    descr: cs.descr.clone(),
+                    hidden: cs.hidden,
+                    rect,
+                    kind,
+                });
+            }
+            if members.is_empty() {
+                return None;
+            }
+            let [l, t, r, b] = ch.map(i64::from);
+            return Some(ObjectKind::Group {
+                ch: [l, t, (r - l).max(1), (b - t).max(1)],
+                members,
+            });
+        }
+        let ot = obj.ot.unwrap_or(u16::MAX);
+        Some(match ot {
             0x08 => {
                 let blip = shape.pib.and_then(|p| (p as usize).checked_sub(1));
-                match blip.and_then(|b| blips.get(b)?.as_ref().map(|x| (b, x))) {
+                match blip.and_then(|b| self.blips.get(b)?.as_ref().map(|x| (b, x))) {
                     Some((b, Blip::Image { .. })) => ObjectKind::Picture {
                         blip: b,
                         crop: shape.crop,
                     },
                     _ => {
                         skipped.pictures += 1;
-                        continue;
+                        return None;
                     }
                 }
             }
-            0x05 => match obj.chart.as_deref().map(|c| parse_chart(c, ctx)) {
+            0x05 if inner => {
+                skipped.charts += 1;
+                return None;
+            }
+            0x05 => match obj.chart.as_deref().map(|c| parse_chart(c, self.ctx)) {
                 Some(Ok(c)) => {
                     skipped.flat += usize::from(c.three_d);
                     ObjectKind::Chart(Box::new(c))
                 }
                 _ => {
                     skipped.charts += 1;
-                    continue;
+                    return None;
                 }
             },
             // Line, rectangle, oval, arc, text box, AutoShape.
-            0x01..=0x04 | 0x06 | 0x1E => match office_shape(&shape, ot, obj.text.as_ref()) {
+            0x01..=0x04 | 0x06 | 0x1E => match office_shape(shape, ot, obj.text.as_ref()) {
                 Some(s) => ObjectKind::Shape(Box::new(s)),
                 None => {
                     skipped.shapes += 1;
-                    continue;
+                    return None;
                 }
             },
             _ => {
                 skipped.shapes += 1;
-                continue;
+                return None;
             }
-        };
-        out.push(Object {
-            anchor: geometry.anchor(&anchor),
-            name: shape.name,
-            descr: shape.descr,
-            hidden: shape.hidden,
-            kind,
-        });
+        })
     }
-    out
+}
+
+/// A child anchor (left, top, right, bottom) as `[x, y, w, h]`. OfficeArt
+/// stores a shape turned by 45° to 135° (or 225° to 315°) by the box it
+/// covers turned, DrawingML by its own box: the sides swap about the
+/// centre.
+fn child_rect(r: [i32; 4], shape: &Shape) -> [i64; 4] {
+    let [l, t, rr, b] = r.map(i64::from);
+    let (w, h) = ((rr - l).max(0), (b - t).max(0));
+    let rot = shape
+        .props
+        .get(&0x04)
+        .map_or(0.0, |&v| f64::from(v as i32) / 65536.0)
+        .rem_euclid(360.0);
+    if (45.0..135.0).contains(&rot) || (225.0..315.0).contains(&rot) {
+        let (cx, cy) = (l + w / 2, t + h / 2);
+        [cx - h / 2, cy - w / 2, h, w]
+    } else {
+        [l, t, w, h]
+    }
 }
 
 /// A drawing object (`OBJ` type `ot`) as a DrawingML shape: its
@@ -567,6 +719,37 @@ pub(crate) struct Chart {
     pub three_d: bool,
     /// Scaling of the category (or X) axis and the value axis.
     pub scales: [Scale; 2],
+    /// What `.ods` charts don't have.
+    pub extra: ChartExtra,
+}
+
+/// More of a chart: axes' number formats and a date axis.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct ChartExtra {
+    /// The category (or X) and value axes' number formats (`IFMT`).
+    pub axis_fmts: [Option<String>; 2],
+    /// The category axis is a date axis (`AXCEXT` `fDateAxis`).
+    pub date_axis: Option<DateAxis>,
+}
+
+/// A date axis' bounds and units (`AXCEXT`); dates are serials of the
+/// workbook's date system, units 0 days, 1 months, 2 years.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct DateAxis {
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    pub major: Option<(u16, u16)>,
+    pub minor: Option<(u16, u16)>,
+    pub base: Option<u16>,
+}
+
+/// `c:baseTimeUnit` / `c:majorTimeUnit` for an `AXCEXT` unit.
+fn time_unit(du: u16) -> &'static str {
+    match du {
+        1 => "months",
+        2 => "years",
+        _ => "days",
+    }
 }
 
 /// An axis' scaling (`VALUERANGE`, `CATSERRANGE`).
@@ -593,6 +776,8 @@ pub(crate) struct Labels {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Plot {
     pub kind: PlotKind,
+    /// On the secondary axes (`AXISPARENT` 1).
+    pub secondary: bool,
     /// Each point its own colour (pie charts).
     pub varied: bool,
     pub series: Vec<Series>,
@@ -651,6 +836,8 @@ pub(crate) struct Series {
     pub points: Vec<(u16, u32)>,
     /// A bubble chart's sizes: a reference.
     pub bubbles: Option<String>,
+    /// Its data labels' own number format.
+    pub label_fmt: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -685,6 +872,8 @@ struct TextBlock {
     point: u16,
     /// Data label position (`Text.dlp`).
     dlp: u16,
+    /// Its own number format (`AI` with `fCustomIfmt`).
+    fmt: Option<String>,
 }
 
 /// `c:dLblPos` for a `Text.dlp` value.
@@ -786,7 +975,10 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
     let mut last = 0u16;
     let mut series: Vec<RawSeries> = Vec::new();
     // (icrt, kind, varied); `None` kind: a type Kantor doesn't draw.
-    let mut groups: Vec<(u16, Option<PlotKind>, bool)> = Vec::new();
+    // (icrt, kind, varied, secondary).
+    let mut groups: Vec<(u16, Option<PlotKind>, bool, bool)> = Vec::new();
+    // The axis group (`AXISPARENT`) being read: 1 for the secondary.
+    let mut axis_parent = 0u16;
     let mut text: Option<TextBlock> = None;
     let mut axis: Option<u16> = None;
     let mut chart = Chart {
@@ -798,11 +990,16 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
         gridlines: [false; 2],
         three_d: false,
         scales: [Scale::default(); 2],
+        extra: ChartExtra::default(),
     };
+    // Number formats of data labels by series index.
+    let mut label_fmt: Vec<(u16, String)> = Vec::new();
     // Label positions by series index, from TEXT blocks linked to them.
     let mut label_pos: Vec<(u16, &'static str)> = Vec::new();
     // The primary axes come first; a secondary axis group's are skipped.
     let mut scaled = [false; 2];
+    let mut scaled_fmt = [false; 2];
+    let mut date_read = false;
     let mut in_chart = false;
     for (typ, d) in recs {
         let mut b = Bytes::new(d);
@@ -826,6 +1023,9 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                                     if let Some(c) = dlp_code(t.dlp) {
                                         label_pos.push((t.series, c));
                                     }
+                                    if let Some(f) = t.fmt {
+                                        label_fmt.push((t.series, f));
+                                    }
                                 }
                                 _ => {}
                             }
@@ -837,6 +1037,7 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                 continue;
             }
             0x1002 => in_chart = true,
+            0x1041 => axis_parent = b.u16().unwrap_or(0),
             SERIES if stack.len() == 1 => series.push(RawSeries::default()),
             0x104A | 0x104B | 0x105B if in_series => {
                 if let Some(s) = series.last_mut() {
@@ -848,7 +1049,19 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                 let (Some(id), Some(rt)) = (b.u8(), b.u8()) else {
                     continue;
                 };
-                let formula = b.skip(4).and_then(|_| b.take(d.len().saturating_sub(6)));
+                let custom = b.u16().is_some_and(|f| f & 1 != 0);
+                let ifmt = b.u16();
+                let formula = b.take(d.len().saturating_sub(6));
+                // A text's (data labels') own number format.
+                if top == Some(TEXT)
+                    && custom
+                    && let (Some(tb), Some(ifmt)) = (text.as_mut(), ifmt)
+                {
+                    tb.fmt = Some(ironcalc_base::number_format::get_num_fmt(
+                        i32::from(ifmt),
+                        ctx.formats,
+                    ));
+                }
                 if top == Some(SERIES)
                     && let Some(s) = series.last_mut()
                     && rt == 2
@@ -935,6 +1148,34 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                     };
                 }
             }
+            // IFMT: an axis' number format.
+            0x104E if top == Some(AXIS) => {
+                if let (Some(f), Some(a @ 0..=1)) = (b.u16(), axis)
+                    && !scaled_fmt[a as usize]
+                {
+                    scaled_fmt[a as usize] = true;
+                    chart.extra.axis_fmts[a as usize] = Some(
+                        ironcalc_base::number_format::get_num_fmt(i32::from(f), ctx.formats),
+                    );
+                }
+            }
+            // AXCEXT: a category axis' date settings.
+            0x1062 if top == Some(AXIS) && axis == Some(0) && !date_read => {
+                date_read = true;
+                let mut v = [0u16; 9];
+                if v.iter_mut().all(|x| b.u16().map(|y| *x = y).is_some()) {
+                    let [min, max, major, du_major, minor, du_minor, base, _, f] = v;
+                    if f & 0x10 != 0 {
+                        chart.extra.date_axis = Some(DateAxis {
+                            min: (f & 0x01 == 0).then_some(f64::from(min)),
+                            max: (f & 0x02 == 0).then_some(f64::from(max)),
+                            major: (f & 0x04 == 0 && major > 0).then_some((major, du_major)),
+                            minor: (f & 0x08 == 0 && minor > 0).then_some((minor, du_minor)),
+                            base: (f & 0x20 == 0).then_some(base),
+                        });
+                    }
+                }
+            }
             // CATSERRANGE: catCross, catLabel, catMark, flags.
             0x1020 if top == Some(AXIS) => {
                 if let (Some(f), Some(a @ 0..=1)) = (b.skip(6).and_then(|_| b.u16()), axis)
@@ -1012,7 +1253,7 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
             CHARTFORMAT => {
                 let r = (|| Some((b.skip(16)?, b.u16()?, b.u16()?)))();
                 let (flags, icrt) = r.map_or((0, groups.len() as u16), |(_, f, i)| (f, i));
-                groups.push((icrt, None, flags & 1 != 0));
+                groups.push((icrt, None, flags & 1 != 0, axis_parent == 1));
             }
             0x1017..=0x101B | 0x103E | 0x103F | 0x1040 | 0x1061 if top == Some(CHARTFORMAT) => {
                 let Some(g) = groups.last_mut() else {
@@ -1093,13 +1334,18 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
     if !in_chart || groups.is_empty() {
         return Err(Unsupported);
     }
+    for (i, f) in label_fmt {
+        if let Some(s) = series.get_mut(i as usize) {
+            s.s.label_fmt = Some(f);
+        }
+    }
     for (i, pos) in label_pos {
         if let Some(l) = series.get_mut(i as usize).and_then(|s| s.s.labels.as_mut()) {
             l.pos = Some(pos);
         }
     }
     groups.sort_by_key(|g| g.0);
-    for (icrt, kind, varied) in &groups {
+    for (icrt, kind, varied, secondary) in &groups {
         let list: Vec<Series> = series
             .iter()
             .filter(|s| s.group == *icrt && !s.aux)
@@ -1115,16 +1361,19 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
         }
         chart.plots.push(Plot {
             kind: kind.ok_or(Unsupported)?,
+            secondary: *secondary,
             varied: *varied,
             series: list,
         });
     }
-    // One plot, or bars, lines and areas on the same axes.
+    // One plot, or columns, lines, areas, scatter and pies together.
     let combinable = |p: &Plot| {
         matches!(
             p.kind,
             PlotKind::Line { .. }
                 | PlotKind::Area { .. }
+                | PlotKind::Scatter
+                | PlotKind::Pie { .. }
                 | PlotKind::Bar {
                     horizontal: false,
                     ..
@@ -1192,12 +1441,31 @@ fn solid(c: u32) -> String {
 pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -> String {
     let mut plots = String::new();
     let mut idx = 0;
-    let axes_ids = "<c:axId val=\"500000001\"/><c:axId val=\"500000002\"/>";
     let mut horizontal = false;
-    let mut scatter = false;
-    let mut pie = false;
     let mut surface = false;
+    // Combinations: plots with categories on the primary axes (ids 1 and
+    // 2) or the secondary ones (5, hidden, and 4 on the right); a scatter
+    // plot beside them on a hidden X axis (3) spanning the categories, as
+    // Excel places it; pies over the plot area.
+    let xy = |p: &Plot| matches!(p.kind, PlotKind::Scatter | PlotKind::Bubble);
+    let is_pie = |p: &Plot| matches!(p.kind, PlotKind::Pie { .. } | PlotKind::OfPie { .. });
+    let with_cats = |p: &Plot| !xy(p) && !is_pie(p);
+    let any_cats = chart.plots.iter().any(with_cats);
+    let pie = chart.plots.iter().all(is_pie);
+    let scatter = !any_cats && chart.plots.iter().any(xy);
+    let has_primary = chart.plots.iter().any(|p| !is_pie(p) && !p.secondary);
+    let second = |p: &Plot| p.secondary && has_primary && !is_pie(p) && any_cats;
+    let side_scatter = any_cats && chart.plots.iter().any(xy);
+    let second_cats = chart.plots.iter().any(|p| with_cats(p) && second(p));
+    let second_any = chart.plots.iter().any(second);
+    let ids = |a: u8, b: u8| format!("<c:axId val=\"50000000{a}\"/><c:axId val=\"50000000{b}\"/>");
     for p in &chart.plots {
+        let axes_ids = match (xy(p) && any_cats, second(p)) {
+            (true, true) => ids(3, 4),
+            (true, false) => ids(3, 2),
+            (false, true) => ids(5, 4),
+            (false, false) => ids(1, 2),
+        };
         let mut sers = String::new();
         let is_pie = matches!(p.kind, PlotKind::Pie { .. } | PlotKind::OfPie { .. });
         let lines = matches!(
@@ -1243,7 +1511,7 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
             let dlbls = s
                 .labels
                 .filter(|l| l.value || l.percent || l.category || l.series)
-                .map(|l| dlbls(&l, p.kind))
+                .map(|l| dlbls(&l, p.kind, s.label_fmt.as_deref()))
                 .unwrap_or_default();
             // Points with their own colour come before the labels.
             let mut dpts = String::new();
@@ -1332,7 +1600,6 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                 "<c:areaChart><c:grouping val=\"{grouping}\"/><c:varyColors val=\"{varied}\"/>{sers}{axes_ids}</c:areaChart>"
             ),
             PlotKind::Pie { hole, first_angle } => {
-                pie = true;
                 if hole > 0 {
                     format!(
                         "<c:doughnutChart><c:varyColors val=\"{varied}\"/>{sers}<c:firstSliceAng val=\"{first_angle}\"/><c:holeSize val=\"{}\"/></c:doughnutChart>",
@@ -1345,13 +1612,11 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                 }
             }
             PlotKind::Scatter => {
-                scatter = true;
                 format!(
                     "<c:scatterChart><c:scatterStyle val=\"lineMarker\"/><c:varyColors val=\"{varied}\"/>{sers}{axes_ids}</c:scatterChart>"
                 )
             }
             PlotKind::Bubble => {
-                scatter = true;
                 format!(
                     "<c:bubbleChart><c:varyColors val=\"{varied}\"/>{sers}<c:bubbleScale val=\"100\"/><c:showNegBubbles val=\"0\"/>{axes_ids}</c:bubbleChart>"
                 )
@@ -1377,7 +1642,6 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                 }
             ),
             PlotKind::OfPie { bar } => {
-                pie = true;
                 let ty = if bar { "bar" } else { "pie" };
                 format!(
                     "<c:ofPieChart><c:ofPieType val=\"{ty}\"/><c:varyColors val=\"{varied}\"/>{sers}<c:gapWidth val=\"100\"/><c:secondPieSize val=\"75\"/><c:serLines/></c:ofPieChart>"
@@ -1391,7 +1655,19 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
             .unwrap_or_default()
     };
     let grid = |on: bool| if on { "<c:majorGridlines/>" } else { "" };
-    let tail = "<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>";
+    let tail_of = |fmt: &Option<String>| {
+        let num = match fmt {
+            Some(c) => format!("<c:numFmt formatCode=\"{}\" sourceLinked=\"0\"/>", esc(c)),
+            None => "<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>".to_owned(),
+        };
+        format!(
+            "{num}<c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>"
+        )
+    };
+    let (cat_tail, val_tail) = (
+        tail_of(&chart.extra.axis_fmts[0]),
+        tail_of(&chart.extra.axis_fmts[1]),
+    );
     let (cat_pos, val_pos) = if horizontal { ("l", "b") } else { ("b", "l") };
     let (cat_title, val_title) = (title(&chart.cat_title), title(&chart.val_title));
     let (cat_grid, val_grid) = (grid(chart.gridlines[0]), grid(chart.gridlines[1]));
@@ -1412,24 +1688,61 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
         },
         unit(&chart.scales[1]),
     );
+    let cat_axis = match chart.extra.date_axis {
+        // A date axis: its bounds and time units.
+        Some(d) => {
+            let num = |name: &str, v: Option<f64>| {
+                v.map(|v| format!("<c:{name} val=\"{v}\"/>"))
+                    .unwrap_or_default()
+            };
+            let orient = if chart.scales[0].reverse {
+                "maxMin"
+            } else {
+                "minMax"
+            };
+            let base = d
+                .base
+                .map(|u| format!("<c:baseTimeUnit val=\"{}\"/>", time_unit(u)))
+                .unwrap_or_default();
+            let unit = |name: &str, u: Option<(u16, u16)>| {
+                u.map(|(n, du)| {
+                    format!(
+                        "<c:{name}Unit val=\"{n}\"/><c:{name}TimeUnit val=\"{}\"/>",
+                        time_unit(du)
+                    )
+                })
+                .unwrap_or_default()
+            };
+            format!(
+                "<c:dateAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"{orient}\"/>{}{}</c:scaling><c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/>{cat_grid}{cat_title}{cat_tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"0\"/><c:lblOffset val=\"100\"/>{base}{}{}</c:dateAx>",
+                num("max", d.max),
+                num("min", d.min),
+                unit("major", d.major),
+                unit("minor", d.minor),
+            )
+        }
+        None => format!(
+            "<c:catAx><c:axId val=\"500000001\"/>{cat_scaling}<c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/>{cat_grid}{cat_title}{cat_tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>"
+        ),
+    };
     let axes = if pie {
         String::new()
     } else if scatter {
         format!(
-            "<c:valAx><c:axId val=\"500000001\"/>{cat_scaling}<c:delete val=\"0\"/><c:axPos val=\"b\"/>{cat_grid}{cat_title}{tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/>{cat_unit}</c:valAx>\
-<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"l\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/>{val_unit}</c:valAx>"
+            "<c:valAx><c:axId val=\"500000001\"/>{cat_scaling}<c:delete val=\"0\"/><c:axPos val=\"b\"/>{cat_grid}{cat_title}{cat_tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/>{cat_unit}</c:valAx>\
+<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"l\"/>{val_grid}{val_title}{val_tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/>{val_unit}</c:valAx>"
         )
     } else {
         format!(
-            "<c:catAx><c:axId val=\"500000001\"/>{cat_scaling}<c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/>{cat_grid}{cat_title}{tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>\
-<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/>{val_unit}</c:valAx>{}",
+            "{cat_axis}\
+<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/>{val_grid}{val_title}{val_tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/>{val_unit}</c:valAx>{}",
             // A surface chart's series axis.
             if surface {
                 "<c:serAx><c:axId val=\"500000003\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/></c:serAx>"
             } else {
                 ""
             }
-        )
+        ) + &combo_axes(chart, side_scatter, second_cats, second_any, data)
     };
     let title = match &chart.title {
         Some(t) => format!(
@@ -1447,6 +1760,47 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
 <c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
 <c:roundedCorners val=\"0\"/><c:chart>{title}<c:plotArea><c:layout/>{plots}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart></c:chartSpace>"
     )
+}
+
+/// The extra axes of a combination chart (see [`chart_xml`]).
+fn combo_axes(
+    chart: &Chart,
+    side_scatter: bool,
+    second_cats: bool,
+    second_any: bool,
+    data: &dyn Fn(&str) -> Option<RefData>,
+) -> String {
+    let marks = "<c:numFmt formatCode=\"General\" sourceLinked=\"1\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>";
+    let mut out = String::new();
+    if side_scatter {
+        // Category k (1-based) at x = k, between ticks.
+        let n = chart
+            .plots
+            .iter()
+            .filter(|p| !matches!(p.kind, PlotKind::Scatter | PlotKind::Bubble))
+            .flat_map(|p| p.series.iter())
+            .filter_map(|s| data(&s.values).map(|d| d.values.len()))
+            .max()
+            .unwrap_or(1)
+            .max(1);
+        let y = if second_any && !second_cats { 4 } else { 2 };
+        out.push_str(&format!(
+            "<c:valAx><c:axId val=\"500000003\"/><c:scaling><c:orientation val=\"minMax\"/><c:max val=\"{}\"/><c:min val=\"0.5\"/></c:scaling><c:delete val=\"1\"/><c:axPos val=\"b\"/>{marks}<c:crossAx val=\"50000000{y}\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/></c:valAx>",
+            n as f64 + 0.5
+        ));
+    }
+    if second_cats {
+        out.push_str(&format!(
+            "<c:catAx><c:axId val=\"500000005\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"1\"/><c:axPos val=\"b\"/>{marks}<c:crossAx val=\"500000004\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>"
+        ));
+    }
+    if second_any {
+        let x = if second_cats { 5 } else { 3 };
+        out.push_str(&format!(
+            "<c:valAx><c:axId val=\"500000004\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"r\"/>{marks}<c:crossAx val=\"50000000{x}\"/><c:crosses val=\"max\"/><c:crossBetween val=\"between\"/></c:valAx>"
+        ));
+    }
+    out
 }
 
 /// `c:scaling` of an axis (bounds and log scale for value axes).
@@ -1468,7 +1822,7 @@ fn scaling(s: &Scale, value: bool) -> String {
 }
 
 /// A series' `c:dLbls` (positions the plot type doesn't have left out).
-fn dlbls(l: &Labels, kind: PlotKind) -> String {
+fn dlbls(l: &Labels, kind: PlotKind, fmt: Option<&str>) -> String {
     let (tag, stacked, pie) = match kind {
         PlotKind::Bar { grouping, .. } => ("barChart", grouping != "clustered", false),
         PlotKind::Line { grouping } => ("lineChart", grouping != "standard", false),
@@ -1497,8 +1851,11 @@ fn dlbls(l: &Labels, kind: PlotKind) -> String {
         .map(|p| format!("<c:dLblPos val=\"{}\"/>", p.code()))
         .unwrap_or_default();
     let f = |v: bool| u8::from(v);
+    let num = fmt
+        .map(|c| format!("<c:numFmt formatCode=\"{}\" sourceLinked=\"0\"/>", esc(c)))
+        .unwrap_or_default();
     format!(
-        "<c:dLbls>{pos}<c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"{}\"/><c:showSerName val=\"{}\"/><c:showPercent val=\"{}\"/><c:showBubbleSize val=\"0\"/></c:dLbls>",
+        "<c:dLbls>{num}{pos}<c:showLegendKey val=\"0\"/><c:showVal val=\"{}\"/><c:showCatName val=\"{}\"/><c:showSerName val=\"{}\"/><c:showPercent val=\"{}\"/><c:showBubbleSize val=\"0\"/></c:dLbls>",
         f(l.value),
         f(l.category),
         f(l.series),
@@ -1529,6 +1886,26 @@ impl XlsDrawings {
     pub(crate) fn is_empty(&self) -> bool {
         self.sheets.is_empty() && self.chart_sheets.is_empty()
     }
+
+    /// Moves date axes' bounds by `days` (a 1904 workbook's dates read
+    /// into the 1900 system, as its cells are).
+    pub(crate) fn shift_dates(&mut self, days: f64) {
+        let charts = self
+            .sheets
+            .iter_mut()
+            .flat_map(|(_, o)| o.iter_mut())
+            .filter_map(|o| match &mut o.kind {
+                ObjectKind::Chart(c) => Some(c.as_mut()),
+                _ => None,
+            })
+            .chain(self.chart_sheets.iter_mut().map(|c| &mut c.chart));
+        for c in charts {
+            if let Some(d) = &mut c.extra.date_axis {
+                d.min = d.min.map(|v| v + days);
+                d.max = d.max.map(|v| v + days);
+            }
+        }
+    }
 }
 
 const NS_MAIN: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -1554,6 +1931,16 @@ pub(crate) fn rels(list: &[(String, &str, String)]) -> String {
 struct DrawingPart {
     xml: String,
     rels: Vec<(String, &'static str, String)>,
+}
+
+/// How an object is written: its name, description, whether it's hidden,
+/// its number (for a default name) and, inside a group, its `[x, y, w, h]`.
+struct Element<'a> {
+    name: Option<&'a str>,
+    descr: Option<&'a str>,
+    hidden: bool,
+    number: usize,
+    rect: Option<[i64; 4]>,
 }
 
 /// The package parts being written.
@@ -1589,9 +1976,9 @@ impl Parts {
             "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<xdr:wsDr {XDR}>"
         );
         let mut rels = Vec::new();
+        // cNvPr ids, unique across the drawing (groups' members too).
+        let mut next_id = 2;
         for (i, o) in objects.iter().enumerate() {
-            let id = i + 2;
-            let rid = format!("rId{}", rels.len() + 1);
             let edit_as = match o.anchor {
                 Anchor::TwoCell {
                     edit_as: EditAs::OneCell,
@@ -1603,66 +1990,16 @@ impl Parts {
                 } => " editAs=\"absolute\"",
                 _ => "",
             };
-            let hidden = if o.hidden { " hidden=\"1\"" } else { "" };
-            let descr = o
-                .descr
-                .as_deref()
-                .map(|d| format!(" descr=\"{}\"", esc(d)))
-                .unwrap_or_default();
-            let body = match &o.kind {
-                ObjectKind::Picture { blip, crop } => {
-                    let Some(Some(Blip::Image { ext, data: bytes })) = blips.get(*blip) else {
-                        continue;
-                    };
-                    let n = self.media.len() + 1;
-                    let media = self
-                        .media
-                        .entry(*blip)
-                        .or_insert_with(|| format!("xl/media/image{n}.{ext}"))
-                        .clone();
-                    if !self.files.iter().any(|(p, _)| *p == media) {
-                        self.files.push((media.clone(), bytes.clone()));
-                    }
-                    rels.push((
-                        rid.clone(),
-                        "image",
-                        format!("../media/{}", media.rsplit('/').next().unwrap_or_default()),
-                    ));
-                    let name = o
-                        .name
-                        .clone()
-                        .unwrap_or_else(|| format!("Picture {}", i + 1));
-                    let src = if crop.iter().any(|c| *c != 0.0) {
-                        let v = |f: f32| (f64::from(f) * 100_000.0).round() as i64;
-                        format!(
-                            "<a:srcRect l=\"{}\" t=\"{}\" r=\"{}\" b=\"{}\"/>",
-                            v(crop[0]),
-                            v(crop[1]),
-                            v(crop[2]),
-                            v(crop[3])
-                        )
-                    } else {
-                        String::new()
-                    };
-                    format!(
-                        "<xdr:pic><xdr:nvPicPr><xdr:cNvPr id=\"{id}\" name=\"{}\"{descr}{hidden}/><xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r=\"{NS_R}\" r:embed=\"{rid}\"/>{src}<a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>",
-                        esc(&name)
-                    )
-                }
-                ObjectKind::Chart(chart) => {
-                    let part = self.chart(chart, data);
-                    rels.push((
-                        rid.clone(),
-                        "chart",
-                        format!("../charts/{}", part.rsplit('/').next().unwrap_or_default()),
-                    ));
-                    let name = o.name.clone().unwrap_or_else(|| format!("Chart {}", i + 1));
-                    frame(id, &name, &descr, hidden, &rid)
-                }
-                ObjectKind::Shape(shape) => {
-                    let name = o.name.clone().unwrap_or_else(|| format!("Shape {}", i + 1));
-                    shape.xml(id, &name, &descr, hidden)
-                }
+            let el = Element {
+                name: o.name.as_deref(),
+                descr: o.descr.as_deref(),
+                hidden: o.hidden,
+                number: i + 1,
+                rect: None,
+            };
+            let Some(body) = self.element(&o.kind, &el, &mut next_id, &mut rels, blips, data)
+            else {
+                continue;
             };
             xml.push_str(&format!(
                 "<xdr:twoCellAnchor{edit_as}>{}{body}<xdr:clientData/></xdr:twoCellAnchor>",
@@ -1671,6 +2008,138 @@ impl Parts {
         }
         xml.push_str("</xdr:wsDr>");
         DrawingPart { xml, rels }
+    }
+
+    /// The element of one object (`xdr:pic`, `xdr:graphicFrame`, `xdr:sp`,
+    /// `xdr:grpSp`…); `None` for a picture that isn't there.
+    fn element(
+        &mut self,
+        kind: &ObjectKind,
+        el: &Element<'_>,
+        next_id: &mut usize,
+        rels: &mut Vec<(String, &'static str, String)>,
+        blips: &[Option<Blip>],
+        data: &dyn Fn(&str) -> Option<RefData>,
+    ) -> Option<String> {
+        let id = *next_id;
+        *next_id += 1;
+        let i = el.number;
+        let hidden = if el.hidden { " hidden=\"1\"" } else { "" };
+        let descr = el
+            .descr
+            .map(|d| format!(" descr=\"{}\"", esc(d)))
+            .unwrap_or_default();
+        let xfrm = |r: Option<[i64; 4]>| {
+            let [x, y, w, h] = r.unwrap_or_default();
+            format!(
+                "<a:xfrm><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{}\" cy=\"{}\"/></a:xfrm>",
+                w.max(0),
+                h.max(0)
+            )
+        };
+        Some(match kind {
+            ObjectKind::Picture { blip, crop } => {
+                let Some(Some(Blip::Image { ext, data: bytes })) = blips.get(*blip) else {
+                    return None;
+                };
+                let rid = format!("rId{}", rels.len() + 1);
+                let n = self.media.len() + 1;
+                let media = self
+                    .media
+                    .entry(*blip)
+                    .or_insert_with(|| format!("xl/media/image{n}.{ext}"))
+                    .clone();
+                if !self.files.iter().any(|(p, _)| *p == media) {
+                    self.files.push((media.clone(), bytes.clone()));
+                }
+                rels.push((
+                    rid.clone(),
+                    "image",
+                    format!("../media/{}", media.rsplit('/').next().unwrap_or_default()),
+                ));
+                let name = el
+                    .name
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("Picture {i}"));
+                let src = if crop.iter().any(|c| *c != 0.0) {
+                    let v = |f: f32| (f64::from(f) * 100_000.0).round() as i64;
+                    format!(
+                        "<a:srcRect l=\"{}\" t=\"{}\" r=\"{}\" b=\"{}\"/>",
+                        v(crop[0]),
+                        v(crop[1]),
+                        v(crop[2]),
+                        v(crop[3])
+                    )
+                } else {
+                    String::new()
+                };
+                format!(
+                    "<xdr:pic><xdr:nvPicPr><xdr:cNvPr id=\"{id}\" name=\"{}\"{descr}{hidden}/><xdr:cNvPicPr><a:picLocks noChangeAspect=\"1\"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip xmlns:r=\"{NS_R}\" r:embed=\"{rid}\"/>{src}<a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr>{}<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic>",
+                    esc(&name),
+                    xfrm(el.rect)
+                )
+            }
+            ObjectKind::Chart(chart) => {
+                let rid = format!("rId{}", rels.len() + 1);
+                let part = self.chart(chart, data);
+                rels.push((
+                    rid.clone(),
+                    "chart",
+                    format!("../charts/{}", part.rsplit('/').next().unwrap_or_default()),
+                ));
+                let name = el
+                    .name
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("Chart {i}"));
+                frame(id, &name, &descr, hidden, &rid)
+            }
+            ObjectKind::Shape(shape) => {
+                let name = el
+                    .name
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("Shape {i}"));
+                match el.rect {
+                    Some(r) => shape
+                        .as_ref()
+                        .clone()
+                        .placed(r)
+                        .xml(id, &name, &descr, hidden),
+                    None => shape.xml(id, &name, &descr, hidden),
+                }
+            }
+            ObjectKind::Group { ch, members } => {
+                let name = el
+                    .name
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| format!("Group {i}"));
+                let [cx, cy, cw, chh] = *ch;
+                // A sheet's group is placed by its anchor: its own box is
+                // its child space.
+                let [x, y, w, h] = el.rect.unwrap_or(*ch);
+                let mut out = format!(
+                    "<xdr:grpSp><xdr:nvGrpSpPr><xdr:cNvPr id=\"{id}\" name=\"{}\"{descr}{hidden}/><xdr:cNvGrpSpPr/></xdr:nvGrpSpPr><xdr:grpSpPr><a:xfrm><a:off x=\"{x}\" y=\"{y}\"/><a:ext cx=\"{}\" cy=\"{}\"/><a:chOff x=\"{cx}\" y=\"{cy}\"/><a:chExt cx=\"{}\" cy=\"{}\"/></a:xfrm></xdr:grpSpPr>",
+                    esc(&name),
+                    w.max(0),
+                    h.max(0),
+                    cw.max(0),
+                    chh.max(0)
+                );
+                for (n, m) in members.iter().enumerate() {
+                    let inner = Element {
+                        name: m.name.as_deref(),
+                        descr: m.descr.as_deref(),
+                        hidden: m.hidden,
+                        number: n + 1,
+                        rect: Some(m.rect),
+                    };
+                    if let Some(x) = self.element(&m.kind, &inner, next_id, rels, blips, data) {
+                        out.push_str(&x);
+                    }
+                }
+                out.push_str("</xdr:grpSp>");
+                out
+            }
+        })
     }
 
     /// Adds `d` as drawing number `n`; returns its part name.
@@ -1893,6 +2362,7 @@ mod tests {
             sheets: &sheets,
             xti: &xti,
             names: &[],
+            formats: &[],
         };
         assert_eq!(
             decompile(&absolute(&rgce), &ctx).as_deref(),
@@ -1913,6 +2383,7 @@ mod tests {
             sheets: &sheets,
             xti: &xti,
             names: &[],
+            formats: &[],
         };
         let u16s = |v: &[u16]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
         let ai = |id: u8, col: u8| {
@@ -1964,6 +2435,7 @@ mod tests {
             sheets: &sheets,
             xti: &xti,
             names: &[],
+            formats: &[],
         };
         let u16s = |v: &[u16]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
         let mut ai = vec![1u8, 2, 0, 0, 0, 0, 11, 0];

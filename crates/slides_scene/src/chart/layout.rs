@@ -366,7 +366,17 @@ pub fn layout(chart: &Chart, w: f32, h: f32, d: &Defaults, m: &mut dyn Measure) 
         .any(|g| matches!(g.kind, Kind::Pie { .. }))
     {
         let plot = manual_rect(chart.plot_layout, w, h).unwrap_or(area);
-        plot_back(chart, &mut o, plot);
+        // A combination with columns, lines or scatter: those on their
+        // axes, the pies over them (as Excel draws them).
+        if chart
+            .groups
+            .iter()
+            .any(|g| !matches!(g.kind, Kind::Pie { .. } | Kind::OfPie(_)))
+        {
+            axes_chart(chart, &mut o, [w, h], area);
+        } else {
+            plot_back(chart, &mut o, plot);
+        }
         for g in chart
             .groups
             .iter()
@@ -1567,10 +1577,11 @@ fn axes_chart(chart: &Chart, o: &mut Out, [w, h]: [f32; 2], area: Rect) {
                     .collect();
                 // A date axis: categories at their dates, a unit apart.
                 if c.ax.kind == AxisKind::Date
-                    && let Some(ds) = super::date_axis::slots(
+                    && let Some(ds) = super::date_axis::slots_within(
                         &s.cat_nums,
                         c.ax.base_unit,
                         c.ax.major_unit.map(|u| (u, c.ax.major_time_unit)),
+                        (c.ax.min, c.ax.max),
                     )
                 {
                     let code = fmt
@@ -2151,6 +2162,10 @@ fn bars(
         let mut prev: Option<(f32, f32)> = None;
         for (i, v) in s.vals.iter().enumerate() {
             let Some(v) = v else { continue };
+            // Outside a date axis' bounds.
+            if !ca.slot(i).is_finite() {
+                continue;
+            }
             let (b0, b1) = stacks[k][i];
             let (b0, b1) = match s.float.as_ref().and_then(|f| f.ranges.get(i).copied()) {
                 Some(Some(r)) => r,
@@ -2290,8 +2305,13 @@ fn lines(
         let n = s.vals.len();
         if area {
             // Filled down to the previous series (stacked) or the base.
-            let top: Vec<P> = (0..n).map(|i| at(i, stacks[k][i].1)).collect();
+            let shown = |i: &usize| ca.slot(*i).is_finite();
+            let top: Vec<P> = (0..n)
+                .filter(shown)
+                .map(|i| at(i, stacks[k][i].1))
+                .collect();
             let bottom: Vec<P> = (0..n)
+                .filter(shown)
                 .rev()
                 .map(|i| {
                     at(
@@ -2327,7 +2347,7 @@ fn lines(
                     None => (n, (None, 0.0)),
                 })
             {
-                match v {
+                match v.filter(|_| i < n && ca.slot(i).is_finite()) {
                     Some(_) => run.push(at(i, st)),
                     None => {
                         if run.len() >= 2 {
@@ -2340,6 +2360,9 @@ fn lines(
         }
         for (i, v) in s.vals.iter().enumerate() {
             let Some(v) = v else { continue };
+            if !ca.slot(i).is_finite() {
+                continue;
+            }
             let q = at(i, stacks[k][i].1);
             if !area && let Some(m) = marker_style(g, s, Some(i), o.d) {
                 markers.push((m, q));
@@ -2536,7 +2559,7 @@ fn stock_lines(g: &Group, ca: &Ax, va: &Ax, plot: Rect, o: &mut Out) {
                 .iter()
                 .filter_map(|s| s.vals.get(i).copied().flatten())
                 .collect();
-            if vs.len() < 2 {
+            if vs.len() < 2 || !ca.slot(i).is_finite() {
                 continue;
             }
             let lo = vs.iter().copied().fold(f64::INFINITY, f64::min);
@@ -2558,6 +2581,9 @@ fn stock_lines(g: &Group, ca: &Ax, va: &Ax, plot: Rect, o: &mut Out) {
             ) else {
                 continue;
             };
+            if !ca.slot(i).is_finite() {
+                continue;
+            }
             let (look, auto) = if close >= open {
                 (&ud.up, o.d.background)
             } else {
