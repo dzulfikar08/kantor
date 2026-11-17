@@ -16,6 +16,14 @@ ignore = [
     { id = "RUSTSEC-2026-0368", reason = "zip 8 via docx-rs; extract() never called" },
     { id = "RUSTSEC-2026-0369", reason = "zip 8 via docx-rs; extract() never called" },
     { id = "RUSTSEC-2026-0429", reason = "zip 8 via docx-rs; extract() never called" },
+    # Also zip 8 via docx-rs: AES (feature "aes-crypto" off), legacy Shrink/Reduce/Implode
+    # (feature "legacy-zip" off), extract() and ZipStreamReader (never used).
+    { id = "RUSTSEC-2026-0545", reason = "zip 8 via docx-rs; aes-crypto feature off" },
+    { id = "RUSTSEC-2026-0546", reason = "zip 8 via docx-rs; extract() never called" },
+    { id = "RUSTSEC-2026-0547", reason = "zip 8 via docx-rs; legacy-zip feature off" },
+    { id = "RUSTSEC-2026-0548", reason = "zip 8 via docx-rs; ZipStreamReader never used" },
+    # chrono is unmaintained (no safe upgrade); GPUI, IronCalc and chrono-tz depend on it too.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no replacement yet; used by GPUI and IronCalc" },
 ]
 
 [licenses]
