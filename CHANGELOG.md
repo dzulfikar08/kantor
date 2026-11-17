@@ -9,6 +9,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-18
+
+Sheets gets zoom (10–400 %, saved with each sheet; Page Break Preview opens at 60 % as in Excel), and Docs lays
+out section columns, with a Columns menu, a More Columns dialog, column breaks and indexes in columns. Pattern fills
+are drawn and can be chosen in shapes, and charts inside grouped shapes are drawn and kept in all three apps.
+SmartArt Organization Charts place assistants and hanging layouts as PowerPoint does, and six more picture layouts
+are laid out again. Imports bring `.xlsb` conditional formatting, `.xls` formulas with 3-D references, and `.ods`
+arcs and custom shapes. Smaller fixes: no stale hover highlight beside menus and dialog cards, icon set and data bar
+previews in Manage Rules, and clearer checkboxes in dark mode.
+
 ### Added
 
 - Pattern fills (Office's "Pattern fill": 5 %, diagonal stripes, checks, bricks… in two colours)
@@ -1896,7 +1906,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/dzulfikar08/kantor/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/dzulfikar08/kantor/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/dzulfikar08/kantor/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/dzulfikar08/kantor/compare/v0.9.0...v0.10.0
