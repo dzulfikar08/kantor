@@ -182,6 +182,8 @@ impl TableStyleDef {
 /// A sheet's tables and their styles.
 pub(crate) struct SheetTables {
     tables: Vec<(TableInfo, Option<TableStyleDef>)>,
+    /// Each table's own differential formats (same order as `tables`).
+    dxfs: Vec<TableDxfs>,
     /// The sheet's hidden rows, sorted: bands count the rows shown.
     hidden: Vec<u32>,
 }
@@ -771,6 +773,122 @@ impl TableCellLook {
     }
 }
 
+/// A table's own differential formats: its header, data and total rows'
+/// (`headerRowDxfId`, `dataDxfId`, `totalsRowDxfId`) and each column's.
+/// Excel draws them over the table style and under the cells' own
+/// formatting; a column's over the table's.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TableDxfs {
+    header: Option<Elem>,
+    data: Option<Elem>,
+    totals: Option<Elem>,
+    /// Header, data, total row of each column.
+    cols: Vec<[Option<Elem>; 3]>,
+}
+
+impl TableDxfs {
+    fn of(t: &Table, dxfs: &[ironcalc_base::types::Dxf], theme: &Theme) -> Self {
+        let get = |id: Option<u32>| {
+            id.and_then(|i| dxfs.get(i as usize))
+                .map(|d| elem_of_dxf(d, theme))
+                .filter(|e| !e.is_empty())
+        };
+        let cols: Vec<[Option<Elem>; 3]> = t
+            .columns
+            .iter()
+            .map(|c| {
+                [
+                    get(c.header_row_dxf_id),
+                    get(c.data_dxf_id),
+                    get(c.totals_row_dxf_id),
+                ]
+            })
+            .collect();
+        Self {
+            header: get(t.header_row_dxf_id),
+            data: get(t.data_dxf_id),
+            totals: get(t.totals_row_dxf_id),
+            cols: if cols.iter().all(|c| c.iter().all(Option::is_none)) {
+                Vec::new()
+            } else {
+                cols
+            },
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.header.is_none()
+            && self.data.is_none()
+            && self.totals.is_none()
+            && self.cols.is_empty()
+    }
+
+    fn apply(&self, t: &TableInfo, row: u32, col: u32, look: &mut TableCellLook) {
+        if self.is_empty() {
+            return;
+        }
+        let a = t.area;
+        let (dt, db) = t.data_rows();
+        let (part, first, last) = if t.header_row() == Some(row) {
+            (0, row, row)
+        } else if t.totals_row() == Some(row) {
+            (2, row, row)
+        } else {
+            (1, dt, db)
+        };
+        let table = [&self.header, &self.data, &self.totals][part];
+        if let Some(e) = table {
+            look.apply(
+                e,
+                Edges {
+                    top: row == first,
+                    bottom: row == last,
+                    left: col == a.left,
+                    right: col == a.right,
+                },
+            );
+        }
+        if let Some(Some(e)) = self.cols.get((col - a.left) as usize).map(|c| &c[part]) {
+            look.apply(
+                e,
+                Edges {
+                    top: row == first,
+                    bottom: row == last,
+                    left: true,
+                    right: true,
+                },
+            );
+        }
+    }
+}
+
+/// A differential format as a table element.
+fn elem_of_dxf(d: &ironcalc_base::types::Dxf, theme: &Theme) -> Elem {
+    use crate::format::resolve;
+    let line = |b: &Option<ironcalc_base::types::BorderItem>| {
+        b.as_ref().map(|b| BorderLine {
+            style: LineStyle::from_ironcalc(&b.style),
+            color: resolve(&b.color, theme),
+        })
+    };
+    let font = d.font.as_ref();
+    let border = d.border.as_ref();
+    Elem {
+        fill: d.fill.as_ref().and_then(|f| resolve(&f.color, theme)),
+        font: font.and_then(|f| resolve(&f.color, theme)),
+        bold: font.and_then(|f| f.b),
+        italic: font.and_then(|f| f.i),
+        underline: font.and_then(|f| f.u),
+        strike: font.and_then(|f| f.strike),
+        left: border.and_then(|b| line(&b.left)),
+        right: border.and_then(|b| line(&b.right)),
+        top: border.and_then(|b| line(&b.top)),
+        bottom: border.and_then(|b| line(&b.bottom)),
+        horizontal: None,
+        vertical: None,
+    }
+}
+
 /// Whether a cell is on the outer edges of the element it is styled by.
 #[derive(Clone, Copy)]
 pub(crate) struct Edges {
@@ -911,26 +1029,39 @@ impl Workbook {
         }
         let model = self.model.get_model();
         let mut hidden: Vec<u32> = Vec::new();
-        let mut v: Vec<(TableInfo, Option<TableStyleDef>)> = match model.workbook.worksheet(sheet) {
-            Ok(ws) => model
-                .workbook
-                .tables
-                .values()
-                .filter(|t| t.sheet_name == ws.name)
-                .filter_map(TableInfo::from_ironcalc)
-                .map(|t| {
-                    let style = t.style.as_deref().and_then(|n| self.table_style(n));
-                    (t, style)
-                })
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-        v.sort_by_key(|(t, _)| (t.area.top, t.area.left));
+        let theme = &model.workbook.theme;
+        let dxf_list = &model.workbook.styles.dxfs;
+        let mut v: Vec<((TableInfo, Option<TableStyleDef>), TableDxfs)> =
+            match model.workbook.worksheet(sheet) {
+                Ok(ws) => model
+                    .workbook
+                    .tables
+                    .values()
+                    .filter(|t| t.sheet_name == ws.name)
+                    .filter_map(|t| {
+                        Some((
+                            TableInfo::from_ironcalc(t)?,
+                            TableDxfs::of(t, dxf_list, theme),
+                        ))
+                    })
+                    .map(|(t, d)| {
+                        let style = t.style.as_deref().and_then(|n| self.table_style(n));
+                        ((t, style), d)
+                    })
+                    .collect(),
+                Err(_) => Vec::new(),
+            };
+        v.sort_by_key(|((t, _), _)| (t.area.top, t.area.left));
         if !v.is_empty() {
             hidden = self.hidden_rows(sheet).into_iter().collect();
             hidden.sort_unstable();
         }
-        let rc = std::sync::Arc::new(SheetTables { tables: v, hidden });
+        let (v, dxfs): (Vec<_>, Vec<_>) = v.into_iter().unzip();
+        let rc = std::sync::Arc::new(SheetTables {
+            tables: v,
+            dxfs,
+            hidden,
+        });
         self.cached(|c| c.tables.insert(sheet, rc.clone()));
         rc
     }
@@ -961,9 +1092,23 @@ impl Workbook {
         match tables
             .tables
             .iter()
-            .find(|(t, _)| t.area.contains(row, col))
+            .position(|(t, _)| t.area.contains(row, col))
         {
-            Some((t, style)) => Some(style.as_ref()?.look(t, row, col, &tables.hidden)),
+            Some(i) => {
+                let (t, style) = &tables.tables[i];
+                let dxfs = &tables.dxfs[i];
+                if style.is_none() && dxfs.is_empty() {
+                    return None;
+                }
+                let mut look = style
+                    .as_ref()
+                    .map(|s| s.look(t, row, col, &tables.hidden))
+                    .unwrap_or_default();
+                // The table's own formats over its style (Excel's table
+                // dxfs), under the cell's own formatting.
+                dxfs.apply(t, row, col, &mut look);
+                Some(look)
+            }
             None => self.pivot_cell_look(sheet, row, col),
         }
     }

@@ -75,8 +75,9 @@ pub(crate) fn load_table<R: Read + std::io::Seek>(
         None
     };
 
-    // style index of the header row of the table
-    let data_dxf_id = if let Some(index_str) = table.attribute("headerRowDxfId") {
+    // style index of the data rows of the table
+    // KANTOR PATCH (§15): upstream read `headerRowDxfId` here.
+    let data_dxf_id = if let Some(index_str) = table.attribute("dataDxfId") {
         index_str.parse::<u32>().ok()
     } else {
         None

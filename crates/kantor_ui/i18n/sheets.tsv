@@ -12,7 +12,6 @@ Fill Colour	Warna Isian
 No Fill	Tanpa Isian
 Text Colour	Warna Teks
 More formatting	Format lainnya
-Freeze panes, hide rows and columns	Bekukan panel, sembunyikan baris dan kolom
 Conditional Formatting	Pemformatan Bersyarat
 Data Validation…	Validasi Data…
 Circle Invalid Data	Lingkari Data Tidak Valid
@@ -225,13 +224,10 @@ Format where	Format jika
 The formula is true for the cells to format; references are relative to the first cell of the range.	Rumus bernilai benar untuk sel yang akan diformat; referensi relatif terhadap sel pertama rentang.
 Bar colour	Warna bilah
 Fill	Isian
-Gradient	Gradien
 Solid	Padat
 Colours	Warna
-Icons	Ikon
 Reverse icon order	Balik urutan ikon
 Show icon only	Tampilkan ikon saja
-Thresholds split the range in equal percentages, as Excel does.	Ambang batas membagi rentang dalam persentase yang sama, seperti di Excel.
 Custom format	Format kustom
 Font colour	Warna font
 Stop if true (rules below don't apply to these cells)	Berhenti jika benar (aturan di bawahnya tidak berlaku untuk sel ini)
@@ -1246,3 +1242,57 @@ Offset: Top Right	Offset: Kanan Atas
 Offset: Top	Offset: Atas
 Offset: Top Left	Offset: Kiri Atas
 Effects	Efek
+Page {}	Halaman {}
+Page Break Preview	Pratinjau Hentian Halaman
+Normal view	Tampilan normal
+Page break moved	Hentian halaman dipindahkan
+Print area changed	Area cetak diubah
+Page Break Preview, freeze panes, hide rows and columns	Pratinjau Hentian Halaman, bekukan panel, sembunyikan baris dan kolom
+3 Stars	3 Bintang
+3 Traffic Lights (Rimmed)	3 Lampu Lalu Lintas (Berbingkai)
+4 Arrows (Gray)	4 Panah (Abu-abu)
+5 Arrows (Gray)	5 Panah (Abu-abu)
+Bar direction	Arah batang
+Bar length (%)	Panjang batang (%)
+Cell midpoint	Titik tengah sel
+Context	Konteks
+Custom List…	Daftar Kustom…
+Custom lists:	Daftar kustom:
+Custom Lists	Daftar Kustom
+Custom lists saved	Daftar kustom disimpan
+e.g. A1:A5	mis. A1:A5
+Excel's built-in lists can't be deleted	Daftar bawaan Excel tidak bisa dihapus
+Icon	Ikon
+Icon style	Gaya ikon
+Import	Impor
+Import list from cells	Impor daftar dari sel
+Left-to-right	Kiri ke kanan
+List entries:	Entri daftar:
+Longest	Terpanjang
+Longest bar	Batang terpanjang
+Negative bar border	Batas batang negatif
+Negative bar fill	Isian batang negatif
+NEW LIST	DAFTAR BARU
+No border	Tanpa batas
+Red To Black	Merah ke Hitam
+Right-to-left	Kanan ke kiri
+Same as positive bar	Sama dengan batang positif
+Shortest	Terpendek
+Shortest bar	Batang terpendek
+Show bar only	Tampilkan batang saja
+The shortest bar can't be longer than the longest	Batang terpendek tidak boleh lebih panjang dari yang terpanjang
+Those cells hold fewer than two entries	Sel-sel itu berisi kurang dari dua entri
+{}: type a percentage from 0 to 100	{}: ketik persentase dari 0 sampai 100
+Type at least two entries, one per line or separated by commas	Ketik setidaknya dua entri, satu per baris atau dipisahkan koma
+Type one entry per line (or separate them with commas), then Add. Sort ▸ Order and the fill handle use these lists in every workbook.	Ketik satu entri per baris (atau pisahkan dengan koma), lalu Tambah. Urutkan ▸ Urutan dan gagang isian memakai daftar ini di setiap buku kerja.
+Type the cells to import, such as A1:A5	Ketik sel yang akan diimpor, seperti A1:A5
+when the value is below the next threshold	saat nilai di bawah ambang berikutnya
+Black	Hitam
+Gray	Abu-abu
+Dark Red	Merah Tua
+Yellow	Kuning
+Dark Blue	Biru Tua
+Allow multiple filters per field	Izinkan beberapa filter per bidang
+Filter 1	Filter 1
+Filter 2	Filter 2
+one by label or date, one by value	satu menurut label atau tanggal, satu menurut nilai

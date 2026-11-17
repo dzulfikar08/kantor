@@ -1692,6 +1692,7 @@ impl SheetsView {
         let sub_view = view.clone();
         let row_view = view.clone();
         let col_view = view.clone();
+        let multi_view = view.clone();
         let (layout, subtotals) = (l.layout, l.subtotals);
         v_flex()
             .gap(SPACE_3)
@@ -1771,6 +1772,30 @@ impl SheetsView {
                         let on = *on;
                         let _ = col_view.update(cx, |this, cx| {
                             this.edit_layout(|l| l.grand_total_column = on, w, cx)
+                        });
+                    }),
+            )
+            .child(
+                Checkbox::new("pivot-multiple-filters")
+                    .label(i18n::t("Allow multiple filters per field"))
+                    .checked(l.multiple_filters)
+                    .disabled(locked)
+                    .on_click(move |on, w, cx| {
+                        let on = *on;
+                        let _ = multi_view.update(cx, |this, cx| {
+                            this.edit_layout(
+                                |l| {
+                                    l.multiple_filters = on;
+                                    // Off: each field keeps its first filter.
+                                    if !on {
+                                        for f in &mut l.fields {
+                                            f.settings.filter2 = None;
+                                        }
+                                    }
+                                },
+                                w,
+                                cx,
+                            )
                         });
                     }),
             )

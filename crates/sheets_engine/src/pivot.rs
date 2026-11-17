@@ -624,6 +624,10 @@ pub(crate) struct Def {
     pub data_fields: Vec<DataField>,
     /// Label, value and date filters.
     pub filters: Vec<PivotFilter>,
+    /// `multipleFieldFilters`: a field may have a label (or date) filter
+    /// and a value (or top 10) filter at once (PivotTable Options' "Allow
+    /// multiple filters per field").
+    pub multiple_filters: bool,
     pub row_grand: bool,
     pub col_grand: bool,
     pub style: StyleInfo,
@@ -977,6 +981,7 @@ fn parse_def(part: &str, sheet_id: u32, cache: usize, xml: &str) -> Result<Def, 
         page_fields,
         data_fields,
         filters,
+        multiple_filters: attr_bool(root, "multipleFieldFilters", true),
         row_grand: attr_bool(root, "rowGrandTotals", true),
         col_grand: attr_bool(root, "colGrandTotals", true),
         style,
@@ -1726,7 +1731,10 @@ fn calc_formulas(
                     .iter()
                     .find(|c| Val::Str(c.name.clone()).key() == v.key())
                 {
-                    out.insert(k, Formula::compile_items(&ci.formula, &cf.name, &names));
+                    out.insert(
+                        k,
+                        Formula::compile_items(&ci.formula, &cf.name, &names, Some(k)),
+                    );
                 }
             }
             out

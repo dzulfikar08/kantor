@@ -236,6 +236,9 @@ pub enum CfSpec {
     DataBar {
         color: Rgb,
         gradient: bool,
+        /// Edit Formatting Rule's bar settings (shortest and longest bar,
+        /// border, negative bars, axis, direction, bar only).
+        bar: CfBarOptions,
     },
     /// Two colours (lowest, highest) or three (lowest, 50th percentile,
     /// highest).
@@ -247,10 +250,304 @@ pub enum CfSpec {
         set: String,
         reverse: bool,
         show_value: bool,
+        /// Each icon and when it shows, lowest first (as `iconId`); empty:
+        /// the set's own icons at 0, 33, 67 % (or quarters, fifths), `>=`.
+        /// `steps[0]`'s value isn't used (the lowest icon takes the rest).
+        steps: Vec<CfIconStep>,
     },
 }
 
+/// How a data bar's shortest or longest bar, or an icon's threshold, is
+/// measured (Excel's "Type").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CfValueKind {
+    /// Data bars only: lowest (or highest) value, or 0 when that is nearer.
+    Automatic,
+    Lowest,
+    Highest,
+    Number,
+    Percent,
+    Percentile,
+    Formula,
+}
+
+impl CfValueKind {
+    /// The types a data bar's minimum offers (its maximum: `Highest` in
+    /// place of `Lowest`).
+    pub const BAR: [CfValueKind; 6] = [
+        CfValueKind::Automatic,
+        CfValueKind::Lowest,
+        CfValueKind::Number,
+        CfValueKind::Percent,
+        CfValueKind::Formula,
+        CfValueKind::Percentile,
+    ];
+    /// The types an icon's threshold offers.
+    pub const ICON: [CfValueKind; 4] = [
+        CfValueKind::Number,
+        CfValueKind::Percent,
+        CfValueKind::Formula,
+        CfValueKind::Percentile,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CfValueKind::Automatic => "Automatic",
+            CfValueKind::Lowest => "Lowest Value",
+            CfValueKind::Highest => "Highest Value",
+            CfValueKind::Number => "Number",
+            CfValueKind::Percent => "Percent",
+            CfValueKind::Percentile => "Percentile",
+            CfValueKind::Formula => "Formula",
+        }
+    }
+
+    /// Whether a value is typed for it.
+    pub fn has_value(self) -> bool {
+        !matches!(
+            self,
+            CfValueKind::Automatic | CfValueKind::Lowest | CfValueKind::Highest
+        )
+    }
+}
+
+/// A data bar end or an icon threshold: its type and the value typed (a
+/// number, or a formula with or without `=`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CfValue {
+    pub kind: CfValueKind,
+    pub value: String,
+}
+
+impl CfValue {
+    pub fn new(kind: CfValueKind, value: impl Into<String>) -> Self {
+        Self {
+            kind,
+            value: value.into(),
+        }
+    }
+
+    /// IronCalc's form (`None`: automatic).
+    fn cfvo(&self, what: &str) -> Result<Option<Cfvo>> {
+        let num = || -> Result<f64> {
+            self.value
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| anyhow!("{what}: type a number"))
+        };
+        Ok(Some(match self.kind {
+            CfValueKind::Automatic => return Ok(None),
+            CfValueKind::Lowest => Cfvo::Min,
+            CfValueKind::Highest => Cfvo::Max,
+            CfValueKind::Number => Cfvo::Number(num()?),
+            CfValueKind::Percent => Cfvo::Percent(num()?),
+            CfValueKind::Percentile => Cfvo::Percentile(num()?),
+            CfValueKind::Formula => {
+                let f = self.value.trim().trim_start_matches('=').trim();
+                if f.is_empty() {
+                    bail!("{what}: type a formula");
+                }
+                Cfvo::Formula(f.to_owned())
+            }
+        }))
+    }
+
+    fn of_cfvo(c: Option<&Cfvo>) -> Self {
+        let n = |v: &f64| format_number(*v);
+        match c {
+            None => CfValue::new(CfValueKind::Automatic, ""),
+            Some(Cfvo::Min) => CfValue::new(CfValueKind::Lowest, ""),
+            Some(Cfvo::Max) => CfValue::new(CfValueKind::Highest, ""),
+            Some(Cfvo::Number(v)) => CfValue::new(CfValueKind::Number, n(v)),
+            Some(Cfvo::Percent(v)) => CfValue::new(CfValueKind::Percent, n(v)),
+            Some(Cfvo::Percentile(v)) => CfValue::new(CfValueKind::Percentile, n(v)),
+            Some(Cfvo::Formula(f)) => CfValue::new(CfValueKind::Formula, format!("={f}")),
+        }
+    }
+}
+
+fn format_number(v: f64) -> String {
+    if v.fract() == 0.0 && v.abs() < 1e15 {
+        format!("{}", v as i64)
+    } else {
+        format!("{v}")
+    }
+}
+
+/// Where a data bar's axis goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CfBarAxis {
+    /// At zero, placed by the values (Excel's "Automatic").
+    #[default]
+    Automatic,
+    /// In the middle of the cell.
+    Middle,
+    /// None: negative bars run the same way as positive ones.
+    None,
+}
+
+/// Which way data bars grow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CfBarDirection {
+    /// As the sheet reads (left to right).
+    #[default]
+    Context,
+    LeftToRight,
+    RightToLeft,
+}
+
+/// Edit Formatting Rule's settings of a data bar beyond its colour.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CfBarOptions {
+    pub min: CfValue,
+    pub max: CfValue,
+    /// Shortest and longest bar, percent of the cell's width.
+    pub min_length: u8,
+    pub max_length: u8,
+    /// A solid border in this colour.
+    pub border: Option<Rgb>,
+    /// Negative bars' fill (`None`: the positive colour).
+    pub negative_fill: Option<Rgb>,
+    /// Negative bars' border (`None`: the positive border's).
+    pub negative_border: Option<Rgb>,
+    pub axis: CfBarAxis,
+    pub axis_color: Rgb,
+    pub direction: CfBarDirection,
+    /// Show the bar only, not the value.
+    pub bar_only: bool,
+}
+
+impl Default for CfBarOptions {
+    /// Excel 2010's defaults (lengths 0 to 100 %, red negative bars).
+    fn default() -> Self {
+        Self {
+            min: CfValue::new(CfValueKind::Automatic, ""),
+            max: CfValue::new(CfValueKind::Automatic, ""),
+            min_length: 0,
+            max_length: 100,
+            border: None,
+            negative_fill: Some(0xFF0000),
+            negative_border: None,
+            axis: CfBarAxis::Automatic,
+            axis_color: 0x000000,
+            direction: CfBarDirection::Context,
+            bar_only: false,
+        }
+    }
+}
+
+impl CfBarOptions {
+    /// The look drawn and saved for it.
+    fn look(&self) -> crate::cf_x14::BarLook {
+        use crate::cf_x14::{Axis, BarLook, Direction};
+        BarLook {
+            min_len: f32::from(self.min_length.min(100)) / 100.0,
+            max_len: f32::from(self.max_length.min(100)) / 100.0,
+            border: self.border.map(color),
+            negative_border: self.negative_border.map(color),
+            negative_fill: None,
+            axis: match self.axis {
+                CfBarAxis::Automatic => Axis::Automatic,
+                CfBarAxis::Middle => Axis::Middle,
+                CfBarAxis::None => Axis::None,
+            },
+            axis_color: Some(color(self.axis_color)),
+            direction: match self.direction {
+                CfBarDirection::Context => Direction::Context,
+                CfBarDirection::LeftToRight => Direction::LeftToRight,
+                CfBarDirection::RightToLeft => Direction::RightToLeft,
+            },
+        }
+    }
+}
+
+/// An icon of Excel's icon sets: the set and its place in it (0: the
+/// lowest value's icon), as `<x14:cfIcon>` names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CfIconRef {
+    pub set: String,
+    pub index: u8,
+}
+
+/// One icon of an icon set rule and the value from which it shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CfIconStep {
+    pub icon: CfIconRef,
+    pub value: CfValue,
+    /// `>=` (else `>`).
+    pub gte: bool,
+}
+
+/// Icon sets whose icons can be picked one by one (Excel's icon list).
+const ICON_SOURCES: [&str; 16] = [
+    "3Arrows",
+    "3ArrowsGray",
+    "4Arrows",
+    "4ArrowsGray",
+    "5Arrows",
+    "5ArrowsGray",
+    "3Triangles",
+    "3TrafficLights1",
+    "3TrafficLights2",
+    "4TrafficLights",
+    "3Signs",
+    "4RedToBlack",
+    "3Symbols",
+    "3Symbols2",
+    "3Flags",
+    "3Stars",
+];
+
+/// Every icon offered for a single step, each once (set, index).
+pub fn icon_choices() -> Vec<CfIconRef> {
+    let mut seen = Vec::new();
+    let mut out = Vec::new();
+    for set in ICON_SOURCES {
+        let Some(icons) = icon_set_icons(set) else {
+            continue;
+        };
+        for (i, pair) in icons.into_iter().enumerate() {
+            if !seen.contains(&pair) {
+                seen.push(pair);
+                out.push(CfIconRef {
+                    set: set.to_owned(),
+                    index: i as u8,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// The default steps of icon set `set` (`n` icons): the set's own icons at
+/// even percentages, `>=`.
+pub fn default_icon_steps(set: &str) -> Vec<CfIconStep> {
+    let n = rating(set)
+        .map(|(_, n)| n)
+        .or_else(|| icon_set_icons(set).map(|v| v.len()))
+        .unwrap_or(3);
+    (0..n)
+        .map(|k| CfIconStep {
+            icon: CfIconRef {
+                set: set.to_owned(),
+                index: k as u8,
+            },
+            value: CfValue::new(
+                CfValueKind::Percent,
+                format_number(((100 * k) as f64 / n as f64).round()),
+            ),
+            gte: true,
+        })
+        .collect()
+}
+
 impl CfSpec {
+    /// Whether icon set `set` is a rating (stars, bars, quarters): one icon
+    /// filled in steps, not picked icon by icon.
+    pub fn is_rating(set: &str) -> bool {
+        rating(set).is_some()
+    }
+
     /// Whether it applies a format (fill, font) rather than drawing.
     pub fn has_format(&self) -> bool {
         !matches!(
@@ -405,6 +702,21 @@ fn rating(set: &str) -> Option<(ironcalc_base::cf_types::Icon, usize)> {
         "5Quarters" => Some((Icon::Circle, 5)),
         _ => None,
     }
+}
+
+/// A rule made or changed in Kantor with Excel 2010 markup of its own: a
+/// data bar's look (`<x14:dataBar>`), or a custom icon set (the whole
+/// `<x14:conditionalFormatting>`). It belongs to the model rule equal to
+/// `rule` on its sheet (any range when none matches `range`: rows
+/// inserted since).
+#[derive(Debug, Clone)]
+pub(crate) struct CfLook {
+    pub sheet_id: u32,
+    pub range: String,
+    pub rule: CfRule,
+    pub look: Option<crate::cf_x14::BarLook>,
+    pub xml: String,
+    pub data_bar: bool,
 }
 
 /// A rule, as Kantor edits it.
@@ -581,13 +893,17 @@ fn input(def: &CfRuleDef, num_fmt_id: &dyn Fn(&str) -> i32) -> Result<CfRuleInpu
                 stop_if_true,
             }
         }
-        CfSpec::DataBar { color: c, gradient } => CfRuleInput::DataBar {
-            min: None,
-            max: None,
+        CfSpec::DataBar {
+            color: c,
+            gradient,
+            bar,
+        } => CfRuleInput::DataBar {
+            min: bar.min.cfvo("Minimum")?,
+            max: bar.max.cfvo("Maximum")?,
             positive_color: color(*c),
-            negative_color: color(0xFF0000),
+            negative_color: color(bar.negative_fill.unwrap_or(*c)),
             is_gradient: *gradient,
-            show_value: true,
+            show_value: !bar.bar_only,
         },
         CfSpec::ColorScale { colors } => {
             if !(2..=3).contains(&colors.len()) {
@@ -613,34 +929,58 @@ fn input(def: &CfRuleDef, num_fmt_id: &dyn Fn(&str) -> i32) -> Result<CfRuleInpu
             set,
             reverse,
             show_value,
+            steps,
         } => {
+            let steps = if steps.is_empty() {
+                default_icon_steps(set)
+            } else {
+                steps.clone()
+            };
+            let cfvo = |k: usize, s: &CfIconStep| -> Result<Cfvo> {
+                if k == 0 {
+                    // The lowest icon takes everything below the next.
+                    return Ok(Cfvo::Percent(0.0));
+                }
+                let what = format!("Icon {}", steps.len() - k);
+                s.value
+                    .cfvo(&what)?
+                    .ok_or_else(|| anyhow!("{what}: pick a type"))
+            };
             if let Some((icon, n)) = rating(set) {
+                if steps.len() != n {
+                    bail!("{set} has {n} steps");
+                }
                 CfRuleInput::IconRating {
                     icon,
                     color: Color::Rgb("#FFC000".into()),
-                    thresholds: (0..n)
-                        .map(|k| (Cfvo::Percent((100 * k / n) as f64), true))
-                        .collect(),
+                    thresholds: steps
+                        .iter()
+                        .enumerate()
+                        .map(|(k, s)| Ok((cfvo(k, s)?, s.gte)))
+                        .collect::<Result<_>>()?,
                     show_value: *show_value,
                 }
             } else {
-                let mut icons =
-                    icon_set_icons(set).ok_or_else(|| anyhow!("unknown icon set {set}"))?;
-                if *reverse {
-                    icons.reverse();
+                let mut out = Vec::with_capacity(steps.len());
+                for (k, s) in steps.iter().enumerate() {
+                    // Reverse Icon Order: the icons swap ends, the values stay.
+                    let pick = if *reverse {
+                        &steps[steps.len() - 1 - k].icon
+                    } else {
+                        &s.icon
+                    };
+                    let (icon, color) = icon_set_icons(&pick.set)
+                        .and_then(|v| v.into_iter().nth(pick.index as usize))
+                        .ok_or_else(|| anyhow!("unknown icon {}/{}", pick.set, pick.index))?;
+                    out.push(IconThreshold {
+                        icon,
+                        cfvo: cfvo(k, s)?,
+                        color,
+                        is_strict: s.gte,
+                    });
                 }
-                let n = icons.len();
                 CfRuleInput::IconSet {
-                    thresholds: icons
-                        .into_iter()
-                        .enumerate()
-                        .map(|(k, (icon, color))| IconThreshold {
-                            icon,
-                            cfvo: Cfvo::Percent(((100 * k) as f64 / n as f64).round()),
-                            color,
-                            is_strict: true,
-                        })
-                        .collect(),
+                    thresholds: out,
                     show_value: *show_value,
                 }
             }
@@ -653,6 +993,7 @@ fn describe(
     rule: &CfRule,
     dxf: Option<&Dxf>,
     model: &ironcalc_base::Model,
+    look: Option<crate::cf_x14::BarLook>,
 ) -> (Option<CfRuleDef>, String) {
     let format = dxf
         .map(|d| CfFormat::from_dxf(d, model))
@@ -799,11 +1140,45 @@ fn describe(
             format!("Formula: ={}", formula.trim_start_matches('=')),
         ),
         CfRule::DataBar {
+            min,
+            max,
             positive_color,
+            negative_color,
             is_gradient,
-            ..
+            show_value,
         } => {
-            let c = parse_rgb(&positive_color.to_rgb(&model.workbook.theme)).unwrap_or(0x638EC6);
+            use crate::cf_x14::{Axis, Direction};
+            let theme = &model.workbook.theme;
+            let rgb = |c: &Color| parse_rgb(&c.to_rgb(theme));
+            let c = rgb(positive_color).unwrap_or(0x638EC6);
+            let look = look.unwrap_or(crate::cf_x14::BarLook::KANTOR);
+            let negative = look
+                .negative_fill
+                .as_ref()
+                .and_then(rgb)
+                .or_else(|| rgb(negative_color));
+            let pct = |f: f32| (f * 100.0).round().clamp(0.0, 100.0) as u8;
+            let bar = CfBarOptions {
+                min: CfValue::of_cfvo(min.as_ref()),
+                max: CfValue::of_cfvo(max.as_ref()),
+                min_length: pct(look.min_len),
+                max_length: pct(look.max_len),
+                border: look.border.as_ref().and_then(rgb),
+                negative_fill: negative.filter(|n| *n != c),
+                negative_border: look.negative_border.as_ref().and_then(rgb),
+                axis: match look.axis {
+                    Axis::Automatic => CfBarAxis::Automatic,
+                    Axis::Middle => CfBarAxis::Middle,
+                    Axis::None => CfBarAxis::None,
+                },
+                axis_color: look.axis_color.as_ref().and_then(rgb).unwrap_or(0),
+                direction: match look.direction {
+                    Direction::Context => CfBarDirection::Context,
+                    Direction::LeftToRight => CfBarDirection::LeftToRight,
+                    Direction::RightToLeft => CfBarDirection::RightToLeft,
+                },
+                bar_only: !show_value,
+            };
             (
                 Some(CfRuleDef {
                     num_fmt: None,
@@ -811,6 +1186,7 @@ fn describe(
                     spec: CfSpec::DataBar {
                         color: c,
                         gradient: *is_gradient,
+                        bar,
                     },
                     format: CfFormat::default(),
                     stop_if_true: false,
@@ -835,11 +1211,139 @@ fn describe(
                 format!("{n}-color scale"),
             )
         }
-        CfRule::IconSet { thresholds, .. } => {
-            (None, format!("Icon set ({} icons)", thresholds.len()))
+        CfRule::IconSet {
+            thresholds,
+            show_value,
+        } => {
+            let summary = format!("Icon set ({} icons)", thresholds.len());
+            let pairs: Vec<_> = thresholds
+                .iter()
+                .map(|t| (t.icon.clone(), t.color.clone()))
+                .collect();
+            // The set it is (or reversed), else its first icon's set.
+            let mut named = None;
+            for (_, name) in ICON_SETS.iter().chain(&[
+                ("", "4ArrowsGray"),
+                ("", "5ArrowsGray"),
+                ("", "3ArrowsGray"),
+                ("", "3TrafficLights2"),
+                ("", "4RedToBlack"),
+                ("", "3Stars"),
+            ]) {
+                let Some(mut set) = icon_set_icons(name) else {
+                    continue;
+                };
+                if set == pairs {
+                    named = Some((*name, false));
+                    break;
+                }
+                set.reverse();
+                if set == pairs {
+                    named = Some((*name, true));
+                    break;
+                }
+            }
+            let choices = icon_choices();
+            let find = |p: &(ironcalc_base::cf_types::Icon, Color)| {
+                choices.iter().find(|c| {
+                    icon_set_icons(&c.set)
+                        .and_then(|v| v.into_iter().nth(c.index as usize))
+                        .as_ref()
+                        == Some(p)
+                })
+            };
+            let mut steps = Vec::with_capacity(thresholds.len());
+            for (k, t) in thresholds.iter().enumerate() {
+                let icon = match named {
+                    Some((name, rev)) => CfIconRef {
+                        set: name.to_owned(),
+                        index: if rev {
+                            (thresholds.len() - 1 - k) as u8
+                        } else {
+                            k as u8
+                        },
+                    },
+                    None => match find(&pairs[k]) {
+                        Some(c) => c.clone(),
+                        None => return (None, summary),
+                    },
+                };
+                steps.push(CfIconStep {
+                    icon,
+                    value: CfValue::of_cfvo(Some(&t.cfvo)),
+                    gte: t.is_strict,
+                });
+            }
+            let set = named.map(|n| n.0.to_owned()).unwrap_or_else(|| {
+                steps
+                    .first()
+                    .map(|s| s.icon.set.clone())
+                    .unwrap_or_default()
+            });
+            // Reverse Icon Order keeps the set's icons in the steps' order.
+            let reverse = named.is_some_and(|n| n.1);
+            if reverse {
+                let icons: Vec<CfIconRef> = steps.iter().rev().map(|s| s.icon.clone()).collect();
+                for (s, i) in steps.iter_mut().zip(icons) {
+                    s.icon = i;
+                }
+            }
+            (
+                Some(CfRuleDef {
+                    num_fmt: None,
+                    border: None,
+                    spec: CfSpec::IconSet {
+                        set,
+                        reverse,
+                        show_value: *show_value,
+                        steps,
+                    },
+                    format: CfFormat::default(),
+                    stop_if_true: false,
+                }),
+                summary,
+            )
         }
-        CfRule::IconRating { thresholds, .. } => {
-            (None, format!("Rating ({} steps)", thresholds.len()))
+        CfRule::IconRating {
+            icon,
+            thresholds,
+            show_value,
+            ..
+        } => {
+            let summary = format!("Rating ({} steps)", thresholds.len());
+            let Some(set) = ["3Stars", "4Rating", "5Rating", "5Quarters"]
+                .into_iter()
+                .find(|s| rating(s) == Some((icon.clone(), thresholds.len())))
+            else {
+                return (None, summary);
+            };
+            let steps = thresholds
+                .iter()
+                .enumerate()
+                .map(|(k, (cfvo, gte))| CfIconStep {
+                    icon: CfIconRef {
+                        set: set.to_owned(),
+                        index: k as u8,
+                    },
+                    value: CfValue::of_cfvo(Some(cfvo)),
+                    gte: *gte,
+                })
+                .collect();
+            (
+                Some(CfRuleDef {
+                    num_fmt: None,
+                    border: None,
+                    spec: CfSpec::IconSet {
+                        set: set.to_owned(),
+                        reverse: false,
+                        show_value: *show_value,
+                        steps,
+                    },
+                    format: CfFormat::default(),
+                    stop_if_true: false,
+                }),
+                summary,
+            )
         }
     }
 }
@@ -902,7 +1406,9 @@ impl Workbook {
                     .get_dxf_for_conditional_formatting(sheet, v.index as u32)
                     .ok()
                     .flatten();
-                let (def, summary) = describe(&v.cf_rule, dxf.as_ref(), model);
+                let look = matches!(v.cf_rule, CfRule::DataBar { .. })
+                    .then(|| self.bar_look_of(self.sheet_id(sheet), &v.range, &v.cf_rule));
+                let (def, summary) = describe(&v.cf_rule, dxf.as_ref(), model, look);
                 let format = dxf
                     .as_ref()
                     .map(|d| CfFormat::from_dxf(d, model))
@@ -968,8 +1474,117 @@ impl Workbook {
                 .map_err(|e| anyhow!("{e}"))?;
             wb.history.edited();
             wb.mark_cf(sheet);
+            wb.record_cf_look(sheet, None, rule);
             Ok(())
         })
+    }
+
+    /// Remember what Excel 2010's markup must say about the rule just
+    /// stored at `index` (`None`: the last one, just added).
+    fn record_cf_look(&mut self, sheet: u32, index: Option<usize>, def: &CfRuleDef) {
+        let Some(cf) = ({
+            let model = self.model.get_model();
+            model.workbook.worksheet(sheet).ok().and_then(|ws| {
+                let list = &ws.conditional_formatting;
+                index.map_or(list.last(), |i| list.get(i)).cloned()
+            })
+        }) else {
+            return;
+        };
+        let sheet_id = self.sheet_id(sheet);
+        let look = match (&def.spec, &cf.cf_rule) {
+            (
+                CfSpec::DataBar { gradient, bar, .. },
+                CfRule::DataBar {
+                    min,
+                    max,
+                    negative_color,
+                    ..
+                },
+            ) => {
+                let look = bar.look();
+                let xml = look.x14_xml(*gradient, min.as_ref(), max.as_ref(), negative_color);
+                Some(CfLook {
+                    sheet_id,
+                    range: cf.range.clone(),
+                    rule: cf.cf_rule.clone(),
+                    look: Some(look),
+                    xml,
+                    data_bar: true,
+                })
+            }
+            (
+                CfSpec::IconSet {
+                    set,
+                    show_value,
+                    steps,
+                    reverse,
+                },
+                CfRule::IconSet { thresholds, .. },
+            ) if rating(set).is_none() && !steps.is_empty() => {
+                // Icons picked one by one: Excel 2010's custom icon set.
+                let n = steps.len();
+                let own = (0..n).all(|k| {
+                    let s = &steps[if *reverse { n - 1 - k } else { k }];
+                    let want = if *reverse { n - 1 - k } else { k };
+                    s.icon.set == *set && usize::from(s.icon.index) == want
+                });
+                (!own).then(|| {
+                    let list: Vec<_> = thresholds
+                        .iter()
+                        .enumerate()
+                        .map(|(k, t)| {
+                            let pick = if *reverse {
+                                &steps[n - 1 - k].icon
+                            } else {
+                                &steps[k].icon
+                            };
+                            (t.cfvo.clone(), t.is_strict, pick.set.clone(), pick.index)
+                        })
+                        .collect();
+                    CfLook {
+                        sheet_id,
+                        range: cf.range.clone(),
+                        rule: cf.cf_rule.clone(),
+                        look: None,
+                        xml: crate::cf_x14::custom_icons_xml(&cf.range, set, *show_value, &list),
+                        data_bar: false,
+                    }
+                })
+            }
+            _ => None,
+        };
+        if let Some(look) = look {
+            self.own_edit(|e, _| e.cf_looks.push(look));
+        }
+    }
+
+    /// Kantor's own Excel 2010 markup for model rule `rule` over `range` of
+    /// sheet `sheet_id` (see [`CfLook`]).
+    pub(crate) fn cf_look(&self, sheet_id: u32, range: &str, rule: &CfRule) -> Option<CfLook> {
+        let edits = self.edits();
+        let mine = edits
+            .cf_looks
+            .iter()
+            .rev()
+            .filter(|l| l.sheet_id == sheet_id && l.rule == *rule);
+        mine.clone()
+            .find(|l| l.range == range)
+            .or_else(|| mine.clone().next())
+            .cloned()
+    }
+
+    /// How data bar `rule` over `range` is drawn: Kantor's look for it,
+    /// else the file's while it is as opened, else Excel 2010's defaults.
+    pub(crate) fn bar_look_of(
+        &self,
+        sheet_id: u32,
+        range: &str,
+        rule: &CfRule,
+    ) -> crate::cf_x14::BarLook {
+        self.cf_look(sheet_id, range, rule)
+            .and_then(|l| l.look)
+            .unwrap_or_else(|| self.cf_x14.bar_look(sheet_id, range, rule))
     }
 
     /// Replace the rule stored at `index` (range and rule; its priority
@@ -989,6 +1604,7 @@ impl Workbook {
                 .map_err(|e| anyhow!("{e}"))?;
             wb.history.edited();
             wb.mark_cf(sheet);
+            wb.record_cf_look(sheet, Some(index), rule);
             Ok(())
         })
     }
@@ -1101,7 +1717,25 @@ impl Workbook {
             if !out.cf_sheets.contains(&ws.sheet_id) {
                 continue;
             }
-            let kept = self.cf_x14.kept(ws.sheet_id, &ws.conditional_formatting);
+            let mut kept = self.cf_x14.kept(ws.sheet_id, &ws.conditional_formatting);
+            // Kantor's own markup wins over the file's for the same rule.
+            for cf in &ws.conditional_formatting {
+                let Some(l) = self.cf_look(ws.sheet_id, &cf.range, &cf.cf_rule) else {
+                    continue;
+                };
+                kept.retain(|k| !(k.range == cf.range && k.data_bar == l.data_bar));
+                kept.push(crate::cf_x14::KeptX14 {
+                    range: cf.range.clone(),
+                    old_range: l.range.clone(),
+                    data_bar: l.data_bar,
+                    bar_xml: l.data_bar.then(|| l.xml.clone()),
+                    xml: if l.data_bar {
+                        String::new()
+                    } else {
+                        l.xml.clone()
+                    },
+                });
+            }
             if !kept.is_empty() {
                 out.cf_x14.push((ws.sheet_id, kept));
             }

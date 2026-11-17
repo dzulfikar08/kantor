@@ -262,11 +262,19 @@ pub struct SheetsSettings {
     /// downloaded. Workbooks opened from a file still ask first (once per
     /// file and session).
     pub web_formulas: bool,
+    /// Custom Lists the user made (Excel's Custom Lists dialog), each its
+    /// items separated by commas (`Low, Medium, High`): Sort ▸ Order and
+    /// fills use them besides Excel's built-in day and month lists.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub custom_lists: Vec<String>,
 }
 
 impl Default for SheetsSettings {
     fn default() -> Self {
-        Self { web_formulas: true }
+        Self {
+            web_formulas: true,
+            custom_lists: Vec::new(),
+        }
     }
 }
 
@@ -426,6 +434,7 @@ mod tests {
             cloud: CloudSettings::default(),
             sheets: SheetsSettings {
                 web_formulas: false,
+                custom_lists: vec!["Low, Medium, High".into()],
             },
             language: Some("id".into()),
             number_format: Some("en".into()),

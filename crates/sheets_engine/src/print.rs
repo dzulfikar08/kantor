@@ -1332,6 +1332,41 @@ impl Workbook {
         self.set_print_settings(sheet, p)
     }
 
+    /// Drag a page break in Page Break Preview: the manual break at `from`
+    /// (if there is one: an automatic break has none) goes, and a manual
+    /// break starts a new page at `to` instead (`None`, or row / column 0:
+    /// dragged off the printed range, removed). Rows when `rows`, else
+    /// columns. One undo step.
+    pub fn move_page_break(
+        &mut self,
+        sheet: u32,
+        rows: bool,
+        from: Option<u32>,
+        to: Option<u32>,
+    ) -> anyhow::Result<()> {
+        let mut p = self.print_settings(sheet);
+        let list = if rows {
+            &mut p.row_breaks
+        } else {
+            &mut p.col_breaks
+        };
+        list.retain(|&b| Some(b) != from);
+        if let Some(to) = to.filter(|&t| t > 0)
+            && let Err(i) = list.binary_search(&to)
+        {
+            list.insert(i, to);
+        }
+        self.set_print_settings(sheet, p)
+    }
+
+    /// Set the print area of `sheet` (Page Break Preview's dragged edges,
+    /// Set Print Area); empty clears it. One undo step.
+    pub fn set_print_area(&mut self, sheet: u32, area: Vec<CellRange>) -> anyhow::Result<()> {
+        let mut p = self.print_settings(sheet);
+        p.print_area = area;
+        self.set_print_settings(sheet, p)
+    }
+
     /// Remove every manual page break of `sheet` (Reset All Page Breaks).
     pub fn reset_page_breaks(&mut self, sheet: u32) -> anyhow::Result<()> {
         let mut p = self.print_settings(sheet);

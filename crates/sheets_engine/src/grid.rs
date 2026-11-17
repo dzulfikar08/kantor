@@ -16,6 +16,87 @@ use std::collections::HashMap;
 
 use crate::{CellRange, MAX_COLS, MAX_ROWS, Workbook};
 
+/// Excel's built-in custom lists (Custom Lists dialog, Sort ▸ Order,
+/// fills), as the dialog shows them.
+pub const BUILTIN_LISTS: [&str; 4] = [
+    "Sun, Mon, Tue, Wed, Thu, Fri, Sat",
+    "Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday",
+    "Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec",
+    "January, February, March, April, May, June, July, August, September, October, November, December",
+];
+
+/// The items of a list typed as Excel's List entries: one per line, or
+/// separated by commas; blanks dropped.
+pub fn parse_custom_list(text: &str) -> Vec<String> {
+    text.split(['\n', ','])
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
+/// How `texts` (a fill's source line) continue in one of `lists`: the
+/// item `k` steps after the last (`k` < 0: before the first). `None` when
+/// they aren't all items of one list in even steps.
+fn list_continuation(
+    lists: &[Vec<String>],
+    texts: &[String],
+) -> Option<impl Fn(i64) -> String + use<>> {
+    if texts.is_empty() {
+        return None;
+    }
+    for list in lists {
+        let n = list.len() as i64;
+        if n < 2 {
+            continue;
+        }
+        let pos: Option<Vec<i64>> = texts
+            .iter()
+            .map(|t| {
+                let t = t.trim();
+                list.iter()
+                    .position(|item| {
+                        item.eq_ignore_ascii_case(t) || item.to_lowercase() == t.to_lowercase()
+                    })
+                    .map(|p| p as i64)
+            })
+            .collect();
+        let Some(pos) = pos else { continue };
+        let step = if pos.len() == 1 {
+            1
+        } else {
+            (pos[1] - pos[0]).rem_euclid(n)
+        };
+        let even = pos.windows(2).all(|w| (w[1] - w[0]).rem_euclid(n) == step);
+        if !even || step == 0 {
+            continue;
+        }
+        let upper = texts
+            .iter()
+            .all(|t| t.chars().any(char::is_alphabetic) && t.to_uppercase() == *t)
+            && texts.iter().any(|t| t.to_lowercase() != *t);
+        let lower = texts.iter().all(|t| t.to_lowercase() == *t)
+            && texts.iter().any(|t| t.to_uppercase() != *t);
+        let (first, last) = (pos[0], pos[pos.len() - 1]);
+        let list = list.clone();
+        return Some(move |k: i64| {
+            let at = if k >= 0 {
+                (last + step * k).rem_euclid(n)
+            } else {
+                (first + step * k).rem_euclid(n)
+            };
+            let item = &list[at as usize];
+            if upper {
+                item.to_uppercase()
+            } else if lower {
+                item.to_lowercase()
+            } else {
+                item.clone()
+            }
+        });
+    }
+    None
+}
+
 /// The top-left cells of the frozen panes of each worksheet of a package
 /// (`sheetView@topLeftCell` where the pane is frozen), by `sheetId`, when
 /// not A1. `skeletons`: [`crate::preserve::worksheet_skeletons`].
@@ -427,12 +508,19 @@ impl Workbook {
             FillDirection::Right | FillDirection::Left => self.model.auto_fill_columns(&area, to),
         };
         let series = self.number_series(sheet, fill);
+        let lists = self.list_series(sheet, fill);
         res.map_err(|e| anyhow!("{e}"))?;
         let mut steps = 1;
         for (line, values) in series {
             match self.write_numbers(sheet, line, &values) {
                 Ok(()) => steps += 1,
                 Err(err) => log::warn!("fill series: {err:#}"),
+            }
+        }
+        for (line, values) in lists {
+            match self.write_texts(sheet, line, &values) {
+                Ok(()) => steps += 1,
+                Err(err) => log::warn!("fill list: {err:#}"),
             }
         }
         self.history.edited_steps(steps);
@@ -589,6 +677,110 @@ impl Workbook {
             out.push((range, new));
         }
         out
+    }
+
+    /// The user's custom lists (Kantor's settings), which fills continue
+    /// besides Excel's built-in lists.
+    pub fn set_custom_lists(&mut self, lists: Vec<Vec<String>>) {
+        self.custom_lists = lists;
+    }
+
+    /// Every list a fill continues: Excel's built-in ones, then the user's.
+    pub fn fill_lists(&self) -> Vec<Vec<String>> {
+        BUILTIN_LISTS
+            .iter()
+            .map(|l| parse_custom_list(l))
+            .chain(self.custom_lists.iter().cloned())
+            .collect()
+    }
+
+    /// Series of custom lists (`Mon` → `Tue`, `Jan, Apr` → `Jul`): lines
+    /// of the source whose texts are all items of one list continue it
+    /// (by one item, or by the source's step), in the source's case
+    /// (`JAN` → `FEB`), as Excel does.
+    fn list_series(&self, sheet: u32, fill: &Fill) -> Vec<(CellRange, Vec<String>)> {
+        let Ok(ws) = self.model.get_model().workbook.worksheet(sheet) else {
+            return Vec::new();
+        };
+        let lists = self.fill_lists();
+        let s = fill.source;
+        let vertical = matches!(fill.direction, FillDirection::Down | FillDirection::Up);
+        let lines = if vertical {
+            s.left..=s.right
+        } else {
+            s.top..=s.bottom
+        };
+        let mut out = Vec::new();
+        for line in lines {
+            let cells: Vec<(u32, u32)> = if vertical {
+                (s.top..=s.bottom).map(|r| (r, line)).collect()
+            } else {
+                (s.left..=s.right).map(|c| (line, c)).collect()
+            };
+            let texts: Option<Vec<String>> = cells
+                .iter()
+                .map(|&(r, c)| {
+                    let text = matches!(
+                        ws.cell(r as i32 + 1, c as i32 + 1).as_deref(),
+                        Some(Cell::SharedString { .. })
+                    );
+                    text.then(|| self.input(sheet, r, c))
+                })
+                .collect();
+            let Some(texts) = texts else { continue };
+            let Some(next) = list_continuation(&lists, &texts) else {
+                continue;
+            };
+            let (range, count, back) = match fill.direction {
+                FillDirection::Down => (
+                    CellRange::from_corners((s.bottom + 1, line), (fill.to, line)),
+                    fill.to - s.bottom,
+                    false,
+                ),
+                FillDirection::Right => (
+                    CellRange::from_corners((line, s.right + 1), (line, fill.to)),
+                    fill.to - s.right,
+                    false,
+                ),
+                FillDirection::Up => (
+                    CellRange::from_corners((fill.to, line), (s.top - 1, line)),
+                    s.top - fill.to,
+                    true,
+                ),
+                FillDirection::Left => (
+                    CellRange::from_corners((line, fill.to), (line, s.left - 1)),
+                    s.left - fill.to,
+                    true,
+                ),
+            };
+            let mut values: Vec<String> = (1..=count as i64)
+                .map(|k| next(if back { -k } else { k }))
+                .collect();
+            if back {
+                values.reverse();
+            }
+            out.push((range, values));
+        }
+        out
+    }
+
+    /// Write texts into a one-row or one-column range as one IronCalc step,
+    /// keeping the cells' formats.
+    fn write_texts(&mut self, sheet: u32, line: CellRange, values: &[String]) -> Result<()> {
+        let sep = if line.cols_count() > 1 { "\t" } else { "\n" };
+        let text = values
+            .iter()
+            .map(|v| format!("\"{}\"", v.replace('"', "\"\"")))
+            .collect::<Vec<_>>()
+            .join(sep);
+        self.model
+            .set_selected_sheet(sheet)
+            .and_then(|()| {
+                self.model
+                    .set_selected_cell(line.top as i32 + 1, line.left as i32 + 1)
+            })
+            .and_then(|()| self.model.paste_csv_string(&line.area(sheet), &text))
+            .map_err(|e| anyhow!("{e}"))
     }
 
     /// Write numbers into a one-row or one-column range as one IronCalc
@@ -1125,6 +1317,47 @@ mod tests {
             wb.set_input(0, *r, *c, v).unwrap();
         }
         wb
+    }
+
+    /// Excel's built-in lists and the user's custom lists continue in a
+    /// fill, in the source's case and steps, up and down; one undo step.
+    #[test]
+    fn fill_continues_custom_lists() {
+        let mut wb = book(&[
+            (0, 0, "Mon"),
+            (0, 1, "JAN"),
+            (1, 1, "MAR"),
+            (0, 2, "december"),
+            (0, 3, "Low"),
+            (0, 4, "Item"),
+        ]);
+        wb.set_custom_lists(vec![parse_custom_list("Low, Medium, High")]);
+        let src = CellRange::from_corners((0, 0), (0, 4));
+        let fill = Fill::from_drag(src, (4, 4)).unwrap();
+        wb.fill(0, &fill).unwrap();
+        let col = |wb: &Workbook, c| (0..5).map(|r| wb.input(0, r, c)).collect::<Vec<_>>();
+        assert_eq!(col(&wb, 0), ["Mon", "Tue", "Wed", "Thu", "Fri"]);
+        assert_eq!(
+            col(&wb, 2),
+            ["december", "january", "february", "march", "april"]
+        );
+        assert_eq!(col(&wb, 3), ["Low", "Medium", "High", "Low", "Medium"]);
+        assert_eq!(col(&wb, 4), ["Item"; 5], "not a list: copied");
+        assert!(wb.undo().unwrap());
+        assert_eq!(wb.input(0, 1, 0), "");
+        // Two items set the step; filling up goes backwards.
+        let mut wb = book(&[(5, 0, "Jan"), (6, 0, "Apr")]);
+        let src = CellRange::from_corners((5, 0), (6, 0));
+        let fill = Fill::from_drag(src, (8, 0)).unwrap();
+        wb.fill(0, &fill).unwrap();
+        assert_eq!(
+            (wb.input(0, 7, 0), wb.input(0, 8, 0)),
+            ("Jul".into(), "Oct".into())
+        );
+        let fill = Fill::from_drag(CellRange::from_corners((5, 0), (6, 0)), (4, 0)).unwrap();
+        wb.fill(0, &fill).unwrap();
+        assert_eq!(wb.input(0, 4, 0), "Oct");
+        assert_eq!(parse_custom_list("a,\n b\n\n,c"), ["a", "b", "c"]);
     }
 
     #[test]

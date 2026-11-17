@@ -33,6 +33,7 @@
 //! those set not to print are left out, and so are shapes and text boxes
 //! (Kantor can't draw them yet).
 
+pub mod break_preview;
 pub mod drawings;
 mod encode;
 mod extract;
@@ -664,7 +665,7 @@ pub struct CellText {
     pub icon_room: f32,
 }
 
-pub use text::FontKey;
+pub use text::{FontKey, Span};
 
 /// A note's box on a printed page: its rectangle (points, like the cells)
 /// and its text.
@@ -672,6 +673,9 @@ pub use text::FontKey;
 pub struct NoteBoxPrint {
     pub rect: [f32; 4],
     pub text: CellText,
+    /// The note's formatting (Excel's bold `Author:` line, or the file's
+    /// runs) over `text`'s font; its text is `text.text`.
+    pub spans: Vec<Span>,
 }
 
 /// Print `opts.sheets` of a workbook to PDF. Returns the PDF and its page

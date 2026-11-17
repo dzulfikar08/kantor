@@ -36,6 +36,26 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   perspective as the chart says.
 - Sheets, Docs and Slides: date axes space their categories by date (days, months or years, as the
   axis says or as Excel picks), leaving room for missing dates, with labels at each major unit.
+- Sheets: Page Break Preview (View menu, or the buttons by the sheet tabs) shows the pages a sheet
+  prints on with "Page 1", "Page 2"… over them, greys what doesn't print and draws the automatic
+  (dashed) and manual (solid) page breaks in blue. Drag a break to move it (an automatic one becomes
+  manual; drag one off the pages to remove it) or drag the outline to set the print area.
+- Sheets: notes printed "As displayed on sheet" keep their formatting (the bold author line, and the
+  file's bold, italic, coloured and sized text).
+- Sheets: Edit Formatting Rule sets an icon set's thresholds (Number, Percent, Formula or Percentile,
+  `>=` or `>`) and each icon (from any icon set), and a data bar's minimum and maximum, shortest and
+  longest bar, solid or gradient fill, border, negative bar fill and border, axis position and
+  colour, direction and Show bar only. They are saved as Excel 2010 saves them.
+- Sheets: Custom Lists… (Commands, or Custom List… in the Sort panel's order) makes your own lists,
+  typed or imported from cells, kept in Kantor's settings. The Sort panel sorts by them and the fill
+  handle continues them (`Low` → `Medium` → `High`), as it now continues Excel's day and month lists
+  (`Mon` → `Tue`, `Jan, Apr` → `Jul`).
+- Sheets: a table's own formats from the file (its header, data and total rows' and its columns')
+  are drawn over its table style and under the cells' own formatting, as in Excel.
+- Sheets: pivot calculated items can name items by position: `Region[2]` (the second item),
+  `Region[-1]` and `Region[+1]` (the items before and after it).
+- Sheets: PivotTable Options' "Allow multiple filters per field": a field can have a label or date
+  filter and a value or Top 10 filter at once (Filter 1 and Filter 2 in Field Settings).
 - Docs: text boxes holding pictures and tables are edited where they're drawn, like any other text
   box, and pictures and tables can be inserted into a text box.
 - Docs: text boxes set to "Resize shape to fit text" are as tall as their text, and grow or shrink

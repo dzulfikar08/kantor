@@ -418,3 +418,101 @@ fn styles_without_custom_ones_stay_as_ironcalc_writes_them() {
     wb.save_as(&c).unwrap();
     assert_eq!(parts(&a)["xl/styles.xml"], parts(&c)["xl/styles.xml"]);
 }
+
+/// A table's own formats (`headerRowDxfId`, a column's `dataDxfId`) are
+/// drawn over its style and under the cells' own formatting, as in Excel.
+#[test]
+fn table_dxfs_layer_between_style_and_cells() {
+    use std::io::{Read, Write};
+    let mut wb = Workbook::new_empty().unwrap();
+    for (c, h) in ["Item", "Qty"].iter().enumerate() {
+        wb.set_input(0, 0, c as u32, h).unwrap();
+        wb.set_input(0, 1, c as u32, "1").unwrap();
+        wb.set_input(0, 2, c as u32, "2").unwrap();
+    }
+    wb.create_table(
+        0,
+        CellRange::from_corners((0, 0), (2, 1)),
+        true,
+        "TableStyleMedium2",
+    )
+    .unwrap();
+    // B3's own fill: it wins over the column's.
+    wb.set_range_style(
+        0,
+        CellRange::from_corners((2, 1), (2, 1)),
+        sheets_engine::StyleChange::Fill(Some(0x00FF00)),
+    )
+    .unwrap();
+    let path = scratch("dxfs-kantor.xlsx");
+    wb.save_as(&path).unwrap();
+    let file = scratch("dxfs-excel.xlsx");
+    {
+        let mut zin = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+        let mut zout = zip::ZipWriter::new(std::fs::File::create(&file).unwrap());
+        let opts = zip::write::SimpleFileOptions::default();
+        let n_dxfs = {
+            let mut s = String::new();
+            zin.by_name("xl/styles.xml")
+                .unwrap()
+                .read_to_string(&mut s)
+                .unwrap();
+            s.matches("<dxf>").count()
+        };
+        for i in 0..zin.len() {
+            let mut f = zin.by_index(i).unwrap();
+            let name = f.name().unwrap().to_string();
+            let mut data = String::new();
+            let mut bytes = Vec::new();
+            f.read_to_end(&mut bytes).unwrap();
+            if name == "xl/styles.xml" || name.starts_with("xl/tables/") {
+                data = String::from_utf8(bytes.clone()).unwrap();
+            }
+            let out = if name == "xl/styles.xml" {
+                let mine = "<dxf><font><i/><color rgb=\"FFFF0000\"/></font></dxf><dxf><fill><patternFill><bgColor rgb=\"FFFFFF00\"/></patternFill></fill></dxf>";
+                let d = if data.contains("</dxfs>") {
+                    data.replacen("</dxfs>", &format!("{mine}</dxfs>"), 1)
+                } else {
+                    data.replacen(
+                        "<dxfs count=\"0\"/>",
+                        &format!("<dxfs count=\"2\">{mine}</dxfs>"),
+                        1,
+                    )
+                };
+                assert!(d.contains(mine), "{d}");
+                d.into_bytes()
+            } else if name.starts_with("xl/tables/") {
+                data.replacen(
+                    "<table ",
+                    &format!("<table headerRowDxfId=\"{n_dxfs}\" "),
+                    1,
+                )
+                .replacen(
+                    "name=\"Qty\"",
+                    &format!("name=\"Qty\" dataDxfId=\"{}\"", n_dxfs + 1),
+                    1,
+                )
+                .into_bytes()
+            } else {
+                bytes
+            };
+            zout.start_file(&name, opts).unwrap();
+            zout.write_all(&out).unwrap();
+        }
+        zout.finish().unwrap();
+    }
+    let wb = Workbook::open(&file).unwrap();
+    // Header: the style's fill and white bold font; the table's dxf makes it
+    // italic red.
+    let h = wb.table_cell_look(0, 0, 0).unwrap();
+    assert!(h.italic && h.bold, "{h:?}");
+    assert_eq!(h.font_color, Some(0xFF0000));
+    assert!(h.fill.is_some());
+    // Qty's data cells: the column's yellow over the stripes.
+    assert_eq!(wb.table_cell_look(0, 1, 1).unwrap().fill, Some(0xFFFF00));
+    let item = wb.table_cell_look(0, 1, 0).unwrap();
+    assert_ne!(item.fill, Some(0xFFFF00));
+    assert!(!item.italic, "the header's format stays on the header");
+    // B3 keeps its own green (drawn over the table's).
+    assert_eq!(wb.cell_style(0, 2, 1).fill, Some(0x00FF00));
+}

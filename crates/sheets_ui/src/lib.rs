@@ -43,6 +43,7 @@ extern crate gpui_kit as gpui;
 mod agent;
 mod ai;
 mod bench;
+mod break_preview;
 mod calc;
 mod cell_editor;
 mod cf_ui;
@@ -50,6 +51,7 @@ mod chart_options_ui;
 mod chart_sheet_ui;
 mod chart_ui;
 mod cond_paint;
+mod custom_lists_ui;
 mod data_validation;
 mod dialog;
 mod drawings;
@@ -420,6 +422,8 @@ pub struct SheetGrid {
     note_anchor: notes_ui::NoteAnchor,
     /// Show All Notes: every note's box is shown (a view setting).
     show_all_notes: bool,
+    /// Sheets (by id) shown in Page Break Preview ([`break_preview`]).
+    break_preview: std::collections::HashSet<u32>,
     /// Text overflowing into empty neighbours, per row ([`overflow`]).
     overflow: overflow::OverflowCache,
 }
@@ -440,7 +444,8 @@ struct Selection {
 }
 
 impl SheetGrid {
-    fn new(book: Workbook, view: WeakEntity<SheetsView>) -> Self {
+    fn new(mut book: Workbook, view: WeakEntity<SheetsView>) -> Self {
+        book.set_custom_lists(custom_lists_ui::user_lists());
         let mut grid = Self {
             book,
             sheet: 0,
@@ -466,6 +471,7 @@ impl SheetGrid {
             note_editing: None,
             note_anchor: Default::default(),
             show_all_notes: false,
+            break_preview: Default::default(),
             overflow: Default::default(),
         };
         grid.resize();
@@ -494,6 +500,10 @@ impl SheetGrid {
     /// Whether a manual page break runs above row `row` and left of column
     /// `col` (Excel draws them as dashed lines in Normal view).
     fn page_breaks(&self, row: u32, col: u32) -> (bool, bool) {
+        // Page Break Preview draws every break itself.
+        if self.break_preview.contains(&self.book.sheet_id(self.sheet)) {
+            return (false, false);
+        }
         let key = (self.book.revision(), self.sheet);
         let mut memo = self.breaks_memo.borrow_mut();
         if memo.as_ref().is_none_or(|(k, _)| *k != key) {
@@ -1368,8 +1378,14 @@ pub struct SheetsView {
     filter_menu: Option<filter_menu::FilterMenu>,
     /// The Custom Sort panel.
     sort_panel: Option<filter_menu::SortPanel>,
+    /// The Custom Lists card ([`custom_lists_ui`]).
+    custom_lists: Option<custom_lists_ui::CustomListsDialog>,
     /// Charts and pictures over the grid (see [`drawings`]).
     drawings: Rc<RefCell<drawings::DrawLayer>>,
+    /// Page Break Preview's pages and drags ([`break_preview`]).
+    break_layer: Rc<RefCell<break_preview::BreakLayer>>,
+    /// The grid's panes when a page break drag last moved.
+    break_drag_panes: Vec<drawings::Pane>,
     /// The Insert PivotTable card (see [`pivot`]).
     pivot_dialog: Option<pivot::InsertDialog>,
     /// The PivotTable Fields panel beside the grid.
@@ -1497,7 +1513,10 @@ impl SheetsView {
             validation_list_sub: None,
             filter_menu: None,
             sort_panel: None,
+            custom_lists: None,
             drawings: Rc::default(),
+            break_layer: Rc::default(),
+            break_drag_panes: Vec::new(),
             pivot_dialog: None,
             pivot_panel: None,
             page_setup: None,
@@ -3023,6 +3042,7 @@ impl Render for SheetsView {
                                 .on_key_down(cx.listener(Self::on_grid_key))
                                 .relative()
                                 .child(DataTable::new(&self.table).bordered(false).small())
+                                .children(self.render_break_preview(cx))
                                 .child(self.render_drawings(cx)),
                         )
                         .children(panel)
@@ -3040,13 +3060,15 @@ impl Render for SheetsView {
                     .bg(t.chrome)
                     .border_t_1()
                     .border_color(t.border)
-                    .child(tabs),
+                    .child(div().flex_1().min_w_0().child(tabs))
+                    .child(self.render_view_buttons(cx)),
             )
             .children(completion)
             .children(self.render_find_bar(cx))
             .children(self.render_row_height_prompt(cx))
             .children(self.render_alert(cx))
             .children(self.render_sort_panel(cx))
+            .children(self.render_custom_lists(cx))
             .children(self.render_filter_menu(cx))
             .children(self.render_pivot_dialog(cx))
             .children(self.render_page_setup(cx))

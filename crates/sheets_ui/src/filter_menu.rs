@@ -487,19 +487,30 @@ pub(crate) struct PanelLevel {
 pub(crate) enum PanelOn {
     Values,
     Look(LookPick),
-    /// One of Excel's built-in custom lists ([`CUSTOM_LISTS`]).
-    List(usize),
+    /// A custom list's items: Excel's built-in ones or the user's
+    /// ([`crate::custom_lists_ui`]).
+    List(Vec<String>),
 }
 
-/// Excel's built-in custom lists.
-pub(crate) const CUSTOM_LISTS: [&str; 4] = [
-    "Sun, Mon, Tue, Wed, Thu, Fri, Sat",
-    "Sunday, Monday, Tuesday, Wednesday, Thursday, Friday, Saturday",
-    "Jan, Feb, Mar, Apr, May, Jun, Jul, Aug, Sep, Oct, Nov, Dec",
-    "January, February, March, April, May, June, July, August, September, October, November, December",
-];
-
 impl SheetsView {
+    /// Sort level `level` of the Sort panel by custom list `items` (from
+    /// Custom Lists).
+    pub(crate) fn set_sort_level_list(
+        &mut self,
+        level: usize,
+        items: Vec<String>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(l) = self
+            .sort_panel
+            .as_mut()
+            .and_then(|p| p.levels.get_mut(level))
+        {
+            l.on = PanelOn::List(items);
+        }
+        cx.notify();
+    }
+
     /// Open the filter menu of column `col` of `scope`, at a window position.
     pub(crate) fn open_filter_menu(
         &mut self,
@@ -912,9 +923,7 @@ impl SheetsView {
                             set: set.clone(),
                             id: *id,
                         },
-                        PanelOn::List(i) => {
-                            SortOn::List(CUSTOM_LISTS[*i].split(", ").map(str::to_owned).collect())
-                        }
+                        PanelOn::List(items) => SortOn::List(items.clone()),
                     },
                 })
                 .collect();
@@ -1276,7 +1285,7 @@ impl SheetsView {
                 PanelOn::Look(LookPick::Fill(_)) => i18n::t("Cell Color").into(),
                 PanelOn::Look(LookPick::Font(_)) => i18n::t("Font Color").into(),
                 PanelOn::Look(LookPick::Icon(..)) => i18n::t("Cell Icon").into(),
-                PanelOn::List(n) => CUSTOM_LISTS[*n].into(),
+                PanelOn::List(items) => crate::custom_lists_ui::list_label(items).into(),
             };
             let order_label: SharedString = match (&on, key.descending) {
                 (PanelOn::Values, false) => "A → Z".into(),
@@ -1360,10 +1369,20 @@ impl SheetsView {
                             PanelOn::Look(LookPick::Icon(set.clone(), *id)),
                         );
                     }
-                    for (n, list) in CUSTOM_LISTS.iter().enumerate() {
-                        m = entry(m, (*list).into(), on == PanelOn::List(n), PanelOn::List(n));
+                    for list in crate::custom_lists_ui::all_lists() {
+                        let label = crate::custom_lists_ui::list_label(&list).into();
+                        let checked = on == PanelOn::List(list.clone());
+                        m = entry(m, label, checked, PanelOn::List(list));
                     }
-                    m
+                    let v = v4.clone();
+                    m.separator()
+                        .item(PopupMenuItem::new(i18n::t("Custom List…")).on_click(
+                            move |_, window, cx| {
+                                let _ = v.update(cx, |this, cx| {
+                                    this.custom_lists_doc(Some(i), window, cx)
+                                });
+                            },
+                        ))
                 });
             // The colour or icon a Cell Color / Font Color / Cell Icon level puts first.
             let look_choices: Vec<(LookPick, AnyElement)> = match &pick_look {

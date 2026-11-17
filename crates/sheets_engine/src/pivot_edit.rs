@@ -187,6 +187,10 @@ pub struct PivotFieldSettings {
     /// [`PivotLayout::values`]) rather than by label.
     pub sort_by_value: Option<usize>,
     pub filter: Option<PivotFieldFilter>,
+    /// A second filter, of the other kind (a value or top 10 filter beside
+    /// a label or date filter, or the reverse), when the pivot table allows
+    /// multiple filters per field ([`PivotLayout::multiple_filters`]).
+    pub filter2: Option<PivotFieldFilter>,
 }
 
 /// How a field is grouped by ranges (Excel's Grouping dialog).
@@ -302,6 +306,9 @@ pub struct PivotLayout {
     /// Why it can't be changed or refreshed, if it can't.
     pub refresh_problem: Option<String>,
     pub style: PivotStyleOptions,
+    /// PivotTable Options ▸ "Allow multiple filters per field": a field may
+    /// have a label (or date) filter and a value (or top 10) filter at once.
+    pub multiple_filters: bool,
 }
 
 impl PivotLayout {
@@ -785,6 +792,8 @@ impl Workbook {
             page_fields: Vec::new(),
             data_fields: Vec::new(),
             filters: Vec::new(),
+            // Kantor writes `multipleFieldFilters="0"`, Excel's default.
+            multiple_filters: false,
             row_grand: true,
             col_grand: true,
             style: StyleInfo {
@@ -1150,6 +1159,7 @@ impl Workbook {
             subtotals,
             grand_total_row: def.col_grand,
             grand_total_column: def.row_grand,
+            multiple_filters: def.multiple_filters,
             refresh_problem: cache
                 .unsupported
                 .clone()
@@ -1320,23 +1330,36 @@ impl Workbook {
         let all_subtotals = current
             .as_ref()
             .is_none_or(|c| c.subtotals != layout.subtotals);
-        // Filters, by field name (one per field, as Excel keeps them).
+        // Filters, by field name: one per field, or a label (date) and a
+        // value (top 10) filter when the pivot allows multiple filters.
         let mut filters: Vec<(String, PivotFieldFilter)> = Vec::new();
         for (f, sf) in layout.fields.iter().enumerate() {
-            let Some(flt) = &sf.settings.filter else {
-                continue;
-            };
-            if !ok(f) || filter_family(&flt.kind).is_none() {
-                bail!("{:?} is not a filter Kantor knows", flt.kind);
+            let second = sf.settings.filter2.as_ref();
+            if let (Some(a), Some(b)) = (&sf.settings.filter, second) {
+                if !layout.multiple_filters {
+                    bail!(
+                        "{} has two filters: turn on Allow multiple filters per field (PivotTable Options)",
+                        sf.name
+                    );
+                }
+                if tests_values(&a.kind) == tests_values(&b.kind) {
+                    bail!(
+                        "{} can have one label or date filter and one value filter",
+                        sf.name
+                    );
+                }
             }
-            let needs_value = matches!(
-                filter_family(&flt.kind),
-                Some(crate::pivot_calc::FilterFamily::Value | crate::pivot_calc::FilterFamily::Top)
-            );
-            if needs_value && flt.value_field.is_none_or(|v| v >= layout.values.len()) {
-                bail!("choose the value field the filter on {} tests", sf.name);
+            for flt in sf.settings.filter.iter().chain(second) {
+                if !ok(f) || filter_family(&flt.kind).is_none() {
+                    bail!("{:?} is not a filter Kantor knows", flt.kind);
+                }
+                if tests_values(&flt.kind)
+                    && flt.value_field.is_none_or(|v| v >= layout.values.len())
+                {
+                    bail!("choose the value field the filter on {} tests", sf.name);
+                }
+                filters.push((cache.fields[f].name.clone(), flt.clone()));
             }
-            filters.push((cache.fields[f].name.clone(), flt.clone()));
         }
         let wanted = layout.clone();
         let d_values = layout.values.len();
@@ -1537,7 +1560,12 @@ impl Workbook {
                 col_stripes: wanted.style.banded_columns,
                 last_column: d.style.last_column,
             };
+            d.multiple_filters = wanted.multiple_filters;
             d.root_sets = vec![
+                (
+                    "multipleFieldFilters",
+                    u8::from(d.multiple_filters).to_string(),
+                ),
                 ("rowGrandTotals", u8::from(d.row_grand).to_string()),
                 ("colGrandTotals", u8::from(d.col_grand).to_string()),
                 (
@@ -1754,6 +1782,29 @@ fn def_skeleton(name: &str, captions: &Captions) -> String {
     )
 }
 
+/// The panel's filters of field `f` (not timelines'), in order.
+fn field_filters(f: usize, filters: &[PivotFilter]) -> impl Iterator<Item = PivotFieldFilter> + '_ {
+    filters
+        .iter()
+        .filter(move |x| x.fld == f && x.name.is_none())
+        .map(|x| PivotFieldFilter {
+            kind: x.kind.clone(),
+            value_field: x.measure,
+            value1: x.v1.clone(),
+            value2: x.v2.clone(),
+            top: x.top,
+        })
+}
+
+/// Whether a filter tests values (value and top 10 filters), not labels or
+/// dates.
+fn tests_values(kind: &str) -> bool {
+    matches!(
+        filter_family(kind),
+        Some(crate::pivot_calc::FilterFamily::Value | crate::pivot_calc::FilterFamily::Top)
+    )
+}
+
 /// Field Settings of field `f` as the definition has them.
 fn field_settings(fd: &Field, f: usize, filters: &[PivotFilter]) -> PivotFieldSettings {
     PivotFieldSettings {
@@ -1779,16 +1830,8 @@ fn field_settings(fd: &Field, f: usize, filters: &[PivotFilter]) -> PivotFieldSe
             _ => PivotSort::Manual,
         },
         sort_by_value: fd.sort_by,
-        filter: filters
-            .iter()
-            .find(|x| x.fld == f)
-            .map(|x| PivotFieldFilter {
-                kind: x.kind.clone(),
-                value_field: x.measure,
-                value1: x.v1.clone(),
-                value2: x.v2.clone(),
-                top: x.top,
-            }),
+        filter: field_filters(f, filters).next(),
+        filter2: field_filters(f, filters).nth(1),
     }
 }
 

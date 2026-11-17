@@ -71,7 +71,8 @@ pub struct DataBar {
     pub to: f32,
     /// The zero axis, when the range has negative and positive values.
     pub axis: Option<f32>,
-    /// The bar is for a negative value (it grows to the left of the axis).
+    /// The bar grows leftwards (a negative value's bar, or any bar of a
+    /// right-to-left rule): its gradient fades towards the left.
     pub negative: bool,
     /// Its border (Excel 2010's "Solid Border").
     pub border: Option<Rgb>,
@@ -89,6 +90,8 @@ struct BarStyle {
     negative_border: Option<Rgb>,
     negative_fill: Option<Rgb>,
     axis_color: Option<Rgb>,
+    /// Bars grow from the right (Excel's "Right-to-Left" direction).
+    rtl: bool,
 }
 
 impl BarStyle {
@@ -100,6 +103,7 @@ impl BarStyle {
         negative_border: None,
         negative_fill: None,
         axis_color: None,
+        rtl: false,
     };
 }
 
@@ -615,9 +619,7 @@ impl Workbook {
             let dxf_of = |id: u32| dxfs.get(id as usize).cloned().map(Arc::new);
             // A data bar's look from the file while it is as opened.
             let bar_style = matches!(cf.cf_rule, CfRule::DataBar { .. }).then(|| {
-                let look = self
-                    .cf_x14
-                    .bar_look(self.sheet_id(sheet), &cf.range, &cf.cf_rule);
+                let look = self.bar_look_of(self.sheet_id(sheet), &cf.range, &cf.cf_rule);
                 let model = self.model.get_model();
                 let c = |c: &Option<ironcalc_base::types::Color>| {
                     c.as_ref().and_then(|c| rgb(model, c))
@@ -630,6 +632,7 @@ impl Workbook {
                     negative_border: c(&look.negative_border),
                     negative_fill: c(&look.negative_fill),
                     axis_color: c(&look.axis_color),
+                    rtl: look.direction == crate::cf_x14::Direction::RightToLeft,
                 }
             });
             let (kind, dxf, stop) = match cf.cf_rule {
@@ -1482,6 +1485,12 @@ fn styled_bar(
         _ => (0.0, len(frac(v)), None),
     };
     let neg = v < 0.0;
+    // Right to left: the same bar, mirrored.
+    let (from, to, axis) = if style.rtl {
+        (1.0 - to, 1.0 - from, axis.map(|a| 1.0 - a))
+    } else {
+        (from, to, axis)
+    };
     DataBar {
         color: if neg {
             style.negative_fill.unwrap_or(negative)
@@ -1492,7 +1501,7 @@ fn styled_bar(
         from,
         to,
         axis,
-        negative: neg,
+        negative: neg != style.rtl,
         border: if neg {
             style.negative_border.or(style.border)
         } else {
@@ -1624,6 +1633,7 @@ mod invalidation {
         let bar = CfSpec::DataBar {
             color: 0x63_8E_C6,
             gradient: true,
+            bar: Default::default(),
         };
         wb.add_cf_rule(0, "A1:A20", &rule(bar)).unwrap();
         let scale = CfSpec::ColorScale {

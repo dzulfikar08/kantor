@@ -55,6 +55,16 @@ pub struct Line {
     pub height: f32,
 }
 
+/// Part of a rich text: a byte range with its own font, colour
+/// (`0xRRGGBB`) and underline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Span {
+    pub range: Range<usize>,
+    pub font: FontKey,
+    pub color: u32,
+    pub underline: bool,
+}
+
 /// A wrapped paragraph: lines with their baselines from the top, points.
 #[derive(Debug, Clone, Default)]
 pub struct Block {
@@ -245,6 +255,59 @@ impl Shaper {
         l
     }
 
+    /// `text` with `spans` of their own font, colour and underline over
+    /// `base`, wrapped to `width` points (explicit line breaks kept). The
+    /// runs keep their colours: draw them with [`Line`]'s own colours.
+    pub fn wrapped_rich(
+        &mut self,
+        text: &str,
+        base: &FontKey,
+        spans: &[Span],
+        width: f32,
+    ) -> Block {
+        let mut b = self.layout.ranged_builder(&mut self.fonts, text, 1.0, true);
+        b.push_default(StyleProperty::FontFamily(FontFamily::Source(
+            base.family.as_ref().into(),
+        )));
+        b.push_default(StyleProperty::FontSize(base.size_pt() * PX));
+        b.push_default(StyleProperty::LineHeight(LineHeight::MetricsRelative(1.0)));
+        b.push_default(StyleProperty::Brush(Rgba::BLACK));
+        for s in spans {
+            let r = s.range.start.min(text.len())..s.range.end.min(text.len());
+            if r.is_empty() || !text.is_char_boundary(r.start) || !text.is_char_boundary(r.end) {
+                continue;
+            }
+            b.push(
+                StyleProperty::FontFamily(FontFamily::Source(s.font.family.as_ref().into())),
+                r.clone(),
+            );
+            b.push(StyleProperty::FontSize(s.font.size_pt() * PX), r.clone());
+            let [cr, cg, cb] = [(s.color >> 16) as u8, (s.color >> 8) as u8, s.color as u8];
+            b.push(StyleProperty::Brush(Rgba([cr, cg, cb, 255])), r.clone());
+            if s.font.bold {
+                b.push(StyleProperty::FontWeight(FontWeight::BOLD), r.clone());
+            }
+            if s.font.italic {
+                b.push(StyleProperty::FontStyle(FontStyle::Italic), r.clone());
+            }
+            if s.underline {
+                b.push(StyleProperty::Underline(true), r.clone());
+            }
+        }
+        let mut layout = b.build(text);
+        layout.break_all_lines(Some(width.max(1.0) * PX));
+        layout.align(Alignment::Start, AlignmentOptions::default());
+        let shared: Arc<str> = Arc::from(text);
+        let mut lines = Vec::new();
+        let mut y = 0.0;
+        for l in layout.lines() {
+            let m = l.metrics();
+            lines.push((line_of(&l, &shared), m.baseline / PX));
+            y = (m.block_max_coord / PX).max(y);
+        }
+        Block { lines, height: y }
+    }
+
     /// `text` wrapped to `width` points (explicit line breaks kept).
     pub fn wrapped(&mut self, text: &str, font: &FontKey, width: f32, justify: bool) -> Block {
         let layout = self.build(text, font, Some(width.max(1.0)), justify);
@@ -292,16 +355,23 @@ fn line_of(line: &docs_layout::parley::Line<'_, Rgba>, text: &Arc<str>) -> Line 
         }
         let synthesis = run.synthesis();
         let dy = gr.baseline() - base;
+        let size = run.font_size();
+        let underline = gr.style().underline.as_ref().map(|d| {
+            (
+                d.offset.unwrap_or(size * 0.1),
+                d.size.unwrap_or((size / 14.0).max(1.0)),
+            )
+        });
         runs.push(TextRun {
             font: run.font().clone(),
             font_size: run.font_size(),
-            color: Rgba::BLACK,
+            color: gr.style().brush,
             embolden: synthesis.embolden(),
             skew_deg: synthesis.skew(),
             origin_x: gr.offset(),
             baseline: dy,
             advance: gr.advance(),
-            underline: None,
+            underline,
             glyphs: gr
                 .positioned_glyphs()
                 .map(|g| {

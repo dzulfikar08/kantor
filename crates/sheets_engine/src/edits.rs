@@ -65,6 +65,10 @@ pub(crate) struct Edits {
     /// Slicer caches' settings changed in Kantor (sorting, items with no
     /// data), by lower-case cache name.
     pub slicer_caches: HashMap<String, crate::slicer::CacheSettings>,
+    /// Conditional formatting rules made or changed in Kantor with what
+    /// only Excel 2010's markup holds (data bar looks, icons picked one by
+    /// one), newest last.
+    pub cf_looks: Vec<crate::cf_edit::CfLook>,
 }
 
 /// What was edited in Kantor at any point of the session (any history
