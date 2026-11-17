@@ -263,8 +263,8 @@ impl DocsView {
         // Columns left empty share what the others leave, as Word does.
         let used: u32 = cols.iter().map(|c| c.width + c.space).sum();
         let empty = cols.iter().filter(|c| c.width == 0).count() as u32;
-        if empty > 0 {
-            let each = (text.saturating_sub(used) / empty).max(cm_to_twips(1.27));
+        if let Some(share) = text.saturating_sub(used).checked_div(empty) {
+            let each = share.max(cm_to_twips(1.27));
             for c in cols.iter_mut().filter(|c| c.width == 0) {
                 c.width = each;
             }

@@ -4627,8 +4627,7 @@ mod column_tests {
         let last_first = page
             .lines
             .iter()
-            .filter(|l| l.x == s.margin_left)
-            .last()
+            .rfind(|l| l.x == s.margin_left)
             .unwrap()
             .para;
         let x = s.margin_left + 2.0;
