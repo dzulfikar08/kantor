@@ -730,7 +730,7 @@ fn picture_layouts_lay_out_and_take_items_with_placeholders() {
         // empty placeholder.
         p.smartart_add_shape(find_start(&p, f, "Forest"), AddPlace::After)
             .unwrap_or_else(|e| panic!("{fam:?}: {e}"));
-        let per_item = (n0 - 0) / 3;
+        let per_item = n0 / 3;
         assert_eq!(drawn(&p, f).len(), n0 + per_item, "{fam:?}");
         assert_eq!(p.smartart_family(f), Some(fam), "{fam:?}");
         let saved = parts(&p.to_bytes().unwrap());
@@ -793,5 +793,8 @@ fn layouts_change_into_picture_layouts() {
                 && texts.iter().any(|t| t.contains("Oslo")),
             "{fam:?} {texts:?}"
         );
+        if let Ok(dir) = std::env::var("KANTOR_SMARTART_PICS_OUT") {
+            std::fs::write(format!("{dir}/convert-{fam:?}.pptx"), p.to_bytes().unwrap()).unwrap();
+        }
     }
 }
