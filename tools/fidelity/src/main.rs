@@ -1066,6 +1066,7 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
         &plain(CfSpec::DataBar {
             color: 0x638EC6,
             gradient: true,
+            bar: Default::default(),
         }),
     )?;
     wb.add_cf_rule(
@@ -1082,6 +1083,7 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
             set: "3Arrows".into(),
             reverse: false,
             show_value: true,
+            steps: Vec::new(),
         }),
     )?;
     // Data validation: a whole number with messages, a list.

@@ -248,7 +248,10 @@ fn data_bar_settings_round_trip() {
     wb.undo().unwrap();
     assert!(wb.cf_rules(0, None).is_empty());
     wb.redo().unwrap();
-    assert_eq!(wb.conditional(0, 9, 0).unwrap().bar.unwrap().border, Some(0x00B050));
+    assert_eq!(
+        wb.conditional(0, 9, 0).unwrap().bar.unwrap().border,
+        Some(0x00B050)
+    );
 
     // Changing only the border (the model rule stays the same) changes it.
     let r = &wb.cf_rules(0, None)[0];
@@ -259,7 +262,10 @@ fn data_bar_settings_round_trip() {
     wb.update_cf_rule(0, r.index, "A1:A10", &def).unwrap();
     assert_eq!(wb.conditional(0, 9, 0).unwrap().bar.unwrap().border, None);
     wb.undo().unwrap();
-    assert_eq!(wb.conditional(0, 9, 0).unwrap().bar.unwrap().border, Some(0x00B050));
+    assert_eq!(
+        wb.conditional(0, 9, 0).unwrap().bar.unwrap().border,
+        Some(0x00B050)
+    );
 }
 
 /// Icon thresholds (type, value, `>` or `>=`) and icons picked one by

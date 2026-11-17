@@ -54,7 +54,9 @@ fn list_continuation(
             .map(|t| {
                 let t = t.trim();
                 list.iter()
-                    .position(|item| item.eq_ignore_ascii_case(t) || item.to_lowercase() == t.to_lowercase())
+                    .position(|item| {
+                        item.eq_ignore_ascii_case(t) || item.to_lowercase() == t.to_lowercase()
+                    })
                     .map(|p| p as i64)
             })
             .collect();
@@ -68,7 +70,9 @@ fn list_continuation(
         if !even || step == 0 {
             continue;
         }
-        let upper = texts.iter().all(|t| t.chars().any(char::is_alphabetic) && t.to_uppercase() == *t)
+        let upper = texts
+            .iter()
+            .all(|t| t.chars().any(char::is_alphabetic) && t.to_uppercase() == *t)
             && texts.iter().any(|t| t.to_lowercase() != *t);
         let lower = texts.iter().all(|t| t.to_lowercase() == *t)
             && texts.iter().any(|t| t.to_uppercase() != *t);
@@ -1333,7 +1337,10 @@ mod tests {
         wb.fill(0, &fill).unwrap();
         let col = |wb: &Workbook, c| (0..5).map(|r| wb.input(0, r, c)).collect::<Vec<_>>();
         assert_eq!(col(&wb, 0), ["Mon", "Tue", "Wed", "Thu", "Fri"]);
-        assert_eq!(col(&wb, 2), ["december", "january", "february", "march", "april"]);
+        assert_eq!(
+            col(&wb, 2),
+            ["december", "january", "february", "march", "april"]
+        );
         assert_eq!(col(&wb, 3), ["Low", "Medium", "High", "Low", "Medium"]);
         assert_eq!(col(&wb, 4), ["Item"; 5], "not a list: copied");
         assert!(wb.undo().unwrap());
@@ -1343,7 +1350,10 @@ mod tests {
         let src = CellRange::from_corners((5, 0), (6, 0));
         let fill = Fill::from_drag(src, (8, 0)).unwrap();
         wb.fill(0, &fill).unwrap();
-        assert_eq!((wb.input(0, 7, 0), wb.input(0, 8, 0)), ("Jul".into(), "Oct".into()));
+        assert_eq!(
+            (wb.input(0, 7, 0), wb.input(0, 8, 0)),
+            ("Jul".into(), "Oct".into())
+        );
         let fill = Fill::from_drag(CellRange::from_corners((5, 0), (6, 0)), (4, 0)).unwrap();
         wb.fill(0, &fill).unwrap();
         assert_eq!(wb.input(0, 4, 0), "Oct");

@@ -102,10 +102,7 @@ impl BreakMap {
         self.areas.iter().find_map(|a| {
             let c = a.cols.iter().position(|b| (b.0..=b.1).contains(&col))?;
             let r = a.rows.iter().position(|b| (b.0..=b.1).contains(&row))?;
-            a.pages
-                .iter()
-                .find(|p| p.0 == c && p.1 == r)
-                .map(|p| p.2)
+            a.pages.iter().find(|p| p.0 == c && p.1 == r).map(|p| p.2)
         })
     }
 }
@@ -139,7 +136,13 @@ mod tests {
         wb.insert_page_break(0, Some(10), None).unwrap();
         let map = BreakMap::new(&wb, 0, &mut shaper);
         let b = map.breaks(0, true);
-        assert_eq!(b[0], PageBreak { at: 10, manual: true });
+        assert_eq!(
+            b[0],
+            PageBreak {
+                at: 10,
+                manual: true
+            }
+        );
         assert!(b[1..].iter().all(|b| !b.manual));
         assert_eq!(map.page_at(9, 0), Some(1));
         assert_eq!(map.page_at(10, 0), Some(2));

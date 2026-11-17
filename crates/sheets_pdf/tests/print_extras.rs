@@ -220,7 +220,10 @@ fn notes_as_displayed_keep_their_formatting() {
         0,
         0,
         0,
-        vec![run("Ana:", true, None), run("\nRed alert", false, Some(0xFF0000))],
+        vec![
+            run("Ana:", true, None),
+            run("\nRed alert", false, Some(0xFF0000)),
+        ],
         "Ana",
     )
     .unwrap();

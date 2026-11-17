@@ -108,7 +108,10 @@ impl BarLook {
         let cfvo = |c: Option<&ironcalc_base::cf_types::Cfvo>, auto: &str| {
             use ironcalc_base::cf_types::Cfvo;
             let f = |t: &str, v: String| {
-                format!("<x14:cfvo type=\"{t}\"><xm:f>{}</xm:f></x14:cfvo>", escape(&v))
+                format!(
+                    "<x14:cfvo type=\"{t}\"><xm:f>{}</xm:f></x14:cfvo>",
+                    escape(&v)
+                )
             };
             match c {
                 None => format!("<x14:cfvo type=\"{auto}\"/>"),

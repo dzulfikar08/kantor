@@ -178,8 +178,7 @@ impl SheetsView {
     /// Whether the sheet on screen is in Page Break Preview.
     pub(crate) fn in_break_preview(&self, cx: &App) -> bool {
         let grid = self.table.read(cx).delegate();
-        grid.break_preview
-            .contains(&grid.book.sheet_id(grid.sheet))
+        grid.break_preview.contains(&grid.book.sheet_id(grid.sheet))
     }
 
     /// View ▸ Page Break Preview (`on`) or Normal, for the sheet on screen.
@@ -214,9 +213,9 @@ impl SheetsView {
             kantor_ui::components::icon_button(id, icon, on == pbp, cx)
                 .xsmall()
                 .tooltip(i18n::t(label))
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.set_break_preview(pbp, window, cx)
-                }))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.set_break_preview(pbp, window, cx)),
+                )
         };
         h_flex()
             .flex_none()
@@ -274,10 +273,15 @@ impl SheetsView {
                         return Ok(None);
                     };
                     match dropped_break(a.range, rows, at, manual, drag.to) {
-                        Some((from, to)) => grid
-                            .book
-                            .move_page_break(sheet, rows, from, to)
-                            .map(|()| Some(if to.is_some() { tk("Page break moved") } else { tk("Page break removed") })),
+                        Some((from, to)) => {
+                            grid.book.move_page_break(sheet, rows, from, to).map(|()| {
+                                Some(if to.is_some() {
+                                    tk("Page break moved")
+                                } else {
+                                    tk("Page break removed")
+                                })
+                            })
+                        }
                         None => Ok(None),
                     }
                 }
@@ -337,7 +341,11 @@ fn prepaint(
         hits: Vec::new(),
         panes: panes.clone(),
     };
-    let areas: Vec<[f64; 4]> = map.areas.iter().map(|a| range_px(&geom, &a.range)).collect();
+    let areas: Vec<[f64; 4]> = map
+        .areas
+        .iter()
+        .map(|a| range_px(&geom, &a.range))
+        .collect();
     for pane in &panes {
         let clip = pane.clip.intersect(&body);
         if clip.size.width <= px(0.) || clip.size.height <= px(0.) {
@@ -378,8 +386,14 @@ fn prepaint(
         // Each page's watermark, and the lines.
         let line = |a: (f64, f64), b: (f64, f64)| {
             (
-                point(pane.origin_x + px(a.0 as f32), pane.origin_y + px(a.1 as f32)),
-                point(pane.origin_x + px(b.0 as f32), pane.origin_y + px(b.1 as f32)),
+                point(
+                    pane.origin_x + px(a.0 as f32),
+                    pane.origin_y + px(a.1 as f32),
+                ),
+                point(
+                    pane.origin_x + px(b.0 as f32),
+                    pane.origin_y + px(b.1 as f32),
+                ),
             )
         };
         for (ai, a) in map.areas.iter().enumerate() {
@@ -699,23 +713,44 @@ mod tests {
             Some((Some(40), Some(30)))
         );
         // An automatic one made manual where dropped.
-        assert_eq!(dropped_break(r, true, 47, false, 30), Some((None, Some(30))));
+        assert_eq!(
+            dropped_break(r, true, 47, false, 30),
+            Some((None, Some(30)))
+        );
         // Dropped where it was: nothing for a manual break.
         assert_eq!(dropped_break(r, true, 40, true, 40), None);
         // Off the range: a manual break goes, an automatic one stays.
         assert_eq!(dropped_break(r, true, 40, true, 0), Some((Some(40), None)));
-        assert_eq!(dropped_break(r, true, 40, true, 100), Some((Some(40), None)));
+        assert_eq!(
+            dropped_break(r, true, 40, true, 100),
+            Some((Some(40), None))
+        );
         assert_eq!(dropped_break(r, false, 3, false, 6), None);
     }
 
     #[std::prelude::v1::test]
     fn edges() {
         let r = CellRange::from_corners((2, 1), (20, 4));
-        assert_eq!(dragged_area(r, 1, 31), CellRange::from_corners((2, 1), (30, 4)));
-        assert_eq!(dragged_area(r, 0, 0), CellRange::from_corners((0, 1), (20, 4)));
-        assert_eq!(dragged_area(r, 3, 3), CellRange::from_corners((2, 1), (20, 2)));
+        assert_eq!(
+            dragged_area(r, 1, 31),
+            CellRange::from_corners((2, 1), (30, 4))
+        );
+        assert_eq!(
+            dragged_area(r, 0, 0),
+            CellRange::from_corners((0, 1), (20, 4))
+        );
+        assert_eq!(
+            dragged_area(r, 3, 3),
+            CellRange::from_corners((2, 1), (20, 2))
+        );
         // Never past the other edge.
-        assert_eq!(dragged_area(r, 2, 9), CellRange::from_corners((2, 4), (20, 4)));
-        assert_eq!(dragged_area(r, 1, 0), CellRange::from_corners((2, 1), (2, 4)));
+        assert_eq!(
+            dragged_area(r, 2, 9),
+            CellRange::from_corners((2, 4), (20, 4))
+        );
+        assert_eq!(
+            dragged_area(r, 1, 0),
+            CellRange::from_corners((2, 1), (2, 4))
+        );
     }
 }

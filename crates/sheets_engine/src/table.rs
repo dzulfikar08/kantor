@@ -817,7 +817,10 @@ impl TableDxfs {
     }
 
     fn is_empty(&self) -> bool {
-        self.header.is_none() && self.data.is_none() && self.totals.is_none() && self.cols.is_empty()
+        self.header.is_none()
+            && self.data.is_none()
+            && self.totals.is_none()
+            && self.cols.is_empty()
     }
 
     fn apply(&self, t: &TableInfo, row: u32, col: u32, look: &mut TableCellLook) {
@@ -1035,7 +1038,12 @@ impl Workbook {
                     .tables
                     .values()
                     .filter(|t| t.sheet_name == ws.name)
-                    .filter_map(|t| Some((TableInfo::from_ironcalc(t)?, TableDxfs::of(t, dxf_list, theme))))
+                    .filter_map(|t| {
+                        Some((
+                            TableInfo::from_ironcalc(t)?,
+                            TableDxfs::of(t, dxf_list, theme),
+                        ))
+                    })
                     .map(|(t, d)| {
                         let style = t.style.as_deref().and_then(|n| self.table_style(n));
                         ((t, style), d)

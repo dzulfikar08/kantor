@@ -100,7 +100,11 @@ impl SheetsView {
             for_level,
             error: None,
         });
-        entries.update(cx, |e, cx| e.focus(window, cx));
+        // After the palette or menu that opened it closes (it gives focus
+        // back to what had it).
+        window.defer(cx, move |window, cx| {
+            entries.update(cx, |e, cx| e.focus(window, cx));
+        });
         cx.notify();
     }
 
@@ -142,7 +146,8 @@ impl SheetsView {
         };
         let items = parse_custom_list(&d.entries.read(cx).value());
         if items.len() < 2 {
-            d.error = Some(t("Type at least two entries, one per line or separated by commas").into());
+            d.error =
+                Some(t("Type at least two entries, one per line or separated by commas").into());
             cx.notify();
             return;
         }
@@ -279,20 +284,21 @@ impl SheetsView {
             .border_color(t_.border)
             .rounded(RADIUS_SM)
             .p(SPACE_1);
-        let entries: Vec<(Option<usize>, String)> = std::iter::once((None, t("NEW LIST").to_owned()))
-            .chain(
-                BUILTIN_LISTS
-                    .iter()
-                    .enumerate()
-                    .map(|(i, l)| (Some(i), (*l).to_owned())),
-            )
-            .chain(
-                d.lists
-                    .iter()
-                    .enumerate()
-                    .map(|(i, l)| (Some(BUILTIN_LISTS.len() + i), list_label(l))),
-            )
-            .collect();
+        let entries: Vec<(Option<usize>, String)> =
+            std::iter::once((None, t("NEW LIST").to_owned()))
+                .chain(
+                    BUILTIN_LISTS
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| (Some(i), (*l).to_owned())),
+                )
+                .chain(
+                    d.lists
+                        .iter()
+                        .enumerate()
+                        .map(|(i, l)| (Some(BUILTIN_LISTS.len() + i), list_label(l))),
+                )
+                .collect();
         for (k, (i, label)) in entries.into_iter().enumerate() {
             let v = view.clone();
             let on = d.selected == i;
@@ -315,18 +321,19 @@ impl SheetsView {
             );
         }
         let builtin = d.selected.is_some_and(|i| i < BUILTIN_LISTS.len());
-        let button = |id: &'static str,
-                      label: &'static str,
-                      run: fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>)| {
-            let v = view.clone();
-            Button::new(id)
-                .outline()
-                .small()
-                .label(label)
-                .on_click(move |_, window, cx| {
-                    let _ = v.update(cx, |this, cx| run(this, window, cx));
-                })
-        };
+        let button =
+            |id: &'static str,
+             label: &'static str,
+             run: fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>)| {
+                let v = view.clone();
+                Button::new(id)
+                    .outline()
+                    .small()
+                    .label(label)
+                    .on_click(move |_, window, cx| {
+                        let _ = v.update(cx, |this, cx| run(this, window, cx));
+                    })
+            };
         let add_label = if d.selected.is_some() && !builtin {
             t("Change")
         } else {

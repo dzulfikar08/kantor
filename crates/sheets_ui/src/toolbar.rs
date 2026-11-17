@@ -459,7 +459,9 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .xsmall()
             .icon(Lucide::Snowflake)
             .dropdown_caret(true)
-            .tooltip(i18n::t("Page Break Preview, freeze panes, hide rows and columns"))
+            .tooltip(i18n::t(
+                "Page Break Preview, freeze panes, hide rows and columns",
+            ))
             .dropdown_menu(move |menu, _, cx| {
                 let pbp = view_view
                     .upgrade()

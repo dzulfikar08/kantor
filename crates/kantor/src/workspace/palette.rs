@@ -1058,9 +1058,13 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Custom Lists…"),
-        detail: tk("Sheets · lists that sort orders and the fill handle follow (Low, Medium, High)"),
+        detail: tk(
+            "Sheets · lists that sort orders and the fill handle follow (Low, Medium, High)",
+        ),
         keys: "",
-        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.custom_lists_doc(None, w, cx)),
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.custom_lists_doc(None, w, cx))
+        },
     },
     Command {
         title: tk("Page Break Preview"),

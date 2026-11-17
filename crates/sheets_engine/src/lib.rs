@@ -60,7 +60,6 @@ mod xls_drawing;
 mod xls_formula;
 mod xls_ftab;
 
-pub use grid::{BUILTIN_LISTS, parse_custom_list};
 pub use cf_edit::{
     COLOR_SCALES, CfBarAxis, CfBarDirection, CfBarOptions, CfCompare, CfFormat, CfIconRef,
     CfIconStep, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp, CfValue, CfValueKind,
@@ -74,6 +73,7 @@ pub use chart_options::{
 };
 pub use chart_sheet::sheet_name_problem;
 pub use drawing::Tab;
+pub use grid::{BUILTIN_LISTS, parse_custom_list};
 pub use import::{ImportNote, SourceFormat};
 /// The borders a conditional formatting rule draws.
 pub use ironcalc_base::types::Border as CfBorder;

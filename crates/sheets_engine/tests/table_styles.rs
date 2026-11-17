@@ -430,8 +430,13 @@ fn table_dxfs_layer_between_style_and_cells() {
         wb.set_input(0, 1, c as u32, "1").unwrap();
         wb.set_input(0, 2, c as u32, "2").unwrap();
     }
-    wb.create_table(0, CellRange::from_corners((0, 0), (2, 1)), true, "TableStyleMedium2")
-        .unwrap();
+    wb.create_table(
+        0,
+        CellRange::from_corners((0, 0), (2, 1)),
+        true,
+        "TableStyleMedium2",
+    )
+    .unwrap();
     // B3's own fill: it wins over the column's.
     wb.set_range_style(
         0,
@@ -448,7 +453,10 @@ fn table_dxfs_layer_between_style_and_cells() {
         let opts = zip::write::SimpleFileOptions::default();
         let n_dxfs = {
             let mut s = String::new();
-            zin.by_name("xl/styles.xml").unwrap().read_to_string(&mut s).unwrap();
+            zin.by_name("xl/styles.xml")
+                .unwrap()
+                .read_to_string(&mut s)
+                .unwrap();
             s.matches("<dxf>").count()
         };
         for i in 0..zin.len() {
@@ -465,18 +473,26 @@ fn table_dxfs_layer_between_style_and_cells() {
                 let d = if data.contains("</dxfs>") {
                     data.replacen("</dxfs>", &format!("{mine}</dxfs>"), 1)
                 } else {
-                    data.replacen("<dxfs count=\"0\"/>", &format!("<dxfs count=\"2\">{mine}</dxfs>"), 1)
+                    data.replacen(
+                        "<dxfs count=\"0\"/>",
+                        &format!("<dxfs count=\"2\">{mine}</dxfs>"),
+                        1,
+                    )
                 };
                 assert!(d.contains(mine), "{d}");
                 d.into_bytes()
             } else if name.starts_with("xl/tables/") {
-                data.replacen("<table ", &format!("<table headerRowDxfId=\"{n_dxfs}\" "), 1)
-                    .replacen(
-                        "name=\"Qty\"",
-                        &format!("name=\"Qty\" dataDxfId=\"{}\"", n_dxfs + 1),
-                        1,
-                    )
-                    .into_bytes()
+                data.replacen(
+                    "<table ",
+                    &format!("<table headerRowDxfId=\"{n_dxfs}\" "),
+                    1,
+                )
+                .replacen(
+                    "name=\"Qty\"",
+                    &format!("name=\"Qty\" dataDxfId=\"{}\"", n_dxfs + 1),
+                    1,
+                )
+                .into_bytes()
             } else {
                 bytes
             };

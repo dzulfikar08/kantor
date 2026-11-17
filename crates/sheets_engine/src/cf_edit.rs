@@ -1222,7 +1222,14 @@ fn describe(
                 .collect();
             // The set it is (or reversed), else its first icon's set.
             let mut named = None;
-            for (_, name) in ICON_SETS.iter().chain(&[("", "4ArrowsGray"), ("", "5ArrowsGray"), ("", "3ArrowsGray"), ("", "3TrafficLights2"), ("", "4RedToBlack"), ("", "3Stars")]) {
+            for (_, name) in ICON_SETS.iter().chain(&[
+                ("", "4ArrowsGray"),
+                ("", "5ArrowsGray"),
+                ("", "3ArrowsGray"),
+                ("", "3TrafficLights2"),
+                ("", "4RedToBlack"),
+                ("", "3Stars"),
+            ]) {
                 let Some(mut set) = icon_set_icons(name) else {
                     continue;
                 };
@@ -1250,7 +1257,11 @@ fn describe(
                 let icon = match named {
                     Some((name, rev)) => CfIconRef {
                         set: name.to_owned(),
-                        index: if rev { (thresholds.len() - 1 - k) as u8 } else { k as u8 },
+                        index: if rev {
+                            (thresholds.len() - 1 - k) as u8
+                        } else {
+                            k as u8
+                        },
                     },
                     None => match find(&pairs[k]) {
                         Some(c) => c.clone(),
@@ -1263,9 +1274,12 @@ fn describe(
                     gte: t.is_strict,
                 });
             }
-            let set = named
-                .map(|n| n.0.to_owned())
-                .unwrap_or_else(|| steps.first().map(|s| s.icon.set.clone()).unwrap_or_default());
+            let set = named.map(|n| n.0.to_owned()).unwrap_or_else(|| {
+                steps
+                    .first()
+                    .map(|s| s.icon.set.clone())
+                    .unwrap_or_default()
+            });
             // Reverse Icon Order keeps the set's icons in the steps' order.
             let reverse = named.is_some_and(|n| n.1);
             if reverse {
@@ -1715,7 +1729,11 @@ impl Workbook {
                     old_range: l.range.clone(),
                     data_bar: l.data_bar,
                     bar_xml: l.data_bar.then(|| l.xml.clone()),
-                    xml: if l.data_bar { String::new() } else { l.xml.clone() },
+                    xml: if l.data_bar {
+                        String::new()
+                    } else {
+                        l.xml.clone()
+                    },
                 });
             }
             if !kept.is_empty() {

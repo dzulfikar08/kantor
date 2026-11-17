@@ -640,19 +640,23 @@ impl SheetsView {
             .when(l.multiple_filters, |d| {
                 let pick = |second: bool, label: &'static str| {
                     let v = view.clone();
-                    Button::new(if second { "pivot-fs-filter2" } else { "pivot-fs-filter1" })
-                        .xsmall()
-                        .label(label)
-                        .when_else(c.second == second, |b| b.primary(), |b| b.outline())
-                        .on_click(move |_, window, cx| {
-                            let _ = v.update(cx, |this, cx| {
-                                this.switch_field_filter(second, window, cx)
-                            });
-                        })
+                    Button::new(if second {
+                        "pivot-fs-filter2"
+                    } else {
+                        "pivot-fs-filter1"
+                    })
+                    .xsmall()
+                    .label(label)
+                    .when_else(c.second == second, |b| b.primary(), |b| b.outline())
+                    .on_click(move |_, window, cx| {
+                        let _ =
+                            v.update(cx, |this, cx| this.switch_field_filter(second, window, cx));
+                    })
                 };
                 d.child(
                     h_flex()
                         .gap(SPACE_2)
+                        .flex_wrap()
                         .child(pick(false, i18n::t("Filter 1")))
                         .child(pick(true, i18n::t("Filter 2")))
                         .child(

@@ -21,9 +21,9 @@ use gpui_kit::*;
 use kantor_ui::i18n::{t, t_dyn, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{
-    COLOR_SCALES, CfBarAxis, CfBarDirection, CfBarOptions, CfCompare, CfFormat,
-    CfIconStep, CfPeriod, CfRuleDef, CfSpec, CfTextOp, CfValueKind, DATA_BAR_COLORS,
-    ICON_SETS, default_icon_steps, sqref_of,
+    COLOR_SCALES, CfBarAxis, CfBarDirection, CfBarOptions, CfCompare, CfFormat, CfIconStep,
+    CfPeriod, CfRuleDef, CfSpec, CfTextOp, CfValueKind, DATA_BAR_COLORS, ICON_SETS,
+    default_icon_steps, sqref_of,
 };
 
 use crate::SheetsView;
@@ -284,7 +284,10 @@ impl SheetsView {
         let icon_steps = default_icon_steps(ICON_SETS[0].1);
         let icon_values: Vec<_> = (0..5)
             .map(|k| {
-                let v = icon_steps.get(k).map(|s| s.value.value.clone()).unwrap_or_default();
+                let v = icon_steps
+                    .get(k)
+                    .map(|s| s.value.value.clone())
+                    .unwrap_or_default();
                 mk(window, cx, &v, "")
             })
             .collect();
@@ -294,19 +297,19 @@ impl SheetsView {
         ]
         .into_iter()
         .chain(icon_values.iter())
-            .map(|e| {
-                cx.subscribe_in(e, window, |this, _, ev: &InputEvent, w, cx| match ev {
-                    InputEvent::Change => {
-                        if let Some(d) = this.cf_dialog.as_mut() {
-                            d.error = None;
-                        }
-                        cx.notify();
+        .map(|e| {
+            cx.subscribe_in(e, window, |this, _, ev: &InputEvent, w, cx| match ev {
+                InputEvent::Change => {
+                    if let Some(d) = this.cf_dialog.as_mut() {
+                        d.error = None;
                     }
-                    InputEvent::PressEnter { .. } => this.cf_dialog_ok(w, cx),
-                    _ => {}
-                })
+                    cx.notify();
+                }
+                InputEvent::PressEnter { .. } => this.cf_dialog_ok(w, cx),
+                _ => {}
             })
-            .collect();
+        })
+        .collect();
         CfDialog {
             sheet,
             edit: None,
@@ -1097,9 +1100,12 @@ impl SheetsView {
             ))
             .child(row(
                 t("Border"),
-                colour_menu("cf-bar-border", d.bar.border, Some(tk("No border")), |d, c| {
-                    d.bar.border = c
-                }),
+                colour_menu(
+                    "cf-bar-border",
+                    d.bar.border,
+                    Some(tk("No border")),
+                    |d, c| d.bar.border = c,
+                ),
                 cx,
             ))
             .child(row(
@@ -1297,7 +1303,8 @@ impl SheetsView {
                             let Some(ic) = *ic else { continue };
                             let v = v.clone();
                             let c = c.clone();
-                            let label = format!("{} {}", t_dyn(icon_set_label(&c.set)), c.index + 1);
+                            let label =
+                                format!("{} {}", t_dyn(icon_set_label(&c.set)), c.index + 1);
                             m = m.item(
                                 PopupMenuItem::element(move |_, _| {
                                     h_flex()
@@ -1323,10 +1330,11 @@ impl SheetsView {
                     .into_any_element()
             };
             let line = if k == 0 {
-                h_flex()
-                    .gap(SPACE_3)
-                    .child(picker)
-                    .child(note(t("when the value is below the next threshold"), false, cx))
+                h_flex().gap(SPACE_3).child(picker).child(note(
+                    t("when the value is below the next threshold"),
+                    false,
+                    cx,
+                ))
             } else {
                 let step = &d.icon_steps[k];
                 let gv = view.clone();
@@ -1375,7 +1383,11 @@ impl SheetsView {
                     .gap(SPACE_2)
                     .child(picker)
                     .child(op)
-                    .child(div().w(px(90.)).child(Input::new(&d.icon_values[k]).small()))
+                    .child(
+                        div()
+                            .w(px(90.))
+                            .child(Input::new(&d.icon_values[k]).small()),
+                    )
                     .child(menu_of(
                         ("cf-icon-kind", k),
                         t_dyn(kind.label()).to_owned(),
@@ -1398,7 +1410,10 @@ impl SheetsView {
         let values: Vec<_> = d.icon_values.clone();
         let steps = d.icon_steps.clone();
         for (k, e) in values.iter().enumerate() {
-            let v = steps.get(k).map(|s| s.value.value.clone()).unwrap_or_default();
+            let v = steps
+                .get(k)
+                .map(|s| s.value.value.clone())
+                .unwrap_or_default();
             e.update(cx, |input, cx| input.set_value(v, window, cx));
         }
         cx.notify();

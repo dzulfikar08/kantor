@@ -501,7 +501,11 @@ impl SheetsView {
         items: Vec<String>,
         cx: &mut Context<Self>,
     ) {
-        if let Some(l) = self.sort_panel.as_mut().and_then(|p| p.levels.get_mut(level)) {
+        if let Some(l) = self
+            .sort_panel
+            .as_mut()
+            .and_then(|p| p.levels.get_mut(level))
+        {
             l.on = PanelOn::List(items);
         }
         cx.notify();
@@ -1371,11 +1375,14 @@ impl SheetsView {
                         m = entry(m, label, checked, PanelOn::List(list));
                     }
                     let v = v4.clone();
-                    m.separator().item(
-                        PopupMenuItem::new(i18n::t("Custom List…")).on_click(move |_, window, cx| {
-                            let _ = v.update(cx, |this, cx| this.custom_lists_doc(Some(i), window, cx));
-                        }),
-                    )
+                    m.separator()
+                        .item(PopupMenuItem::new(i18n::t("Custom List…")).on_click(
+                            move |_, window, cx| {
+                                let _ = v.update(cx, |this, cx| {
+                                    this.custom_lists_doc(Some(i), window, cx)
+                                });
+                            },
+                        ))
                 });
             // The colour or icon a Cell Color / Font Color / Cell Icon level puts first.
             let look_choices: Vec<(LookPick, AnyElement)> = match &pick_look {

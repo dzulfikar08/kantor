@@ -422,7 +422,11 @@ pub(crate) fn note_spans(n: &sheets_engine::CellNote, base: &FontKey) -> Vec<cra
                 .map(|r| {
                     let range = at..at + r.text.len();
                     at = range.end;
-                    let fam = r.font.as_deref().map(family).unwrap_or_else(|| base.family.clone());
+                    let fam = r
+                        .font
+                        .as_deref()
+                        .map(family)
+                        .unwrap_or_else(|| base.family.clone());
                     let size = r.size.map_or(base.size_pt(), |s| s as f32 / 100.0);
                     crate::Span {
                         range,

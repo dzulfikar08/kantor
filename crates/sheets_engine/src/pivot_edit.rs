@@ -1353,7 +1353,8 @@ impl Workbook {
                 if !ok(f) || filter_family(&flt.kind).is_none() {
                     bail!("{:?} is not a filter Kantor knows", flt.kind);
                 }
-                if tests_values(&flt.kind) && flt.value_field.is_none_or(|v| v >= layout.values.len())
+                if tests_values(&flt.kind)
+                    && flt.value_field.is_none_or(|v| v >= layout.values.len())
                 {
                     bail!("choose the value field the filter on {} tests", sf.name);
                 }
