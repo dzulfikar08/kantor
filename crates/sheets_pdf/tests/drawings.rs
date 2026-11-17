@@ -401,3 +401,25 @@ fn grouped_lines_keep_their_colour() {
     // #C00000 strokes: Zigzag, Pair line, Joined link.
     assert_eq!(content.matches("0.7529412 0 0 RG").count(), 3, "{content}");
 }
+
+#[test]
+fn patterns_and_grouped_charts_print() {
+    let mut book = open("xlsx/27_patterns_group_charts.xlsx");
+    let doc = export(&mut book, &Options::default());
+    // Pattern fills are PDF tiling patterns (the shapes' and the charts').
+    let patterns = doc
+        .objects
+        .values()
+        .filter(|o| {
+            o.as_stream().is_ok_and(|s| {
+                s.dict
+                    .get(b"PatternType")
+                    .is_ok_and(|t| t.as_i64().ok() == Some(1))
+            })
+        })
+        .count();
+    assert!(patterns >= 3, "{patterns} tiling patterns");
+    // The grouped chart prints its category labels (both charts do).
+    let text = texts(&doc).join(" ");
+    assert!(text.matches("North").count() >= 2, "{text}");
+}

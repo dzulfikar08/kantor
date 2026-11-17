@@ -1655,6 +1655,7 @@ dependencies = [
  "docs_layout",
  "flate2",
  "kantor_metafile",
+ "kantor_ooxml",
  "krilla",
  "log",
  "roxmltree 0.21.2",
@@ -7071,6 +7072,7 @@ name = "sheets_scene"
 version = "0.12.0"
 dependencies = [
  "docs_layout",
+ "kantor_ooxml",
  "sheets_engine",
  "slides_engine",
  "slides_scene",

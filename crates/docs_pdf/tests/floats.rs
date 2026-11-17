@@ -483,3 +483,70 @@ fn growing_fit_to_text_box_rewraps_the_body_live() {
     let after = narrow(&laid2);
     assert!(after > before, "{before} → {after}");
 }
+
+/// `patterns_group_charts.docx` (scripts/corpus/gen_patterns_groups.py): a
+/// pattern-filled shape and a group holding a chart; saved and opened
+/// again, both are still there.
+#[test]
+fn patterns_and_charts_inside_groups() {
+    use docs_pdf::floats::{FloatPrim, Painter};
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/docx/patterns_group_charts.docx");
+    let check = |doc: &Document| {
+        let mut engine = Engine::new();
+        let laid = docs_pdf::lay_out(doc, &mut engine);
+        let painter = Painter::new(doc);
+        let items: Vec<&docs_pdf::FloatItem> = laid.floats.iter().flatten().collect();
+        let by = |name: &str| {
+            *items
+                .iter()
+                .find(|it| it.float(doc).unwrap().name == name)
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        let rect = by("Pattern rect");
+        let prims = painter.prims(rect.float(doc).unwrap(), rect.rect);
+        let pattern = prims.iter().find_map(|p| match p {
+            FloatPrim::Path(d) => match &d.gradient {
+                Some(slides_scene::Paint::Pattern { fg, bg, bits, .. }) => Some((*fg, *bg, *bits)),
+                _ => None,
+            },
+            _ => None,
+        });
+        let (fg, bg, bits) = pattern.expect("a pattern fill");
+        assert_eq!(bits, kantor_ooxml::pattern::bits("wdDnDiag"));
+        assert_eq!(
+            (fg.0, bg.0),
+            ([0x54, 0x82, 0x35, 255], [0xFF, 0xF2, 0xCC, 255])
+        );
+        // The group's chart: drawn below the group's caption, with labels.
+        let g = by("Chart group");
+        let chart = g.chart.clone().expect("the group's chart is drawn");
+        let shown: Vec<String> = chart.labels.iter().map(|l| l.layout.shown(0)).collect();
+        for want in ["North", "West"] {
+            assert!(shown.iter().any(|s| s == want), "{want} in {shown:?}");
+        }
+        let patterned = chart
+            .prims
+            .iter()
+            .filter(|p| {
+                matches!(p, FloatPrim::Path(d) if matches!(d.gradient, Some(slides_scene::Paint::Pattern { .. })))
+            })
+            .count();
+        assert_eq!(patterned, 4, "four patterned bars");
+        let top = chart.labels.iter().map(|l| l.y).fold(f32::MAX, f32::min);
+        assert!(
+            top > g.rect[1] + 30.0,
+            "below the caption: {top} in {:?}",
+            g.rect
+        );
+        // In the PDF: tiling patterns.
+        let pdf = docs_pdf::export(doc, &mut engine).unwrap();
+        let text = String::from_utf8_lossy(&pdf);
+        assert!(text.contains("/PatternType 1"), "a tiling pattern");
+    };
+    let mut doc = Document::open(&path).unwrap();
+    check(&doc);
+    let out = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join("patterns_group_charts.docx");
+    doc.save_as(&out).unwrap();
+    check(&Document::open(&out).unwrap());
+}

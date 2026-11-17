@@ -2,6 +2,8 @@ use super::*;
 
 use std::path::Path;
 
+use slides_scene::Paint;
+
 fn open() -> (Workbook, tempfile::TempDir) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("charts.xlsx");
@@ -642,4 +644,93 @@ fn shadows_pictures_and_3d_are_drawn() {
     assert_eq!(count(&with, |p| matches!(p, Prim::Picture(_))), 1);
     let without = shape_items(&builder, &mut engine, &theme, &pic, &none, 100.0, 50.0);
     assert_eq!(count(&without, |p| matches!(p, Prim::Picture(_))), 0);
+}
+
+#[test]
+fn patterns_and_charts_inside_groups_are_drawn() {
+    let book = Workbook::open(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/xlsx/27_patterns_group_charts.xlsx"),
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    let get = |name: &str| {
+        book.drawings(0)
+            .into_iter()
+            .find(|d| d.name == name)
+            .unwrap()
+    };
+    // A pattern: its bitmap in its two colours.
+    let boxed = scenes.items(&mut engine, &book, &get("Diagonal box"), 200.0, 100.0);
+    let patterns: Vec<&Paint> = boxed
+        .iter()
+        .filter_map(|i| match &i.prim {
+            Prim::Fill { paint, .. } if matches!(paint, Paint::Pattern { .. }) => Some(paint),
+            _ => None,
+        })
+        .collect();
+    let [Paint::Pattern { fg, bg, bits, .. }] = patterns.as_slice() else {
+        panic!("{patterns:?}")
+    };
+    assert_eq!(*bits, kantor_ooxml::pattern::bits("dkUpDiag"));
+    assert_eq!(
+        (fg.0, bg.0),
+        ([0x44, 0x72, 0xC4, 255], [255, 255, 255, 255])
+    );
+    // The group draws its chart: bars (patterned too) and labels, in the
+    // group's lower part (below the caption).
+    let group = scenes.items(&mut engine, &book, &get("Chart group"), 400.0, 300.0);
+    assert!(texts(&group) >= 5, "caption, categories and values");
+    let bars = group
+        .iter()
+        .filter(|i| {
+            matches!(&i.prim, Prim::Fill { paint: Paint::Pattern { bits, .. }, .. }
+            if *bits == kantor_ooxml::pattern::bits("ltUpDiag"))
+        })
+        .count();
+    assert_eq!(bars, 4, "one patterned bar per region");
+    assert!(
+        !group
+            .iter()
+            .any(|i| matches!(i.prim, Prim::Unsupported { .. }))
+    );
+    // Live: a changed cell changes the grouped chart's bars.
+    let heights = |items: &[Item]| -> Vec<f32> {
+        items
+            .iter()
+            .filter(|i| {
+                matches!(
+                    &i.prim,
+                    Prim::Fill {
+                        paint: Paint::Pattern { .. },
+                        ..
+                    }
+                )
+            })
+            .filter_map(|i| match &i.prim {
+                Prim::Fill { path, .. } => path.transformed(&i.transform).bounds(),
+                _ => None,
+            })
+            .map(|b| b[3] - b[1])
+            .collect()
+    };
+    let before = heights(&group);
+    let mut book = book;
+    book.set_input(0, 2, 1, "240").unwrap();
+    let after = scenes.items(
+        &mut engine,
+        &book,
+        &get_in(&book, "Chart group"),
+        400.0,
+        300.0,
+    );
+    assert_ne!(before, heights(&after));
+}
+
+fn get_in(book: &Workbook, name: &str) -> Drawing {
+    book.drawings(0)
+        .into_iter()
+        .find(|d| d.name == name)
+        .unwrap()
 }

@@ -661,3 +661,19 @@ fn edited_chart_data_and_table_text_are_drawn() {
         assert!(chars.contains(c), "{c} in {chars:?}");
     }
 }
+
+#[test]
+fn pattern_fills_are_tiling_patterns() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/pptx/patterns.pptx");
+    let pres = Presentation::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let (pdf, pages) = slides_pdf::export(&pres, &mut engine).unwrap();
+    assert_eq!(pages, 1);
+    let all = all_text(&pdf);
+    // The two shapes' patterns and the grouped chart's bars'.
+    assert!(
+        count(all.as_bytes(), b"/PatternType 1") >= 3,
+        "tiling patterns"
+    );
+}
