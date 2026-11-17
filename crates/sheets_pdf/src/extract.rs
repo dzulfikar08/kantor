@@ -402,16 +402,50 @@ fn shown_notes(
             (x1 - x0 - 4.0).max(1.0),
             (y1 - y0 - 3.0).max(1.0),
         ];
+        let font = FontKey::new(family.clone(), 9.0, false, false);
         out.push(crate::NoteBoxPrint {
             rect,
-            text: note_text(
-                n.text.clone(),
-                FontKey::new(family.clone(), 9.0, false, false),
-                inner,
-            ),
+            spans: note_spans(n, &font),
+            text: note_text(n.text.clone(), font, inner),
         });
     }
     out
+}
+
+/// A note's formatting as printed: its own runs when the file has them,
+/// else Excel's bold `Author:` first line.
+pub(crate) fn note_spans(n: &sheets_engine::CellNote, base: &FontKey) -> Vec<crate::Span> {
+    match &n.runs {
+        Some(runs) => {
+            let mut at = 0;
+            runs.iter()
+                .map(|r| {
+                    let range = at..at + r.text.len();
+                    at = range.end;
+                    let fam = r.font.as_deref().map(family).unwrap_or_else(|| base.family.clone());
+                    let size = r.size.map_or(base.size_pt(), |s| s as f32 / 100.0);
+                    crate::Span {
+                        range,
+                        font: FontKey::new(fam, size, r.bold, r.italic),
+                        color: r.color.unwrap_or(0),
+                        underline: r.underline,
+                    }
+                })
+                .collect()
+        }
+        None => {
+            let head = format!("{}:", n.author);
+            if n.author.is_empty() || !n.text.starts_with(&head) {
+                return Vec::new();
+            }
+            vec![crate::Span {
+                range: 0..head.len(),
+                font: FontKey::new(base.family.clone(), base.size_pt(), true, false),
+                color: 0,
+                underline: false,
+            }]
+        }
+    }
 }
 
 /// A chart sheet's page: its objects over the printable area, with the

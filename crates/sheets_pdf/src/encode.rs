@@ -155,7 +155,11 @@ impl Encoder {
             fill_rect(&mut surface, [x, y + h - t, w, t], 0);
             fill_rect(&mut surface, [x, y, t, h], 0);
             fill_rect(&mut surface, [x + w - t, y, t, h], 0);
-            pen.cell_text(&mut surface, &n.text);
+            if n.spans.is_empty() {
+                pen.cell_text(&mut surface, &n.text);
+            } else {
+                pen.rich_text(&mut surface, &n.text, &n.spans);
+            }
         }
         surface.pop();
         let images = &mut self.images;
@@ -552,6 +556,28 @@ impl Pen<'_> {
             draw_run(surface, &run, font);
         }
         surface.pop();
+    }
+
+    /// Rich text wrapped in `t`'s cell from its top left (a note's box):
+    /// each run in its own colour, cut to the cell.
+    fn rich_text(&mut self, surface: &mut Surface, t: &CellText, spans: &[crate::Span]) {
+        let [x0, y0, w, _] = t.cell;
+        let avail = (w - 2.0 * PAD_X).max(1.0);
+        let block = self.shaper.wrapped_rich(&t.text, &t.font, spans, avail);
+        let clip = clip_to(surface, intersect(t.clip, t.cell));
+        for (line, base) in &block.lines {
+            let tr = Transform::from_translate(x0 + PAD_X, y0 + PAD_Y + base);
+            surface.push_transform(&tr);
+            for run in &line.runs {
+                if let Some(font) = self.fonts.get(&run.font) {
+                    draw_run(surface, run, font);
+                }
+            }
+            surface.pop();
+        }
+        if clip {
+            surface.pop();
+        }
     }
 
     fn cell_text(&mut self, surface: &mut Surface, t: &CellText) {

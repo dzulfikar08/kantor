@@ -200,3 +200,47 @@ fn header_pictures_and_theme_colours() {
         .count();
     assert!(images >= 1, "the picture is in the PDF");
 }
+
+#[test]
+fn notes_as_displayed_keep_their_formatting() {
+    use sheets_engine::NoteRun;
+    let mut wb = book_with_notes();
+    with_comments(&mut wb, PrintComments::AsDisplayed);
+    let run = |text: &str, bold: bool, color: Option<u32>| NoteRun {
+        text: text.into(),
+        bold,
+        italic: false,
+        underline: color.is_some(),
+        size: Some(1200),
+        color,
+        font: None,
+        other: String::new(),
+    };
+    wb.set_note_runs(
+        0,
+        0,
+        0,
+        vec![run("Ana:", true, None), run("\nRed alert", false, Some(0xFF0000))],
+        "Ana",
+    )
+    .unwrap();
+    wb.show_notes(0, CellRange::from_corners((0, 0), (0, 0)), true)
+        .unwrap();
+    let plan = Plan::new(&wb, &Options::default(), &mut Shaper::new());
+    let page = sheets_pdf::extract(&mut wb, &plan, 0);
+    assert_eq!(page.notes.len(), 1);
+    let rich = &page.notes[0];
+    assert_eq!(rich.spans.len(), 2);
+    assert!(rich.spans[0].font.bold);
+    assert_eq!(rich.spans[1].color, 0xFF0000);
+    assert!(rich.spans[1].underline);
+    assert_eq!(rich.spans[1].font.size_pt(), 12.0);
+    let (pdf, _) = sheets_pdf::export(&mut wb, &Options::default()).unwrap();
+    let text = &page_texts(&pdf)[0];
+    assert!(text.contains("Red") && text.contains("alert"), "{text}");
+    // The red run is drawn red.
+    let doc = lopdf::Document::load_mem(&pdf).unwrap();
+    let (_, page_id) = doc.get_pages().into_iter().next().unwrap();
+    let content = String::from_utf8_lossy(&doc.get_page_content(page_id)).into_owned();
+    assert!(content.contains("1 0 0 rg"), "a red fill colour");
+}
