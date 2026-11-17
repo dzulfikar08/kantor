@@ -1,6 +1,6 @@
 //! The Format Shape panel, as Excel's pane for shapes, text boxes and
 //! lines: Fill (no fill, solid colour with transparency, gradient,
-//! picture), Line (no line, colour, width, dash type, begin and end
+//! pattern with Excel's 48 patterns and two colours, picture), Line (no line, colour, width, dash type, begin and end
 //! arrows), Effects (Excel's outer shadow presets) and the text's vertical
 //! alignment. Right-click a shape (or the Shapes menu, or
 //! the command palette) opens it; each change is one undo step.
@@ -66,6 +66,8 @@ pub(crate) struct ShapeLook {
     pub anchor: Option<TextAnchor>,
     /// A picture fill.
     pub picture: bool,
+    /// A pattern fill: its preset, foreground and background colours.
+    pub pattern: Option<(&'static str, [u8; 3], [u8; 3])>,
     /// Its outer shadow preset (`None`: none, or not a preset).
     pub shadow: Option<ShadowPreset>,
     /// It has a shadow (preset or not).
@@ -118,7 +120,14 @@ pub(crate) fn shape_look(xml: &str, theme_xml: Option<&str>) -> Option<ShapeLook
         Some(Fill::Solid(c, a)) => (Some(c.0), false, *a),
         Some(Fill::Gradient(g)) => (g.stops.last().map(|s| s.color.0), true, 255),
         Some(Fill::Picture(_)) => (None, false, 255),
+        Some(Fill::Pattern(p)) => (Some(p.fg.0.0), false, 255),
         None => (look.fill.map(|c| c.0), false, 255),
+    };
+    let pattern = match &look.fill_as_read {
+        Some(Fill::Pattern(p)) => kantor_ooxml::pattern::preset(&p.prst)
+            .or(kantor_ooxml::pattern::PRESETS.first())
+            .map(|pr| (pr.prst, p.fg.0.0, p.bg.0.0)),
+        _ => None,
     };
     let picture = matches!(look.fill_as_read, Some(Fill::Picture(_)));
     // Lines, arcs and connectors are open paths: arrows apply.
@@ -150,6 +159,7 @@ pub(crate) fn shape_look(xml: &str, theme_xml: Option<&str>) -> Option<ShapeLook
         has_text,
         anchor: has_text.then(|| anchor.unwrap_or(TextAnchor::Top)),
         picture,
+        pattern,
         shadow: fmt::shadow_of(xml),
         shadowed: look.effects.shadow.is_some(),
     })
@@ -413,7 +423,7 @@ impl SheetsView {
                 })
         };
         let fill_rgb = look.fill.unwrap_or(ACCENT1);
-        let solid = look.fill.is_some() && !look.gradient;
+        let solid = look.fill.is_some() && !look.gradient && look.pattern.is_none();
         let tr = look.transparency;
         let fills = h_flex()
             .gap(SPACE_2)
@@ -452,6 +462,24 @@ impl SheetsView {
                     )
                 }),
             ));
+        let (pat_fg, pat_bg) = look
+            .pattern
+            .map_or((fill_rgb, [255, 255, 255]), |(_, f, b)| (f, b));
+        let fills = fills.child(choice(
+            "shape-pattern-fill",
+            tk("Pattern fill"),
+            look.pattern.is_some(),
+            act(move |x| {
+                fmt::set_fill(
+                    x,
+                    ShapeFill::Pattern {
+                        prst: "pct5",
+                        fg: pat_fg,
+                        bg: pat_bg,
+                    },
+                )
+            }),
+        ));
         let pv = view.clone();
         let fills = fills.child(
             Button::new("shape-picture-fill")
@@ -524,6 +552,9 @@ impl SheetsView {
             }),
             cx,
         );
+        let patterns = look
+            .pattern
+            .map(|current| self.render_pattern_options(current, view, cx));
         let line_rgb = look.line.unwrap_or(ACCENT1);
         let lines = h_flex()
             .gap(SPACE_2)
@@ -691,9 +722,10 @@ impl SheetsView {
             .gap(SPACE_4)
             .child(section(tk("Fill")))
             .child(fills)
-            .when(look.fill.is_some(), |d| {
+            .when(look.fill.is_some() && look.pattern.is_none(), |d| {
                 d.child(row(i18n::t("Colour"), fill_colour, cx))
             })
+            .when_some(patterns, |d, p| d.child(p))
             .when(solid, |d| {
                 d.child(row(
                     i18n::t("Transparency"),
@@ -744,6 +776,87 @@ impl SheetsView {
 }
 
 impl SheetsView {
+    /// Pattern fill's gallery (Excel's 48 patterns) and its foreground and
+    /// background colours, for a shape whose pattern is `current`.
+    fn render_pattern_options(
+        &self,
+        (prst, fg, bg): (&'static str, [u8; 3], [u8; 3]),
+        view: &WeakEntity<SheetsView>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let t = tokens(cx);
+        let set = |v: &WeakEntity<SheetsView>, fill: ShapeFill, w: &mut Window, cx: &mut App| {
+            let _ = v.update(cx, |this, cx| {
+                this.format_shape(w, cx, move |x| fmt::set_fill(x, fill))
+            });
+        };
+        let mut grid = h_flex().flex_wrap().gap(px(3.));
+        let (fg_h, bg_h) = (
+            crate::look::hsla(rgb_u32(fg)),
+            crate::look::hsla(rgb_u32(bg)),
+        );
+        for (i, pr) in kantor_ooxml::pattern::PRESETS[..kantor_ooxml::pattern::GALLERY]
+            .iter()
+            .enumerate()
+        {
+            let v = view.clone();
+            let on = pr.prst == prst;
+            let name = i18n::t_dyn(kantor_ui::components::PATTERN_NAMES[i]);
+            let p = pr.prst;
+            grid = grid.child(
+                div()
+                    .id(("shape-pattern", i))
+                    .size(px(26.))
+                    .p(px(2.))
+                    .rounded(RADIUS_SM)
+                    .border_1()
+                    .border_color(if on { t.accent } else { t.border })
+                    .cursor_pointer()
+                    // The shape's own colours, not UI colours.
+                    .child(
+                        kantor_ui::components::pattern_swatch(pr.bits, fg_h, bg_h, 2.0).size_full(),
+                    )
+                    .tooltip(move |w, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(name).build(w, cx)
+                    })
+                    .on_click(move |_, w, cx| {
+                        set(&v, ShapeFill::Pattern { prst: p, fg, bg }, w, cx)
+                    }),
+            );
+        }
+        let colour = |id: &'static str, label: &'static str, now: [u8; 3], fore: bool| {
+            let v = view.clone();
+            swatch_popover(
+                id,
+                Lucide::PaintBucket,
+                label,
+                None,
+                Some(crate::look::hsla(rgb_u32(now))),
+                std::rc::Rc::new(move |c, w, cx| {
+                    let Some(c) = c else { return };
+                    let c = rgb_bytes(c);
+                    let (fg, bg) = if fore { (c, bg) } else { (fg, c) };
+                    set(&v, ShapeFill::Pattern { prst, fg, bg }, w, cx)
+                }),
+                cx,
+            )
+        };
+        v_flex()
+            .gap(SPACE_3)
+            .child(grid)
+            .child(row(
+                i18n::t("Foreground"),
+                colour("shape-pattern-fg", tk("Foreground"), fg, true),
+                cx,
+            ))
+            .child(row(
+                i18n::t("Background"),
+                colour("shape-pattern-bg", tk("Background"), bg, false),
+                cx,
+            ))
+            .into_any_element()
+    }
+
     /// Picture fill: pick a picture file for the selected shape.
     fn pick_shape_picture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some((key, _)) = self.selected_shape(cx) else {

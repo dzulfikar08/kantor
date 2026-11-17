@@ -20,6 +20,7 @@ kantor_numfmt.workspace = true
 # Chart parts (ChartML).
 roxmltree.workspace = true
 slides_engine.workspace = true
+kantor_ooxml.workspace = true
 # The fonts' vertical glyph forms (GSUB `vert` / `vrt2`); docs_layout's version.
 skrifa = "0.42"
 

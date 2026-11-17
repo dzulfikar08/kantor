@@ -992,6 +992,24 @@ pub(crate) fn write_paint(out: &mut String, p: &Paint) {
             );
         }
         Paint::Rgb(c) => out.push_str(&solid(*c)),
+        Paint::Pattern { prst, fg, bg } => {
+            let colour = |p: &Paint| -> String {
+                let mut s = String::new();
+                write_paint(&mut s, p);
+                // The colour element inside `a:solidFill`.
+                s.strip_prefix("<a:solidFill>")
+                    .and_then(|s| s.strip_suffix("</a:solidFill>"))
+                    .unwrap_or("<a:srgbClr val=\"000000\"/>")
+                    .to_owned()
+            };
+            let _ = write!(
+                out,
+                "<a:pattFill prst=\"{}\"><a:fgClr>{}</a:fgClr><a:bgClr>{}</a:bgClr></a:pattFill>",
+                esc_attr(prst),
+                colour(fg),
+                colour(bg)
+            );
+        }
     }
 }
 

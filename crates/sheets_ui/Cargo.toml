@@ -18,6 +18,7 @@ kantor_mem.workspace = true
 kantor_spell.workspace = true
 kantor_ui.workspace = true
 sheets_engine.workspace = true
+kantor_ooxml.workspace = true
 # Charts and pictures over the grid: built by sheets_scene (the Slides chart
 # renderer), painted by Slides' scene painter with Docs' font bridge.
 docs_ui.workspace = true

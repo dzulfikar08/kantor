@@ -330,6 +330,19 @@ impl Painter {
                     .collect(),
             },
             slides_scene::Paint::Solid(c) => slides_scene::Paint::Solid(faded(c)),
+            slides_scene::Paint::Pattern {
+                fg,
+                bg,
+                bits,
+                origin,
+                cell,
+            } => slides_scene::Paint::Pattern {
+                fg: faded(fg),
+                bg: faded(bg),
+                bits,
+                origin,
+                cell,
+            },
         };
         for sub in &o.paths {
             let segs: Vec<Seg> = sub.cmds.iter().map(|c| xform.seg(c)).collect();
@@ -764,7 +777,9 @@ impl Painter {
             })
         });
         let fill = match own {
-            Some(n) if n.tag_name().name() == "gradFill" => cx.full_fill(n, &|_| None)?,
+            Some(n) if matches!(n.tag_name().name(), "gradFill" | "pattFill") => {
+                cx.full_fill(n, &|_| None)?
+            }
             Some(_) => return None,
             None => {
                 let r = style.and_then(|s| child(s, "fillRef"))?;
@@ -773,7 +788,10 @@ impl Painter {
                 cx.style_fill(idx, ph)?
             }
         };
-        if !matches!(fill, slides_engine::Fill::Gradient(_)) {
+        if !matches!(
+            fill,
+            slides_engine::Fill::Gradient(_) | slides_engine::Fill::Pattern(_)
+        ) {
             return None;
         }
         let [x, y, w, h] = rect;
@@ -801,6 +819,19 @@ impl Painter {
                 rx,
                 ry,
                 stops,
+            },
+            slides_scene::Paint::Pattern {
+                fg,
+                bg,
+                bits,
+                origin,
+                cell,
+            } => slides_scene::Paint::Pattern {
+                fg,
+                bg,
+                bits,
+                origin: at(origin),
+                cell,
             },
             solid => solid,
         })
@@ -1122,6 +1153,36 @@ pub fn gradient_pieces(segs: &[Seg], g: &slides_scene::Paint) -> Vec<(Vec<Seg>, 
     let mut out = Vec::new();
     match g {
         Paint::Solid(c) => out.push((segs.to_vec(), GradientPiece::Solid(*c))),
+        Paint::Pattern {
+            fg,
+            bg,
+            bits,
+            origin,
+            cell,
+        } => match slides_scene::paint::pattern_cells(
+            &path,
+            false,
+            bits,
+            *origin,
+            *cell,
+            slides_scene::paint::PATTERN_CELLS,
+        ) {
+            Some(cells) => {
+                out.push((segs.to_vec(), GradientPiece::Solid(*bg)));
+                let mut fs = Vec::with_capacity(cells.len() * 5);
+                for [x, y, w, h] in cells {
+                    fs.push(Seg::Move([x, y]));
+                    fs.push(Seg::Line([x + w, y]));
+                    fs.push(Seg::Line([x + w, y + h]));
+                    fs.push(Seg::Line([x, y + h]));
+                    fs.push(Seg::Close);
+                }
+                if !fs.is_empty() {
+                    out.push((fs, GradientPiece::Solid(*fg)));
+                }
+            }
+            None => out.push((segs.to_vec(), GradientPiece::Solid(g.main_color()))),
+        },
         Paint::Linear { from, to, stops } if stops.len() >= 2 => {
             let len = to.minus(*from).len().max(1e-4);
             let u = to.minus(*from).scale(1.0 / len);

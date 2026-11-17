@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use docs_engine::{Document, Float, FloatKind};
-use docs_layout::{PageSetup, PagedDocument, Rgba};
+use docs_layout::{PageSetup, PagedDocument};
 use slides_scene::chart::{self, Chart, HAlign, Label, Mark, Measure, TextFont};
 use slides_scene::{Affine, Paint, Prim};
 
@@ -69,32 +69,11 @@ pub fn chart_draw(
                 let t = at.then(place);
                 match prim {
                     Prim::Fill { path, paint, .. } => {
-                        let color = match &paint {
-                            Paint::Solid(c) => *c,
-                            Paint::Linear { stops, .. } | Paint::Radial { stops, .. } => {
-                                stops.first().map_or(Rgba::BLACK, |s| s.color)
-                            }
-                        };
-                        // Gradients (column and area fills) on the page.
-                        let k = (t.a * t.a + t.b * t.b).sqrt().max(1e-3);
+                        let color = paint.main_color();
+                        // Gradients and patterns (column and area fills) on the page.
                         let gradient = match paint {
                             Paint::Solid(_) => None,
-                            Paint::Linear { from, to, stops } => Some(Paint::Linear {
-                                from: t.apply(from),
-                                to: t.apply(to),
-                                stops,
-                            }),
-                            Paint::Radial {
-                                center,
-                                rx,
-                                ry,
-                                stops,
-                            } => Some(Paint::Radial {
-                                center: t.apply(center),
-                                rx: rx * k,
-                                ry: ry * k,
-                                stops,
-                            }),
+                            other => Some(other.mapped(&t)),
                         };
                         out.prims.push(FloatPrim::Path(DrawPath {
                             segs: segs(&path, &t),

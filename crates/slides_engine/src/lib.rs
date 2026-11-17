@@ -45,7 +45,7 @@ pub use docs_engine::{LINE_BREAK, Position, Rgb, Selection, Toggle};
 pub use edit::{ShapeRef, image_ext, image_size, set_toggle};
 pub use fill::{
     Arrow, ArrowKind, ArrowSize, BlipFill, Dash, Fill, GradPath, GradStop, Gradient, LineCap,
-    LineJoin, LineStyle, PictureLook,
+    LineJoin, LineStyle, PatternFill, PictureLook,
 };
 pub use find::TextMatch;
 pub use frame::{Frame, FrameContent};

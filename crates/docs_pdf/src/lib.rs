@@ -738,6 +738,8 @@ fn gradient_fill(g: &slides_scene::Paint) -> Fill {
     };
     match g {
         slides_scene::Paint::Solid(c) => fill(*c),
+        // Drawn by `fill_pattern`; the mixed colour where it can't be.
+        p @ slides_scene::Paint::Pattern { .. } => fill(p.main_color()),
         slides_scene::Paint::Linear { from, to, stops: s } => Fill {
             paint: LinearGradient {
                 x1: from.x * TO_PT,
@@ -781,6 +783,92 @@ fn gradient_fill(g: &slides_scene::Paint) -> Fill {
             }
         }
     }
+}
+
+/// Fill `path` with a DrawingML pattern: its background colour, then the
+/// foreground bits as a PDF tiling pattern. `origin` and `cell` are in
+/// the surface's current units (the pattern turns and scales with them).
+#[allow(clippy::too_many_arguments)]
+pub fn fill_pattern(
+    surface: &mut Surface,
+    path: &krilla::geom::Path,
+    rule: krilla::paint::FillRule,
+    fg: Rgba,
+    bg: Rgba,
+    bits: &[u8; 8],
+    origin: (f32, f32),
+    cell: f32,
+) {
+    let cell = cell.max(0.01);
+    let colour = |c: Rgba| {
+        let [r, g, b, a] = c.0;
+        (
+            rgb::Color::new(r, g, b),
+            NormalizedF32::new(a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
+        )
+    };
+    surface.set_stroke(None);
+    if bg.0[3] > 0 {
+        let (c, opacity) = colour(bg);
+        surface.set_fill(Some(Fill {
+            paint: c.into(),
+            opacity,
+            rule,
+        }));
+        surface.draw_path(path);
+    }
+    if fg.0[3] > 0 && bits.iter().any(|b| *b != 0) {
+        let (c, opacity) = colour(fg);
+        let stream = {
+            let mut sb = surface.stream_builder();
+            let mut tile = sb.surface();
+            let mut pb = PathBuilder::new();
+            for (y, row) in bits.iter().enumerate() {
+                let mut x = 0;
+                while x < 8 {
+                    if row >> x & 1 == 0 {
+                        x += 1;
+                        continue;
+                    }
+                    let start = x;
+                    while x < 8 && row >> x & 1 == 1 {
+                        x += 1;
+                    }
+                    if let Some(r) = Rect::from_xywh(
+                        start as f32 * cell,
+                        y as f32 * cell,
+                        (x - start) as f32 * cell,
+                        cell,
+                    ) {
+                        pb.push_rect(r);
+                    }
+                }
+            }
+            if let Some(tp) = pb.finish() {
+                tile.set_fill(Some(Fill {
+                    paint: c.into(),
+                    opacity: NormalizedF32::ONE,
+                    rule: Default::default(),
+                }));
+                tile.draw_path(&tp);
+            }
+            tile.finish();
+            sb.finish()
+        };
+        surface.set_fill(Some(Fill {
+            paint: krilla::paint::Pattern {
+                stream,
+                transform: Transform::from_translate(origin.0, origin.1),
+                width: 8.0 * cell,
+                height: 8.0 * cell,
+            }
+            .into(),
+            opacity,
+            rule,
+        }));
+        surface.draw_path(path);
+    }
+    surface.set_fill(None);
 }
 
 fn fill_rect(surface: &mut Surface, [x, y, w, h]: [f32; 4], color: Rgba) {
@@ -912,7 +1000,28 @@ fn draw_float(surface: &mut Surface, f: &FloatScene, images: &mut Images, fonts:
         let Some(path) = krilla_path(&p.segs) else {
             continue;
         };
+        if let Some(slides_scene::Paint::Pattern {
+            fg,
+            bg,
+            bits,
+            origin,
+            cell,
+        }) = &p.gradient
+        {
+            fill_pattern(
+                surface,
+                &path,
+                Default::default(),
+                *fg,
+                *bg,
+                bits,
+                (origin.x * TO_PT, origin.y * TO_PT),
+                cell * TO_PT,
+            );
+        }
+        let patterned = matches!(p.gradient, Some(slides_scene::Paint::Pattern { .. }));
         surface.set_fill(match &p.gradient {
+            _ if patterned => None,
             Some(g) => Some(gradient_fill(g)),
             None => p.fill.map(fill),
         });

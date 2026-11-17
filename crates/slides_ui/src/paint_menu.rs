@@ -1,6 +1,7 @@
 //! The Fill and Outline popovers: the slide's theme colours (as theme
-//! references, so they follow the theme), no fill / no outline, and
-//! outline widths.
+//! references, so they follow the theme), no fill / no outline, pattern
+//! fills (PowerPoint's 48 patterns in two theme colours) and outline
+//! widths.
 
 use std::time::{Duration, Instant};
 
@@ -215,6 +216,13 @@ impl SlidesView {
                     look.fill.is_none(),
                     Box::new(|v, w, cx| v.set_fill_doc(Paint::None, w, cx)),
                 ));
+                let shape = self.pres.shape(i)?;
+                panel = panel.child(self.render_pattern_fill(
+                    shape,
+                    self.pres.theme_colors(self.current),
+                    &view,
+                    cx,
+                ));
             }
             PaintKind::Line => {
                 panel = panel.child(row(
@@ -253,6 +261,131 @@ impl SlidesView {
                 .snap_to_window_with_margin(SPACE_4)
                 .child(panel),
         ))
+    }
+}
+
+impl SlidesView {
+    /// Pattern fill: PowerPoint's 48 patterns and, for a patterned shape,
+    /// its foreground and background colours (theme colours).
+    fn render_pattern_fill(
+        &self,
+        shape: &slides_engine::Shape,
+        theme: Vec<(&'static str, slides_engine::Rgb)>,
+        view: &WeakEntity<SlidesView>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement + use<> {
+        let t = tokens(cx);
+        // The shape's pattern: as set in Kantor, else as read.
+        let current: Option<(String, Paint, Paint)> = match &shape.paint.fill {
+            Some(Paint::Pattern { prst, fg, bg }) => {
+                Some((prst.clone(), (**fg).clone(), (**bg).clone()))
+            }
+            Some(_) => None,
+            None => match &shape.look.fill_as_read {
+                Some(slides_engine::Fill::Pattern(p)) => {
+                    Some((p.prst.clone(), Paint::Rgb(p.fg.0), Paint::Rgb(p.bg.0)))
+                }
+                _ => None,
+            },
+        };
+        let resolve = |p: &Paint| match p {
+            Paint::Rgb(c) => Some(*c),
+            Paint::Scheme(s) => theme.iter().find(|(k, _)| k == s).map(|(_, c)| *c),
+            _ => None,
+        };
+        let (fg, bg) = current.as_ref().map_or_else(
+            || (Paint::Scheme("accent1".into()), Paint::Scheme("bg1".into())),
+            |(_, f, b)| (f.clone(), b.clone()),
+        );
+        let fg_rgb = resolve(&fg).unwrap_or(slides_engine::Rgb([0x44, 0x72, 0xC4]));
+        let bg_rgb = resolve(&bg).unwrap_or(slides_engine::Rgb([255, 255, 255]));
+        let mut grid = h_flex().flex_wrap().gap(px(3.)).px(SPACE_4);
+        for (k, pr) in kantor_ooxml::pattern::PRESETS[..kantor_ooxml::pattern::GALLERY]
+            .iter()
+            .enumerate()
+        {
+            let v = view.clone();
+            let on = current.as_ref().is_some_and(|c| c.0 == pr.prst);
+            let name = i18n::t_dyn(kantor_ui::components::PATTERN_NAMES[k]);
+            let paint = Paint::Pattern {
+                prst: pr.prst.into(),
+                fg: Box::new(fg.clone()),
+                bg: Box::new(bg.clone()),
+            };
+            grid = grid.child(
+                div()
+                    .id(("slides-pattern", k))
+                    .size(px(22.))
+                    .p(px(2.))
+                    .rounded(RADIUS_SM)
+                    .border_1()
+                    .border_color(if on { t.accent } else { t.border })
+                    .cursor_pointer()
+                    // The slide's own colours, not UI colours.
+                    .child(
+                        kantor_ui::components::pattern_swatch(
+                            pr.bits,
+                            hsla(fg_rgb),
+                            hsla(bg_rgb),
+                            2.0,
+                        )
+                        .size_full(),
+                    )
+                    .tooltip(move |window, cx| Tooltip::new(name).build(window, cx))
+                    .on_click(move |_, window, cx| {
+                        let paint = paint.clone();
+                        let _ = v.update(cx, |this, cx| this.set_fill_doc(paint, window, cx));
+                    }),
+            );
+        }
+        let mut out = v_flex()
+            .gap(SPACE_2)
+            .child(
+                section_label(i18n::t("Pattern fill"), cx)
+                    .px(SPACE_4)
+                    .pt(SPACE_2),
+            )
+            .child(grid);
+        if let Some((prst, fg, bg)) = current {
+            // One row of theme colours each for the foreground and background.
+            for (fore, label) in [
+                (true, i18n::t("Foreground")),
+                (false, i18n::t("Background")),
+            ] {
+                let now = if fore { &fg } else { &bg };
+                let mut sw = h_flex().gap(px(3.)).px(SPACE_4).flex_wrap();
+                for (slot, rgb) in &theme {
+                    let v = view.clone();
+                    let on = resolve(now) == Some(*rgb);
+                    let pick = Paint::Scheme((*slot).into());
+                    let paint = Paint::Pattern {
+                        prst: prst.clone(),
+                        fg: Box::new(if fore { pick.clone() } else { fg.clone() }),
+                        bg: Box::new(if fore { bg.clone() } else { pick }),
+                    };
+                    let id = format!("slides-pattern-{}-{slot}", if fore { "fg" } else { "bg" });
+                    sw = sw.child(
+                        div()
+                            .id(SharedString::from(id))
+                            .size(px(16.))
+                            .rounded(RADIUS_SM)
+                            .border_1()
+                            .border_color(if on { t.accent } else { t.border_strong })
+                            .cursor_pointer()
+                            .child(div().size_full().rounded(RADIUS_SM).bg(hsla(*rgb)))
+                            .on_click(move |_, window, cx| {
+                                let paint = paint.clone();
+                                let _ =
+                                    v.update(cx, |this, cx| this.set_fill_doc(paint, window, cx));
+                            }),
+                    );
+                }
+                out = out
+                    .child(div().px(SPACE_4).text_color(t.fg_muted).child(label))
+                    .child(sw);
+            }
+        }
+        out
     }
 }
 

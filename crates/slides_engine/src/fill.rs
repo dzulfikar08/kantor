@@ -1,5 +1,6 @@
 //! Fills and line formatting as read, for display (never written back: the
 //! source XML is kept). Gradients (`a:gradFill`), pictures (`a:blipFill`),
+//! patterns (`a:pattFill`),
 //! transparency, and line dashes, caps, joins and arrowheads (`a:ln`).
 //!
 //! Units are the file's: gradient stop positions and crop insets in
@@ -89,6 +90,32 @@ pub struct BlipFill {
     pub alpha: u8,
 }
 
+/// `a:pattFill`: one of the 8 × 8 presets in two colours
+/// ([`kantor_ooxml::pattern`]).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct PatternFill {
+    /// The `prst` value (`pct5` when missing).
+    pub prst: String,
+    /// Foreground colour and opacity (the set bits).
+    pub fg: (Rgb, u8),
+    pub bg: (Rgb, u8),
+}
+
+impl PatternFill {
+    pub fn bits(&self) -> [u8; 8] {
+        kantor_ooxml::pattern::bits(&self.prst)
+    }
+
+    /// The two colours mixed by the share of foreground bits.
+    pub fn mixed(&self) -> (Rgb, u8) {
+        let k = kantor_ooxml::pattern::coverage(&self.bits());
+        let m = |a: u8, b: u8| (b as f32 + (a as f32 - b as f32) * k).round() as u8;
+        let (Rgb(f), fa) = self.fg;
+        let (Rgb(b), ba) = self.bg;
+        (Rgb(std::array::from_fn(|i| m(f[i], b[i]))), m(fa, ba))
+    }
+}
+
 /// A fill as read.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Fill {
@@ -97,6 +124,7 @@ pub enum Fill {
     Solid(Rgb, u8),
     Gradient(Arc<Gradient>),
     Picture(Arc<BlipFill>),
+    Pattern(Arc<PatternFill>),
 }
 
 impl Fill {
@@ -105,6 +133,7 @@ impl Fill {
         match self {
             Fill::Solid(c, _) => Some(*c),
             Fill::Gradient(g) => Some(g.stops[0].color),
+            Fill::Pattern(p) => Some(p.fg.0),
             Fill::None | Fill::Picture(_) => None,
         }
     }
@@ -349,16 +378,21 @@ impl ColorCtx<'_> {
                     alpha: blip_alpha(blip),
                 }))
             }
-            // Patterns: the foreground colour (as before).
             "pattFill" => {
-                let (c, a) = path(n, &[(NS_A, "fgClr")])
-                    .and_then(|f| {
-                        f.children()
-                            .filter(|c| c.is_element())
-                            .find_map(|c| self.color_alpha(c))
-                    })
-                    .unwrap_or((Rgb([0, 0, 0]), 255));
-                Fill::Solid(c, a)
+                let color = |el: &str, def: Rgb| {
+                    path(n, &[(NS_A, el)])
+                        .and_then(|f| {
+                            f.children()
+                                .filter(|c| c.is_element())
+                                .find_map(|c| self.color_alpha(c))
+                        })
+                        .unwrap_or((def, 255))
+                };
+                Fill::Pattern(Arc::new(PatternFill {
+                    prst: n.attribute("prst").unwrap_or("pct5").to_string(),
+                    fg: color("fgClr", Rgb([0, 0, 0])),
+                    bg: color("bgClr", Rgb([255, 255, 255])),
+                }))
             }
             _ => return None,
         })

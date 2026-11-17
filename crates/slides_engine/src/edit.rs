@@ -380,6 +380,7 @@ impl Presentation {
         match p {
             Paint::None => None,
             Paint::Rgb(c) => Some(*c),
+            Paint::Pattern { fg, .. } => self.paint_rgb(slide, fg),
             Paint::Scheme(s) => {
                 let m = self.master_of(slide);
                 crate::theme::ColorCtx {
@@ -404,11 +405,15 @@ impl Presentation {
         }
         // Theme colours resolved up front (the slide is borrowed mutably below).
         let palette = self.theme_colors(r.0);
-        let lookup = move |c: &Paint| match c {
-            Paint::None => None,
-            Paint::Rgb(c) => Some(*c),
-            Paint::Scheme(n) => palette.iter().find(|(k, _)| k == n).map(|(_, v)| *v),
-        };
+        fn lookup(palette: &[(&str, Rgb)], c: &Paint) -> Option<Rgb> {
+            match c {
+                Paint::None => None,
+                Paint::Rgb(c) => Some(*c),
+                Paint::Pattern { fg, .. } => lookup(palette, fg),
+                Paint::Scheme(n) => palette.iter().find(|(k, _)| k == n).map(|(_, v)| *v),
+            }
+        }
+        let lookup = move |c: &Paint| lookup(&palette, c);
         self.record(Kind::Other, None, focus.clone(), false, |p| {
             let s = p.slide_mut(r.0)?;
             f(s.shape_at_mut(r.1, r.2).context("no such shape")?, &lookup);
@@ -420,6 +425,16 @@ impl Presentation {
     pub fn set_fill(&mut self, r: impl Into<ShapeRef>, fill: Paint) -> anyhow::Result<()> {
         self.paint_shape(r.into(), |shape, rgb| {
             shape.look.fill = rgb(&fill);
+            // A pattern is drawn from the fill as read (resolved now).
+            if let Paint::Pattern { prst, fg, bg } = &fill {
+                shape.look.fill_as_read = Some(crate::fill::Fill::Pattern(std::sync::Arc::new(
+                    crate::fill::PatternFill {
+                        prst: prst.clone(),
+                        fg: (rgb(fg).unwrap_or(Rgb([0, 0, 0])), 255),
+                        bg: (rgb(bg).unwrap_or(Rgb([255, 255, 255])), 255),
+                    },
+                )));
+            }
             shape.paint.fill = Some(fill);
         })
     }

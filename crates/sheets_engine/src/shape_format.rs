@@ -1,6 +1,6 @@
 //! Format Shape for worksheet shapes and text boxes, as Excel's pane sets
-//! them: the fill (no fill, a solid colour with transparency, a gradient),
-//! the outline (no line, colour, width, dash, arrowheads), where the text
+//! them: the fill (no fill, a solid colour with transparency, a gradient,
+//! a pattern of Excel's gallery), the outline (no line, colour, width, dash, arrowheads), where the text
 //! sits (top, middle, bottom), a picture fill ([`Workbook::set_shape_picture`])
 //! and Excel's outer shadow presets ([`set_shadow`]).
 //!
@@ -50,6 +50,13 @@ pub enum ShapeFill {
     Gradient {
         rgb: [u8; 3],
         vertical: bool,
+    },
+    /// A pattern (`a:pattFill`): a preset of [`kantor_ooxml::pattern`],
+    /// set bits in `fg`, the rest in `bg`.
+    Pattern {
+        prst: &'static str,
+        fg: [u8; 3],
+        bg: [u8; 3],
     },
 }
 
@@ -365,6 +372,11 @@ fn fill_xml(fill: ShapeFill, a: &str) -> String {
                 hex(rgb)
             )
         }
+        ShapeFill::Pattern { prst, fg, bg } => format!(
+            "<{a}pattFill prst=\"{prst}\"><{a}fgClr><{a}srgbClr val=\"{}\"/></{a}fgClr><{a}bgClr><{a}srgbClr val=\"{}\"/></{a}bgClr></{a}pattFill>",
+            hex(fg),
+            hex(bg)
+        ),
     }
 }
 
@@ -679,6 +691,20 @@ mod tests {
         parses(&grad);
         assert!(grad.contains("<a:gs pos=\"0\"><a:srgbClr val=\"999999\"/>"));
         assert!(grad.contains("<a:lin ang=\"5400000\""));
+        let patt = set_fill(
+            &grad,
+            ShapeFill::Pattern {
+                prst: "dkUpDiag",
+                fg: [0x44, 0x72, 0xC4],
+                bg: [255, 255, 255],
+            },
+        )
+        .unwrap();
+        parses(&patt);
+        assert!(patt.contains(
+            "</a:prstGeom><a:pattFill prst=\"dkUpDiag\"><a:fgClr><a:srgbClr val=\"4472C4\"/></a:fgClr><a:bgClr><a:srgbClr val=\"FFFFFF\"/></a:bgClr></a:pattFill></xdr:spPr>"
+        ));
+        assert!(!patt.contains("gradFill"));
         // The text box's fill sits before its outline.
         let tb = ShapePreset::TextBox.xml("TextBox 1");
         let t = set_fill(&tb, ShapeFill::None).unwrap();

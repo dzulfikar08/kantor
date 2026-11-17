@@ -64,6 +64,67 @@ pub enum Paint {
         ry: f32,
         stops: Vec<Stop>,
     },
+    /// A DrawingML pattern (`a:pattFill`): an 8 × 8 bitmap
+    /// ([`kantor_ooxml::pattern`]) tiled from `origin`, one bit `cell`
+    /// units square; set bits in `fg`, the rest in `bg`.
+    Pattern {
+        fg: Rgba,
+        bg: Rgba,
+        bits: [u8; 8],
+        origin: P,
+        cell: f32,
+    },
+}
+
+impl Paint {
+    /// One colour standing for the paint (renderers that can't draw it).
+    pub fn main_color(&self) -> Rgba {
+        match self {
+            Paint::Solid(c) => *c,
+            Paint::Linear { stops, .. } | Paint::Radial { stops, .. } => {
+                stops.first().map_or(Rgba::BLACK, |s| s.color)
+            }
+            Paint::Pattern { fg, bg, bits, .. } => paint::mix(*fg, *bg, bits),
+        }
+    }
+
+    /// The paint with its geometry mapped by `t` (`k` = how much `t`
+    /// scales lengths).
+    pub fn mapped(self, t: &Affine) -> Paint {
+        let k = (t.a * t.a + t.b * t.b).sqrt().max(1e-3);
+        match self {
+            Paint::Solid(c) => Paint::Solid(c),
+            Paint::Linear { from, to, stops } => Paint::Linear {
+                from: t.apply(from),
+                to: t.apply(to),
+                stops,
+            },
+            Paint::Radial {
+                center,
+                rx,
+                ry,
+                stops,
+            } => Paint::Radial {
+                center: t.apply(center),
+                rx: rx * k,
+                ry: ry * k,
+                stops,
+            },
+            Paint::Pattern {
+                fg,
+                bg,
+                bits,
+                origin,
+                cell,
+            } => Paint::Pattern {
+                fg,
+                bg,
+                bits,
+                origin: t.apply(origin),
+                cell: cell * k,
+            },
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
