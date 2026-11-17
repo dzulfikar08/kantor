@@ -3,7 +3,8 @@
 424 public Office files, each opened, saved, reopened and exported to PDF by
 Kantor's engines, with the saved files checked by Microsoft's Open XML SDK.
 First run: 2026-11-15; second, third and fourth runs on main: 2026-11-16;
-fifth run, before v0.11.0, and sixth, before v0.12.0: 2026-11-17.
+fifth run, before v0.11.0, and sixth, before v0.12.0: 2026-11-17;
+seventh, before v0.13.0: 2026-11-18.
 
 ## What was swept
 
@@ -392,6 +393,73 @@ equal to" now (`cf_create::text_equal_to_number_formats_and_borders`).
 
 Results: `~/.cache/realworld-out/pre0120-2026-11-17/`.
 
+## Seventh run, before v0.13.0 (2026-11-18)
+
+Rerun of all 424 files on main at `441091b` (after Sheets zoom saved per
+sheet, Docs section columns with balancing, column breaks and `.doc`/`.rtf`
+import, `.xlsb` conditional formatting, `.xls` cell formulas decoded by
+Kantor's own reader (3-D references), `.ods` custom shapes and arcs and
+shape placement on Kantor's default cell sizes, DrawingML pattern fills,
+charts inside groups, SmartArt Organization Chart assistants and hanging
+layouts, six picture layouts, and overlays that block hover had merged),
+release build, compared file by file with the sixth run.
+
+| | sixth run | main, `441091b` |
+|---|---:|---:|
+| crash, panic or timeout | 0 | 0 |
+| refused to open | 6 | 6 |
+| saved file Office would repair | 0 | 0 |
+| content changed by a save | 0 | 0 |
+| page count changed by a save (Docs, Slides) | 0 of 199 | 0 of 199 |
+| ok | 418 | 418 |
+| slowest file | 4.2 s | 4.6 s |
+| all files' probe time added up | 64 s | 78 s |
+
+No regressions: every file has the same kind, error and counts of cells,
+paragraphs, slides and shapes as in the sixth run, and no new Open XML SDK
+error. What changed:
+
+- **`.xls` formulas.** POI's 55906-MultiSheetRefs.xls keeps its 11 3-D
+  formulas (`SUM(Sheet1:Sheet3!A1:B2)`, `COUNTA`, `MIN`/`MAX`/`COUNT` with
+  mixed references) instead of their values: 13 formulas instead of 2, and
+  its "11 formulas kept as values" import note is gone. Every `.xls` cell
+  formula now goes through Kantor's decoder, so the values Kantor works out
+  were compared with the results cached in each file (read with xlrd): 4,623
+  formulas in the 31 files xlrd reads, none different (xlrd can't read the damaged
+  cfb_dir_short_chunk_panic.xls).
+- **Docs pages.** Docx4j_GettingStarted.docx (a two-column section) prints
+  71 pages instead of 72 (LibreOffice 70). The other files with columns (3
+  `.docx` and the seven-column `.doc`) have the same page count as before
+  and as LibreOffice, and their pages look like LibreOffice's (columns,
+  line between, INDEX in columns). No other Docs page count changed.
+- **Zoom.** The 17 workbooks with a zoom of their own keep it through a
+  save (`zoomScale` read and written back for every sheet); printed pages
+  don't change.
+- **Timing:** one flag (bug66675.xlsx, PDF 0.2 → 1.0 s in the sweep) was
+  157 ms alone against v0.12.0's 181 ms. Timed alone against a probe built
+  from the `v0.12.0` tag (min of 5–15 interleaved runs), the 12 slowest files,
+  the 12 with the largest sweep ratio and the files with columns took the
+  same time (0.87–1.14×, the 1.14× ones back to 0.96–0.99× over 15 runs).
+  The added-up time was higher because the machine was busier.
+
+The Office validation scenarios (`tools/fidelity/office_check.py`): 207
+saved files, 0 new Open XML SDK errors, all converted to PDF by LibreOffice.
+Four scenarios were added for markup v0.13 writes:
+`sheets_v013_features.xlsx` (a zoom on each of three sheets, one in Page
+Break Preview, a pattern fill set on a shape, the sheet whose group holds a
+chart copied with Move or Copy, saved twice), `columns_edited.docx` and
+`new_doc_columns.docx` (two columns with a line between from This point
+forward, a column break, three columns in the last section, saved twice)
+and `org_chart_edits.pptx` (Add Assistant and Right Hanging on an
+Organization Chart, a Hierarchy changed to an Organization Chart and given
+an assistant, and a pattern-filled shape, saved twice).
+
+Nothing needed fixing in this run.
+
+Results: `~/.cache/realworld-out/pre0130-2026-11-18/` (a second sweep with
+a clean rebuild of the probe, identical apart from one timing flag:
+`pre0130-2026-11-18-b/`).
+
 ## Left
 
 Refused (6):
@@ -401,11 +469,8 @@ Refused (6):
 - 1 `.xlsb` that calamine can't read (an error, not a crash).
 
 Import notes left (content Kantor doesn't bring in): formulas kept as their
-values in 6 `.xls`/`.ods` files (64 formulas; the 11 in POI's
-55906-MultiSheetRefs.xls are 3-D references such as
-`SUM(Sheet1:Sheet3!A1:B2)`, which Sheets works out since v0.12, but the
-formula text calamine gives for them doesn't give the file's results, so
-they stay values), 2 controls in SimpleWithAutofilter.xls, the
+values in 5 `.xls`/`.ods` files (53 formulas; the 11 3-D formulas of POI's
+55906-MultiSheetRefs.xls come in as formulas since v0.13), 2 controls in SimpleWithAutofilter.xls, the
 formatting of one damaged `.xls` (cfb_dir_short_chunk_panic), and 13 `.ods`
 sheet names Excel doesn't allow (renamed). The `.ods` polygon of tdf137216
 imports since v0.12.
