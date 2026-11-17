@@ -15,8 +15,14 @@
 //!   a paragraph in the `TOC n` style with a `PAGEREF` to a `_Toc`
 //!   bookmark on its heading (`\h` makes entries links, `\n` drops page
 //!   numbers, `\p` sets the separator);
+//! - `TOC \b` lists only the headings inside a bookmark, `TOC \f` the
+//!   `TC` entries (with its identifier, `\l` levels);
+//! - formulas (`= expression`), `IF`, `COMPARE` (worked out in document
+//!   order, fields nested in their codes first: see
+//!   [`crate::field_calc`]), `STYLEREF`, `LISTNUM`, `SET` values read by
+//!   `REF`, and `INDEX` from the `XE` entries and their pages;
 //! - `MERGEFIELD` shows «Name» (there is no data source);
-//! - anything else (`HYPERLINK`, `IF`, formulas…) keeps its result.
+//! - anything else (`HYPERLINK`…) keeps its result.
 //!
 //! Page number fields (`PAGE`, `NUMPAGES`, `SECTIONPAGES`) aren't spans:
 //! they stay one object each, filled in per page (see `crate::section`).
@@ -859,6 +865,9 @@ struct Eval<'a> {
     props: Props,
     bookmarks: HashMap<String, Bookmark>,
     seq: HashMap<usize, Option<u32>>,
+    listnum: HashMap<usize, String>,
+    /// `SET name value`: values REF and formulas read by name (lower case).
+    sets: HashMap<String, String>,
     pages: Option<&'a dyn PageLookup>,
 }
 
@@ -876,6 +885,18 @@ impl<'a> Eval<'a> {
             props: Props::of(doc),
             bookmarks: bookmarks(paras),
             seq: seq_values(doc, paras, spans),
+            listnum: listnum_values(doc, paras, spans),
+            sets: spans
+                .iter()
+                .map(|s| Instr::parse(&s.instr))
+                .filter(|i| i.kind == "SET" && !i.args.is_empty())
+                .map(|i| {
+                    (
+                        i.args[0].to_lowercase(),
+                        i.args.get(1).cloned().unwrap_or_default(),
+                    )
+                })
+                .collect(),
             pages: None,
         }
     }
@@ -971,6 +992,22 @@ impl<'a> Eval<'a> {
             "REF" => self.reference(&i, i.args.first().map(String::as_str)),
             "NOTEREF" => self.note_ref(&i),
             "PAGEREF" => self.page_ref(span, &i),
+            "=" | "IF" | "COMPARE" => {
+                let code = self.code(span);
+                let i = Instr::parse(&code);
+                let out = match i.kind.as_str() {
+                    "=" => self.formula(span, &code, &i),
+                    "IF" => self.if_field(&i),
+                    _ => self.compare_field(&i),
+                };
+                Outcome::Text(i.cased(&out))
+            }
+            "STYLEREF" => self.style_ref(span, &i),
+            "LISTNUM" => match self.listnum.get(&span.id()) {
+                Some(n) => Outcome::Text(n.clone()),
+                None => Outcome::Keep,
+            },
+            "INDEX" => self.index(&i),
             k if !k.is_empty()
                 && i.switches.iter().all(|(s, _)| s != "@")
                 && self.bookmarks.contains_key(&i.kind) =>
@@ -986,6 +1023,203 @@ impl<'a> Eval<'a> {
             }
             _ => Outcome::Keep,
         }
+    }
+
+    /// The field's instruction with the fields nested in its code worked
+    /// out (bookmark references and formulas; others keep their result).
+    fn code(&self, span: &FieldSpan) -> String {
+        let mut nested = |code: &str, old: &str| -> String {
+            let i = Instr::parse(code);
+            let name = match i.kind.as_str() {
+                "REF" => i.args.first().cloned(),
+                "=" => {
+                    return self.formula(span, code, &i);
+                }
+                k if !k.is_empty()
+                    && self
+                        .bookmark(code.split_whitespace().next().unwrap_or(""))
+                        .is_some() =>
+                {
+                    code.split_whitespace().next().map(str::to_owned)
+                }
+                _ => None,
+            };
+            name.as_deref()
+                .and_then(|n| self.bookmark_text(n))
+                .unwrap_or_else(|| old.to_owned())
+        };
+        span.mark
+            .code_with_results(&mut nested)
+            .unwrap_or_else(|| span.instr.clone())
+    }
+
+    /// A bookmark's text (for formulas, `IF` and `COMPARE`).
+    fn bookmark_text(&self, name: &str) -> Option<String> {
+        let Some(b) = self.bookmark(name) else {
+            return self.sets.get(&name.to_lowercase()).cloned();
+        };
+        let end = b.end.unwrap_or(b.start);
+        Some(text_between(self.paras, b.start, end).trim().to_owned())
+    }
+
+    /// `= expression`, with its `\#` picture.
+    fn formula(&self, span: &FieldSpan, code: &str, i: &Instr) -> String {
+        let body = code.trim_start().strip_prefix('=').unwrap_or(code);
+        // The expression ends where the switches start.
+        let expr = match body.find('\\') {
+            Some(k) => &body[..k],
+            None => body,
+        };
+        let lookup = |n: &str| self.bookmark_text(n);
+        let env = crate::field_calc::FormulaEnv {
+            paras: self.paras,
+            bookmark: &lookup,
+            cell: self.paras.get(span.begin.para).and_then(|p| p.cell),
+            decimal: self.doc.decimal,
+        };
+        match crate::field_calc::formula(expr, &env) {
+            Ok(v) => match i.arg("#") {
+                Some(pic) => crate::field_calc::number_picture(v, pic, self.doc.decimal),
+                None => crate::field_calc::plain_number(v, self.doc.decimal),
+            },
+            Err(e) => e,
+        }
+    }
+
+    /// An operand of `IF` or `COMPARE`: a bookmark's text, or as written.
+    fn operand(&self, s: &str) -> String {
+        self.bookmark_text(s).unwrap_or_else(|| s.to_owned())
+    }
+
+    /// `IF a op b "true" "false"`.
+    fn if_field(&self, i: &Instr) -> String {
+        let [a, op, b, rest @ ..] = &i.args[..] else {
+            return "!Syntax Error".into();
+        };
+        match crate::field_calc::compare(&self.operand(a), op, &self.operand(b), self.doc.decimal) {
+            Some(true) => rest.first().cloned().unwrap_or_default(),
+            Some(false) => rest.get(1).cloned().unwrap_or_default(),
+            None => "!Syntax Error".into(),
+        }
+    }
+
+    /// `COMPARE a op b`: 1 or 0.
+    fn compare_field(&self, i: &Instr) -> String {
+        let [a, op, b, ..] = &i.args[..] else {
+            return "!Syntax Error".into();
+        };
+        match crate::field_calc::compare(&self.operand(a), op, &self.operand(b), self.doc.decimal) {
+            Some(r) => (r as u8).to_string(),
+            None => "!Syntax Error".into(),
+        }
+    }
+
+    /// `STYLEREF "Style"` (or a heading level): the nearest paragraph in
+    /// that style above the field, else below it. In headers and footers
+    /// it depends on the page: the saved result stays.
+    fn style_ref(&self, span: &FieldSpan, i: &Instr) -> Outcome {
+        if self.doc.field_props.is_some() {
+            return Outcome::Keep;
+        }
+        let Some(want) = i.args.first() else {
+            return Outcome::Keep;
+        };
+        let level: Option<u8> = want.trim().parse().ok();
+        let matches = |p: &Paragraph| -> bool {
+            if let Some(l) = level {
+                return self.doc.style_level(p) == Some(l)
+                    && p.props.style.as_deref().is_some_and(|s| {
+                        self.doc
+                            .styles
+                            .get(s)
+                            .is_some_and(|st| st.name.to_ascii_lowercase().starts_with("heading"))
+                    });
+            }
+            p.props.style.as_deref().is_some_and(|id| {
+                id.eq_ignore_ascii_case(want)
+                    || self
+                        .doc
+                        .styles
+                        .get(id)
+                        .is_some_and(|st| st.name.eq_ignore_ascii_case(want))
+            }) || (want.eq_ignore_ascii_case("normal") && p.props.style.is_none())
+        };
+        let here = span.begin.para.min(self.paras.len().saturating_sub(1));
+        let found = (0..=here)
+            .rev()
+            .chain(here + 1..self.paras.len())
+            .find(|&k| {
+                matches(&self.paras[k]) && !crate::field_calc::para_text(&self.paras[k]).is_empty()
+            });
+        let Some(k) = found else {
+            return Outcome::Text("Error! No text of specified style in document.".into());
+        };
+        if i.has("n") || i.has("r") || i.has("w") {
+            let markers = self.doc.list_markers_of(self.paras);
+            let m = markers.get(k).cloned().flatten().unwrap_or_default();
+            return Outcome::Text(m.trim().trim_end_matches(['.', ')']).to_owned());
+        }
+        Outcome::Text(i.cased(&crate::field_calc::para_text(&self.paras[k])))
+    }
+
+    /// `INDEX`: the `XE` entries in alphabetical order with the pages
+    /// they're on (needs the layout), one per line (`\e` sets the
+    /// separator, `Main:Sub` entries go under their main entry).
+    fn index(&self, i: &Instr) -> Outcome {
+        let Some(pages) = self.pages else {
+            return Outcome::Keep;
+        };
+        let sep = i.arg("e").unwrap_or(", ");
+        let mut entries: std::collections::BTreeMap<(String, String), (String, String, Vec<u32>)> =
+            std::collections::BTreeMap::new();
+        for s in spans(self.paras) {
+            let xi = Instr::parse(&s.instr);
+            if xi.kind != "XE" {
+                continue;
+            }
+            let Some(text) = xi.args.first() else {
+                continue;
+            };
+            let (main, sub) = match text.split_once(':') {
+                Some((m, s)) => (m.trim().to_owned(), s.trim().to_owned()),
+                None => (text.trim().to_owned(), String::new()),
+            };
+            let page = pages.page_of(s.begin).map(|p| pages.page_number(p));
+            let e = entries
+                .entry((main.to_lowercase(), sub.to_lowercase()))
+                .or_insert_with(|| (main, sub, Vec::new()));
+            if let Some(p) = page
+                && !e.2.contains(&p)
+            {
+                e.2.push(p);
+            }
+        }
+        if entries.is_empty() {
+            return Outcome::Text("No index entries found.".into());
+        }
+        let mut lines = Vec::new();
+        let mut last_main = String::new();
+        for ((main_key, _), (main, sub, pages)) in &entries {
+            let mut pages = pages.clone();
+            pages.sort_unstable();
+            let nums = pages
+                .iter()
+                .map(|p| i.number(*p))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if sub.is_empty() {
+                lines.push(format!("{main}{sep}{nums}"));
+            } else {
+                if *main_key != last_main
+                    && !entries.contains_key(&(main_key.clone(), String::new()))
+                {
+                    lines.push(main.clone());
+                }
+                lines.push(format!("    {sub}{sep}{nums}"));
+            }
+            last_main = main_key.clone();
+        }
+        Outcome::Text(lines.join(&LINE_BREAK.to_string()))
     }
 
     fn bookmark(&self, name: &str) -> Option<&Bookmark> {
@@ -1009,6 +1243,9 @@ impl<'a> Eval<'a> {
 
     fn reference(&self, i: &Instr, name: Option<&str>) -> Outcome {
         let Some(b) = name.and_then(|n| self.bookmark(n)) else {
+            if let Some(v) = name.and_then(|n| self.sets.get(&n.to_lowercase())) {
+                return Outcome::Text(i.cased(v));
+            }
             return self.missing();
         };
         if i.has("n") || i.has("r") || i.has("w") {
@@ -1121,6 +1358,50 @@ fn seq_values(
             *c += 1;
         }
         out.insert(s.id(), Some(*c));
+    }
+    out
+}
+
+/// Every `LISTNUM` field's number: Word's built-in lists, counted per
+/// list name in document order (`\l` sets the level, else one below the
+/// paragraph's list level; `\s` the number; a level counted resets the
+/// levels below it).
+fn listnum_values(
+    doc: &Document,
+    paras: &[Paragraph],
+    spans: &[FieldSpan],
+) -> HashMap<usize, String> {
+    let mut out = HashMap::new();
+    let mut counters: HashMap<String, [u32; 10]> = HashMap::new();
+    for s in spans {
+        let i = Instr::parse(&s.instr);
+        if i.kind != "LISTNUM" {
+            continue;
+        }
+        let list = i
+            .args
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "NumberDefault".into());
+        let level = match i.arg("l").and_then(|l| l.trim().parse::<usize>().ok()) {
+            Some(l) => l.clamp(1, 9),
+            None => paras
+                .get(s.begin.para)
+                .and_then(|p| doc.styles.effective_num(p))
+                .map_or(1, |n| (n.level as usize + 2).min(9)),
+        };
+        let c = counters.entry(list.to_ascii_lowercase()).or_insert([0; 10]);
+        match i.arg("s").and_then(|n| n.trim().parse::<u32>().ok()) {
+            Some(n) => c[level] = n,
+            None => c[level] += 1,
+        }
+        for k in level + 1..10 {
+            c[k] = 0;
+        }
+        out.insert(
+            s.id(),
+            crate::field_calc::listnum_label(&list, level, c[level]),
+        );
     }
     out
 }
@@ -1300,10 +1581,70 @@ impl Document {
             Vec::new()
         };
         let markers = self.list_markers_of(paras);
+        // `\b`: only what's inside the bookmark.
+        let within = i.arg("b").map(|name| {
+            let marks = bookmarks(paras);
+            let b = marks.get(name).or_else(|| {
+                marks
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case(name))
+                    .map(|(_, v)| v)
+            });
+            b.map_or(0..0, |b| {
+                let end = b.end.unwrap_or(b.start);
+                // An end before anything of its paragraph (a bookmark
+                // closed between paragraphs) leaves that paragraph out.
+                let before = paras
+                    .get(end.para)
+                    .and_then(|p| p.text.get(..end.offset))
+                    .is_some_and(|t| t.chars().all(|c| c == OBJECT));
+                let last = if end.para > b.start.para && before {
+                    end.para - 1
+                } else {
+                    end.para
+                };
+                b.start.para..last + 1
+            })
+        });
+        // `\f`: `TC` entries (with the same `\f` identifier; `\l` levels).
+        let tc_levels = i.arg("l").and_then(range);
+        let mut tcs: HashMap<usize, Vec<(String, u8)>> = HashMap::new();
+        if i.has("f") {
+            let want = i.arg("f").map(str::to_ascii_lowercase);
+            for s in crate::fields::spans(paras) {
+                let ti = Instr::parse(&s.instr);
+                if ti.kind != "TC" {
+                    continue;
+                }
+                let id = ti.arg("f").map_or("c".to_owned(), str::to_ascii_lowercase);
+                if want.as_ref().is_some_and(|w| *w != id) || (want.is_none() && id != "c") {
+                    continue;
+                }
+                let level = ti
+                    .arg("l")
+                    .and_then(|l| l.trim().parse::<u8>().ok())
+                    .unwrap_or(1);
+                if tc_levels.is_some_and(|(a, b)| !(a..=b).contains(&level)) {
+                    continue;
+                }
+                if let Some(text) = ti.args.first() {
+                    tcs.entry(s.begin.para)
+                        .or_default()
+                        .push((text.clone(), level));
+                }
+            }
+        }
         let mut out = Vec::new();
         for (k, p) in paras.iter().enumerate() {
-            if skip.contains(&k) {
+            if skip.contains(&k) || within.as_ref().is_some_and(|w| !w.contains(&k)) {
                 continue;
+            }
+            for (text, level) in tcs.remove(&k).unwrap_or_default() {
+                out.push(Entry {
+                    level: level.clamp(1, 9),
+                    text,
+                    para: k,
+                });
             }
             let level = if let Some(c) = &caption {
                 spans
@@ -1675,7 +2016,19 @@ fn keeps_result(kind: &str) -> bool {
             | "NOTEREF"
             | "PAGEREF"
             | "TOC"
+            | "="
+            | "IF"
+            | "COMPARE"
+            | "STYLEREF"
+            | "LISTNUM"
+            | "INDEX"
     )
+}
+
+/// Field types worked out one at a time in document order, each seeing
+/// the results before it (a column total of formulas).
+fn in_order(kind: &str) -> bool {
+    matches!(kind, "=" | "IF" | "COMPARE")
 }
 
 /// Which fields show their codes instead of their results (Word's
@@ -1833,6 +2186,8 @@ impl Document {
                     let k = s.kind();
                     if k == "TOC"
                         || k == "PAGEREF"
+                        || k == "INDEX"
+                        || in_order(&k)
                         || matches!(k.as_str(), "REF" | "NOTEREF") != refs
                     {
                         continue;
@@ -1848,11 +2203,36 @@ impl Document {
             }
         }
 
-        // Page references: from where the updated document is laid out.
+        // Formulas, IF and COMPARE in document order.
+        let mut k = 0;
+        loop {
+            let now = spans(&paras);
+            let Some(s) = now
+                .iter()
+                .filter(|s| targets.contains(&s.id()) && in_order(&s.kind()))
+                .nth(k)
+                .cloned()
+            else {
+                break;
+            };
+            k += 1;
+            let snapshot = self.snapshot(paras.clone());
+            let out = match Eval::new(&snapshot, &paras, cx, &now).eval(&s) {
+                Outcome::Text(t) => t,
+                Outcome::Keep => continue,
+            };
+            let id = set_result(&mut paras, &s, &out);
+            targets.insert(id);
+        }
+
+        // Page references and indexes: from where the updated document is
+        // laid out.
         let now = spans(&paras);
         let pagerefs: Vec<&FieldSpan> = now
             .iter()
-            .filter(|s| targets.contains(&s.id()) && s.kind() == "PAGEREF")
+            .filter(|s| {
+                targets.contains(&s.id()) && matches!(s.kind().as_str(), "PAGEREF" | "INDEX")
+            })
             .collect();
         if !pagerefs.is_empty() {
             let snapshot = self.snapshot(paras.clone());

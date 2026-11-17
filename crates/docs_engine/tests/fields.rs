@@ -850,3 +850,76 @@ fn tracked_field_code_edits_are_deleted_and_inserted_code() {
     let body = &parts(&std::fs::read(&out2).unwrap())["word/document.xml"];
     assert!(!body.contains("<w:delInstrText"), "{body}");
 }
+
+/// formulas.docx (scripts/corpus/gen_docx_more.py): fields Word computes,
+/// saved with wrong results on purpose, worked out by F9 on everything.
+#[test]
+fn formulas_conditions_and_more_fields_are_worked_out() {
+    let mut doc = Document::open(&corpus("formulas.docx")).unwrap();
+    let sel = all(&doc);
+    doc.update_fields(sel, &cx(), &mut lay_out);
+    let line = |doc: &Document, start: &str| shown(doc, find(doc, start));
+    assert_eq!(
+        line(&doc, "Price "),
+        "Price 250, count 4. Total: 1,000. Half: 125. Rounded: 3.33. Check: 1. Max: 8. 14"
+    );
+    assert_eq!(line(&doc, "If: "), "If: many / different / compare: 1 / 1");
+    assert_eq!(line(&doc, "Rate is"), "Rate is 0.11 / tax 11");
+    // STYLEREF: the nearest heading above; below when there's none above.
+    assert_eq!(line(&doc, "Style ref: "), "Style ref: Part one / Part one");
+    assert_eq!(
+        line(&doc, "Style ref here"),
+        "Style ref here: Outside the bookmark"
+    );
+    // Table formulas: cells by name, a column of formulas totalled.
+    assert_eq!(shown(&doc, find(&doc, "Pens") + 3), "18.00");
+    assert_eq!(shown(&doc, find(&doc, "Paper") + 3), "12.75");
+    assert_eq!(shown(&doc, find(&doc, "Ink") + 3), "20");
+    let total = (0..doc.len()).find(|&i| shown(&doc, i) == "Total").unwrap();
+    assert_eq!(shown(&doc, total + 1), "17", "SUM(ABOVE) of the Qty column");
+    assert_eq!(shown(&doc, total + 2), "17", "AVERAGE(LEFT): 17");
+    assert_eq!(shown(&doc, total + 3), "50.75");
+    // SEQ switches: \r restarts, \c repeats, \h hides.
+    assert_eq!(
+        line(&doc, "Seq "),
+        "Seq 1, 2, restart 10, same 10, hidden, next 12"
+    );
+    // LISTNUM: one level below the paragraph's, `\l` and `\s` honoured.
+    assert_eq!(line(&doc, "First "), "First a) and b)");
+    assert_eq!(line(&doc, "Second "), "Second 5)");
+    // INDEX: XE entries with their pages, alphabetically.
+    assert_eq!(
+        line(&doc, "Index: "),
+        format!("Index: Apples, 1{}Bananas, 1", docs_engine::LINE_BREAK)
+    );
+    // TOC \b: only the headings inside the bookmark; \f: TC entries.
+    let contents = find(&doc, "Contents of part two");
+    assert_eq!(shown(&doc, contents + 1), "Inside the bookmark\t1");
+    assert_eq!(shown(&doc, contents + 2), "Figures");
+    assert_eq!(shown(&doc, contents + 3), "Figure entry A\t1");
+    assert_eq!(shown(&doc, contents + 4), "Figure entry B\t1");
+    assert_eq!(
+        doc.paragraph(contents + 4).props.style.as_deref(),
+        Some("TOC2")
+    );
+    // Saved and read back: the new results stay.
+    let saved = doc.to_docx_bytes().unwrap();
+    let xml = &parts(&saved)["word/document.xml"];
+    assert!(xml.contains(">1,000<") && xml.contains(">50.75<"), "{xml}");
+    // Fields nested in the code are worked out first.
+    let p = find(&doc, "Rate is");
+    let end = Selection::caret(Position::new(p, doc.paragraph(p).text.len()));
+    doc.insert_field(
+        end,
+        "IF { REF Count } > 3 \"many\" \"few\"",
+        &cx(),
+        &mut lay_out,
+    );
+    doc.insert_field(
+        Selection::caret(Position::new(p, doc.paragraph(p).text.len())),
+        "= { Price } / { REF Count } \\# \"0.0\"",
+        &cx(),
+        &mut lay_out,
+    );
+    assert_eq!(shown(&doc, p), "Rate is 0.11 / tax 11many62.5");
+}

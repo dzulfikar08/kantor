@@ -29,7 +29,7 @@ use crate::DocsView;
 use crate::fields::now;
 
 /// Fields Insert Field… offers: code word and what it shows.
-const FIELDS: [(&str, &str); 9] = [
+const FIELDS: [(&str, &str); 22] = [
     ("DATE", tk("Today's date")),
     ("TIME", tk("The time now")),
     ("PAGE", tk("The page number")),
@@ -39,6 +39,19 @@ const FIELDS: [(&str, &str); 9] = [
     ("FILENAME", tk("The file's name")),
     ("REF", tk("A bookmark's text")),
     ("PAGEREF", tk("The page a bookmark is on")),
+    ("=", tk("A formula: numbers, bookmarks, table cells")),
+    ("IF", tk("One text or another, by a comparison")),
+    ("COMPARE", tk("1 or 0, by a comparison")),
+    ("SEQ", tk("Numbers figures, tables and other items")),
+    ("STYLEREF", tk("The nearest paragraph in a style")),
+    ("LISTNUM", tk("A list number inside a paragraph")),
+    ("SET", tk("Gives a bookmark a value")),
+    ("TOC", tk("A table of contents")),
+    ("TC", tk("A table of contents entry")),
+    ("INDEX", tk("An index of the XE entries")),
+    ("XE", tk("An index entry")),
+    ("NUMWORDS", tk("The number of words")),
+    ("SECTIONPAGES", tk("The number of pages in the section")),
 ];
 
 const DATE_PICTURES: [&str; 7] = [
@@ -146,6 +159,18 @@ pub(crate) fn field_code(
         },
         "FILENAME" if path => "FILENAME \\p".into(),
         "REF" | "PAGEREF" => format!("{name} {} \\h", bookmark.unwrap_or("")),
+        // A starting point to edit in the code box, as Word's Field dialog
+        // fills in.
+        "=" => "= SUM(ABOVE)".into(),
+        "IF" => "IF 1 = 1 \"Yes\" \"No\"".into(),
+        "COMPARE" => "COMPARE 1 = 1".into(),
+        "SEQ" => "SEQ Figure \\* ARABIC".into(),
+        "STYLEREF" => "STYLEREF \"Heading 1\"".into(),
+        "SET" => "SET Name 1".into(),
+        "TOC" => "TOC \\o \"1-3\" \\h".into(),
+        "TC" => "TC \"Entry\" \\l 1".into(),
+        "INDEX" => "INDEX \\e \", \"".into(),
+        "XE" => "XE \"Entry\"".into(),
         _ => name.to_owned(),
     }
 }
@@ -250,10 +275,30 @@ impl DocsView {
         self.set_codes(v, cx);
     }
 
-    /// Ctrl+F9: write a new field's code.
+    /// Ctrl+F9: a new field's braces at the caret, its code typed in them
+    /// (Word's; selected text becomes the code). F9 then works it out.
     pub fn new_field_code_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let at = self.caret_point();
-        self.open_code_edit(None, "", at, window, cx);
+        let (a, b) = self.sel.ordered();
+        let code = self.doc.text_in(a, b).replace(docs_engine::OBJECT, "");
+        let code = code.lines().next().unwrap_or_default().trim().to_owned();
+        let engine = self.engine.clone();
+        let sel = self.doc.insert_field(self.sel, &code, &now(), &mut |d| {
+            docs_pdf::field_pages(d, &mut engine.borrow_mut())
+        });
+        self.edited(sel, window, cx);
+        let begin = self.doc.clamp(a);
+        let Some(f) = self.doc.fields().into_iter().find(|f| f.begin == begin) else {
+            return;
+        };
+        let mut v = self.codes();
+        if v.all {
+            v.ids.remove(&f.mark_id());
+        } else {
+            v.ids.insert(f.mark_id());
+        }
+        self.set_codes(v, cx);
+        self.start_code(begin, None, cx);
+        self.status = t("Type the field's code; F9 updates it").into();
     }
 
     /// Where to open a popover by the caret (window coordinates).
@@ -1334,5 +1379,8 @@ mod tests {
         assert_eq!(field_code(6, 0, None, true), "FILENAME \\p");
         assert_eq!(field_code(8, 0, Some("Intro"), false), "PAGEREF Intro \\h");
         assert_eq!(field_code(5, 0, None, false), "TITLE");
+        assert_eq!(field_code(9, 0, None, false), "= SUM(ABOVE)");
+        assert_eq!(field_code(10, 0, None, false), "IF 1 = 1 \"Yes\" \"No\"");
+        assert_eq!(field_code(16, 0, None, false), "TOC \\o \"1-3\" \\h");
     }
 }

@@ -18,6 +18,7 @@ mod comment_thread;
 mod document;
 pub mod docx;
 mod edit;
+mod field_calc;
 mod field_edit;
 mod field_track;
 pub mod fields;
