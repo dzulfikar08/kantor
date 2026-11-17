@@ -1201,3 +1201,14 @@ This column is filtered by colour or icon. Choosing values replaces it.	Kolom in
 This column has a filter Kantor keeps but can't edit. Choosing values replaces it.	Kolom ini punya filter yang disimpan Kantor tetapi tidak bisa diubah. Memilih nilai akan menggantinya.
 e.g. 0.00% (none: the cell's own)	mis. 0.00% (kosong: format sel itu sendiri)
 Border (outline)	Batas (garis luar)
+IME mode	Mode IME
+No Control	Tanpa Kontrol
+Off (English mode)	Mati (mode Inggris)
+Disable	Nonaktifkan
+Hiragana	Hiragana
+Full-width katakana	Katakana lebar penuh
+Half-width katakana	Katakana setengah lebar
+Full-width alphanumeric	Alfanumerik lebar penuh
+Half-width alphanumeric	Alfanumerik setengah lebar
+Full-width hangul	Hangul lebar penuh
+Half-width hangul	Hangul setengah lebar

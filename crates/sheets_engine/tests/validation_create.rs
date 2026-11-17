@@ -28,6 +28,7 @@ fn corpus(name: &str) -> PathBuf {
 
 fn whole_1_to_10() -> Validation {
     Validation {
+        ime_mode: None,
         kind: ValidationType::Whole,
         operator: ValidationOperator::Between,
         allow_blank: true,
@@ -51,6 +52,7 @@ fn whole_1_to_10() -> Validation {
 
 fn list_rule() -> Validation {
     Validation {
+        ime_mode: None,
         kind: ValidationType::List,
         operator: ValidationOperator::Between,
         allow_blank: true,
@@ -218,6 +220,7 @@ fn edited_sheet_drops_the_x14_copy_and_others_stay() {
 fn typed_times_meet_time_rules() {
     let mut wb = Workbook::new_empty().unwrap();
     let hours = Validation {
+        ime_mode: None,
         kind: ValidationType::Time,
         formula1: Some(validation_operand(ValidationType::Time, "8:00").unwrap()),
         formula2: Some(validation_operand(ValidationType::Time, "17:00").unwrap()),
@@ -279,4 +282,22 @@ fn a_rule_changed_for_all_cells_with_the_same_settings() {
     wb.set_input(0, 8, 0, "15").unwrap();
     assert!(wb.validate_cell(0, 8, 0).is_none(), "so does A9");
     assert_eq!(wb.validation(0, 0, 0).unwrap().ranges, vec![a, c]);
+}
+
+#[test]
+fn ime_mode_is_set_saved_and_read_back() {
+    let mut wb = Workbook::new_empty().unwrap();
+    let cells = CellRange::from_corners((0, 0), (4, 0));
+    let rule = Validation {
+        ime_mode: Some("hiragana".into()),
+        ..whole_1_to_10()
+    };
+    wb.set_validation(0, &[cells], rule).unwrap();
+    let path = scratch("ime.xlsx");
+    wb.save_as(&path).unwrap();
+    let sheet = &parts(&path)["xl/worksheets/sheet1.xml"];
+    assert!(sheet.contains("imeMode=\"hiragana\""), "{sheet}");
+    let mut back = Workbook::open(&path).unwrap();
+    let v = back.validation(0, 2, 0).unwrap();
+    assert_eq!(v.ime_mode.as_deref(), Some("hiragana"));
 }

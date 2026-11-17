@@ -1979,6 +1979,7 @@ impl DvDef {
             (kind, fix(args[0])?)
         };
         Some(Validation {
+            ime_mode: None,
             kind,
             operator,
             allow_blank: self.allow_blank,

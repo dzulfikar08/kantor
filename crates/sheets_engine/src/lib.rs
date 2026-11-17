@@ -289,7 +289,7 @@ pub use table_style_edit::{
     DEFAULT_PIVOT_STYLE, DEFAULT_TABLE_STYLE, TableElement, TableStyleSpec,
 };
 pub use validation::{
-    ErrorStyle, ListItem, Message, Validation, ValidationOperator, ValidationType,
+    ErrorStyle, IME_MODES, ListItem, Message, Validation, ValidationOperator, ValidationType,
 };
 
 const LOCALE: &str = "en";

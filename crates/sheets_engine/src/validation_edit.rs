@@ -140,6 +140,9 @@ pub(crate) fn validations_xml(rules: &[Validation]) -> Option<String> {
                 x.push_str(&format!(" operator=\"{op}\""));
             }
         }
+        if let Some(m) = r.ime_mode.as_deref().filter(|m| *m != "noControl") {
+            x.push_str(&format!(" imeMode=\"{}\"", esc(m)));
+        }
         if r.allow_blank {
             x.push_str(" allowBlank=\"1\"");
         }

@@ -197,6 +197,7 @@ fn names_follow_a_rename_and_go_with_a_deleted_sheet() {
 
 fn list_rule() -> Validation {
     Validation {
+        ime_mode: None,
         kind: ValidationType::List,
         operator: ValidationOperator::Between,
         allow_blank: true,

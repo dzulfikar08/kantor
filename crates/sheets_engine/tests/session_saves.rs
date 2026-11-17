@@ -90,6 +90,7 @@ fn an_edit_saved_then_undone_is_undone_in_the_next_save() {
         0,
         &[CellRange::from_corners((1, 1), (5, 1))],
         Validation {
+            ime_mode: None,
             kind: ValidationType::Whole,
             operator: ValidationOperator::GreaterThan,
             allow_blank: true,

@@ -26,6 +26,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Sheets: conditional formatting rules can set a number format and an outline border, rules with
   number formats or borders from a file can be edited (the borders are kept), and "Text that is
   equal to" joins the specific-text rules.
+- Sheets: Data Validation keeps and sets Excel's IME mode (Hiragana, Off (English mode)...), which
+  Excel uses to switch the input method for the cells.
 - Sheets: workbooks with macros (`.xlsm`) keep their macros when saved, as `.xlsm`. Kantor doesn't
   run them and says so when the workbook opens. Save As `.xlsx` warns, as Excel does, that a
   macro-free workbook can't hold them, and offers to save as `.xlsm` instead. A workbook saved as
