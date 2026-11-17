@@ -430,7 +430,7 @@ impl DocsView {
         if let Some(m) = &menu.more {
             panel = panel.child(self.render_more_columns(m, cx));
         }
-        Some(deferred(
+        Some(kantor_ui::overlay::popover(
             anchored()
                 .position(menu.at)
                 .anchor(Anchor::TopRight)

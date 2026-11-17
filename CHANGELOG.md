@@ -60,6 +60,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Fixed
 
+- Menus, popovers and dialog cards no longer leave the row or button under the pointer highlighted,
+  and what lies beneath them doesn't light up as the pointer moves: they now block the pointer
+  like Excel's and Word's. A click outside a menu or popover only closes it, and the Sheets
+  dialogs (Conditional Formatting, Data Validation, Page Setup, Zoom, Format as Table…) are modal.
+- Unchecked checkboxes (the filter menu's values, for one) are easy to see in dark themes: checkbox
+  and radio boxes and input fields are outlined at 3:1 contrast or more in every theme (WCAG).
+- Sheets: Manage Rules shows what icon set, rating, data bar and colour scale rules draw (the
+  rule's icons in order, its bar in its colour and fill, the scale's gradient) instead of "AaBb".
+- Sheets: on a zoomed sheet, the note and shape text editors type at the sheet's zoom, and the
+  drop-down button of a validation list and the red note mark zoom with the cells, as in Excel.
+- Sheets: shapes in an `.ods` file that sets no column widths or row heights keep their size and
+  shape (a 2 cm square printed taller than wide).
 - Sheets: `.xls` formulas with 3-D references (`SUM(Jan:Mar!B2)`) come in as formulas instead of
   values.
 

@@ -1028,7 +1028,7 @@ impl DocsView {
                 p.child(h_flex().flex_wrap().gap(SPACE_2).children(buttons))
             })
             .child(h_flex().child(div().flex_1()).child(done));
-        Some(deferred(
+        Some(kantor_ui::overlay::popover(
             anchored()
                 .position(edit.at)
                 .anchor(Anchor::TopLeft)

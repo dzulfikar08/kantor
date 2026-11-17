@@ -1124,7 +1124,10 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
         let Some(sheet) = names.iter().position(|n| n == name) else {
             continue;
         };
-        let mut objects = (Vec::new(), crate::ods_drawing::Spans::default());
+        let mut objects = (
+            Vec::new(),
+            crate::ods_drawing::Spans::for_sheet(model, sheet as u32),
+        );
         apply_table(
             table,
             sheet as u32,

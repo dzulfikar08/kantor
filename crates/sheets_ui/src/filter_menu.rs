@@ -1249,7 +1249,8 @@ impl SheetsView {
             })
             .child(buttons);
         Some(
-            deferred(anchored().position(menu.at).snap_to_window().child(panel)).into_any_element(),
+            kantor_ui::overlay::popover(anchored().position(menu.at).snap_to_window().child(panel))
+                .into_any_element(),
         )
     }
 

@@ -74,8 +74,9 @@ fn ods_pictures_and_charts_are_imported() {
     assert!(xml.contains("<c:f>Data!$A$2:$A$5</c:f>"), "{xml}");
     assert!(xml.contains("<c:v>18</c:v>"), "{xml}");
 
-    // The pictures at A8 and C8: 120 x 80 and 90 x 60 px (LibreOffice's
-    // rows are 17 px).
+    // The pictures at A8 and C8: 120 x 80 and 90 x 60 px. The rows past
+    // the data set no height: they are the sheet's default 20 px, so the
+    // 80 px picture ends at the foot of row 11.
     let pictures: Vec<&Drawing> = on_data
         .iter()
         .filter(|d| matches!(&*d.kind, DrawingKind::Picture { .. }))
@@ -85,7 +86,7 @@ fn ods_pictures_and_charts_are_imported() {
         unreachable!()
     };
     assert!(data.starts_with(b"\x89PNG"), "{part}");
-    assert_eq!(corners(&pictures[0].anchor), ((0, 7), (1, 11)));
+    assert_eq!(corners(&pictures[0].anchor), ((0, 7), (1, 10)));
     let DrawingKind::Picture { data, .. } = &*pictures[1].kind else {
         unreachable!()
     };

@@ -478,3 +478,60 @@ fn text_equal_to_number_formats_and_borders() {
         assert!(specs.contains(want), "{want:?} not in {specs:?}");
     }
 }
+
+/// Manage Rules shows an icon set's icons and a rating's levels, lowest
+/// first as cells get them (reversed sets reversed), and no icons for other
+/// rules.
+#[test]
+fn rule_list_carries_icons() {
+    let mut wb = data_book();
+    let plain = |spec| CfRuleDef {
+        num_fmt: None,
+        border: None,
+        spec,
+        format: CfFormat::default(),
+        stop_if_true: false,
+    };
+    let icons = |set: &str, reverse: bool| CfSpec::IconSet {
+        set: set.into(),
+        reverse,
+        show_value: true,
+        steps: Vec::new(),
+    };
+    wb.add_cf_rule(0, "A1:A10", &plain(icons("3Arrows", false)))
+        .unwrap();
+    wb.add_cf_rule(0, "B1:B10", &plain(icons("3Arrows", true)))
+        .unwrap();
+    wb.add_cf_rule(0, "C1:C10", &plain(icons("4Rating", false)))
+        .unwrap();
+    wb.add_cf_rule(
+        0,
+        "D1:D10",
+        &plain(CfSpec::ColorScale {
+            colors: vec![0xF8696B, 0x63BE7B],
+        }),
+    )
+    .unwrap();
+    let rules = wb.cf_rules(0, None);
+    let of = |range: &str| {
+        rules
+            .iter()
+            .find(|r| r.range == range)
+            .unwrap()
+            .icons
+            .clone()
+    };
+    let arrows = of("A1:A10");
+    assert_eq!(arrows.len(), 3);
+    assert!(arrows.iter().all(Option::is_some));
+    assert_eq!(arrows[0], wb.set_icon("3Arrows", 0));
+    assert_eq!(arrows[2], wb.set_icon("3Arrows", 2));
+    let mut reversed = of("B1:B10");
+    reversed.reverse();
+    assert_eq!(reversed, arrows);
+    let rating = of("C1:C10");
+    assert_eq!(rating.len(), 4);
+    assert!(rating.iter().all(Option::is_some));
+    assert_ne!(rating[0], rating[3]);
+    assert!(of("D1:D10").is_empty());
+}

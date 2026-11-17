@@ -180,7 +180,9 @@ impl SheetGrid {
             .filter(|l| l.cell == (sheet, row, col));
         if v.kind == sheets_engine::ValidationType::List && v.dropdown {
             let view = self.view.clone();
-            let size = row_height.max(px(16.)).min(CONTROL_MD);
+            // Scaled with the sheet, as Excel's (the row height already is).
+            let zoom = crate::look::zoom(&self.book, sheet);
+            let size = row_height.max(px(16.) * zoom).min(CONTROL_MD * zoom);
             let button = div()
                 .id("validation-dropdown")
                 .occlude()
@@ -199,7 +201,7 @@ impl SheetGrid {
                 .text_color(t.fg_muted)
                 .hover(|s| s.bg(t.hover).text_color(t.fg))
                 .cursor_pointer()
-                .child(Icon::new(Lucide::ChevronDown).with_size(ICON_SM))
+                .child(Icon::new(Lucide::ChevronDown).with_size(ICON_SM * zoom))
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     window.prevent_default();
                     cx.stop_propagation();

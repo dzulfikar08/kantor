@@ -1217,7 +1217,7 @@ impl DocsView {
                 )
             }
         };
-        Some(deferred(
+        Some(kantor_ui::overlay::popover(
             anchored()
                 .position(at)
                 .anchor(anchor)

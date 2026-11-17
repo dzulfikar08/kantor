@@ -790,6 +790,9 @@ pub struct CfRuleInfo {
     /// What it draws when it applies, for the list.
     pub format: CfFormat,
     pub stop_if_true: bool,
+    /// An icon set's or rating's icons, lowest first, as its cells get
+    /// them (`None`: No Cell Icon); empty for other rules.
+    pub icons: Vec<Option<crate::CfIcon>>,
 }
 
 /// A value typed for a comparison: numbers and formulas as they are (a
@@ -1472,6 +1475,7 @@ impl Workbook {
                     summary,
                     format,
                     stop_if_true: stop_of(&v.cf_rule),
+                    icons: crate::cond_format::rule_icons(model, &v.cf_rule),
                 }
             })
             .collect()

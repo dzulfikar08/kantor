@@ -1626,6 +1626,8 @@ impl SheetsView {
                 cx,
             )));
         }
+        let mut previews: Vec<Option<AnyElement>> =
+            rules.iter().map(|r| rule_preview(r, &tok)).collect();
         let n = rules.len();
         for (k, r) in rules.into_iter().enumerate() {
             let idx = r.index;
@@ -1657,7 +1659,10 @@ impl SheetsView {
                                     .child(SharedString::from(tf("Applies to {}", &[&r.range]))),
                             ),
                     )
-                    .child(format_chip(&r.format, "AaBb", cx))
+                    .child(match previews[k].take() {
+                        Some(p) => p,
+                        None => format_chip(&r.format, "AaBb", cx).into_any_element(),
+                    })
                     .child(
                         Checkbox::new(("cf-row-stop", k))
                             .label(t("Stop"))
@@ -1971,13 +1976,73 @@ fn format_chip(f: &CfFormat, text: &'static str, cx: &App) -> Div {
     d.child(text)
 }
 
-/// A colour scale as a strip.
+/// A colour scale as a strip: its two or three colours blended from the
+/// lowest (left) to the highest, as Excel draws them.
 fn scale_strip(colors: &[u32]) -> Div {
     let mut d = h_flex().h(px(14.)).w(px(84.));
-    for c in colors {
-        d = d.child(div().flex_1().h_full().bg(crate::look::hsla(*c)));
+    match colors {
+        [only] => d = d.bg(crate::look::hsla(*only)),
+        _ => {
+            for pair in colors.windows(2) {
+                let (a, b) = (crate::look::hsla(pair[0]), crate::look::hsla(pair[1]));
+                d = d.child(div().flex_1().h_full().bg(linear_gradient(
+                    90.,
+                    linear_color_stop(a, 0.),
+                    linear_color_stop(b, 1.),
+                )));
+            }
+        }
     }
     d
+}
+
+/// What a Manage Rules line shows for rules that draw rather than format:
+/// an icon set's icons (highest first, as Excel lists them), a data bar in
+/// its colour and fill, a colour scale's gradient. `None`: the rule's
+/// format on sample text.
+fn rule_preview(r: &sheets_engine::CfRuleInfo, t: &kantor_ui::Tokens) -> Option<AnyElement> {
+    let frame = || {
+        div()
+            .flex_none()
+            .w(px(84.))
+            .h(CONTROL_SM)
+            .p(px(2.))
+            .rounded(RADIUS_SM)
+            .border_1()
+            .border_color(t.border)
+            .bg(gpui::white())
+    };
+    if !r.icons.is_empty() {
+        return Some(
+            frame()
+                .flex()
+                .items_center()
+                .justify_center()
+                .gap(px(3.))
+                .children(r.icons.iter().rev().map(|i| match i {
+                    Some(i) => crate::cond_paint::icon_element(*i).into_any_element(),
+                    None => div().size(px(13.)).flex_none().into_any_element(),
+                }))
+                .into_any_element(),
+        );
+    }
+    Some(match &r.def.as_ref()?.spec {
+        CfSpec::DataBar {
+            color,
+            gradient,
+            bar,
+        } => frame()
+            .child(crate::cond_paint::bar_preview(
+                *color, *gradient, bar.border,
+            ))
+            .into_any_element(),
+        CfSpec::ColorScale { colors } => frame()
+            .flex()
+            .items_center()
+            .child(scale_strip(colors).w_full().h_full())
+            .into_any_element(),
+        _ => return None,
+    })
 }
 
 /// The toolbar's Conditional Formatting menu.

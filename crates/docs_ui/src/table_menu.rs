@@ -276,7 +276,7 @@ impl DocsView {
             .child(heading(i18n::t("Number of rows"), cx))
             .child(div().px(SPACE_4).child(Input::new(&menu.rows).small()))
             .child(h_flex().px(SPACE_4).justify_end().child(ok));
-        Some(deferred(
+        Some(kantor_ui::overlay::popover(
             anchored()
                 .position(menu.at)
                 .snap_to_window_with_margin(SPACE_4)
@@ -379,7 +379,7 @@ impl DocsView {
             .child(aligns)
             .child(heading(i18n::t("Indent from left (cm)"), cx))
             .child(indent_row);
-        Some(deferred(
+        Some(kantor_ui::overlay::popover(
             anchored()
                 .position(menu.at)
                 .snap_to_window_with_margin(SPACE_4)

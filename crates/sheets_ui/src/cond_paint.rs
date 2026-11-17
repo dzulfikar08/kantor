@@ -108,6 +108,21 @@ fn bar_layers(bar: DataBar, zoom: f32) -> Vec<AnyElement> {
     out
 }
 
+/// A data bar of `color` filling `w` × `h` (a Manage Rules preview).
+pub(crate) fn bar_preview(color: u32, gradient: bool, border: Option<u32>) -> Div {
+    let bar = DataBar {
+        color,
+        gradient,
+        from: 0.0,
+        to: 1.0,
+        axis: None,
+        negative: false,
+        border,
+        axis_color: None,
+    };
+    div().relative().size_full().children(bar_layers(bar, 1.0))
+}
+
 pub(crate) fn icon_element(icon: CfIcon) -> impl IntoElement {
     icon_sized(icon, ICON)
 }

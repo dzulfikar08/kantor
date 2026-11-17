@@ -410,6 +410,53 @@ fn lerp(a: Rgb, b: Rgb, t: f64) -> Rgb {
     mix(16) | mix(8) | mix(0)
 }
 
+/// Level `level` (0: lowest) of a rating of `of` levels drawn with `base`:
+/// stars filled, quarters of a pie, signal bars lit.
+fn rating_icon(base: CfIcon, level: u8, of: u8) -> CfIcon {
+    let of = of.max(1) - 1;
+    let shape = match base.shape {
+        IconShape::Star { .. } => IconShape::Star { filled: level, of },
+        IconShape::Circle => IconShape::Pie { filled: level, of },
+        _ => IconShape::Bars { lit: level, of },
+    };
+    CfIcon {
+        shape,
+        // Excel's quarters are dark grey.
+        color: if matches!(shape, IconShape::Pie { .. }) {
+            0x40_40_40
+        } else {
+            base.color
+        },
+    }
+}
+
+/// The icons an icon set or rating rule gives its cells, lowest first
+/// (`None`: No Cell Icon); empty for other rules.
+pub(crate) fn rule_icons(model: &Model, rule: &CfRule) -> Vec<Option<CfIcon>> {
+    match rule {
+        CfRule::IconSet { thresholds, .. } => thresholds
+            .iter()
+            .map(|t| {
+                (t.color != ironcalc_base::types::Color::None)
+                    .then(|| icon_of(model, &t.icon, &t.color))
+            })
+            .collect(),
+        CfRule::IconRating {
+            icon,
+            color,
+            thresholds,
+            ..
+        } => {
+            let of = thresholds.len().clamp(1, 5) as u8;
+            let base = icon_of(model, icon, color);
+            (0..thresholds.len())
+                .map(|i| Some(rating_icon(base, i as u8, of)))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// [`icon_of`] for the filters and sorts by icon.
 pub(crate) fn icon_of_pub(
     model: &Model,
@@ -837,21 +884,6 @@ impl Workbook {
                         .into_iter()
                         .enumerate()
                         .map(|(i, (cfvo, gte))| {
-                            let level = i as u8;
-                            let shape = match base.shape {
-                                IconShape::Star { .. } => IconShape::Star {
-                                    filled: level,
-                                    of: of - 1,
-                                },
-                                IconShape::Circle => IconShape::Pie {
-                                    filled: level,
-                                    of: of - 1,
-                                },
-                                _ => IconShape::Bars {
-                                    lit: level,
-                                    of: of - 1,
-                                },
-                            };
                             let formula = match &cfvo {
                                 Cfvo::Formula(f) => {
                                     self.model.cf_parse(sheet, f, anchor.0, anchor.1)
@@ -862,15 +894,7 @@ impl Workbook {
                                 cfvo,
                                 formula,
                                 gte,
-                                icon: Some(CfIcon {
-                                    shape,
-                                    // Excel's quarters are dark grey.
-                                    color: if matches!(shape, IconShape::Pie { .. }) {
-                                        0x40_40_40
-                                    } else {
-                                        base.color
-                                    },
-                                }),
+                                icon: Some(rating_icon(base, i as u8, of)),
                             }
                         })
                         .collect();
