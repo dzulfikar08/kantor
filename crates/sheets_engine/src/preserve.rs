@@ -1160,8 +1160,7 @@ fn add_vba(pkg: &mut Package, rel: &Rel, vba_part: &str, orig: &Original) -> Res
                 // CT_Workbook: fileVersion, fileSharing, workbookPr, ...
                 let after = root
                     .children()
-                    .filter(|c| is_main(*c, "fileVersion") || is_main(*c, "fileSharing"))
-                    .last();
+                    .rfind(|c| is_main(*c, "fileVersion") || is_main(*c, "fileSharing"));
                 let at = match after {
                     Some(n) => n.range().end,
                     None => {
