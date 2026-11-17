@@ -105,6 +105,7 @@ fn kantor_copies_unchanged(node: &Node, row: i32, column: i32) -> bool {
         | Node::DefinedNameKind(_)
         | Node::TableNameKind(_)
         | Node::TableRefKind(_)
+        | Node::Range3DKind(_)
         | Node::NamedVariableKind { .. }
         | Node::ImplicitIntersection { .. }
         | Node::SpillRangeOperator { .. }

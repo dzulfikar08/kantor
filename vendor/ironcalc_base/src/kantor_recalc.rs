@@ -179,6 +179,30 @@ fn reads_of(node: &Node, reads: &mut Reads) {
                 absolute: *absolute_column2,
             },
         }),
+        // KANTOR PATCH (3-D references): the range on each sheet.
+        Node::Range3DKind(r) => {
+            for sheet in crate::kantor_3d::sheets_of(r) {
+                reads.precedents.push(Precedent {
+                    sheet,
+                    row1: End {
+                        value: r.row1,
+                        absolute: r.absolute_row1,
+                    },
+                    column1: End {
+                        value: r.column1,
+                        absolute: r.absolute_column1,
+                    },
+                    row2: End {
+                        value: r.row2,
+                        absolute: r.absolute_row2,
+                    },
+                    column2: End {
+                        value: r.column2,
+                        absolute: r.absolute_column2,
+                    },
+                });
+            }
+        }
         Node::BooleanKind(_)
         | Node::NumberKind(_)
         | Node::StringKind(_)

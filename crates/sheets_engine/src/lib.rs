@@ -2047,12 +2047,17 @@ mod tests {
 
     #[test]
     fn unknown_error_codes_are_not_written() {
-        // Q1 Summary!B6 is a 3-D reference IronCalc evaluates to #ERROR!.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("multi.xlsx");
         let mut wb = Workbook::open(corpus("02_multi_sheet.xlsx")).unwrap();
         // Opening shows Excel's cached values; IronCalc's own come with a recalculation.
         wb.recalculate();
+        // Q1 Summary!B6 is a 3-D reference (`SUM(Jan:Mar!B2:B4)`), worked out
+        // as Excel does; B5 adds the same cells one by one.
+        assert_eq!(wb.display_value(3, 5, 1), wb.display_value(3, 4, 1));
+        // A formula IronCalc can't read evaluates to #ERROR!.
+        wb.set_input(3, 7, 1, "=1+*2").unwrap();
+        assert_eq!(wb.display_value(3, 7, 1), "#ERROR!");
         wb.save_as(&path).unwrap();
         let parts = preserve::parts_of(&fs::read(&path).unwrap());
         assert!(

@@ -9,6 +9,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Sheets: 3-D references such as `=SUM(Jan:Mar!B2)` or `=AVERAGE('Week 1:Week 4'!B2:D9)` are
+  worked out, as in Excel: SUM, AVERAGE, COUNT, COUNTA, MAX, MIN, PRODUCT, STDEV and VAR (and
+  their A, .P and .S forms) read the same cells on every sheet from the first named sheet to the
+  last. A sheet inserted or moved between them is counted, renaming either end renames it in the
+  formula, and deleting an end sheet moves the reference to the next sheet in. They are saved as
+  Excel writes them.
+
 ## [0.11.0] - 2026-11-17
 
 Docs text boxes are edited in place with their formatting, undo and Track Changes, as in Word.

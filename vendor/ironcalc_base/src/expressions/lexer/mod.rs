@@ -363,7 +363,21 @@ impl<'a> Lexer<'a> {
                             //   8. An Invalid token
                             let position = self.position;
                             self.position -= 1;
-                            let name = self.consume_identifier();
+                            let mut name = self.consume_identifier();
+                            // KANTOR PATCH (3-D references): `Jan:Mar!B2`.
+                            if self.peek_char() == Some(':')
+                                && utils::parse_reference_a1(&name.to_uppercase()).is_none()
+                                && utils::parse_reference_r1c1(&name.to_uppercase()).is_none()
+                            {
+                                let colon = self.position;
+                                self.position += 1;
+                                let last = self.consume_identifier();
+                                if !last.is_empty() && self.peek_char() == Some('!') {
+                                    name = format!("{name}:{last}");
+                                } else {
+                                    self.position = colon;
+                                }
+                            }
                             let position_indent = self.position;
 
                             let peek_char = self.peek_char();

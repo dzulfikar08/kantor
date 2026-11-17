@@ -297,6 +297,7 @@ impl<'a> Model<'a> {
             Node::DefinedNameKind(_) => None,
             Node::TableNameKind(_) => None,
             Node::TableRefKind(_) => None,
+            Node::Range3DKind(_) => None,
             Node::NamedVariableKind { .. } => None,
             Node::CompareKind { .. } => None,
             Node::OpPowerKind { .. } => None,
