@@ -13,6 +13,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 - 3-D charts show their data labels, and cylinder, cone and pyramid columns and bars are drawn in
   their shape instead of as boxes (Slides, Sheets and Docs, on screen and in PDFs).
+- Sheets: Page Break Preview is saved in the file for each sheet and the sheet opens in it again,
+  as in Excel; the zoom a sheet was saved with is kept.
+- Sheets: an icon set's threshold can show "No Cell Icon" (Edit Formatting Rule), and files that
+  use it show no icon there instead of a grey circle.
 - Windows metafile pictures (WMF, EMF and EMF+), Mac PICT pictures and BMPs are drawn in Docs,
   Slides and Sheets, on screen and in PDFs, instead of an empty box: from `.docx`, `.pptx` and
   `.xlsx` files and from `.doc`, `.ppt`, `.xls`, `.ods` and `.rtf` imports (which used to leave

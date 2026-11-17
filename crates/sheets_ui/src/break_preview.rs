@@ -178,19 +178,15 @@ impl SheetsView {
     /// Whether the sheet on screen is in Page Break Preview.
     pub(crate) fn in_break_preview(&self, cx: &App) -> bool {
         let grid = self.table.read(cx).delegate();
-        grid.break_preview.contains(&grid.book.sheet_id(grid.sheet))
+        grid.book.break_preview(grid.sheet)
     }
 
     /// View ▸ Page Break Preview (`on`) or Normal, for the sheet on screen.
     pub fn set_break_preview(&mut self, on: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.table.update(cx, |table, cx| {
             let grid = table.delegate_mut();
-            let id = grid.book.sheet_id(grid.sheet);
-            if on {
-                grid.break_preview.insert(id);
-            } else {
-                grid.break_preview.remove(&id);
-            }
+            let sheet = grid.sheet;
+            grid.book.set_break_preview(sheet, on);
             table.refresh(cx);
         });
         self.break_layer.borrow_mut().drag = None;

@@ -422,8 +422,6 @@ pub struct SheetGrid {
     note_anchor: notes_ui::NoteAnchor,
     /// Show All Notes: every note's box is shown (a view setting).
     show_all_notes: bool,
-    /// Sheets (by id) shown in Page Break Preview ([`break_preview`]).
-    break_preview: std::collections::HashSet<u32>,
     /// Text overflowing into empty neighbours, per row ([`overflow`]).
     overflow: overflow::OverflowCache,
 }
@@ -471,7 +469,6 @@ impl SheetGrid {
             note_editing: None,
             note_anchor: Default::default(),
             show_all_notes: false,
-            break_preview: Default::default(),
             overflow: Default::default(),
         };
         grid.resize();
@@ -501,7 +498,7 @@ impl SheetGrid {
     /// `col` (Excel draws them as dashed lines in Normal view).
     fn page_breaks(&self, row: u32, col: u32) -> (bool, bool) {
         // Page Break Preview draws every break itself.
-        if self.break_preview.contains(&self.book.sheet_id(self.sheet)) {
+        if self.book.break_preview(self.sheet) {
             return (false, false);
         }
         let key = (self.book.revision(), self.sheet);

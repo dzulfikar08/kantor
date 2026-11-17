@@ -434,6 +434,12 @@ pub(crate) struct SheetPatch {
     /// from A1 (`grid::set_frozen_at`). Written as the sheet view's
     /// `topLeftCell` and a pane whose splits count from it.
     pub frozen_view: Option<((u32, u32), (u32, u32))>,
+    /// The sheet view's `view`: `Some(true)` Page Break Preview,
+    /// `Some(false)` Normal (`view` removed; Page Layout is kept).
+    pub break_preview: Option<bool>,
+    /// Attributes of the sheet view to add where it has none (the file's
+    /// zoom).
+    pub view_attrs: Vec<(&'static str, String)>,
 }
 
 impl Patches {
@@ -6607,24 +6613,52 @@ fn patch_sheet(full: &str, patch: &SheetPatch) -> Result<String, String> {
             _ => {}
         }
     }
-    if let Some((origin, split)) = patch.frozen_view
+    if (patch.frozen_view.is_some()
+        || patch.break_preview.is_some()
+        || !patch.view_attrs.is_empty())
         && let Some(view) = root
             .children()
             .find(|c| is_main(*c, "sheetViews"))
             .and_then(|v| v.children().find(|c| is_main(*c, "sheetView")))
     {
         let mut out = String::from("<sheetView");
+        let page_layout = view.attribute("view") == Some("pageLayout");
         for a in view.attributes() {
-            if !(a.namespace().is_none() && a.name() == "topLeftCell") {
-                write_attr_same(&mut out, a, view)?;
+            let plain = a.namespace().is_none();
+            if plain && a.name() == "topLeftCell" && patch.frozen_view.is_some() {
+                continue;
+            }
+            if plain && a.name() == "view" && patch.break_preview.is_some() {
+                continue;
+            }
+            write_attr_same(&mut out, a, view)?;
+        }
+        for (k, v) in &patch.view_attrs {
+            if view.attribute(*k).is_none() {
+                out.push_str(&format!(" {k}=\"{}\"", esc_attr(v)));
             }
         }
-        out.push_str(&format!(
-            " topLeftCell=\"{}\">{}</sheetView>",
-            crate::cell_name(origin.0, origin.1),
-            frozen_pane_xml(origin, split)
-        ));
-        edits.push((view.range(), out));
+        match patch.break_preview {
+            Some(true) => out.push_str(" view=\"pageBreakPreview\""),
+            Some(false) if page_layout => out.push_str(" view=\"pageLayout\""),
+            _ => {}
+        }
+        if let Some((origin, split)) = patch.frozen_view {
+            out.push_str(&format!(
+                " topLeftCell=\"{}\">{}</sheetView>",
+                crate::cell_name(origin.0, origin.1),
+                frozen_pane_xml(origin, split)
+            ));
+            edits.push((view.range(), out));
+        } else {
+            // Only the start tag: the panes and selections stay.
+            let xml = &sk.xml[view.range()];
+            let end = start_tag_end(xml).ok_or("sheetView is not closed")?;
+            let self_closing = xml[..end].ends_with("/>");
+            out.push_str(if self_closing { "/>" } else { ">" });
+            let r = view.range();
+            edits.push((r.start..r.start + end, out));
+        }
     }
     if !patch.remove_exts.is_empty()
         && let Some(list) = root.children().find(|c| is_main(*c, "extLst"))
@@ -6683,6 +6717,20 @@ fn frozen_pane_xml(origin: (u32, u32), split: (u32, u32)) -> String {
         ),
         (false, false) => String::new(),
     }
+}
+
+/// The length of the start tag `xml` begins with (quotes respected).
+fn start_tag_end(xml: &str) -> Option<usize> {
+    let mut quote = None;
+    for (i, c) in xml.char_indices() {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(q), _) if c == q => quote = None,
+            (None, '>') => return Some(i + 1),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn write_attr_same(out: &mut String, a: roxmltree::Attribute, n: Node) -> Result<(), String> {
@@ -7652,6 +7700,47 @@ mod tests {
     }
 
     #[test]
+    fn sheet_views_keep_their_zoom_and_page_break_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zoom.xlsx");
+        let mut wb = crate::Workbook::new_empty().unwrap();
+        wb.set_input(0, 0, 0, "x").unwrap();
+        wb.save_as(&path).unwrap();
+        // As Excel saves a sheet left in Page Break Preview at 70 %.
+        let mut pkg = Package::read(&std::fs::read(&path).unwrap()).unwrap();
+        let part = "xl/worksheets/sheet1.xml";
+        let xml = pkg.text(part).unwrap().unwrap().replacen(
+            "<sheetView ",
+            "<sheetView zoomScale=\"85\" zoomScaleNormal=\"85\" zoomScaleSheetLayoutView=\"70\" view=\"pageBreakPreview\" ",
+            1,
+        );
+        pkg.set(part, xml.into_bytes());
+        std::fs::write(&path, pkg.write().unwrap()).unwrap();
+        let mut wb = crate::Workbook::open(&path).unwrap();
+        assert!(wb.break_preview(0));
+        wb.set_input(0, 1, 1, "y").unwrap();
+        wb.save_as(&path).unwrap();
+        let saved = || {
+            String::from_utf8(read_part(&std::fs::read(&path).unwrap(), part).unwrap()).unwrap()
+        };
+        let xml = saved();
+        for a in [
+            "zoomScale=\"85\"",
+            "zoomScaleNormal=\"85\"",
+            "zoomScaleSheetLayoutView=\"70\"",
+            "view=\"pageBreakPreview\"",
+        ] {
+            assert!(xml.contains(a), "{a}: {xml}");
+        }
+        assert_eq!(xml.matches("view=\"").count(), 1, "{xml}");
+        // Back to Normal: the zoom stays, the view goes.
+        wb.set_break_preview(0, false);
+        wb.save_as(&path).unwrap();
+        let xml = saved();
+        assert!(!xml.contains("pageBreakPreview") && xml.contains("zoomScale=\"85\""), "{xml}");
+    }
+
+    #[test]
     fn patches_keep_unmodelled_attributes_and_order() {
         let xml = r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheetPr codeName="S"/><dimension ref="A1"/><sheetData><row r="1"><c r="A1"><v>1</v></c></row></sheetData><pageMargins left="1" right="1" top="1" bottom="1" header="0.5" footer="0.5"/><pageSetup paperSize="1" copies="2" r:id="rId4"/><drawing r:id="rId1"/></worksheet>"#;
         let patch = SheetPatch {
@@ -7664,6 +7753,8 @@ mod tests {
             page_setup: Some(vec![("paperSize", "9".into()), ("orientation", "landscape".into())]),
             remove_exts: Vec::new(),
             frozen_view: None,
+            break_preview: None,
+            view_attrs: Vec::new(),
         };
         let out = patch_sheet(xml, &patch).unwrap();
         assert_eq!(

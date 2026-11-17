@@ -122,6 +122,11 @@ fn parse_x14_data_bars(ws: &XmlNode, theme: &Theme) -> HashMap<String, DataBarEx
 /// Unrecognized sets (e.g. 5Signal) fall back to Circle.
 fn icon_from_excel_id(icon_set: &str, icon_id: u32) -> (Icon, Color) {
     let s = |c: &'static str| Color::Rgb(c.to_string());
+    // KANTOR PATCH (§16): Excel's "No Cell Icon" is the set `NoIcons`: an
+    // icon without a colour, which Kantor draws as none.
+    if icon_set == "NoIcons" {
+        return (Icon::Circle, Color::None);
+    }
     // Standard sets are already in icon_set_icons, indexed from lowest to highest.
     if let Some(icons) = icon_set_icons(icon_set) {
         if let Some((icon, color)) = icons.get(icon_id as usize) {
