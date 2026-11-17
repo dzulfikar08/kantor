@@ -118,9 +118,6 @@ pub fn preset(typ: u16) -> Option<&'static str> {
     })
 }
 
-/// A freeform's path (`pVertices`, `pSegmentInfo`, `geoRight/Bottom`) as
-/// `a:custGeom`.
-
 /// A freeform shape's path (`pVertices`, `pSegmentInfo`, `pGuides` and the
 /// geometry box) as `a:custGeom`; `None` when it can't be followed.
 pub fn cust_geom(props: &HashMap<u16, u32>, complex: &HashMap<u16, Vec<u8>>) -> Option<String> {
@@ -378,6 +375,9 @@ fn cust_geom_of(s: &S) -> Option<String> {
     ))
 }
 
+/// Writes a cubic Bézier (two control points and the end) into a path.
+type Cubic<'a> = dyn Fn(&mut String, (f64, f64), (f64, f64), (f64, f64)) + 'a;
+
 /// An escape arc ([MS-ODRAW] msopathEscapeArcTo and friends) as cubic
 /// Béziers: the ellipse in the box `a`–`b`, from the ray through `st` to
 /// the ray through `en`, counterclockwise on the page unless `clockwise`;
@@ -386,7 +386,7 @@ fn cust_geom_of(s: &S) -> Option<String> {
 fn arc(
     path: &mut String,
     pt: &dyn Fn((i64, i64)) -> String,
-    cubic: &dyn Fn(&mut String, (f64, f64), (f64, f64), (f64, f64)),
+    cubic: &Cubic<'_>,
     a: (i64, i64),
     b: (i64, i64),
     st: (i64, i64),

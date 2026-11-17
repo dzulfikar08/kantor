@@ -859,9 +859,7 @@ impl W<'_> {
     ) -> Option<(String, String)> {
         Some(match body {
             FloatBody::Picture { media, crop } => {
-                let Some(id) = self.media_rel(*media) else {
-                    return None;
-                };
+                let id = self.media_rel(*media)?;
                 let src = if crop.iter().any(|v| *v != 0) {
                     format!(
                         "<a:srcRect l=\"{}\" t=\"{}\" r=\"{}\" b=\"{}\"/>",

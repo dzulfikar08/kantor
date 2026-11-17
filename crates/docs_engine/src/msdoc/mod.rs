@@ -1171,7 +1171,7 @@ impl Reader {
         } else {
             let geom = match art::preset(shape.typ) {
                 Some(p) => format!("<a:prstGeom prst=\"{p}\"><a:avLst/></a:prstGeom>"),
-                None => match art::cust_geom(&shape) {
+                None => match art::cust_geom(shape) {
                     Some(g) => g,
                     None if shape.typ == 0 || shape.typ == 4095 => {
                         // A path Kantor can't follow: its box, so the
