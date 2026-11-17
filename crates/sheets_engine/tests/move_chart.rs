@@ -357,11 +357,11 @@ const PNG: &[u8] = &[
 /// 20_charts.xlsx with chart1 linked to an outside workbook
 /// (`c:externalData`) and holding user shapes (a text box and a picture,
 /// `c:userShapes`), and a group with a picture on the first sheet.
-fn linked_book() -> PathBuf {
+fn linked_book(name: &str) -> PathBuf {
     use std::io::Write as _;
     let src = std::fs::read(corpus("20_charts.xlsx")).unwrap();
     let mut zin = zip::ZipArchive::new(std::io::Cursor::new(src)).unwrap();
-    let path = scratch("linked.xlsx");
+    let path = scratch(name);
     let mut out = zip::ZipWriter::new(std::fs::File::create(&path).unwrap());
     let opts = zip::write::SimpleFileOptions::default();
     for i in 0..zin.len() {
@@ -477,7 +477,7 @@ fn check_links(p: &BTreeMap<String, String>, chart: &str) {
 
 #[test]
 fn moved_charts_keep_their_links() {
-    let src = linked_book();
+    let src = linked_book("linked-a.xlsx");
     let mut wb = Workbook::open(&src).unwrap();
     let key = wb
         .drawings(0)
@@ -530,7 +530,7 @@ fn moved_charts_keep_their_links() {
 
 #[test]
 fn copied_sheets_bring_group_pictures_and_chart_links() {
-    let src = linked_book();
+    let src = linked_book("linked-b.xlsx");
     let mut wb = Workbook::open(&src).unwrap();
     let before = wb.drawings(0).len();
     let copy = wb.copy_sheet(0, 2).unwrap();

@@ -230,8 +230,11 @@ impl Anchor {
     }
 }
 
-/// Pictures a shape element names: `r:embed` id, image extension, bytes.
-pub type ShapeMedia = Arc<[(String, String, Arc<[u8]>)]>;
+/// A picture a shape element names: `r:embed` id, image extension, bytes.
+pub type MediaItem = (String, String, Arc<[u8]>);
+
+/// The pictures a shape element names.
+pub type ShapeMedia = Arc<[MediaItem]>;
 
 /// What an object is.
 #[derive(Clone, Debug)]
@@ -287,7 +290,7 @@ pub(crate) struct Object {
     alternate: bool,
     /// A shape's pictures (a group's `xdr:pic`s): `r:embed` id, image
     /// extension and bytes; `None` when one can't be found.
-    media: Option<Vec<(String, String, Arc<[u8]>)>>,
+    media: Option<Vec<MediaItem>>,
 }
 
 /// An object on a sheet as it is now.
@@ -688,7 +691,7 @@ fn shape_media(
     obj: Node,
     targets: &HashMap<String, (String, String)>,
     parts: &HashMap<String, Arc<[u8]>>,
-) -> Option<Vec<(String, String, Arc<[u8]>)>> {
+) -> Option<Vec<MediaItem>> {
     let mut out: Vec<(String, String, Arc<[u8]>)> = Vec::new();
     for b in obj.descendants().filter(|d| is(*d, NS_A, "blip")) {
         let Some(rid) = r_id(b, "embed") else {
@@ -999,7 +1002,7 @@ impl Drawings {
     }
 
     /// The pictures inside shape `key` of the file (see `Object::media`).
-    pub(crate) fn shape_media(&self, key: DrawingKey) -> Option<Vec<(String, String, Arc<[u8]>)>> {
+    pub(crate) fn shape_media(&self, key: DrawingKey) -> Option<Vec<MediaItem>> {
         self.object(key)?.media.clone()
     }
 

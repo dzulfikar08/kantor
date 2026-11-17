@@ -496,8 +496,7 @@ pub(super) fn restructure(
             }
             let after = doc
                 .descendants()
-                .filter(|n| is(*n, NS_CX, "data"))
-                .last()
+                .rfind(|n| is(*n, NS_CX, "data"))
                 .map_or(block.range().end, |d| d.range().end);
             edits.push((after..after, data));
             // The series: the template's look, no ID of its own yet.

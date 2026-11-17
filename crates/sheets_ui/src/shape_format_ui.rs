@@ -839,6 +839,19 @@ mod tests {
         assert_eq!(l.head, "none");
     }
 
+    /// Shadow preset names from `sheets_engine`, shown through `t_dyn`.
+    const SHADOW_LABELS: &[&str] = &[
+        tk("Offset: Bottom Right"),
+        tk("Offset: Bottom"),
+        tk("Offset: Bottom Left"),
+        tk("Offset: Right"),
+        tk("Offset: Center"),
+        tk("Offset: Left"),
+        tk("Offset: Top Right"),
+        tk("Offset: Top"),
+        tk("Offset: Top Left"),
+    ];
+
     #[std::prelude::v1::test]
     fn shadows_read_back() {
         let rect = ShapePreset::Rectangle.xml("R");
@@ -848,6 +861,7 @@ mod tests {
             let l = shape_look(&x, None).unwrap();
             assert_eq!(l.shadow, Some(p));
             assert!(l.shadowed);
+            assert!(SHADOW_LABELS.contains(&p.label()), "{}", p.label());
             assert!(i18n::indonesian(p.label()).is_some(), "{}", p.label());
         }
         let x = fmt::set_shadow(

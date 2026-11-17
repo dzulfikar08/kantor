@@ -23,7 +23,8 @@ use roxmltree::Document;
 use crate::Workbook;
 use crate::chart_edit::{NEW_CHART_BASE, NewChart};
 use crate::drawing::{
-    Anchor, ChartSheetNow, DrawingKey, EditAs, Marker, Tab, chart_sheet_key_id, chart_sheet_of_key,
+    Anchor, ChartSheetNow, DrawingKey, EditAs, Marker, MediaItem, Tab, chart_sheet_key_id,
+    chart_sheet_of_key,
 };
 use crate::preserve::BundlePart;
 use crate::xls_drawing::{CHART_SHEET_SIZE, XDR, frame, rels};
@@ -276,7 +277,7 @@ impl Workbook {
 
     /// The pictures inside shape `key` (a group's), to copy with it
     /// (`None`: one can't be found).
-    pub(crate) fn shape_media(&self, key: DrawingKey) -> Option<Vec<(String, String, Arc<[u8]>)>> {
+    pub(crate) fn shape_media(&self, key: DrawingKey) -> Option<Vec<MediaItem>> {
         if key.index >= NEW_CHART_BASE {
             return Some(self.new_chart(key)?.shape?.media.clone());
         }
