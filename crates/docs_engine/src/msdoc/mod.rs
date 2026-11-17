@@ -18,7 +18,7 @@
 //!   including huge PAPXs in the Data stream), the stylesheet (STSH), fonts
 //!   (SttbfFfn), lists (PlfLst / PlfLfo);
 //! - tables (row ends, cell boundaries, horizontal and vertical merges,
-//!   borders, shading, row heights); nested tables are flattened;
+//!   borders, shading, row heights), tables nested in cells;
 //! - sections: page size, orientation, margins, header distances, title
 //!   page, page number restarts;
 //! - inline PNG and JPEG pictures (PICF + OfficeArt blips in the Data
@@ -29,12 +29,15 @@
 //!
 //! - comments (PlcfandRef / PlcfandTxt, authors from GrpXstAtnOwners) with
 //!   their ranges (the annotation bookmarks PlcfAtnBkf / PlcfAtnBkl, tagged
-//!   in SttbfAtnBkmk); dates aren't read.
+//!   in SttbfAtnBkmk) and dates (AtrdExtra, Word 2002 and later).
 //!
 //! Not imported (listed in [`Imported::notes`]): floating objects in
 //! headers, footers and text boxes, grouped shapes, freeform shapes drawn
-//! with guide formulas, WMF/EMF pictures and embedded objects, hidden text. Tracked changes are shown
-//! accepted.
+//! with guide formulas, WMF/EMF pictures and embedded objects, hidden text.
+//!
+//! Tracked insertions and deletions (`sprmCFRMarkIns` / `sprmCFRMarkDel`
+//! with their authors from SttbfRMark and dates) come in as revisions
+//! (`w:ins` / `w:del`), deleted paragraph marks included.
 //!
 //! Encrypted files and files from Word 6 / Word 95 are refused with a
 //! message. A damaged file is an error, never a panic: every offset is
@@ -143,11 +146,14 @@ const PLC_SPA_HDR: usize = 41;
 const PLCF_ATN_BKF: usize = 42;
 const PLCF_ATN_BKL: usize = 43;
 const DGG_INFO: usize = 50;
+const STTBF_RMARK: usize = 51;
 const PLCFTXBX_TXT: usize = 56;
 const PLCFEND_REF: usize = 46;
 const PLCFEND_TXT: usize = 47;
 const PLF_LST: usize = 73;
 const PLF_LFO: usize = 74;
+/// FibRgFcLcb2002: comments' dates (ATRDPost10, 18 bytes each).
+const ATRD_EXTRA: usize = 112;
 
 impl Fib {
     fn read(w: &[u8]) -> Result<Self> {
@@ -230,10 +236,12 @@ pub(crate) enum Item {
     CommentRef(Chp, usize),
 }
 
-/// A comment: author, initials, text.
+/// A comment: author, initials, date, text.
 pub(crate) struct Comment {
     pub author: String,
     pub initials: String,
+    /// When it was written (`2026-11-17T09:30:00Z`), when the file says.
+    pub date: Option<String>,
     pub blocks: Vec<Block>,
 }
 
@@ -293,6 +301,8 @@ pub(crate) struct Para {
     pub items: Vec<Item>,
     /// Ends section `n` (not the last one).
     pub section_end: Option<usize>,
+    /// A table nested in a cell, in place of a paragraph.
+    pub nested: Option<Vec<Row>>,
 }
 
 #[derive(Clone, Debug)]
@@ -365,6 +375,8 @@ pub(crate) struct Doc {
     pub media: Vec<(&'static str, Vec<u8>)>,
     pub facing_pages: bool,
     pub default_tab: u16,
+    /// Who made tracked changes (SttbfRMark).
+    pub revision_authors: Vec<String>,
 }
 
 // ── reading ───────────────────────────────────────────────────────────────
@@ -682,7 +694,12 @@ impl Reader {
         };
         let body = self.story(0, main_end, true);
         let mut comments = Vec::new();
-        for (author, initials, a, b) in comment_texts {
+        let dates: Vec<Option<String>> = self.tbl(ATRD_EXTRA).map_or_else(Vec::new, |x| {
+            x.chunks_exact(18)
+                .map(|c| dttm(u32::from_le_bytes([c[0], c[1], c[2], c[3]])))
+                .collect()
+        });
+        for (k, (author, initials, a, b)) in comment_texts.into_iter().enumerate() {
             let mut blocks = self.story(a, b, false);
             if blocks.len() > 1
                 && matches!(blocks.last(), Some(Block::Para(p)) if p.items.is_empty())
@@ -692,6 +709,7 @@ impl Reader {
             comments.push(Comment {
                 author,
                 initials,
+                date: dates.get(k).cloned().flatten(),
                 blocks,
             });
         }
@@ -751,6 +769,7 @@ impl Reader {
             media: std::mem::take(&mut self.media),
             facing_pages,
             default_tab,
+            revision_authors: self.tbl(STTBF_RMARK).map(sttb_strings).unwrap_or_default(),
         })
     }
 
@@ -1282,13 +1301,10 @@ impl Reader {
                         mark: chp.visible(),
                         items: std::mem::take(&mut items),
                         section_end: section_end.filter(|&s| s + 1 < self.sed_cps.len()),
+                        nested: None,
                     },
                     u,
                 ));
-                cp += 1;
-                continue;
-            }
-            if chp.deleted {
                 cp += 1;
                 continue;
             }
@@ -1379,6 +1395,7 @@ impl Reader {
                     mark: Chp::default(),
                     items,
                     section_end: None,
+                    nested: None,
                 },
                 0x0D,
             ));
@@ -1388,6 +1405,42 @@ impl Reader {
 }
 
 /// The URL of a `HYPERLINK "url"` field (not local `\l` links).
+/// The strings of an extended STTB (`fExtend` = 0xFFFF, UTF-16).
+fn sttb_strings(b: &[u8]) -> Vec<String> {
+    let mut out = Vec::new();
+    if u16_at(b, 0) != Some(0xFFFF) {
+        return out;
+    }
+    let count = u16_at(b, 2).unwrap_or(0) as usize;
+    let extra = u16_at(b, 4).unwrap_or(0) as usize;
+    let mut at = 6;
+    for _ in 0..count {
+        let Some(cch) = u16_at(b, at) else { break };
+        let units: Vec<u16> = (0..cch as usize)
+            .map_while(|k| u16_at(b, at + 2 + k * 2))
+            .collect();
+        out.push(String::from_utf16_lossy(&units));
+        at += 2 + cch as usize * 2 + extra;
+    }
+    out
+}
+
+/// A DTTM ([MS-DOC] 2.9.66: minutes, hours, day, month, years since
+/// 1900, weekday in bit fields) as an `xsd:dateTime`; `None` when empty.
+pub(crate) fn dttm(v: u32) -> Option<String> {
+    let min = v & 0x3F;
+    let hour = (v >> 6) & 0x1F;
+    let day = (v >> 11) & 0x1F;
+    let month = (v >> 16) & 0x0F;
+    let year = 1900 + ((v >> 20) & 0x1FF);
+    if v == 0 || day == 0 || !(1..=12).contains(&month) || hour > 23 || min > 59 {
+        return None;
+    }
+    Some(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{min:02}:00Z"
+    ))
+}
+
 fn hyperlink_url(instr: &str) -> Option<String> {
     let rest = instr.trim_start().get(9..)?.trim();
     if rest.starts_with("\\l") {
@@ -1525,60 +1578,92 @@ fn parse_lvl(s: &[u8], at: usize) -> Option<(Level, usize)> {
     ))
 }
 
-/// Group flat paragraphs into paragraphs and tables. Nested tables are
-/// flattened into their outer cell.
-fn assemble(paras: Vec<(Para, u16)>, notes: &mut BTreeSet<String>) -> Vec<Block> {
+/// Group flat paragraphs into paragraphs and tables, tables nested in
+/// cells kept nested (by their depth, `sprmPItap`; inner cells and rows end
+/// with `sprmPFInnerTableCell` / `sprmPFInnerTtp`).
+fn assemble(paras: Vec<(Para, u16)>, _notes: &mut BTreeSet<String>) -> Vec<Block> {
+    #[derive(Default)]
+    struct Level {
+        rows: Vec<Row>,
+        cells: Vec<Vec<Para>>,
+        cell: Vec<Para>,
+    }
+    /// Close the innermost table: it goes into its parent's cell as one
+    /// nested table (an unfinished row's text as paragraphs).
+    fn close(stack: &mut Vec<Level>, out: &mut Vec<Block>) {
+        let Some(l) = stack.pop() else { return };
+        let leftovers: Vec<Para> = l.cells.into_iter().flatten().chain(l.cell).collect();
+        match stack.last_mut() {
+            Some(parent) => {
+                if !l.rows.is_empty() {
+                    parent.cell.push(Para {
+                        pap: Pap::default(),
+                        mark: Chp::default(),
+                        items: Vec::new(),
+                        section_end: None,
+                        nested: Some(l.rows),
+                    });
+                }
+                parent.cell.extend(leftovers);
+            }
+            None => {
+                if !l.rows.is_empty() {
+                    out.push(Block::Table(l.rows));
+                }
+                out.extend(leftovers.into_iter().map(|p| Block::Para(Box::new(p))));
+            }
+        }
+    }
     let mut out = Vec::new();
-    let mut rows: Vec<Row> = Vec::new();
-    let mut cells: Vec<Vec<Para>> = Vec::new();
-    let mut cell: Vec<Para> = Vec::new();
-    let flush = |out: &mut Vec<Block>,
-                 rows: &mut Vec<Row>,
-                 cells: &mut Vec<Vec<Para>>,
-                 cell: &mut Vec<Para>| {
-        if !rows.is_empty() {
-            out.push(Block::Table(std::mem::take(rows)));
-        }
-        // An unfinished row (damaged file): keep its text as paragraphs.
-        for p in cells.drain(..).flatten().chain(cell.drain(..)) {
-            out.push(Block::Para(Box::new(p)));
-        }
-    };
+    let mut stack: Vec<Level> = Vec::new();
     for (p, mark) in paras {
         let depth = p.pap.itap.unwrap_or(if p.pap.in_table { 1 } else { 0 });
-        let in_table = p.pap.in_table || depth > 0;
-        if !in_table {
-            flush(&mut out, &mut rows, &mut cells, &mut cell);
+        let depth = if p.pap.in_table { depth.max(1) } else { depth }.clamp(0, 16) as usize;
+        if depth == 0 {
+            while !stack.is_empty() {
+                close(&mut stack, &mut out);
+            }
             out.push(Block::Para(Box::new(p)));
             continue;
         }
-        if depth > 1 {
-            notes.insert("nested tables flattened".into());
-            if p.pap.inner_ttp {
-                continue;
-            }
-            let mut p = p;
-            p.pap.in_table = true;
-            cell.push(p);
-            continue;
+        while stack.len() > depth {
+            close(&mut stack, &mut out);
         }
-        if p.pap.ttp {
-            cells.push(std::mem::take(&mut cell));
+        while stack.len() < depth {
+            stack.push(Level::default());
+        }
+        let l = stack.last_mut().expect("a level");
+        let row_end = if depth == 1 {
+            p.pap.ttp
+        } else {
+            p.pap.inner_ttp
+        };
+        if row_end {
+            l.cells.push(std::mem::take(&mut l.cell));
             // The row-end mark itself is no content; a cell left open
             // before it (no cell mark) is kept.
-            let mut row_cells = std::mem::take(&mut cells);
+            let mut row_cells = std::mem::take(&mut l.cells);
             row_cells.retain(|c| !c.is_empty());
-            rows.push(Row {
+            l.rows.push(Row {
                 tap: p.pap.tap.clone(),
                 cells: row_cells,
             });
             continue;
         }
-        cell.push(p);
-        if mark == 0x07 {
-            cells.push(std::mem::take(&mut cell));
+        let cell_end = if depth == 1 {
+            mark == 0x07
+        } else {
+            p.pap.inner_cell
+        };
+        let mut p = p;
+        p.pap.in_table = true;
+        l.cell.push(p);
+        if cell_end {
+            l.cells.push(std::mem::take(&mut l.cell));
         }
     }
-    flush(&mut out, &mut rows, &mut cells, &mut cell);
+    while !stack.is_empty() {
+        close(&mut stack, &mut out);
+    }
     out
 }

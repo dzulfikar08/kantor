@@ -466,6 +466,13 @@ fn comments_with_their_ranges() {
     assert_eq!(c[1].author, "Budi Santoso");
     assert_eq!(c[1].text, "Two runs.\nSecond line.");
     assert_eq!(c[2].text, "On a whole paragraph.");
+    // Their dates (AtrdExtra), to the minute.
+    assert!(
+        c.iter()
+            .all(|c| c.date.len() == 20 && c.date.ends_with(":00Z")),
+        "{:?}",
+        c.iter().map(|c| &c.date).collect::<Vec<_>>()
+    );
     let anchors = doc.comment_anchors();
     assert_eq!(anchors.len(), 3, "{anchors:?}");
     // The first covers "budget"; the second crosses two runs.
@@ -485,4 +492,89 @@ fn comments_with_their_ranges() {
     let again = Document::open(&out).unwrap();
     assert_eq!(again.comments().len(), 3);
     assert_eq!(again.comment_anchors().len(), 3);
+}
+
+/// revisions.doc: tracked changes come in as revisions, with their
+/// authors and dates, not accepted.
+#[test]
+fn tracked_changes_come_in_as_revisions() {
+    let doc = open("revisions.doc");
+    let changes = doc.changes();
+    let summary: Vec<(String, String, String)> = changes
+        .iter()
+        .map(|c| (format!("{:?}", c.kind), c.author.clone(), c.text.clone()))
+        .collect();
+    assert!(
+        summary
+            .iter()
+            .any(|(k, a, t)| k.contains("Ins") && a == "Citra Dewi" && t == "is renewed "),
+        "{summary:?}"
+    );
+    assert!(
+        summary
+            .iter()
+            .any(|(k, a, t)| k.contains("Del") && a == "Budi Santoso" && t == " or two"),
+        "{summary:?}"
+    );
+    let ins = changes.iter().find(|c| c.author == "Citra Dewi").unwrap();
+    assert_eq!(ins.date, "2026-11-10T09:15:00Z");
+    // Accept all: the text as the authors meant it.
+    let mut doc = doc;
+    doc.resolve_all(true, docs_engine::Selection::default());
+    assert_eq!(
+        doc.paragraphs()[0].text.replace('\u{FFFC}', ""),
+        "The contract is renewed for one year."
+    );
+    assert!(
+        doc.paragraphs()
+            .iter()
+            .any(|p| p.text == "This paragraph's end was deleted,so it joins this one."),
+        "{:?}",
+        texts(&doc)
+    );
+}
+
+/// nested.doc: a table inside a cell stays a table inside the cell (as
+/// Kantor keeps nested tables of .docx files), saved nested.
+#[test]
+fn nested_tables_are_kept_nested() {
+    let doc = open("nested.doc");
+    assert!(
+        !doc.import_notes().iter().any(|n| n.contains("nested")),
+        "{:?}",
+        doc.import_notes()
+    );
+    let t = texts(&doc);
+    assert!(t.iter().any(|p| p.contains("Outer A1")), "{t:?}");
+    assert!(
+        t.iter().any(|p| p.contains("After the inner table.")),
+        "{t:?}"
+    );
+    assert!(
+        t.iter().any(|p| p.contains("After the outer table.")),
+        "{t:?}"
+    );
+    // The inner table isn't flattened into the cell's paragraphs.
+    assert!(
+        !t.iter()
+            .any(|p| p.trim_start_matches('\u{FFFC}') == "In A1"),
+        "{t:?}"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("nested.docx");
+    let mut doc = doc;
+    doc.save_as(&out).unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+        .unwrap();
+    // A w:tbl inside a w:tc.
+    let outer = xml.find("<w:tbl>").unwrap();
+    let inner = xml[outer + 7..]
+        .find("<w:tbl>")
+        .map(|i| i + outer + 7)
+        .unwrap();
+    assert!(xml[outer..inner].contains("<w:tc>"), "nested");
+    assert!(xml[inner..].contains(">In B2<"));
 }

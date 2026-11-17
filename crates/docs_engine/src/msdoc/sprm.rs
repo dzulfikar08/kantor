@@ -114,6 +114,12 @@ pub struct Chp {
     pub data: bool,
     pub ole2: bool,
     pub deleted: bool,
+    /// Tracked insertion (`sprmCFRMarkIns`).
+    pub inserted: bool,
+    /// Who made the tracked insertion and deletion (SttbfRMark index)
+    /// and when (DTTM).
+    pub ins_by: Option<(u16, u32)>,
+    pub del_by: Option<(u16, u32)>,
     /// A symbol character (`sprmCSymbol`): font index and character.
     pub symbol: Option<(u16, u16)>,
 }
@@ -148,6 +154,15 @@ impl Chp {
                 0x0806 => self.data = b != 0,
                 0x080A => self.ole2 = b != 0,
                 0x0800 => self.deleted = b != 0,
+                0x0801 => self.inserted = b != 0,
+                0x4804 => self.ins_by = Some((w.unwrap_or(0), self.ins_by.map_or(0, |x| x.1))),
+                0x6805 => {
+                    self.ins_by = Some((self.ins_by.map_or(0, |x| x.0), u32_at(op, 0).unwrap_or(0)))
+                }
+                0x4863 => self.del_by = Some((w.unwrap_or(0), self.del_by.map_or(0, |x| x.1))),
+                0x6864 => {
+                    self.del_by = Some((self.del_by.map_or(0, |x| x.0), u32_at(op, 0).unwrap_or(0)))
+                }
                 0x6A09 => {
                     if let (Some(f), Some(c)) = (u16_at(op, 0), u16_at(op, 2)) {
                         self.symbol = Some((f, c));

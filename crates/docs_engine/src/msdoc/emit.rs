@@ -55,6 +55,8 @@ struct W<'a> {
     pictures: u32,
     /// Parts besides document.xml: name, content type, XML.
     parts: Vec<(String, String, String)>,
+    /// The next tracked change's id.
+    rev_id: std::cell::Cell<u32>,
 }
 
 /// Word's style id for a name: words capitalised, joined, letters and
@@ -104,6 +106,7 @@ pub fn package(doc: &Doc) -> Result<Vec<u8>> {
         media_rels: vec![None; doc.media.len()],
         pictures: 0,
         parts: Vec::new(),
+        rev_id: std::cell::Cell::new(1),
     };
     w.rel("styles", "styles.xml", false);
     w.rel("settings", "settings.xml", false);
@@ -160,9 +163,14 @@ pub fn package(doc: &Doc) -> Result<Vec<u8>> {
     if !doc.comments.is_empty() {
         let mut x = format!("<w:comments {NS}>");
         for (i, c) in doc.comments.iter().enumerate() {
+            let date = c
+                .date
+                .as_deref()
+                .map(|d| format!(" w:date=\"{d}\""))
+                .unwrap_or_default();
             let _ = write!(
                 x,
-                "<w:comment w:id=\"{i}\" w:author=\"{}\" w:initials=\"{}\">",
+                "<w:comment w:id=\"{i}\" w:author=\"{}\"{date} w:initials=\"{}\">",
                 esc(&c.author),
                 esc(&c.initials)
             );
@@ -535,9 +543,18 @@ impl W<'_> {
     }
 
     fn para(&mut self, p: &Para, sects: &[String]) -> String {
+        if let Some(rows) = &p.nested {
+            return self.table(rows);
+        }
         let mut x = String::from("<w:p><w:pPr>");
         x.push_str(&self.ppr_inner(&p.pap, true));
-        let mark = self.rpr(&p.mark, p.pap.istd);
+        let mut mark = self.rpr(&p.mark, p.pap.istd);
+        // A tracked paragraph mark (schema order: before the formatting).
+        if p.mark.deleted {
+            mark.insert_str(0, &format!("<w:del{}/>", self.rev_attrs(p.mark.del_by)));
+        } else if p.mark.inserted {
+            mark.insert_str(0, &format!("<w:ins{}/>", self.rev_attrs(p.mark.ins_by)));
+        }
         if !mark.is_empty() {
             let _ = write!(x, "<w:rPr>{mark}</w:rPr>");
         }
@@ -622,13 +639,44 @@ impl W<'_> {
         x
     }
 
+    /// A tracked change's id, author and date attributes.
+    fn rev_attrs(&self, by: Option<(u16, u32)>) -> String {
+        let id = self.rev_id.get();
+        self.rev_id.set(id + 1);
+        let author = by
+            .and_then(|(i, _)| self.doc.revision_authors.get(i as usize))
+            .filter(|a| !a.is_empty())
+            .map_or("Unknown", String::as_str);
+        let date = by
+            .and_then(|(_, d)| super::dttm(d))
+            .map(|d| format!(" w:date=\"{d}\""))
+            .unwrap_or_default();
+        format!(" w:id=\"{id}\" w:author=\"{}\"{date}", esc(author))
+    }
+
     fn text_runs(&self, c: &Chp, t: &str, istd: u16) -> String {
+        let run = self.plain_runs(c, t, istd);
+        if c.deleted {
+            format!("<w:del{}>{run}</w:del>", self.rev_attrs(c.del_by))
+        } else if c.inserted {
+            format!("<w:ins{}>{run}</w:ins>", self.rev_attrs(c.ins_by))
+        } else {
+            run
+        }
+    }
+
+    fn plain_runs(&self, c: &Chp, t: &str, istd: u16) -> String {
         let rpr = self.rpr(c, istd);
         let mut x = format!("<w:r>{}", wrap("w:rPr", &rpr));
         let mut buf = String::new();
+        let text_el = if c.deleted { "w:delText" } else { "w:t" };
         let flush = |x: &mut String, buf: &mut String| {
             if !buf.is_empty() {
-                let _ = write!(x, "<w:t xml:space=\"preserve\">{}</w:t>", esc(buf));
+                let _ = write!(
+                    x,
+                    "<{text_el} xml:space=\"preserve\">{}</{text_el}>",
+                    esc(buf)
+                );
                 buf.clear();
             }
         };
@@ -1004,6 +1052,10 @@ impl W<'_> {
             }
             for p in &c.paras {
                 x.push_str(&self.para(p, &[]));
+            }
+            // A cell ends with a paragraph (after a nested table too).
+            if c.paras.last().is_some_and(|p| p.nested.is_some()) {
+                x.push_str("<w:p/>");
             }
             x.push_str("</w:tc>");
         }
