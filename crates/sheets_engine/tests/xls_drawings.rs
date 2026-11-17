@@ -406,3 +406,59 @@ fn chart_options_of_xls() {
         "{pie}"
     );
 }
+
+/// odsdraw.ods (scripts/corpus/gen_ods_drawings.py): freeform shapes,
+/// groups kept as groups, callouts, linked shapes, form controls and an
+/// embedded object's replacement picture.
+#[test]
+fn ods_freeforms_groups_and_controls() {
+    let wb = Workbook::open(corpus("odsdraw.ods")).unwrap();
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+    let all = wb.drawings(0);
+    let xml = |name: &str| -> String {
+        let d = all.iter().find(|d| d.name == name).unwrap_or_else(|| {
+            panic!(
+                "no {name} in {:?}",
+                all.iter().map(|d| &d.name).collect::<Vec<_>>()
+            )
+        });
+        match &*d.kind {
+            DrawingKind::Shape { xml, .. } => xml.to_string(),
+            DrawingKind::Picture { .. } => "picture".into(),
+            k => panic!("{name}: {k:?}"),
+        }
+    };
+    let wave = xml("Wave");
+    assert!(
+        wave.contains("<a:custGeom>") && wave.contains("<a:cubicBezTo>"),
+        "{wave}"
+    );
+    assert!(wave.contains("<a:path w=\"4000\" h=\"2000\">"), "{wave}");
+    assert!(xml("Arrow polygon").contains("<a:close/>"));
+    let zig = xml("Zigzag");
+    assert!(
+        zig.contains("fill=\"none\"") && !zig.contains("<a:close/>"),
+        "{zig}"
+    );
+    assert_eq!(xml("Hexagon").matches("<a:lnTo>").count(), 5);
+    assert_eq!(xml("Star").matches("<a:lnTo>").count(), 9);
+    let pair = xml("Pair");
+    assert!(pair.starts_with("<xdr:grpSp"), "{pair}");
+    assert_eq!(
+        pair.matches("<xdr:grpSp>").count() + 1,
+        2,
+        "a group inside: {pair}"
+    );
+    assert!(
+        pair.contains("name=\"Pair circle\"") && pair.contains("<xdr:cxnSp"),
+        "{pair}"
+    );
+    assert!(xml("Callout").contains("wedgeRectCallout"));
+    assert!(xml("Linked box").contains("<a:t>Link</a:t>"));
+    assert!(xml("Run button").contains("<a:t>Run</a:t>"));
+    assert!(xml("Agree box").contains("\u{2611} Agree"));
+    assert!(xml("Pick list").contains("Beta"));
+    assert!(xml("Field box").contains("typed"));
+    assert!(xml("Options frame").contains("Options"));
+    assert_eq!(xml("Embedded"), "picture");
+}
