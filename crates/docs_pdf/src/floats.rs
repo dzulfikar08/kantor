@@ -6,11 +6,13 @@
 //! Shape outlines come from Slides' DrawingML preset geometry
 //! ([`slides_engine::geom`], all 187 presets and custom geometry), colours
 //! from the document's theme with Slides' colour rules. Outer shadows are
-//! drawn (their blur approximated), and glows (a few fading edges) and
+//! drawn blurred ([`crate::blur`]), 3-D extrusions and bevels
+//! approximated (the outline repeated along the depth, light and dark
+//! edges), and glows (a few fading edges) and
 //! soft edges (the shape a little transparent) approximated. Gradients
 //! are drawn as gradients (linear; path gradients as radial ones); the
 //! screen and the PDF draw them, [`DrawPath::fill`] holds the first colour
-//! for anything that can't. Not drawn: 3-D and picture fills of shapes.
+//! for anything that can't. Not drawn: picture fills of shapes.
 
 use std::sync::Arc;
 
@@ -126,6 +128,8 @@ pub enum FloatPrim {
     },
     /// Content Kantor doesn't draw (charts, groups, SmartArt): a box.
     Placeholder([f32; 4], String),
+    /// A blurred shadow, drawn as a picture.
+    Blurred(crate::blur::Blurred),
 }
 
 /// Colours of a document's shapes.
@@ -181,7 +185,16 @@ impl Painter {
                 let geom = geom_doc
                     .as_ref()
                     .and_then(|d| d.root_element().first_element_child());
-                let size = (f.at.cx.max(0) as f64, f.at.cy.max(0) as f64);
+                // At the size it's drawn (a "Resize shape to fit text"
+                // shape is as tall as its text).
+                let size = if rect[2] > 0.0 || rect[3] > 0.0 {
+                    (
+                        (rect[2].max(0.0) * EMU_PER_PX) as f64,
+                        (rect[3].max(0.0) * EMU_PER_PX) as f64,
+                    )
+                } else {
+                    (f.at.cx.max(0) as f64, f.at.cy.max(0) as f64)
+                };
                 let k = 1.0 / EMU_PER_PX;
                 self.shape(sp_root, style_root, geom, size, rect, (k, k), &mut out);
             }
@@ -278,6 +291,7 @@ impl Painter {
                 .collect();
             out.extend(self.shadow(sp, &outlines));
             out.extend(self.glow(sp, &outlines));
+            out.extend(self.extrusion(sp, &outlines, fill));
         }
         // Soft edges fade the shape out towards its edge: approximated as
         // the whole shape a little transparent, without its outline.
@@ -332,6 +346,15 @@ impl Painter {
                 stroke: line.clone().filter(|_| sub.stroke && !soft),
                 gradient,
             }));
+        }
+        if fill.is_some() {
+            let outlines: Vec<Vec<Seg>> = o
+                .paths
+                .iter()
+                .filter(|p| p.fill.is_filled())
+                .map(|p| p.cmds.iter().map(|c| xform.seg(c)).collect())
+                .collect();
+            out.extend(self.bevel(sp, &outlines));
         }
         // Arrowheads on open paths.
         if let (Some(ls), Some((color, width, _))) = (ls, line)
@@ -512,6 +535,120 @@ impl Painter {
         out
     }
 
+    /// A 3-D extrusion (`a:sp3d/@extrusionH`) seen from the scene's
+    /// camera (`a:scene3d/a:camera/@prst`), approximated: the outline
+    /// repeated back along the depth in the extrusion colour (or the fill
+    /// darkened), behind the shape. A camera straight in front shows
+    /// none, as in Word.
+    fn extrusion(
+        &self,
+        sp: Option<Node>,
+        outlines: &[Vec<Seg>],
+        fill: Option<Rgba>,
+    ) -> Vec<FloatPrim> {
+        let Some(sp) = sp else { return Vec::new() };
+        let Some(d3) = child(sp, "sp3d") else {
+            return Vec::new();
+        };
+        let depth = d3
+            .attribute("extrusionH")
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(0.0)
+            / EMU_PER_PX;
+        let camera = child(sp, "scene3d")
+            .and_then(|s| child(s, "camera"))
+            .and_then(|c| c.attribute("prst"))
+            .unwrap_or("orthographicFront");
+        if depth < 0.5 || camera == "orthographicFront" {
+            return Vec::new();
+        }
+        let depth = depth.min(80.0) * 0.6;
+        let sx = if camera.contains("Left") { -1.0 } else { 1.0 };
+        let sy = if camera.contains("Top") || camera.contains("Above") {
+            -1.0
+        } else {
+            1.0
+        };
+        let (ux, uy) = (
+            sx * std::f32::consts::FRAC_1_SQRT_2,
+            sy * std::f32::consts::FRAC_1_SQRT_2,
+        );
+        let cx = self.ctx();
+        let color = child(d3, "extrusionClr")
+            .and_then(|c| {
+                c.children()
+                    .filter(|n| n.is_element())
+                    .find_map(|n| cx.color_alpha(n))
+            })
+            .map(|(c, a)| rgba(c, a))
+            .or_else(|| {
+                fill.map(|c| {
+                    let [r, g, b, a] = c.0;
+                    let k = |v: u8| (v as f32 * 0.6).round() as u8;
+                    Rgba([k(r), k(g), k(b), a])
+                })
+            });
+        let Some(color) = color else {
+            return Vec::new();
+        };
+        let steps = (depth / 1.0).ceil().clamp(1.0, 60.0) as usize;
+        let mut out = Vec::new();
+        for k in (1..=steps).rev() {
+            let t = depth * k as f32 / steps as f32;
+            for segs in outlines {
+                out.push(FloatPrim::Path(DrawPath {
+                    segs: segs
+                        .iter()
+                        .map(|s| offset_seg(*s, ux * t, uy * t))
+                        .collect(),
+                    fill: Some(color),
+                    stroke: None,
+                    gradient: None,
+                }));
+            }
+        }
+        out
+    }
+
+    /// A top bevel (`a:sp3d/a:bevelT`), approximated: a light edge up and
+    /// left and a dark one down and right inside the outline, as light
+    /// from the top left shows it.
+    fn bevel(&self, sp: Option<Node>, outlines: &[Vec<Seg>]) -> Vec<FloatPrim> {
+        let Some(b) = sp
+            .and_then(|s| child(s, "sp3d"))
+            .and_then(|d| child(d, "bevelT"))
+        else {
+            return Vec::new();
+        };
+        if b.attribute("prst") == Some("none") {
+            return Vec::new();
+        }
+        let w = b
+            .attribute("w")
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(76_200.0)
+            / EMU_PER_PX;
+        if w < 0.5 {
+            return Vec::new();
+        }
+        let w = w.min(24.0);
+        let mut out = Vec::new();
+        for segs in outlines {
+            for (shift, color) in [
+                (w / 3.0, Rgba([0, 0, 0, 60])),
+                (-w / 3.0, Rgba([255, 255, 255, 110])),
+            ] {
+                out.push(FloatPrim::Path(DrawPath {
+                    segs: segs.iter().map(|s| offset_seg(*s, shift, shift)).collect(),
+                    fill: None,
+                    stroke: Some((color, w * 0.5, None)),
+                    gradient: None,
+                }));
+            }
+        }
+        out
+    }
+
     /// Soft edges' radius (`a:effectLst/a:softEdge/@rad`) in px.
     fn soft_edge(&self, sp: Option<Node>) -> Option<f32> {
         sp.and_then(|s| child(s, "effectLst"))
@@ -552,8 +689,15 @@ impl Painter {
             .map(|segs| segs.iter().map(|s| offset_seg(*s, dx, dy)).collect())
             .collect();
         let mut out = Vec::new();
-        // The blur: the shadow's alpha spread over the core and a few
-        // edges that widen out to the blur radius.
+        // Blurred: filled and blurred on the CPU, drawn as a picture.
+        if blur > 0.5
+            && let Some(b) = crate::blur::blurred(&moved, rgba(color, alpha).0, blur)
+        {
+            out.push(FloatPrim::Blurred(b));
+            return out;
+        }
+        // Without a picture (nothing to fill): the shadow's alpha spread
+        // over the core and a few edges that widen out to the blur radius.
         let layers = if blur > 0.5 { 3 } else { 0 };
         let core = if layers > 0 { alpha / 2 } else { alpha };
         for segs in &moved {
@@ -1128,7 +1272,16 @@ pub fn text_area(f: &Float, rect: [f32; 4]) -> [f32; 4] {
         .and_then(|d| d.root_element().first_element_child())
         .and_then(Geometry::from_xml)
         .unwrap_or_else(|| Geometry::preset("rect"));
-    let (cx, cy) = (f.at.cx.max(0) as f64, f.at.cy.max(0) as f64);
+    // The box as drawn (a "Resize shape to fit text" shape grows with its
+    // text: see `pages::float_item`).
+    let (cx, cy) = if rect[2] > 0.0 || rect[3] > 0.0 {
+        (
+            (rect[2].max(0.0) * EMU_PER_PX) as f64,
+            (rect[3].max(0.0) * EMU_PER_PX) as f64,
+        )
+    } else {
+        (f.at.cx.max(0) as f64, f.at.cy.max(0) as f64)
+    };
     let tr = outline(&geometry, cx, cy).text_rect;
     let px = |v: f64| v as f32 / EMU_PER_PX;
     let [l, t, r, b] = insets(f);
@@ -1330,6 +1483,26 @@ mod tests {
         let pieces = gradient_pieces(&box_.segs, box_.gradient.as_ref().unwrap());
         assert!(pieces.len() > 10);
         assert_eq!(pieces[0].1, GradientPiece::Solid(Rgba([0, 0, 255, 255])));
+    }
+
+    #[test]
+    fn three_d_extrusions_and_bevels_are_approximated() {
+        let doc = Document::new();
+        let painter = Painter::new(&doc);
+        let fill = "<a:solidFill><a:srgbClr val=\"4472C4\"/></a:solidFill>";
+        let count = |extra: &str| {
+            let f = Float::from_xml(&shape_xml(&format!("{fill}{extra}"))).unwrap();
+            painter.prims(&f, [0.0, 0.0, 100.0, 100.0]).len()
+        };
+        let plain = count("");
+        // Seen from in front: no depth shows.
+        assert_eq!(count("<a:sp3d extrusionH=\"190500\"/>"), plain);
+        let deep = count(
+            "<a:scene3d><a:camera prst=\"isometricOffAxis1Right\"/><a:lightRig rig=\"threePt\" dir=\"t\"/></a:scene3d><a:sp3d extrusionH=\"190500\"/>",
+        );
+        assert!(deep > plain + 5, "{deep} {plain}");
+        let bevel = count("<a:sp3d><a:bevelT w=\"101600\" h=\"101600\"/></a:sp3d>");
+        assert_eq!(bevel, plain + 2);
     }
 
     #[test]

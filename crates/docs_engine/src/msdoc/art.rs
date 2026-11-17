@@ -11,7 +11,8 @@
 //!
 //! Preset shape types become DrawingML presets; freeform shapes (which
 //! LibreOffice writes for all its shapes) become a `custGeom` path from
-//! their vertices and segments.
+//! their vertices and segments, vertices that name guide formulas worked
+//! out ([`guides`]).
 
 use std::collections::HashMap;
 
@@ -163,7 +164,9 @@ pub(crate) fn drawing(dgg: &[u8], word: &[u8]) -> Drawing {
             b = &b[1..];
             let Some(len) = u32_at(b, 4) else { break };
             let end = 8usize.saturating_add(len as usize).min(b.len());
-            if label == 0 && u16_at(b, 2) == Some(0xF002) {
+            // dgglbl 0: the main text's drawing, 1: the headers' (shape
+            // ids are unique across both).
+            if label <= 1 && u16_at(b, 2) == Some(0xF002) {
                 let mut order = 0;
                 shapes(&b[8..end], &mut d.shapes, &mut order);
             }
@@ -347,24 +350,35 @@ pub(crate) fn preset(typ: u16) -> Option<&'static str> {
 pub(crate) fn cust_geom(s: &Shape) -> Option<String> {
     let verts = s.complex.get(&0x145)?;
     let (n, cb) = (u16_at(verts, 0)? as usize, u16_at(verts, 4)?);
+    let geo = |id: u16, d: i64| s.prop(id).map_or(d, |v| i64::from(v as i32));
+    let (left, top) = (geo(0x140, 0), geo(0x141, 0));
+    let guides = guides(s, [left, top, geo(0x142, 21600), geo(0x143, 21600)]);
+    // Values with the high bit set name a guide formula's result.
+    let guide = |k: usize| guides.get(k).copied();
     let mut pts = Vec::with_capacity(n);
     for k in 0..n {
         let p = match cb {
-            // Values with the high bit set name a guide formula, which
-            // Kantor doesn't evaluate.
             0xFFF0 | 4 => {
                 let (x, y) = (u16_at(verts, 6 + k * 4)?, u16_at(verts, 8 + k * 4)?);
-                if (x | y) & 0xFFF0 == 0x8000 {
-                    return None;
-                }
-                (i64::from(x as i16), i64::from(y as i16))
+                let v = |c: u16| {
+                    if c & 0xFF00 == 0x8000 {
+                        guide((c & 0xFF) as usize)
+                    } else {
+                        Some(i64::from(c as i16))
+                    }
+                };
+                (v(x)?, v(y)?)
             }
             8 => {
                 let (x, y) = (u32_at(verts, 6 + k * 8)?, u32_at(verts, 10 + k * 8)?);
-                if (x | y) & 0xFFFF_0000 == 0x8000_0000 {
-                    return None;
-                }
-                (i64::from(x as i32), i64::from(y as i32))
+                let v = |c: u32| {
+                    if c & 0xFFFF_0000 == 0x8000_0000 {
+                        guide((c & 0xFFFF) as usize)
+                    } else {
+                        Some(i64::from(c as i32))
+                    }
+                };
+                (v(x)?, v(y)?)
             }
             _ => return None,
         };
@@ -373,8 +387,6 @@ pub(crate) fn cust_geom(s: &Shape) -> Option<String> {
     if pts.is_empty() {
         return None;
     }
-    let geo = |id: u16, d: i64| s.prop(id).map_or(d, |v| i64::from(v as i32));
-    let (left, top) = (geo(0x140, 0), geo(0x141, 0));
     let (mut right, mut bottom) = (geo(0x142, 21600), geo(0x143, 21600));
     if right <= left {
         right = pts.iter().map(|p| p.0).max().unwrap_or(1).max(left + 1);
@@ -397,11 +409,11 @@ pub(crate) fn cust_geom(s: &Shape) -> Option<String> {
     if segs.is_empty() {
         let first = it.next()?;
         path.push_str(&format!("<a:moveTo>{}</a:moveTo>", pt(first)));
-        for p in it {
+        for p in it.by_ref() {
             path.push_str(&format!("<a:lnTo>{}</a:lnTo>", pt(p)));
         }
     } else {
-        for seg in segs {
+        for &seg in &segs {
             let kind = seg >> 13;
             let count = (seg & 0x1FFF) as usize;
             match kind {
@@ -445,7 +457,9 @@ pub(crate) fn cust_geom(s: &Shape) -> Option<String> {
             }
         }
     }
-    if !path.starts_with("<a:moveTo>") {
+    // Vertices the segments don't account for (LibreOffice writes its
+    // arcs that way): the path can't be trusted.
+    if !path.starts_with("<a:moveTo>") || (!segs.is_empty() && it.next().is_some()) {
         return None;
     }
     let fill = if no_fill { " fill=\"none\"" } else { "" };
@@ -457,6 +471,85 @@ pub(crate) fn cust_geom(s: &Shape) -> Option<String> {
 }
 
 /// A line end of `lineStartArrowhead` / `lineEndArrowhead`.
+/// The results of a shape's guide formulas (`pGuides`, [MS-ODRAW]
+/// 2.2.59 SG): each from up to three parameters, which are numbers or
+/// (flagged) the geometry's edges, adjust values, earlier guides or the
+/// shape's size.
+fn guides(s: &Shape, [l, t, r, b]: [i64; 4]) -> Vec<i64> {
+    let Some(g) = s.complex.get(&0x156) else {
+        return Vec::new();
+    };
+    let n = u16_at(g, 0).unwrap_or(0) as usize;
+    let cb = u16_at(g, 4).unwrap_or(8);
+    let cb = if cb == 0xFFF0 { 4 } else { cb as usize };
+    if cb != 8 {
+        return Vec::new();
+    }
+    let mut out: Vec<i64> = Vec::with_capacity(n);
+    for k in 0..n {
+        let at = 6 + k * 8;
+        let (Some(op), Some(p1), Some(p2), Some(p3)) = (
+            u16_at(g, at),
+            u16_at(g, at + 2),
+            u16_at(g, at + 4),
+            u16_at(g, at + 6),
+        ) else {
+            break;
+        };
+        let value = |raw: u16, calc: bool| -> f64 {
+            if !calc {
+                return f64::from(raw as i16);
+            }
+            match raw {
+                0x0140 => l as f64,
+                0x0141 => t as f64,
+                0x0142 => r as f64,
+                0x0143 => b as f64,
+                0x0147..=0x0150 => s.prop(raw).map_or(0.0, |v| f64::from(v as i32)),
+                0x0400..=0x047F => out.get((raw - 0x0400) as usize).copied().unwrap_or(0) as f64,
+                0x04F8 | 0x04FC => (r - l) as f64,
+                0x04F9 | 0x04FD => (b - t) as f64,
+                0x04FE => (r - l) as f64 / 2.0,
+                0x04FF => (b - t) as f64 / 2.0,
+                _ => 0.0,
+            }
+        };
+        let a = value(p1, op & 0x2000 != 0);
+        let bb = value(p2, op & 0x4000 != 0);
+        let c = value(p3, op & 0x8000 != 0);
+        let deg = |v: f64| (v / 65536.0).to_radians();
+        let v = match op & 0x1FFF {
+            0 => a + bb - c,
+            1 if c != 0.0 => a * bb / c,
+            1 => 0.0,
+            2 => (a + bb) / 2.0,
+            3 => a.abs(),
+            4 => a.min(bb),
+            5 => a.max(bb),
+            6 => {
+                if a > 0.0 {
+                    bb
+                } else {
+                    c
+                }
+            }
+            7 => (a * a + bb * bb + c * c).sqrt(),
+            8 => bb.atan2(a).to_degrees() * 65536.0,
+            9 => a * deg(bb).sin(),
+            10 => a * deg(bb).cos(),
+            11 => a * c.atan2(bb).cos(),
+            12 => a * c.atan2(bb).sin(),
+            13 => a.max(0.0).sqrt(),
+            14 => a + bb * 65536.0 - c * 65536.0,
+            15 if bb != 0.0 => c * (1.0 - (a / bb).powi(2)).max(0.0).sqrt(),
+            16 => a * deg(bb).tan(),
+            _ => 0.0,
+        };
+        out.push(if v.is_finite() { v.round() as i64 } else { 0 });
+    }
+    out
+}
+
 pub(crate) fn arrowhead(v: u32) -> Option<&'static str> {
     Some(match v {
         1 => "triangle",

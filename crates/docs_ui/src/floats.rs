@@ -396,8 +396,8 @@ impl DocsView {
 
     /// Edit the text `which` of object `sel` where it's drawn, caret at
     /// the window point `p` (Word's text box editing). `false` when it
-    /// can't be (SmartArt, turned text, pictures or tables in it): the
-    /// text popover edits it instead.
+    /// can't be (SmartArt, turned text): the text popover edits it
+    /// instead.
     fn text_in_place(
         &mut self,
         page: usize,
@@ -413,9 +413,7 @@ impl DocsView {
         let Some(f) = self.doc.float_at(sel.para, sel.index) else {
             return false;
         };
-        if matches!(f.kind, docs_engine::FloatKind::SmartArt { .. })
-            || f.text_locked_in(which).is_some()
-        {
+        if matches!(f.kind, docs_engine::FloatKind::SmartArt { .. }) {
             return false;
         }
         let turned = match which {
@@ -1007,6 +1005,35 @@ impl DocsView {
                 None => &self.doc,
             };
             for prim in &fp.prims {
+                if let FloatPrim::Blurred(b) = prim {
+                    // A blurred shadow: its own picture.
+                    let key = format!("blur:{}", b.key);
+                    // Moving a shape makes new ones: keep only a few.
+                    if !self.images.contains_key(&key)
+                        && self
+                            .images
+                            .keys()
+                            .filter(|k| k.starts_with("blur:"))
+                            .count()
+                            >= 32
+                    {
+                        self.images.retain(|k, _| !k.starts_with("blur:"));
+                    }
+                    let img = self
+                        .images
+                        .entry(key.clone())
+                        .or_insert_with(|| {
+                            Arc::new(gpui_kit::Image::from_bytes(
+                                ImageFormat::Png,
+                                b.png.to_vec(),
+                            ))
+                        })
+                        .clone();
+                    if let Some(data) = img.use_render_image(window, cx) {
+                        out.insert((fp.story.map_or(0, |s| s + 1), key), data);
+                    }
+                    continue;
+                }
                 let FloatPrim::Picture {
                     rel_id,
                     image,
@@ -1438,6 +1465,17 @@ pub(crate) fn paint_floats(
                         }
                     }
                 }
+                FloatPrim::Blurred(b) => {
+                    let key = (fp.story.map_or(0, |s| s + 1), format!("blur:{}", b.key));
+                    if let Some(data) = f.float_images.get(&key) {
+                        let r = Bounds::from_corners(
+                            g.page_to_screen(page, b.rect[0], b.rect[1]),
+                            g.page_to_screen(page, b.rect[0] + b.rect[2], b.rect[1] + b.rect[3]),
+                        );
+                        let _ =
+                            window.paint_image(r, r, Corners::default(), data.clone(), 0, false);
+                    }
+                }
                 FloatPrim::Placeholder(r, _) => {
                     let b = Bounds::from_corners(
                         g.page_to_screen(page, r[0], r[1]),
@@ -1448,11 +1486,26 @@ pub(crate) fn paint_floats(
                 }
             }
         }
+        // Pictures in text boxes (decoded with the headers' ones).
+        let pictures = |window: &mut Window, l: &docs_pdf::StoryLayout, (x, y): (f32, f32)| {
+            for o in l.paged.objects(0) {
+                if let Some(data) = f.hf_images.get(&(l.key(), o.para, o.index)) {
+                    let [ox, oy, w, h] = o.rect;
+                    let b = Bounds::from_corners(
+                        g.page_to_screen(page, x + ox, y + oy),
+                        g.page_to_screen(page, x + ox + w, y + oy + h),
+                    );
+                    let _ = window.paint_image(b, b, Corners::default(), data.clone(), 0, false);
+                }
+            }
+        };
         if let Some((l, x, y)) = &fp.text {
             paint_text(window, l, (*x, *y));
+            pictures(window, l, (*x, *y));
         }
         for (l, x, y) in &fp.labels {
             paint_text(window, l, (*x, *y));
+            pictures(window, l, (*x, *y));
         }
         for tt in &fp.turned {
             let Some(img) = tt.image(z * window.scale_factor()) else {

@@ -97,6 +97,9 @@ pub struct FloatSpec {
     pub z: u32,
     /// The wrap polygon (Tight, Through) as fractions of the box.
     pub polygon: Option<Vec<[f32; 2]>>,
+    /// Through wrapping: text also goes into the polygon's hollows (the
+    /// gaps between its parts across a line), not only around it.
+    pub through: bool,
     /// How far the object reaches past its box on the left, top, right
     /// and bottom (px; negative inside it): a turned object's turned
     /// bounds, which text wraps around as in Word.
@@ -131,6 +134,8 @@ pub struct WrapArea {
     /// Its wrap polygon on the page (px) and the distance from text kept
     /// left and right of it, when text follows it.
     pub polygon: Option<WrapPolygon>,
+    /// Through: text goes into the polygon's hollows too.
+    pub through: bool,
 }
 
 /// Stretches narrower than this (px) get no text.
@@ -224,7 +229,70 @@ impl WrapArea {
             side: spec.side,
             key,
             polygon,
+            through: spec.through,
         })
+    }
+
+    /// What the object takes between `top` and `bottom`, as stretches:
+    /// one (its box, or its wrap polygon's extent there) except with
+    /// Through, where each part of the polygon across the band is one
+    /// and the hollows between them stay free (each grown by the distance
+    /// from text). `None` when the band is free.
+    fn spans(&self, top: f32, bottom: f32) -> Option<Vec<(f32, f32)>> {
+        let whole = self.span(top, bottom)?;
+        let Some((pts, [l, r])) = self.polygon.as_ref().filter(|_| self.through) else {
+            return Some(vec![whole]);
+        };
+        let mut parts: Vec<(f32, f32)> = Vec::new();
+        let n = pts.len();
+        // The polygon's inside on a few lines across the band (even-odd).
+        let steps = 4;
+        for k in 0..=steps {
+            let y = top + (bottom - top) * k as f32 / steps as f32;
+            let mut xs: Vec<f32> = Vec::new();
+            for i in 0..n {
+                let (a, b) = (pts[i], pts[(i + 1) % n]);
+                if (a[1] <= y && b[1] > y) || (b[1] <= y && a[1] > y) {
+                    xs.push(a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]));
+                }
+            }
+            xs.sort_by(f32::total_cmp);
+            parts.extend(xs.as_chunks::<2>().0.iter().map(|c| (c[0], c[1])));
+        }
+        // Edges crossing the band take their stretch too.
+        for i in 0..n {
+            let (a, b) = (pts[i], pts[(i + 1) % n]);
+            let (y0, y1) = (a[1].min(b[1]), a[1].max(b[1]));
+            if y1 < top || y0 > bottom {
+                continue;
+            }
+            let at = |y: f32| {
+                if (b[1] - a[1]).abs() < 1e-6 {
+                    None
+                } else {
+                    Some(a[0] + (b[0] - a[0]) * (y - a[1]) / (b[1] - a[1]))
+                }
+            };
+            let (xa, xb) = match (at(top.max(y0)), at(bottom.min(y1))) {
+                (Some(p), Some(q)) => (p.min(q), p.max(q)),
+                _ => (a[0].min(b[0]), a[0].max(b[0])),
+            };
+            parts.push((xa, xb));
+        }
+        if parts.is_empty() {
+            return Some(vec![whole]);
+        }
+        parts.sort_by(|p, q| p.0.total_cmp(&q.0));
+        let mut merged: Vec<(f32, f32)> = Vec::new();
+        for (a, b) in parts {
+            let (a, b) = (a - l, b + r);
+            match merged.last_mut() {
+                // Gaps too narrow for text count as taken.
+                Some(m) if a <= m.1 + MIN_SEGMENT => m.1 = m.1.max(b),
+                _ => merged.push((a, b)),
+            }
+        }
+        Some(merged)
     }
 
     /// Left and right of what the object takes between `top` and `bottom`
@@ -275,9 +343,10 @@ pub(crate) fn free_segments(
     let mut any = false;
     for e in excl.iter().filter(|e| e.touches(top, bottom)) {
         let [_, _, _, ey1] = e.area;
-        let Some((ex0, ex1)) = e.span(top, bottom) else {
+        let Some(taken) = e.spans(top, bottom) else {
             continue;
         };
+        let (ex0, ex1) = (taken[0].0, taken[taken.len() - 1].1);
         any = true;
         if e.wrap == FloatWrap::TopAndBottom {
             // Only when it's beside the column at all.
@@ -286,25 +355,27 @@ pub(crate) fn free_segments(
             }
             continue;
         }
-        let (cut0, cut1) = match e.side {
-            FloatSide::Left => (ex0, f32::INFINITY),
-            FloatSide::Right => (f32::NEG_INFINITY, ex1),
-            FloatSide::Both | FloatSide::Largest => (ex0, ex1),
+        let cuts: Vec<(f32, f32)> = match e.side {
+            FloatSide::Left => vec![(ex0, f32::INFINITY)],
+            FloatSide::Right => vec![(f32::NEG_INFINITY, ex1)],
+            FloatSide::Both | FloatSide::Largest => taken,
         };
-        let mut next = Vec::new();
-        for (a, b) in segs {
-            if cut1 <= a || cut0 >= b {
-                next.push((a, b));
-                continue;
+        for (cut0, cut1) in cuts {
+            let mut next = Vec::new();
+            for (a, b) in segs {
+                if cut1 <= a || cut0 >= b {
+                    next.push((a, b));
+                    continue;
+                }
+                if cut0 > a {
+                    next.push((a, cut0));
+                }
+                if cut1 < b {
+                    next.push((cut1, b));
+                }
             }
-            if cut0 > a {
-                next.push((a, cut0));
-            }
-            if cut1 < b {
-                next.push((cut1, b));
-            }
+            segs = next;
         }
-        segs = next;
         if e.side == FloatSide::Largest
             && let Some(best) = segs
                 .iter()
@@ -348,6 +419,7 @@ mod tests {
             behind: false,
             z: 1,
             polygon: None,
+            through: false,
             extent: [0.0; 4],
         }
     }
@@ -495,11 +567,65 @@ mod tests {
         assert!(segs[0].1 > 220.0 && segs[0].1 < 250.0, "{segs:?}");
         assert!(segs[1].0 > 250.0 && segs[1].0 < 280.0, "{segs:?}");
         // Without a polygon, the box.
-        let square = WrapArea { polygon: None, ..e };
+        let square = WrapArea {
+            polygon: None,
+            ..e.clone()
+        };
         assert_eq!(
             free_segments(&[square], col, 180.0, 190.0),
             Ok(vec![(100.0, 190.0), (310.0, 500.0)])
         );
+    }
+}
+
+#[cfg(test)]
+mod through_tests {
+    use super::*;
+
+    #[test]
+    fn through_wrap_fills_the_polygons_hollows() {
+        // A "U": two uprights joined at the bottom, open at the top.
+        let polygon = vec![
+            [0.0, 0.0],
+            [0.3, 0.0],
+            [0.3, 0.7],
+            [0.7, 0.7],
+            [0.7, 0.0],
+            [1.0, 0.0],
+            [1.0, 1.0],
+            [0.0, 1.0],
+        ];
+        let sp = FloatSpec {
+            index: 0,
+            h: (FloatRefH::Page, FloatPos::Offset(200.0)),
+            v: (FloatRefV::Page, FloatPos::Offset(100.0)),
+            width: 200.0,
+            height: 100.0,
+            dist: [0.0, 0.0, 5.0, 5.0],
+            wrap: FloatWrap::Square,
+            side: FloatSide::Both,
+            behind: false,
+            z: 1,
+            polygon: Some(polygon),
+            through: true,
+            extent: [0.0; 4],
+        };
+        let e = WrapArea::of(&sp, [200.0, 100.0, 200.0, 100.0], (0, 0)).unwrap();
+        let col = (100.0, 500.0);
+        // Between the uprights: text goes into the hollow.
+        let segs = free_segments(std::slice::from_ref(&e), col, 110.0, 125.0).unwrap();
+        assert_eq!(segs.len(), 3, "{segs:?}");
+        assert!((segs[1].0 - 265.0).abs() < 0.5 && (segs[1].1 - 335.0).abs() < 0.5);
+        // Across the bottom bar: around it only.
+        let segs = free_segments(std::slice::from_ref(&e), col, 180.0, 195.0).unwrap();
+        assert_eq!(segs, vec![(100.0, 195.0), (405.0, 500.0)]);
+        // Tight: around the outside only.
+        let tight = WrapArea {
+            through: false,
+            ..e
+        };
+        let segs = free_segments(&[tight], col, 110.0, 125.0).unwrap();
+        assert_eq!(segs, vec![(100.0, 195.0), (405.0, 500.0)]);
     }
 }
 
@@ -537,6 +663,7 @@ mod flow_tests {
             behind: false,
             z: 1,
             polygon: None,
+            through: false,
             extent: [0.0; 4],
         }
     }

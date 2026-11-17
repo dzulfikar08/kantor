@@ -230,6 +230,9 @@ pub struct Document {
     /// Names pictures inserted into a header, footer or note being edited
     /// (`header1_`), so they never clash with the body's.
     pub(crate) media_stem: String,
+    /// Smallest `wp:docPr` id new pictures may take minus one: a text box
+    /// being edited gets the main document's largest, so ids stay unique.
+    pub(crate) doc_pr_floor: u32,
     /// A header, footer or note being edited: the main document's
     /// properties its fields (`TITLE`, `FILENAME`…) show.
     pub(crate) field_props: Option<Arc<crate::fields::Props>>,
@@ -297,6 +300,7 @@ impl Document {
             imported: None,
             history: History::default(),
             media_stem: String::new(),
+            doc_pr_floor: 0,
             field_props: None,
             field_codes: None,
         }
@@ -422,6 +426,7 @@ impl Document {
             imported: None,
             history: History::default(),
             media_stem: String::new(),
+            doc_pr_floor: 0,
             field_props: None,
             field_codes: None,
         };
@@ -671,6 +676,7 @@ impl Document {
             imported: self.imported.clone(),
             history: History::default(),
             media_stem: self.media_stem.clone(),
+            doc_pr_floor: self.doc_pr_floor,
             field_props: self.field_props.clone(),
             field_codes: None,
         }

@@ -332,10 +332,23 @@ impl DocsView {
             None => std::borrow::Cow::Borrowed(&self.doc),
             Some(s) => {
                 let mut main = s.main.clone();
-                main.finish_part(s.edit.clone(), self.doc.clone(), s.body_sel);
+                main.finish_part(self.fitted_edit(s), self.doc.clone(), s.body_sel);
                 std::borrow::Cow::Owned(main)
             }
         }
+    }
+
+    /// The part edit `s`, with the height a "Resize shape to fit text"
+    /// box is drawn at now (the shape keeps it when editing ends).
+    fn fitted_edit(&self, s: &PartSession) -> PartEdit {
+        let mut edit = s.edit.clone();
+        if let PartTarget::TextBox(b) = s.target
+            && b.which.is_none()
+            && let Some((_, it)) = box_item(&self.laid.floats, b, s.page)
+        {
+            edit.fit_height = Some((it.rect[3] * docs_engine::object::EMU_PER_PX).round() as i64);
+        }
+        edit
     }
 
     /// The body selection (the one to come back to while a part is
@@ -518,8 +531,9 @@ impl DocsView {
         self.hf_menu = None;
         self.float_sel = None;
         self.text_box_edit = None;
+        let edit = self.fitted_edit(&s);
         let part = std::mem::replace(&mut self.doc, s.main);
-        self.doc.finish_part(s.edit, part, s.body_sel);
+        self.doc.finish_part(edit, part, s.body_sel);
         self.sel = self.doc.clamp_selection(s.body_sel);
         self.typing_props = None;
         self.marked = None;

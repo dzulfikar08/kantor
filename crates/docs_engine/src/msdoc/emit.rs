@@ -55,6 +55,13 @@ struct W<'a> {
     pictures: u32,
     /// Parts besides document.xml: name, content type, XML.
     parts: Vec<(String, String, String)>,
+    /// The next tracked change's id.
+    rev_id: std::cell::Cell<u32>,
+    /// Relationships of the parts besides document.xml (headers, footers,
+    /// notes, comments): part file name, its relationships.
+    part_rels: Vec<(String, Vec<Rel>)>,
+    /// Media some part refers to (written to the package).
+    media_used: Vec<std::cell::Cell<bool>>,
 }
 
 /// Word's style id for a name: words capitalised, joined, letters and
@@ -104,6 +111,11 @@ pub fn package(doc: &Doc) -> Result<Vec<u8>> {
         media_rels: vec![None; doc.media.len()],
         pictures: 0,
         parts: Vec::new(),
+        rev_id: std::cell::Cell::new(1),
+        part_rels: Vec::new(),
+        media_used: (0..doc.media.len())
+            .map(|_| std::cell::Cell::new(false))
+            .collect(),
     };
     w.rel("styles", "styles.xml", false);
     w.rel("settings", "settings.xml", false);
@@ -147,10 +159,11 @@ pub fn package(doc: &Doc) -> Result<Vec<u8>> {
             "<w:{file} {NS}><w:{tag} w:type=\"separator\" w:id=\"-1\"><w:p><w:r><w:separator/></w:r></w:p></w:{tag}>\
              <w:{tag} w:type=\"continuationSeparator\" w:id=\"0\"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:{tag}>"
         );
-        for (i, blocks) in notes.iter().enumerate() {
-            let _ = write!(x, "<w:{tag} w:id=\"{}\">", i + 1);
-            x.push_str(&w.blocks(blocks));
-            let _ = write!(x, "</w:{tag}>");
+        let inner: Vec<String> = w.in_part(&format!("{file}.xml"), |w| {
+            notes.iter().map(|blocks| w.blocks(blocks)).collect()
+        });
+        for (i, body) in inner.iter().enumerate() {
+            let _ = write!(x, "<w:{tag} w:id=\"{}\">{body}</w:{tag}>", i + 1);
         }
         let _ = write!(x, "</w:{file}>");
         w.rel(file, &format!("{file}.xml"), false);
@@ -160,13 +173,18 @@ pub fn package(doc: &Doc) -> Result<Vec<u8>> {
     if !doc.comments.is_empty() {
         let mut x = format!("<w:comments {NS}>");
         for (i, c) in doc.comments.iter().enumerate() {
+            let date = c
+                .date
+                .as_deref()
+                .map(|d| format!(" w:date=\"{d}\""))
+                .unwrap_or_default();
             let _ = write!(
                 x,
-                "<w:comment w:id=\"{i}\" w:author=\"{}\" w:initials=\"{}\">",
+                "<w:comment w:id=\"{i}\" w:author=\"{}\"{date} w:initials=\"{}\">",
                 esc(&c.author),
                 esc(&c.initials)
             );
-            x.push_str(&w.blocks(&c.blocks));
+            x.push_str(&w.in_part("comments.xml", |w| w.blocks(&c.blocks)));
             x.push_str("</w:comment>");
         }
         x.push_str("</w:comments>");
@@ -194,7 +212,8 @@ pub fn package(doc: &Doc) -> Result<Vec<u8>> {
             } else {
                 ("hdr", format!("header{hf_count}.xml"))
             };
-            let x = format!("<w:{tag} {NS}>{}</w:{tag}>", w.blocks(blocks));
+            let inner = w.in_part(&part, |w| w.blocks(blocks));
+            let x = format!("<w:{tag} {NS}>{inner}</w:{tag}>");
             let id = w.rel(if footer { "footer" } else { "header" }, &part, false);
             w.parts.push((
                 format!("word/{part}"),
@@ -265,6 +284,27 @@ fn sect_pr(sep: &super::sprm::Sep, refs: &str) -> String {
 }
 
 impl W<'_> {
+    /// Run `f` writing part `file` (`header1.xml`): the relationships it
+    /// makes (pictures, links) go to that part's own `.rels`.
+    fn in_part<T>(&mut self, file: &str, f: impl FnOnce(&mut Self) -> T) -> T {
+        // A part written in pieces (comments) carries on numbering.
+        let so_far = self
+            .part_rels
+            .iter()
+            .position(|(f, _)| f == file)
+            .map(|i| self.part_rels.remove(i).1)
+            .unwrap_or_default();
+        let rels = std::mem::replace(&mut self.rels, so_far);
+        let media = std::mem::replace(&mut self.media_rels, vec![None; self.doc.media.len()]);
+        let out = f(self);
+        let own = std::mem::replace(&mut self.rels, rels);
+        self.media_rels = media;
+        if !own.is_empty() {
+            self.part_rels.push((file.to_owned(), own));
+        }
+        out
+    }
+
     fn rel(&mut self, kind: &'static str, target: &str, external: bool) -> String {
         let id = format!("rId{}", self.rels.len() + 1);
         self.rels.push(Rel {
@@ -535,9 +575,18 @@ impl W<'_> {
     }
 
     fn para(&mut self, p: &Para, sects: &[String]) -> String {
+        if let Some(rows) = &p.nested {
+            return self.table(rows);
+        }
         let mut x = String::from("<w:p><w:pPr>");
         x.push_str(&self.ppr_inner(&p.pap, true));
-        let mark = self.rpr(&p.mark, p.pap.istd);
+        let mut mark = self.rpr(&p.mark, p.pap.istd);
+        // A tracked paragraph mark (schema order: before the formatting).
+        if p.mark.deleted {
+            mark.insert_str(0, &format!("<w:del{}/>", self.rev_attrs(p.mark.del_by)));
+        } else if p.mark.inserted {
+            mark.insert_str(0, &format!("<w:ins{}/>", self.rev_attrs(p.mark.ins_by)));
+        }
         if !mark.is_empty() {
             let _ = write!(x, "<w:rPr>{mark}</w:rPr>");
         }
@@ -622,13 +671,44 @@ impl W<'_> {
         x
     }
 
+    /// A tracked change's id, author and date attributes.
+    fn rev_attrs(&self, by: Option<(u16, u32)>) -> String {
+        let id = self.rev_id.get();
+        self.rev_id.set(id + 1);
+        let author = by
+            .and_then(|(i, _)| self.doc.revision_authors.get(i as usize))
+            .filter(|a| !a.is_empty())
+            .map_or("Unknown", String::as_str);
+        let date = by
+            .and_then(|(_, d)| super::dttm(d))
+            .map(|d| format!(" w:date=\"{d}\""))
+            .unwrap_or_default();
+        format!(" w:id=\"{id}\" w:author=\"{}\"{date}", esc(author))
+    }
+
     fn text_runs(&self, c: &Chp, t: &str, istd: u16) -> String {
+        let run = self.plain_runs(c, t, istd);
+        if c.deleted {
+            format!("<w:del{}>{run}</w:del>", self.rev_attrs(c.del_by))
+        } else if c.inserted {
+            format!("<w:ins{}>{run}</w:ins>", self.rev_attrs(c.ins_by))
+        } else {
+            run
+        }
+    }
+
+    fn plain_runs(&self, c: &Chp, t: &str, istd: u16) -> String {
         let rpr = self.rpr(c, istd);
         let mut x = format!("<w:r>{}", wrap("w:rPr", &rpr));
         let mut buf = String::new();
+        let text_el = if c.deleted { "w:delText" } else { "w:t" };
         let flush = |x: &mut String, buf: &mut String| {
             if !buf.is_empty() {
-                let _ = write!(x, "<w:t xml:space=\"preserve\">{}</w:t>", esc(buf));
+                let _ = write!(
+                    x,
+                    "<{text_el} xml:space=\"preserve\">{}</{text_el}>",
+                    esc(buf)
+                );
                 buf.clear();
             }
         };
@@ -661,6 +741,7 @@ impl W<'_> {
             None => {
                 let id = self.rel("image", &format!("media/image{}.{ext}", m + 1), false);
                 self.media_rels[m] = Some(id.clone());
+                self.media_used[m].set(true);
                 id
             }
         };
@@ -688,6 +769,7 @@ impl W<'_> {
             None => {
                 let id = self.rel("image", &format!("media/image{}.{ext}", m + 1), false);
                 self.media_rels[m] = Some(id.clone());
+                self.media_used[m].set(true);
                 id
             }
         })
@@ -1005,6 +1087,10 @@ impl W<'_> {
             for p in &c.paras {
                 x.push_str(&self.para(p, &[]));
             }
+            // A cell ends with a paragraph (after a nested table too).
+            if c.paras.last().is_some_and(|p| p.nested.is_some()) {
+                x.push_str("<w:p/>");
+            }
             x.push_str("</w:tc>");
         }
         if cells.is_empty() {
@@ -1281,12 +1367,39 @@ fn zip(w: &W, document: &str) -> Result<Vec<u8>> {
         ),
         ("word/document.xml".into(), format!("{decl}{document}").into_bytes()),
     ];
-    let mut rels = String::from(
+    for (file, own) in &w.part_rels {
+        files.push((
+            format!("word/_rels/{file}.rels"),
+            format!("{decl}{}", rels_xml(own)).into_bytes(),
+        ));
+    }
+    files.push((
+        "word/_rels/document.xml.rels".into(),
+        format!("{decl}{}", rels_xml(&w.rels)).into_bytes(),
+    ));
+    for (name, _, xml) in &w.parts {
+        files.push((name.clone(), format!("{decl}{xml}").into_bytes()));
+    }
+    for (m, (ext, bytes)) in w.doc.media.iter().enumerate() {
+        if w.media_used.get(m).is_some_and(|u| u.get()) {
+            files.push((format!("word/media/image{}.{ext}", m + 1), bytes.clone()));
+        }
+    }
+    for (name, bytes) in files {
+        out.start_file(name, opts)?;
+        out.write_all(&bytes)?;
+    }
+    Ok(out.finish()?.into_inner())
+}
+
+/// A relationships part's XML.
+fn rels_xml(rels: &[Rel]) -> String {
+    let mut x = String::from(
         "<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">",
     );
-    for r in &w.rels {
+    for r in rels {
         let _ = write!(
-            rels,
+            x,
             "<Relationship Id=\"{}\" Type=\"{REL}/{}\" Target=\"{}\"{}/>",
             r.id,
             r.kind,
@@ -1298,22 +1411,6 @@ fn zip(w: &W, document: &str) -> Result<Vec<u8>> {
             }
         );
     }
-    rels.push_str("</Relationships>");
-    files.push((
-        "word/_rels/document.xml.rels".into(),
-        format!("{decl}{rels}").into_bytes(),
-    ));
-    for (name, _, xml) in &w.parts {
-        files.push((name.clone(), format!("{decl}{xml}").into_bytes()));
-    }
-    for (m, (ext, bytes)) in w.doc.media.iter().enumerate() {
-        if w.media_rels[m].is_some() {
-            files.push((format!("word/media/image{}.{ext}", m + 1), bytes.clone()));
-        }
-    }
-    for (name, bytes) in files {
-        out.start_file(name, opts)?;
-        out.write_all(&bytes)?;
-    }
-    Ok(out.finish()?.into_inner())
+    x.push_str("</Relationships>");
+    x
 }

@@ -20,6 +20,13 @@ converted to .doc by LibreOffice ("MS Word 97" filter):
 * floats.doc: tests/corpus/docx/floats.docx (floating pictures, shapes and
   text boxes, from gen_docx.py) as LibreOffice saves it in Word 97 format
   (its DrawingML shapes become freeforms drawn with guide formulas).
+* revisions.doc: tracked changes by two authors (an insertion, a
+  deletion, a deleted paragraph mark), as Word keeps them.
+* nested.doc: a table with a table inside one of its cells.
+* hdrfloat.doc: a floating picture in the header and a floating text box
+  in the footer.
+* drawings.doc: tests/corpus/docx/drawings.docx (a group, a canvas, turned
+  objects) as LibreOffice saves it in Word 97 format.
 * shapes.doc: a flat ODT (SHAPES_FODT below) with LibreOffice's own shapes,
   which it saves as Word's preset types: a rectangle with text, an ellipse
   behind the text, a rounded rectangle placed from the page, a line with an
@@ -28,6 +35,8 @@ converted to .doc by LibreOffice ("MS Word 97" filter):
 Regenerate with
 `uv run --with python-docx==1.2.0 scripts/corpus/gen_doc.py tests/corpus/doc [soffice]`
 where soffice defaults to ~/.cache/lo/lo.AppImage (LibreOffice 25.8).
+`ONLY=revisions,nested` writes just those files (LibreOffice output
+carries timestamps, so the others would change for nothing).
 """
 import datetime
 import os
@@ -265,6 +274,98 @@ def comments_doc():
     return d
 
 
+def tracked(par, kind, rid, author, date, text):
+    """A tracked insertion or deletion appended to a paragraph."""
+    el = OxmlElement(f"w:{kind}")
+    el.set(qn("w:id"), str(rid))
+    el.set(qn("w:author"), author)
+    el.set(qn("w:date"), date)
+    r = OxmlElement("w:r")
+    t = OxmlElement("w:delText" if kind == "del" else "w:t")
+    t.set(qn("xml:space"), "preserve")
+    t.text = text
+    r.append(t)
+    el.append(r)
+    par._p.append(el)
+
+
+def revisions_doc():
+    d = Document()
+    p = d.add_paragraph("The contract ")
+    tracked(p, "ins", 1, "Citra Dewi", "2026-11-10T09:15:00Z", "is renewed ")
+    p.add_run("for one year")
+    tracked(p, "del", 2, "Budi Santoso", "2026-11-11T14:30:00Z", " or two")
+    p.add_run(".")
+    p = d.add_paragraph("This paragraph's end was deleted,")
+    mark = OxmlElement("w:rPr")
+    dl = OxmlElement("w:del")
+    dl.set(qn("w:id"), "3")
+    dl.set(qn("w:author"), "Budi Santoso")
+    dl.set(qn("w:date"), "2026-11-11T14:31:00Z")
+    mark.append(dl)
+    p._p.get_or_add_pPr().append(mark)
+    d.add_paragraph("so it joins this one.")
+    return d
+
+
+def nested_doc():
+    d = Document()
+    d.add_paragraph("A table with a table inside:")
+    t = d.add_table(rows=2, cols=2)
+    t.style = "Table Grid"
+    t.cell(0, 0).text = "Outer A1"
+    t.cell(0, 1).text = "Outer B1"
+    t.cell(1, 0).text = "Outer A2"
+    inner_cell = t.cell(1, 1)
+    inner_cell.text = "Inner table:"
+    inner = inner_cell.add_table(rows=2, cols=2)
+    inner.style = "Table Grid"
+    for r in range(2):
+        for c in range(2):
+            inner.cell(r, c).text = f"In {'AB'[c]}{r + 1}"
+    inner_cell.add_paragraph("After the inner table.")
+    d.add_paragraph("After the outer table.")
+    return d
+
+
+HDR_NS = (
+    'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+    'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+    'xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" '
+    'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+)
+
+
+def hdrfloat_doc(tmp):
+    from docx.oxml import parse_xml
+
+    d = Document()
+    img = tmp / "logo.png"
+    img.write_bytes(png(48, 24))
+    hp = d.sections[0].header.paragraphs[0]
+    hp.text = "Header text beside a floating logo"
+    rid, _ = d.sections[0].header.part.get_or_add_image(str(img))
+    cx, cy = 48 * 9525 * 2, 24 * 9525 * 2
+    anchor = (
+        f'<w:r {HDR_NS}><w:drawing><wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" '
+        'relativeHeight="251659264" behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1">'
+        '<wp:simplePos x="0" y="0"/><wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>'
+        '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>'
+        f'<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapSquare wrapText="bothSides"/>'
+        '<wp:docPr id="7" name="Header logo"/><wp:cNvGraphicFramePr/><a:graphic><a:graphicData '
+        'uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic><pic:nvPicPr><pic:cNvPr id="0" '
+        f'name="logo.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/><a:stretch><a:fillRect/>'
+        f'</a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic>'
+        "</wp:anchor></w:drawing></w:r>"
+    )
+    hp._p.append(parse_xml(anchor))
+    for _ in range(3):
+        d.add_paragraph("Body text under a header that holds a floating picture. " * 3)
+    return d
+
+
 def main():
     out.mkdir(parents=True, exist_ok=True)
     base = Path(os.environ.get("TMPDIR", Path.home() / ".cache/ktmp"))
@@ -278,16 +379,27 @@ def main():
             "page": page_doc(),
             "picture": picture_doc(tmp),
             "comments": comments_doc(),
+            "revisions": revisions_doc(),
+            "nested": nested_doc(),
+            "hdrfloat": hdrfloat_doc(tmp),
         }
+        only = set(filter(None, os.environ.get("ONLY", "").split(",")))
+        if only:
+            docs = {k: v for k, v in docs.items() if k in only}
         for name, d in docs.items():
             d.core_properties.created = FIXED
             d.core_properties.modified = FIXED
             d.core_properties.author = "Kantor corpus"
             d.core_properties.last_modified_by = "Kantor corpus"
             d.save(tmp / f"{name}.docx")
-        shutil.copy(Path(__file__).resolve().parents[2] / "tests/corpus/docx/floats.docx", tmp)
+        docx_dir = Path(__file__).resolve().parents[2] / "tests/corpus/docx"
+        names = list(docs)
+        for copied in ("floats", "drawings"):
+            if not only or copied in only:
+                shutil.copy(docx_dir / f"{copied}.docx", tmp)
+                names.append(copied)
+        fodt = not only or "shapes" in only
         (tmp / "shapes.fodt").write_text(SHAPES_FODT, encoding="utf-8")
-        names = [*docs, "floats"]
         profile = tmp / "profile"
         # 81: LibreOffice made a new profile and wants a restart; run again.
         cmd = [
@@ -299,11 +411,11 @@ def main():
             "--outdir",
             str(tmp),
             *[str(tmp / f"{n}.docx") for n in names],
-            str(tmp / "shapes.fodt"),
+            *([str(tmp / "shapes.fodt")] if fodt else []),
         ]
         if subprocess.run(cmd).returncode == 81:
             subprocess.run(cmd, check=True)
-        for n in [*names, "shapes"]:
+        for n in [*names, *(["shapes"] if fodt else [])]:
             shutil.copy(tmp / f"{n}.doc", out / f"{n}.doc")
             print(out / f"{n}.doc")
 

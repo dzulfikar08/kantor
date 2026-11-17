@@ -571,3 +571,117 @@ fn group_shape_text_is_edited_in_place() {
     assert!(xml.contains(">Do it<") && xml.contains("<w:i/>"), "{xml}");
     assert!(xml.contains(">Plan<"));
 }
+
+/// A text box with a picture and a table in it (textboxes.docx,
+/// scripts/corpus/gen_docx_more.py) is edited in place like any other:
+/// pictures and tables can be added there, and the box keeps them.
+#[test]
+fn text_box_with_picture_and_table_is_edited_in_place() {
+    use docs_engine::{BoxRef, Position, Selection};
+    let mut doc = Document::open(&corpus("textboxes.docx")).unwrap();
+    let (para, index, f) = floats(&doc)
+        .into_iter()
+        .find(|f| f.2.name == "Rich box")
+        .unwrap();
+    let tb = f.text.as_ref().unwrap();
+    assert!(tb.auto_fit, "spAutoFit read");
+    assert_eq!(table_count(&tb.doc), 1, "the table in the box");
+    assert!(f.text_locked().is_some(), "the popover still can't edit it");
+    let b = BoxRef {
+        story: None,
+        para,
+        index,
+        which: None,
+    };
+    let (mut edit, mut part) = doc.edit_text_box(b).expect("edited in place");
+    // New pictures and tables fit the box (240 px less its margins).
+    assert!(part.content_width() < 240 * 15, "{}", part.content_width());
+    let first = part.paragraph(0).text.clone();
+    assert_eq!(first, "Box with a picture and a table");
+    let png = {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend(2u32.to_be_bytes());
+        png.extend(1u32.to_be_bytes());
+        png.extend([8, 6, 0, 0, 0, 0, 0, 0, 0]);
+        png
+    };
+    let end = Selection::caret(Position::new(0, first.len()));
+    let after = part.insert_text(end, "\n", None);
+    let after = part.insert_image(after, png.to_vec(), "dot.png").unwrap();
+    let picture = part
+        .paragraph(after.head.para)
+        .object_at(after.head.offset - 3);
+    let Some(Object::Image(img)) = picture else {
+        panic!("picture inserted: {picture:?}");
+    };
+    assert!(img.cx <= 240 * 9525);
+    assert!(img.doc_pr > 11, "docPr ids stay unique: {}", img.doc_pr);
+    let tables = table_count(&part);
+    let end = part.end();
+    assert!(part.insert_table(Selection::caret(end), 2, 2).is_some());
+    assert_eq!(table_count(&part), tables + 1);
+    edit.fit_height = Some(200 * 9525);
+    assert!(doc.finish_part(edit, part, Selection::default()));
+    let f = doc.float_at(para, index).unwrap();
+    assert_eq!(f.at.cy, 200 * 9525, "resized to fit its text");
+    assert_eq!(table_count(&f.text.as_ref().unwrap().doc), 2);
+    let saved = doc.to_docx_bytes().unwrap();
+    let p = parts(&saved);
+    let xml = String::from_utf8(p["word/document.xml"].clone()).unwrap();
+    // The shape and its VML fallback both get the new content.
+    assert_eq!(xml.matches("<w:tbl>").count(), 4, "{xml}");
+    assert_eq!(xml.matches("r:embed=\"rIdKantorImage1\"").count(), 2);
+    assert!(xml.contains("cy=\"1905000\""), "new height saved");
+    let rels = String::from_utf8(p["word/_rels/document.xml.rels"].clone()).unwrap();
+    assert!(rels.contains("rIdKantorImage1"), "{rels}");
+    assert!(p.contains_key("word/media/kantor_image1.png"));
+    // Read back: still a box with two tables and two pictures.
+    let dir = std::env::temp_dir().join(format!("kantor-boxes-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("boxes.docx");
+    std::fs::write(&path, &saved).unwrap();
+    if let Ok(out) = std::env::var("KANTOR_BOXES_OUT") {
+        std::fs::write(out, &saved).unwrap();
+    }
+    let back = Document::open(&path).unwrap();
+    let (_, _, f) = floats(&back)
+        .into_iter()
+        .find(|f| f.2.name == "Rich box")
+        .unwrap();
+    let d = &f.text.as_ref().unwrap().doc;
+    assert_eq!(table_count(d), 2);
+    let pictures = d
+        .paragraphs()
+        .iter()
+        .flat_map(|p| p.objects())
+        .filter(|(_, o)| matches!(o, Object::Image(_)))
+        .count();
+    assert_eq!(pictures, 2);
+    // A second picture in another box gets its own id.
+    let (para2, index2, _) = floats(&doc)
+        .into_iter()
+        .find(|f| f.2.name == "Fit box")
+        .unwrap();
+    let b2 = BoxRef {
+        story: None,
+        para: para2,
+        index: index2,
+        which: None,
+    };
+    let (edit, mut part) = doc.edit_text_box(b2).unwrap();
+    let end = part.end();
+    part.insert_image(Selection::caret(end), png.to_vec(), "dot.png")
+        .unwrap();
+    assert!(doc.finish_part(edit, part, Selection::default()));
+    let p = parts(&doc.to_docx_bytes().unwrap());
+    assert!(p.contains_key("word/media/kantor_image2.png"));
+}
+
+fn table_count(doc: &Document) -> usize {
+    let ids: std::collections::BTreeSet<u32> = doc
+        .paragraphs()
+        .iter()
+        .filter_map(|p| p.cell.map(|c| c.table))
+        .collect();
+    ids.len()
+}

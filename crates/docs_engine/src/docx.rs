@@ -993,6 +993,7 @@ impl BodyParser<'_> {
                         doc: self.text_box_doc(inner),
                         insets,
                         v_align,
+                        auto_fit: false,
                     }),
                     edited: false,
                 })
@@ -1008,6 +1009,7 @@ impl BodyParser<'_> {
                 doc,
                 insets,
                 v_align,
+                auto_fit: crate::float::text_box_auto_fit(xml),
             }));
         }
         Some(Object::Float(Arc::new(f)))
@@ -3191,6 +3193,26 @@ fn unique_rev_ids(xml: String) -> String {
     out
 }
 
+/// The pictures `paras` show, those in their text boxes included.
+fn used_images(paras: &[Paragraph]) -> HashSet<&str> {
+    let mut out = HashSet::new();
+    for (_, o) in paras.iter().flat_map(|p| p.objects()) {
+        match o {
+            Object::Image(i) => {
+                out.insert(i.rel_id.as_str());
+            }
+            Object::Float(f) => {
+                let boxes = f.text.iter().chain(f.boxes.iter().map(|b| &b.text));
+                for tb in boxes {
+                    out.extend(used_images(tb.doc.paragraphs()));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 pub(crate) fn body_xml(doc: &Document) -> String {
     unique_rev_ids(body_xml_raw(doc))
 }
@@ -3672,15 +3694,7 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
     }
 
     // Pictures inserted in Kantor that the body still uses.
-    let used: HashSet<&str> = doc
-        .paragraphs()
-        .iter()
-        .flat_map(|p| p.objects())
-        .filter_map(|(_, o)| match o {
-            Object::Image(i) => Some(i.rel_id.as_str()),
-            _ => None,
-        })
-        .collect();
+    let used = used_images(doc.paragraphs());
     for m in doc.new_media() {
         if pkg.has_rel(&m.rel_id) || !used.contains(m.rel_id.as_str()) {
             continue;
@@ -3795,15 +3809,7 @@ fn part_media<'a>(
     };
     let mut seen = HashSet::new();
     for d in docs {
-        let used: HashSet<&str> = d
-            .paragraphs()
-            .iter()
-            .flat_map(|p| p.objects())
-            .filter_map(|(_, o)| match o {
-                Object::Image(i) => Some(i.rel_id.as_str()),
-                _ => None,
-            })
-            .collect();
+        let used = used_images(d.paragraphs());
         for m in d.new_media() {
             if !used.contains(m.rel_id.as_str()) || !seen.insert(m.rel_id.clone()) {
                 continue;

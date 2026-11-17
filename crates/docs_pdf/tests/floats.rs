@@ -152,10 +152,10 @@ fn groups_charts_turns_shadows_and_tight_wrap() {
         "{pic:?} in {rect:?}"
     );
     assert!((pic[2] - rect[2] / 2.0).abs() < 0.01);
-    // The shadow: translucent black fills drawn before the shape.
-    let shadow = g.iter().position(
-        |p| matches!(p, FloatPrim::Path(d) if d.fill.is_some_and(|c| c.0[3] < 255 && c.0[0] == 0)),
-    );
+    // The shadow: blurred (a picture of it), drawn before the shape.
+    let shadow = g
+        .iter()
+        .position(|p| matches!(p, FloatPrim::Blurred(b) if b.rect[2] > 0.0));
     let shape = g.iter().position(|p| {
         matches!(p, FloatPrim::Path(d) if d.fill.is_some_and(|c| c.0 == [0xBD, 0xD7, 0xEE, 255]))
     });
@@ -389,4 +389,55 @@ fn chartex_floats_are_drawn() {
     for want in ["Cash flow", "Start", "End", "Increase", "-30"] {
         assert!(shown.iter().any(|s| s == want), "{want} in {shown:?}");
     }
+}
+
+/// textboxes.docx (scripts/corpus/gen_docx_more.py): a text box holding a
+/// picture and a table draws both; boxes set to "Resize shape to fit
+/// text" are as tall as their text, whatever height was saved.
+#[test]
+fn text_boxes_with_pictures_tables_and_fit_to_text() {
+    let path =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/corpus/docx/textboxes.docx");
+    let doc = Document::open(&path).unwrap();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let find = |name: &str| {
+        laid.floats[0]
+            .iter()
+            .find(|it| it.float(&doc).unwrap().name == name)
+            .unwrap()
+    };
+    let rich = find("Rich box");
+    let (l, _, y) = rich.text.as_ref().unwrap();
+    // Saved 40 px tall; its text, picture and table need much more.
+    assert!(rich.rect[3] > 100.0, "{:?}", rich.rect);
+    assert!(
+        (y + l.height + 4.8 - (rich.rect[1] + rich.rect[3])).abs() < 0.5,
+        "{y} {} {:?}",
+        l.height,
+        rich.rect
+    );
+    let fit = find("Fit box");
+    // Saved 90 px tall with one line of text: shrinks to it.
+    assert!(fit.rect[3] < 45.0, "{:?}", fit.rect);
+    let scene = docs_pdf::scene(&doc, &laid);
+    let page = &scene.pages[0];
+    let content: Vec<_> = page.front.iter().map(|f| &f.content).collect();
+    assert!(
+        content.iter().any(|c| !c.pictures.is_empty()),
+        "the box's picture"
+    );
+    assert!(
+        content.iter().any(|c| c.rules.len() >= 4),
+        "the box's table borders"
+    );
+    let text: String = content
+        .iter()
+        .flat_map(|c| &c.runs)
+        .map(|r| &*r.text)
+        .collect();
+    assert!(
+        text.contains("Pens") && text.contains("After the table"),
+        "{text}"
+    );
 }

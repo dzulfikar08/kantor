@@ -213,7 +213,6 @@ Bookmark “{}” deleted	Penanda “{}” dihapus
 Choose what the cross-reference points to	Pilih yang dirujuk referensi silang
 Cross-reference	Referensi Silang
 Endnote number	Nomor catatan akhir
-Enter updates the field; Esc cancels	Enter memperbarui bidang; Esc membatalkan
 Entire caption	Seluruh keterangan
 Equation	Persamaan
 Field	Bidang
@@ -229,7 +228,6 @@ Heading text	Teks judul
 Insert Field	Sisipkan Bidang
 Insert as hyperlink	Sisipkan sebagai hyperlink
 Insert reference to	Sisipkan referensi ke
-New field: its code	Bidang baru: kodenya
 No field at the caret	Tidak ada bidang di posisi kursor
 Nothing of this kind in the document	Tidak ada yang seperti ini di dokumen
 Paragraph number	Nomor paragraf
@@ -243,8 +241,6 @@ The page number	Nomor halaman
 The time now	Waktu sekarang
 This document has no bookmarks	Dokumen ini tidak memiliki penanda
 Today's date	Tanggal hari ini
-Update	Perbarui
-e.g. DATE \@ "d MMMM yyyy"	mis. DATE \@ "d MMMM yyyy"
 # Tracked formatting changes (balloons in the markup column)
 Formatted: {}	Diformat: {}
 Font: Bold	Font: Tebal
@@ -312,4 +308,17 @@ SmartArt shape added	Bentuk SmartArt ditambahkan
 SmartArt shape deleted	Bentuk SmartArt dihapus
 Field code: {} (was {})	Kode field: {} (sebelumnya {})
 Editing the text box: click outside it or press Esc to go back	Mengedit kotak teks: klik di luarnya atau tekan Esc untuk kembali
-Pictures and tables can't go in a text box in Kantor yet	Gambar dan tabel belum bisa dimasukkan ke kotak teks di Kantor
+A formula: numbers, bookmarks, table cells	Rumus: angka, penanda, sel tabel
+One text or another, by a comparison	Satu teks atau teks lain, menurut perbandingan
+1 or 0, by a comparison	1 atau 0, menurut perbandingan
+Numbers figures, tables and other items	Menomori gambar, tabel, dan item lain
+The nearest paragraph in a style	Paragraf terdekat dengan suatu gaya
+A list number inside a paragraph	Nomor daftar di dalam paragraf
+Gives a bookmark a value	Memberi nilai pada penanda
+A table of contents	Daftar isi
+A table of contents entry	Entri daftar isi
+An index of the XE entries	Indeks dari entri XE
+An index entry	Entri indeks
+The number of words	Jumlah kata
+The number of pages in the section	Jumlah halaman di bagian ini
+Type the field's code; F9 updates it	Ketik kode bidang; F9 memperbaruinya

@@ -1006,17 +1006,6 @@ impl DocsView {
         }
     }
 
-    /// Whether a text box is being edited: Kantor keeps pictures and
-    /// tables out of it (it can't edit a box holding them), and says so.
-    fn no_objects_here(&mut self, cx: &mut Context<Self>) -> bool {
-        if !matches!(self.part_target(), Some(part::PartTarget::TextBox(_))) {
-            return false;
-        }
-        self.status = t("Pictures and tables can't go in a text box in Kantor yet").into();
-        cx.notify();
-        true
-    }
-
     /// Insert a `rows` × `cols` table at the caret.
     pub fn insert_table_doc(
         &mut self,
@@ -1026,9 +1015,6 @@ impl DocsView {
         cx: &mut Context<Self>,
     ) {
         self.table_picker = None;
-        if self.no_objects_here(cx) {
-            return;
-        }
         match self.doc.insert_table(self.sel, rows, cols) {
             Some(sel) => self.edited(sel, window, cx),
             None => {
@@ -1062,9 +1048,6 @@ impl DocsView {
 
     /// Ask for a PNG or JPEG and insert it at the caret.
     pub fn insert_image_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.no_objects_here(cx) {
-            return;
-        }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -1820,8 +1803,21 @@ impl DocsView {
         let laid = self.laid.clone();
         let g = self.geometry();
         for page in g.visible_pages(laid.paged.pages.len()) {
-            for placed in laid.furniture.get(page).into_iter().flatten() {
-                let l = &placed.layout;
+            // Headers, footers and notes, and floating objects' text boxes.
+            let stories: Vec<&Arc<docs_pdf::StoryLayout>> = laid
+                .furniture
+                .get(page)
+                .into_iter()
+                .flatten()
+                .map(|p| &p.layout)
+                .chain(laid.floats.get(page).into_iter().flatten().flat_map(|it| {
+                    it.text
+                        .iter()
+                        .map(|t| &t.0)
+                        .chain(it.boxes.iter().map(|b| &b.layout))
+                }))
+                .collect();
+            for l in stories {
                 let story = l.doc(&self.doc);
                 for o in l.paged.objects(0) {
                     if o.kind != ObjectKind::Image {
@@ -2666,7 +2662,6 @@ impl Render for DocsView {
                 cx.listener(|this, _: &MouseUpEvent, window, cx| {
                     this.dragging = false;
                     this.float_mouse_up(window, cx);
-                    this.field_mouse_up(window, cx);
                 }),
             )
             .on_scroll(cx.listener(Self::on_scroll))

@@ -368,6 +368,122 @@ impl FieldMark {
         Some(out.trim().to_owned())
     }
 
+    /// The instruction as Word works it out when updating: each field
+    /// nested in the code replaced by `nested(its code, its saved result)`
+    /// (`IF { REF Count } > 3 …` → `IF 4 > 3 …`). Fields without nested
+    /// ones give their instruction.
+    pub fn code_with_results(
+        &self,
+        nested: &mut dyn FnMut(&str, &str) -> String,
+    ) -> Option<String> {
+        use quick_xml::events::Event;
+        let Self::Begin {
+            instr,
+            code,
+            simple,
+            ..
+        } = self
+        else {
+            return None;
+        };
+        if *simple || code.matches("fldCharType=\"begin\"").count() < 2 {
+            return Some(instr.clone());
+        }
+        let mut r = quick_xml::Reader::from_str(code);
+        let mut out = String::new();
+        let mut depth = 0usize;
+        // Whether each open field is in its result.
+        let mut in_result: Vec<bool> = Vec::new();
+        let (mut in_instr, mut in_t, mut in_del) = (false, false, false);
+        let (mut sub_code, mut sub_result) = (String::new(), String::new());
+        let entity = |g: &[u8]| match g {
+            b"amp" => "&",
+            b"lt" => "<",
+            b"gt" => ">",
+            b"quot" => "\"",
+            b"apos" => "'",
+            _ => "",
+        };
+        loop {
+            match r.read_event() {
+                Ok(Event::Eof) | Err(_) => break,
+                Ok(Event::Start(e)) if e.local_name().as_ref() == b"del" => in_del = true,
+                Ok(Event::End(e)) if e.local_name().as_ref() == b"del" => in_del = false,
+                _ if in_del => {}
+                Ok(Event::Start(e)) | Ok(Event::Empty(e))
+                    if e.local_name().as_ref() == b"fldChar" =>
+                {
+                    let kind = e
+                        .attributes()
+                        .flatten()
+                        .find(|a| a.key.local_name().as_ref() == b"fldCharType")
+                        .map(|a| a.value.into_owned());
+                    match kind.as_deref() {
+                        Some(b"begin") => {
+                            depth += 1;
+                            in_result.push(false);
+                            if depth == 2 {
+                                sub_code.clear();
+                                sub_result.clear();
+                            }
+                        }
+                        Some(b"separate") => {
+                            if let Some(x) = in_result.last_mut() {
+                                *x = true;
+                            }
+                        }
+                        Some(b"end") => {
+                            in_result.pop();
+                            if depth == 2 {
+                                out.push_str(&nested(sub_code.trim(), &sub_result));
+                            }
+                            depth = depth.saturating_sub(1);
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Start(e)) if e.local_name().as_ref() == b"instrText" => in_instr = true,
+                Ok(Event::End(e)) if e.local_name().as_ref() == b"instrText" => in_instr = false,
+                Ok(Event::Start(e)) if e.local_name().as_ref() == b"t" => in_t = true,
+                Ok(Event::End(e)) if e.local_name().as_ref() == b"t" => in_t = false,
+                Ok(Event::Text(t)) => {
+                    let v = t
+                        .xml10_content()
+                        .map(|v| v.into_owned())
+                        .unwrap_or_default();
+                    self::push_code_text(
+                        &mut out,
+                        &mut sub_code,
+                        &mut sub_result,
+                        &in_result,
+                        depth,
+                        in_instr,
+                        in_t,
+                        &v,
+                    );
+                }
+                Ok(Event::GeneralRef(g)) => {
+                    let v = match g.resolve_char_ref().ok().flatten() {
+                        Some(c) => c.to_string(),
+                        None => entity(&g).to_owned(),
+                    };
+                    self::push_code_text(
+                        &mut out,
+                        &mut sub_code,
+                        &mut sub_result,
+                        &in_result,
+                        depth,
+                        in_instr,
+                        in_t,
+                        &v,
+                    );
+                }
+                _ => {}
+            }
+        }
+        Some(out)
+    }
+
     /// A field's start from a code typed with nested fields in braces (as
     /// [`FieldMark::shown_code`] shows them): the nested fields written as
     /// fields in its code (without results: Word works them out when the
@@ -470,6 +586,34 @@ pub struct Opaque {
     pub xml: String,
     /// Placeholder text, e.g. `Floating image` or `Field: PAGE`.
     pub label: String,
+}
+
+/// Where text read from a field's code goes ([`FieldMark::code_with_results`]):
+/// the outer code, a nested field's code, or its result.
+#[allow(clippy::too_many_arguments)]
+fn push_code_text(
+    out: &mut String,
+    sub_code: &mut String,
+    sub_result: &mut String,
+    in_result: &[bool],
+    depth: usize,
+    in_instr: bool,
+    in_t: bool,
+    v: &str,
+) {
+    match depth {
+        1 if in_instr && !in_result[0] => out.push_str(v),
+        d if d >= 2 && !in_result[0] => {
+            if in_result[1] {
+                if in_t {
+                    sub_result.push_str(v);
+                }
+            } else if d == 2 && in_instr {
+                sub_code.push_str(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]

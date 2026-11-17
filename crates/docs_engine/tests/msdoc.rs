@@ -345,12 +345,25 @@ fn floating_pictures_and_text_boxes() {
     use docs_engine::float::{Place, RelH, RelV};
     use docs_engine::{FloatKind, Wrap};
     // floats.docx as LibreOffice saves it in Word 97 format: two pictures,
-    // a text box, and shapes as freeforms drawn with guide formulas (left
-    // out with a note).
+    // a text box, and shapes as freeforms drawn with guide formulas.
     let doc = open("floats.doc");
-    assert_eq!(doc.import_notes(), ["freeform shapes not imported"]);
+    assert_eq!(
+        doc.import_notes(),
+        ["some freeform shapes drawn as rectangles"]
+    );
     let f = floats(&doc);
-    assert_eq!(f.len(), 3, "{f:?}");
+    assert_eq!(f.len(), 6, "{f:?}");
+    // The freeforms' paths, their guides worked out: inside their boxes.
+    for x in f.iter().filter(|x| x.xml.contains("custGeom")) {
+        let xml = &*x.xml;
+        assert!(xml.contains("<a:path w=\""), "{xml}");
+        let pts: Vec<i64> = xml
+            .split("<a:pt x=\"")
+            .skip(1)
+            .filter_map(|s| s.split('"').next()?.parse().ok())
+            .collect();
+        assert!(!pts.is_empty() && pts.iter().all(|&v| v >= 0), "{pts:?}");
+    }
     let pictures: Vec<_> = f
         .iter()
         .filter(|x| matches!(x.kind, FloatKind::Picture { .. }))
@@ -375,10 +388,10 @@ fn floating_pictures_and_text_boxes() {
     assert!(matches!(pictures[1].at.v.1, Place::Offset(_)));
     let text_box = f
         .iter()
-        .find(|x| x.kind == FloatKind::Shape)
+        .find(|x| x.kind == FloatKind::Shape && float_texts(x).len() == 2)
         .expect("the text box");
     assert_eq!(float_texts(text_box), ["Text box", "with two paragraphs"]);
-    save_and_reopen(doc, 3);
+    save_and_reopen(doc, 6);
 }
 
 fn float_texts(f: &docs_engine::Float) -> Vec<String> {
@@ -466,6 +479,13 @@ fn comments_with_their_ranges() {
     assert_eq!(c[1].author, "Budi Santoso");
     assert_eq!(c[1].text, "Two runs.\nSecond line.");
     assert_eq!(c[2].text, "On a whole paragraph.");
+    // Their dates (AtrdExtra), to the minute.
+    assert!(
+        c.iter()
+            .all(|c| c.date.len() == 20 && c.date.ends_with(":00Z")),
+        "{:?}",
+        c.iter().map(|c| &c.date).collect::<Vec<_>>()
+    );
     let anchors = doc.comment_anchors();
     assert_eq!(anchors.len(), 3, "{anchors:?}");
     // The first covers "budget"; the second crosses two runs.
@@ -485,4 +505,138 @@ fn comments_with_their_ranges() {
     let again = Document::open(&out).unwrap();
     assert_eq!(again.comments().len(), 3);
     assert_eq!(again.comment_anchors().len(), 3);
+}
+
+/// revisions.doc: tracked changes come in as revisions, with their
+/// authors and dates, not accepted.
+#[test]
+fn tracked_changes_come_in_as_revisions() {
+    let doc = open("revisions.doc");
+    let changes = doc.changes();
+    let summary: Vec<(String, String, String)> = changes
+        .iter()
+        .map(|c| (format!("{:?}", c.kind), c.author.clone(), c.text.clone()))
+        .collect();
+    assert!(
+        summary
+            .iter()
+            .any(|(k, a, t)| k.contains("Ins") && a == "Citra Dewi" && t == "is renewed "),
+        "{summary:?}"
+    );
+    assert!(
+        summary
+            .iter()
+            .any(|(k, a, t)| k.contains("Del") && a == "Budi Santoso" && t == " or two"),
+        "{summary:?}"
+    );
+    let ins = changes.iter().find(|c| c.author == "Citra Dewi").unwrap();
+    assert_eq!(ins.date, "2026-11-10T09:15:00Z");
+    // Accept all: the text as the authors meant it.
+    let mut doc = doc;
+    doc.resolve_all(true, docs_engine::Selection::default());
+    assert_eq!(
+        doc.paragraphs()[0].text.replace('\u{FFFC}', ""),
+        "The contract is renewed for one year."
+    );
+    assert!(
+        doc.paragraphs()
+            .iter()
+            .any(|p| p.text == "This paragraph's end was deleted,so it joins this one."),
+        "{:?}",
+        texts(&doc)
+    );
+}
+
+/// nested.doc: a table inside a cell stays a table inside the cell (as
+/// Kantor keeps nested tables of .docx files), saved nested.
+#[test]
+fn nested_tables_are_kept_nested() {
+    let doc = open("nested.doc");
+    assert!(
+        !doc.import_notes().iter().any(|n| n.contains("nested")),
+        "{:?}",
+        doc.import_notes()
+    );
+    let t = texts(&doc);
+    assert!(t.iter().any(|p| p.contains("Outer A1")), "{t:?}");
+    assert!(
+        t.iter().any(|p| p.contains("After the inner table.")),
+        "{t:?}"
+    );
+    assert!(
+        t.iter().any(|p| p.contains("After the outer table.")),
+        "{t:?}"
+    );
+    // The inner table isn't flattened into the cell's paragraphs.
+    assert!(
+        !t.iter()
+            .any(|p| p.trim_start_matches('\u{FFFC}') == "In A1"),
+        "{t:?}"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("nested.docx");
+    let mut doc = doc;
+    doc.save_as(&out).unwrap();
+    let bytes = std::fs::read(&out).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("word/document.xml").unwrap(), &mut xml)
+        .unwrap();
+    // A w:tbl inside a w:tc.
+    let outer = xml.find("<w:tbl>").unwrap();
+    let inner = xml[outer + 7..]
+        .find("<w:tbl>")
+        .map(|i| i + outer + 7)
+        .unwrap();
+    assert!(xml[outer..inner].contains("<w:tc>"), "nested");
+    assert!(xml[inner..].contains(">In B2<"));
+}
+
+/// hdrfloat.doc: a floating picture in the header comes in, in the
+/// header, its picture in the header's own relationships.
+#[test]
+fn header_floating_objects_come_in() {
+    let doc = open("hdrfloat.doc");
+    assert!(
+        !doc.import_notes().iter().any(|n| n.contains("header")),
+        "{:?}",
+        doc.import_notes()
+    );
+    let st = doc
+        .stories()
+        .iter()
+        .find(|s| {
+            s.kind == HfKind::Header
+                && s.doc
+                    .paragraphs()
+                    .iter()
+                    .any(|p| p.text.contains("Header text"))
+        })
+        .expect("the header");
+    let floats: Vec<_> = st
+        .doc
+        .paragraphs()
+        .iter()
+        .flat_map(|p| p.objects())
+        .filter_map(|(_, o)| match o {
+            Object::Float(f) => Some(f.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(floats.len(), 1, "the logo");
+    let docs_engine::FloatKind::Picture { rel_id, .. } = &floats[0].kind else {
+        panic!("{:?}", floats[0].kind);
+    };
+    assert!(st.doc.image_bytes(rel_id).is_some(), "its picture");
+    let mut doc = doc;
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("hdrfloat.docx");
+    doc.save_as(&out).unwrap();
+    let again = Document::open(&out).unwrap();
+    assert!(again.stories().iter().any(|s| {
+        s.doc
+            .paragraphs()
+            .iter()
+            .any(|p| p.objects().any(|(_, o)| matches!(o, Object::Float(_))))
+    }));
 }
