@@ -618,6 +618,21 @@ pub(crate) enum PlotKind {
         first_angle: u16,
     },
     Scatter,
+    /// Bubbles: a scatter chart with sizes.
+    Bubble,
+    /// `filled`: the area under each series filled (`RADARAREA`).
+    Radar {
+        filled: bool,
+    },
+    /// A 3-D surface (`SURF`), shown in Kantor as its contour view.
+    Surface,
+    /// Pie of pie or bar of pie (`BOPPOP`).
+    OfPie {
+        bar: bool,
+    },
+    /// High-low-close (or open-high-low-close) series (`.ods` stock
+    /// charts).
+    Stock,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -632,6 +647,10 @@ pub(crate) struct Series {
     pub no_line: bool,
     pub no_marker: bool,
     pub labels: Option<Labels>,
+    /// Points with their own fill (`DATAFORMAT` with a point index).
+    pub points: Vec<(u16, u32)>,
+    /// A bubble chart's sizes: a reference.
+    pub bubbles: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -651,6 +670,8 @@ struct RawSeries {
     /// Its formatting applies to the whole series (`DATAFORMAT` `xi`
     /// 0xFFFF).
     whole: bool,
+    /// Or to this point.
+    point: Option<u16>,
 }
 
 /// A `TEXT` block while its records are read.
@@ -849,6 +870,7 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                         }
                         1 => s.values = f,
                         2 => s.s.cats = f,
+                        3 => s.s.bubbles = f,
                         _ => {}
                     }
                 }
@@ -928,10 +950,28 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
             }
             DATAFORMAT if top == Some(SERIES) => {
                 if let Some(s) = series.last_mut() {
-                    s.whole = b.u16() == Some(0xFFFF);
+                    let xi = b.u16();
+                    s.whole = xi == Some(0xFFFF);
+                    s.point = xi.filter(|&x| x != 0xFFFF);
                 }
             }
             // AREAFORMAT, LINEFORMAT, MARKERFORMAT of a series.
+            // A point's own fill.
+            0x100A
+                if top == Some(DATAFORMAT)
+                    && in_series
+                    && series.last().is_some_and(|s| s.point.is_some()) =>
+            {
+                let r = (|| Some((rgb(&mut b)?, b.skip(4)?, b.u16()?, b.u16()?)))();
+                if let (Some(s), Some((fore, _, fls, flags))) = (series.last_mut(), r)
+                    && flags & 1 == 0
+                    && fls == 1
+                    && let Some(i) = s.point
+                    && s.s.points.len() < 4096
+                {
+                    s.s.points.push((i, fore));
+                }
+            }
             0x100A | 0x1007 | 0x1009 if top == Some(DATAFORMAT) && in_series => {
                 let Some(s) = series.last_mut().filter(|s| s.whole) else {
                     continue;
@@ -1014,8 +1054,17 @@ pub(crate) fn parse_chart(recs: &[(u16, Vec<u8>)], ctx: &Context) -> Result<Char
                     })(),
                     0x101B => {
                         let bubbles = b.skip(4).and_then(|_| b.u16()).is_some_and(|f| f & 1 != 0);
-                        (!bubbles).then_some(PlotKind::Scatter)
+                        Some(if bubbles {
+                            PlotKind::Bubble
+                        } else {
+                            PlotKind::Scatter
+                        })
                     }
+                    0x103E => Some(PlotKind::Radar { filled: false }),
+                    0x1040 => Some(PlotKind::Radar { filled: true }),
+                    0x103F => Some(PlotKind::Surface),
+                    // BOPPOP: pst 1 pie of pie, 2 bar of pie.
+                    0x1061 => b.u8().map(|pst| PlotKind::OfPie { bar: pst == 2 }),
                     _ => None,
                 };
             }
@@ -1147,10 +1196,14 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
     let mut horizontal = false;
     let mut scatter = false;
     let mut pie = false;
+    let mut surface = false;
     for p in &chart.plots {
         let mut sers = String::new();
-        let is_pie = matches!(p.kind, PlotKind::Pie { .. });
-        let lines = matches!(p.kind, PlotKind::Line { .. } | PlotKind::Scatter);
+        let is_pie = matches!(p.kind, PlotKind::Pie { .. } | PlotKind::OfPie { .. });
+        let lines = matches!(
+            p.kind,
+            PlotKind::Line { .. } | PlotKind::Scatter | PlotKind::Radar { filled: false }
+        );
         for s in &p.series {
             sers.push_str(&format!(
                 "<c:ser><c:idx val=\"{idx}\"/><c:order val=\"{idx}\"/>"
@@ -1163,7 +1216,7 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                 Some(Text::Ref(f)) => sers.push_str(&format!("<c:tx>{}</c:tx>", str_ref(f, data))),
                 None => {}
             }
-            let line = if s.no_line {
+            let line = if s.no_line || p.kind == PlotKind::Stock {
                 Some("<a:ln w=\"28575\"><a:noFill/></a:ln>".to_owned())
             } else {
                 s.line.filter(|_| lines).map(|c| {
@@ -1192,16 +1245,40 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                 .filter(|l| l.value || l.percent || l.category || l.series)
                 .map(|l| dlbls(&l, p.kind))
                 .unwrap_or_default();
+            // Points with their own colour come before the labels.
+            let mut dpts = String::new();
+            for (i, c) in &s.points {
+                dpts.push_str(&format!("<c:dPt><c:idx val=\"{i}\"/>"));
+                match p.kind {
+                    PlotKind::Bar { .. } => dpts.push_str("<c:invertIfNegative val=\"0\"/>"),
+                    PlotKind::Bubble => dpts.push_str("<c:bubble3D val=\"0\"/>"),
+                    _ => {}
+                }
+                dpts.push_str(&format!("<c:spPr>{}</c:spPr></c:dPt>", solid(*c)));
+            }
+            let dlbls = format!("{dpts}{dlbls}");
             match p.kind {
-                PlotKind::Scatter => {
+                PlotKind::Scatter | PlotKind::Bubble => {
+                    if p.kind == PlotKind::Bubble {
+                        sers.push_str("<c:invertIfNegative val=\"0\"/>");
+                    }
                     sers.push_str(&dlbls);
                     if let Some(x) = &s.cats {
                         sers.push_str(&format!("<c:xVal>{}</c:xVal>", num_ref(x, data)));
                     }
-                    sers.push_str(&format!(
-                        "<c:yVal>{}</c:yVal><c:smooth val=\"0\"/>",
-                        num_ref(&s.values, data)
-                    ));
+                    sers.push_str(&format!("<c:yVal>{}</c:yVal>", num_ref(&s.values, data)));
+                    if p.kind == PlotKind::Bubble {
+                        // Without sizes every bubble is the same.
+                        let size = match &s.bubbles {
+                            Some(b) => num_ref(b, data),
+                            None => num_ref(&s.values, data),
+                        };
+                        sers.push_str(&format!(
+                            "<c:bubbleSize>{size}</c:bubbleSize><c:bubble3D val=\"0\"/>"
+                        ));
+                    } else {
+                        sers.push_str("<c:smooth val=\"0\"/>");
+                    }
                 }
                 _ => {
                     if matches!(p.kind, PlotKind::Bar { .. }) {
@@ -1273,6 +1350,39 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
                     "<c:scatterChart><c:scatterStyle val=\"lineMarker\"/><c:varyColors val=\"{varied}\"/>{sers}{axes_ids}</c:scatterChart>"
                 )
             }
+            PlotKind::Bubble => {
+                scatter = true;
+                format!(
+                    "<c:bubbleChart><c:varyColors val=\"{varied}\"/>{sers}<c:bubbleScale val=\"100\"/><c:showNegBubbles val=\"0\"/>{axes_ids}</c:bubbleChart>"
+                )
+            }
+            PlotKind::Radar { filled } => {
+                let style = if filled { "filled" } else { "marker" };
+                format!(
+                    "<c:radarChart><c:radarStyle val=\"{style}\"/><c:varyColors val=\"{varied}\"/>{sers}{axes_ids}</c:radarChart>"
+                )
+            }
+            PlotKind::Surface => {
+                surface = true;
+                format!(
+                    "<c:surfaceChart><c:wireframe val=\"0\"/>{sers}{axes_ids}<c:axId val=\"500000003\"/></c:surfaceChart>"
+                )
+            }
+            PlotKind::Stock => format!(
+                "<c:stockChart>{sers}<c:hiLowLines/>{}{axes_ids}</c:stockChart>",
+                if p.series.len() >= 4 {
+                    "<c:upDownBars><c:gapWidth val=\"150\"/><c:upBars/><c:downBars/></c:upDownBars>"
+                } else {
+                    ""
+                }
+            ),
+            PlotKind::OfPie { bar } => {
+                pie = true;
+                let ty = if bar { "bar" } else { "pie" };
+                format!(
+                    "<c:ofPieChart><c:ofPieType val=\"{ty}\"/><c:varyColors val=\"{varied}\"/>{sers}<c:gapWidth val=\"100\"/><c:secondPieSize val=\"75\"/><c:serLines/></c:ofPieChart>"
+                )
+            }
         });
     }
     let title = |t: &Option<String>| {
@@ -1312,7 +1422,13 @@ pub(crate) fn chart_xml(chart: &Chart, data: &dyn Fn(&str) -> Option<RefData>) -
     } else {
         format!(
             "<c:catAx><c:axId val=\"500000001\"/>{cat_scaling}<c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/>{cat_grid}{cat_title}{tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>\
-<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/>{val_unit}</c:valAx>"
+<c:valAx><c:axId val=\"500000002\"/>{val_scaling}<c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/>{val_grid}{val_title}{tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/>{val_unit}</c:valAx>{}",
+            // A surface chart's series axis.
+            if surface {
+                "<c:serAx><c:axId val=\"500000003\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/><c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/><c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/></c:serAx>"
+            } else {
+                ""
+            }
         )
     };
     let title = match &chart.title {
@@ -1367,6 +1483,11 @@ fn dlbls(l: &Labels, kind: PlotKind) -> String {
             true,
         ),
         PlotKind::Scatter => ("scatterChart", false, false),
+        PlotKind::Bubble => ("bubbleChart", false, false),
+        PlotKind::Radar { .. } => ("radarChart", false, false),
+        PlotKind::Surface => ("surfaceChart", false, false),
+        PlotKind::OfPie { .. } => ("ofPieChart", false, true),
+        PlotKind::Stock => ("stockChart", false, false),
     };
     let ok = crate::chart_options::LabelPos::for_group(tag, stacked);
     let pos = l
@@ -1780,6 +1901,58 @@ mod tests {
         let mut f = vec![11, 0];
         f.extend(rgce);
         assert_eq!(chart_ref(&f, &ctx).as_deref(), Some("Data!$B$2:$B$5"));
+    }
+
+    /// A bubble chart with its sizes, and a point with its own fill.
+    #[test]
+    fn bubbles_and_point_colours() {
+        let sheets = ["Data".to_owned()];
+        let xti = [Some((0, 0))];
+        let ctx = Context {
+            base: (0, 0),
+            sheets: &sheets,
+            xti: &xti,
+            names: &[],
+        };
+        let u16s = |v: &[u16]| v.iter().flat_map(|x| x.to_le_bytes()).collect::<Vec<u8>>();
+        let ai = |id: u8, col: u8| {
+            let mut a = vec![id, 2, 0, 0, 0, 0, 11, 0];
+            a.extend([0x3B, 0, 0, 1, 0, 4, 0, col, 0xC0, col, 0xC0]);
+            a
+        };
+        // AREAFORMAT: fore 0xC00000, back, solid (fls 1), not automatic.
+        let mut area = vec![0xC0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0];
+        area.extend(u16s(&[1, 0, 0, 0]));
+        let mut cf = vec![0u8; 16];
+        cf.extend(u16s(&[0, 0]));
+        let recs: Vec<(u16, Vec<u8>)> = vec![
+            (0x1002, vec![0; 16]),
+            (BEGIN, vec![]),
+            (SERIES, vec![0; 12]),
+            (BEGIN, vec![]),
+            (0x1051, ai(1, 1)),
+            (0x1051, ai(2, 0)),
+            (0x1051, ai(3, 2)),
+            (DATAFORMAT, u16s(&[2, 0, 0, 0])),
+            (BEGIN, vec![]),
+            (0x100A, area),
+            (END, vec![]),
+            (END, vec![]),
+            (CHARTFORMAT, cf),
+            (BEGIN, vec![]),
+            (0x101B, u16s(&[100, 1, 1])),
+            (END, vec![]),
+            (END, vec![]),
+        ];
+        let chart = parse_chart(&recs, &ctx).unwrap();
+        assert_eq!(chart.plots[0].kind, PlotKind::Bubble);
+        let s = &chart.plots[0].series[0];
+        assert_eq!(s.bubbles.as_deref(), Some("Data!$C$2:$C$5"));
+        assert_eq!(s.points, [(2, 0xC00000)]);
+        let xml = chart_xml(&chart, &|_| None);
+        assert!(xml.contains("<c:bubbleChart>"), "{xml}");
+        assert!(xml.contains("<c:bubbleSize>"), "{xml}");
+        assert!(xml.contains("<c:dPt><c:idx val=\"2\"/><c:bubble3D val=\"0\"/><c:spPr><a:solidFill><a:srgbClr val=\"C00000\"/>"), "{xml}");
     }
 
     #[test]

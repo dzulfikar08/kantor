@@ -88,10 +88,8 @@ fn check_pictures(wb: &Workbook) {
 #[test]
 fn pictures_and_charts_are_imported() {
     let wb = Workbook::open(corpus("drawings.xls")).unwrap();
-    assert_eq!(
-        wb.import_notes(),
-        ["1 chart not imported (radar, surface, bubble, bar of pie or combination charts)"]
-    );
+    // The radar chart comes in too.
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
     assert_eq!(wb.sheet_names(), ["Data", "Charts"]);
     assert_eq!(wb.tabs(), [Tab::Sheet(0), Tab::Sheet(1), Tab::Chart(0)]);
     check_pictures(&wb);
@@ -135,6 +133,7 @@ fn pictures_and_charts_are_imported() {
         (ChartType::Pie, "Pie", "Pie"),
         (ChartType::Other, "Doughnut", "Doughnut"),
         (ChartType::Scatter, "Scatter", "Scatter"),
+        (ChartType::Other, "Radar", "Radar"),
     ];
     assert_eq!(kinds.len(), want.len(), "{kinds:?}");
     for (got, want) in kinds.iter().zip(want) {
@@ -210,7 +209,7 @@ fn imported_drawings_save_to_xlsx_and_reopen() {
     let info = back.chart_info(on_data[0].key).unwrap();
     assert_eq!(info.spec.title, "Sales by quarter");
     assert_eq!(info.spec.data, CellRange::from_corners((1, 0), (5, 2)));
-    assert_eq!(back.drawings(1).len(), 6);
+    assert_eq!(back.drawings(1).len(), 7);
     assert_eq!(back.chart_sheet_drawings(0).len(), 1);
 
     // Saved again: the same parts.
@@ -333,4 +332,23 @@ fn xls_shapes_and_text_boxes() {
         wb.import_notes(),
         ["1 shape, text box or control not imported"]
     );
+}
+
+/// The radar chart of drawings.xls and drawings.ods is brought in as a
+/// radar chart.
+#[test]
+fn radar_charts_are_imported() {
+    for name in ["drawings.xls", "drawings.ods"] {
+        let wb = Workbook::open(corpus(name)).unwrap();
+        let radar = (0..wb.sheet_names().len() as u32)
+            .flat_map(|s| wb.drawings(s))
+            .filter_map(|d| match &*d.kind {
+                DrawingKind::Chart { xml, .. } => Some(xml.to_string()),
+                _ => None,
+            })
+            .find(|x| x.contains("<c:radarChart>"));
+        let xml = radar.unwrap_or_else(|| panic!("{name}: no radar chart"));
+        assert!(xml.contains("<c:radarStyle "), "{xml}");
+        assert!(xml.matches("<c:ser>").count() == 2, "{xml}");
+    }
 }

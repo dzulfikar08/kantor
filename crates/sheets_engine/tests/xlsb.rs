@@ -42,7 +42,11 @@ fn xlsb_layout() {
     assert_eq!(merges.len(), 2, "{merges:?}");
     assert!(merges.contains(&CellRange::from_corners((0, 0), (0, 2))));
     // Column A wider than B, both wider than the default; D hidden.
-    let (a, b, c) = (wb.column_width(0, 0), wb.column_width(0, 1), wb.column_width(0, 2));
+    let (a, b, c) = (
+        wb.column_width(0, 0),
+        wb.column_width(0, 1),
+        wb.column_width(0, 2),
+    );
     assert!(a > b && b > c, "{a} {b} {c}");
     assert!(wb.is_column_hidden(0, 3));
     // Row 1 is 30 pt, taller than row 2.

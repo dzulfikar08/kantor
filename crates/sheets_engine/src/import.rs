@@ -114,7 +114,7 @@ impl std::fmt::Display for ImportNote {
             ),
             Self::ChartsSkipped(n) => write!(
                 f,
-                "{n} chart{} not imported (radar, surface, bubble, bar of pie or combination charts)",
+                "{n} chart{} not imported (combination or other types Kantor doesn't draw)",
                 s(n)
             ),
             Self::ChartsShownFlat(n) => write!(f, "{n} 3-D chart{} shown flat", s(n)),

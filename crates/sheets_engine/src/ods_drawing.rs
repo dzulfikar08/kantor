@@ -1409,6 +1409,10 @@ fn read_chart(
                 first_angle,
             },
             "scatter" => PlotKind::Scatter,
+            "bubble" => PlotKind::Bubble,
+            "radar" => PlotKind::Radar { filled: false },
+            "filled-radar" => PlotKind::Radar { filled: true },
+            "stock" => PlotKind::Stock,
             _ => return Err(Unsupported),
         })
     };
@@ -1428,12 +1432,26 @@ fn read_chart(
         } else {
             kind_of(sclass)?
         };
-        let Some(values) = s
+        let Some(mut values) = s
             .attribute((NS_CHART, "values-cell-range-address"))
             .and_then(|r| excel_ref(r, rename))
         else {
             continue;
         };
+        // Bubbles: the values are the sizes; the first domain holds the y
+        // values, the second the x values.
+        let domains: Vec<String> = s
+            .children()
+            .filter(|c| c.has_tag_name((NS_CHART, "domain")))
+            .filter_map(|d| d.attribute((NS_TABLE, "cell-range-address")))
+            .filter_map(|r| excel_ref(r, rename))
+            .collect();
+        let mut bubbles = None;
+        if kind == PlotKind::Bubble
+            && let Some(y) = domains.first()
+        {
+            bubbles = Some(std::mem::replace(&mut values, y.clone()));
+        }
         let name = s
             .attribute((NS_CHART, "label-cell-address"))
             .and_then(|r| excel_ref(r, rename))
@@ -1449,7 +1467,9 @@ fn read_chart(
                 })
             });
         let style = s.attribute((NS_CHART, "style-name"));
-        let scats = if matches!(kind, PlotKind::Scatter) {
+        let scats = if kind == PlotKind::Bubble {
+            domains.get(1).cloned().or_else(|| cats.clone())
+        } else if matches!(kind, PlotKind::Scatter) {
             ch(s, "domain")
                 .and_then(|d| d.attribute((NS_TABLE, "cell-range-address")))
                 .and_then(|r| excel_ref(r, rename))
@@ -1490,6 +1510,8 @@ fn read_chart(
                 == Some("none"),
             labels: (labels.value || labels.percent || labels.category || labels.series)
                 .then_some(labels),
+            points: Vec::new(),
+            bubbles,
         };
         match plots.iter_mut().find(|p| p.kind == kind) {
             Some(p) => p.series.push(series),

@@ -91,11 +91,17 @@ fn color(b: &[u8], o: usize, theme: &[u32]) -> Option<u32> {
             8..=63 => DEFAULT_PALETTE[index as usize - 8],
             _ => return None,
         },
-        2 => (u8_at(b, o + 4) as u32) << 16 | (u8_at(b, o + 5) as u32) << 8 | u8_at(b, o + 6) as u32,
+        2 => {
+            (u8_at(b, o + 4) as u32) << 16 | (u8_at(b, o + 5) as u32) << 8 | u8_at(b, o + 6) as u32
+        }
         3 => *theme.get(index as usize)?,
         _ => return None,
     };
-    Some(if tint.abs() > 1e-6 { tinted(rgb, tint) } else { rgb })
+    Some(if tint.abs() > 1e-6 {
+        tinted(rgb, tint)
+    } else {
+        rgb
+    })
 }
 
 /// Excel's tint: the colour's HLS lightness moved towards black or white.
@@ -111,7 +117,11 @@ fn tinted(rgb: u32, tint: f64) -> u32 {
         (0.0, 0.0)
     } else {
         let d = max - min;
-        let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+        let s = if l > 0.5 {
+            d / (2.0 - max - min)
+        } else {
+            d / (max + min)
+        };
         let h = if max == r {
             (g - b) / d + if g < b { 6.0 } else { 0.0 }
         } else if max == g {
@@ -121,7 +131,11 @@ fn tinted(rgb: u32, tint: f64) -> u32 {
         };
         (h / 6.0, s)
     };
-    let l = if tint < 0.0 { l * (1.0 + tint) } else { l * (1.0 - tint) + tint };
+    let l = if tint < 0.0 {
+        l * (1.0 + tint)
+    } else {
+        l * (1.0 - tint) + tint
+    };
     let hue = |p: f64, q: f64, t: f64| {
         let t = t.rem_euclid(1.0);
         if t < 1.0 / 6.0 {
@@ -137,9 +151,17 @@ fn tinted(rgb: u32, tint: f64) -> u32 {
     let (r, g, b) = if s == 0.0 {
         (l, l, l)
     } else {
-        let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+        let q = if l < 0.5 {
+            l * (1.0 + s)
+        } else {
+            l + s - l * s
+        };
         let p = 2.0 * l - q;
-        (hue(p, q, h + 1.0 / 3.0), hue(p, q, h), hue(p, q, h - 1.0 / 3.0))
+        (
+            hue(p, q, h + 1.0 / 3.0),
+            hue(p, q, h),
+            hue(p, q, h - 1.0 / 3.0),
+        )
     };
     let c = |v: f64| ((v * 255.0).round().clamp(0.0, 255.0)) as u32;
     c(r) << 16 | c(g) << 8 | c(b)
@@ -149,8 +171,8 @@ fn tinted(rgb: u32, tint: f64) -> u32 {
 /// accents, links); Office's defaults when the part is missing.
 fn theme_colors(xml: Option<&str>) -> Vec<u32> {
     let mut out = vec![
-        0xFFFFFF, 0x000000, 0xE7E6E6, 0x44546A, 0x4472C4, 0xED7D31, 0xA5A5A5, 0xFFC000,
-        0x5B9BD5, 0x70AD47, 0x0563C1, 0x954F72,
+        0xFFFFFF, 0x000000, 0xE7E6E6, 0x44546A, 0x4472C4, 0xED7D31, 0xA5A5A5, 0xFFC000, 0x5B9BD5,
+        0x70AD47, 0x0563C1, 0x954F72,
     ];
     let Some(doc) = xml.and_then(|x| roxmltree::Document::parse(x).ok()) else {
         return out;
@@ -333,7 +355,11 @@ impl Styles {
             alignment: (alignment != Alignment::default()).then_some(alignment),
             num_fmt: ironcalc_base::number_format::get_num_fmt(xf.fmt as i32, &self.formats),
             fill: Fill {
-                color: self.fills.get(xf.fill as usize).cloned().unwrap_or(Color::None),
+                color: self
+                    .fills
+                    .get(xf.fill as usize)
+                    .cloned()
+                    .unwrap_or(Color::None),
             },
             font: self
                 .fonts
@@ -341,7 +367,11 @@ impl Styles {
                 .or(self.fonts.first())
                 .cloned()
                 .unwrap_or_default(),
-            border: self.borders.get(xf.border as usize).cloned().unwrap_or_default(),
+            border: self
+                .borders
+                .get(xf.border as usize)
+                .cloned()
+                .unwrap_or_default(),
             quote_prefix: f & 0x8000 != 0,
             protection: (!locked || hidden).then_some(CellProtection { locked, hidden }),
         }
@@ -388,7 +418,11 @@ fn sheet_parts(zip: &mut zip::ZipArchive<std::fs::File>) -> Vec<(String, String)
         for r in doc.descendants().filter(|n| n.has_tag_name("Relationship")) {
             if let (Some(id), Some(t)) = (r.attribute("Id"), r.attribute("Target")) {
                 let t = t.trim_start_matches('/');
-                let t = if t.starts_with("xl/") { t.to_owned() } else { format!("xl/{t}") };
+                let t = if t.starts_with("xl/") {
+                    t.to_owned()
+                } else {
+                    format!("xl/{t}")
+                };
                 targets.insert(id.to_owned(), t);
             }
         }
@@ -534,7 +568,10 @@ fn apply_sheet(bin: &[u8], sheet: u32, model: &mut Model<'_>, styles: &mut Style
         }
     }
     for c in &mut cols {
-        c.style = c.style.map(|ix| styles.get(model, ix as u32)).filter(|&s| s != 0);
+        c.style = c
+            .style
+            .map(|ix| styles.get(model, ix as u32))
+            .filter(|&s| s != 0);
     }
     for r in &mut rows {
         if r.s != 0 {
