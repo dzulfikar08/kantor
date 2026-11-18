@@ -864,10 +864,14 @@ fn same_result(
         Data::DateTime(dt) => number(date_serial(dt, date1904)),
         Data::DateTimeIso(iso) => number(iso_datetime_to_serial(iso)?),
         Data::DurationIso(iso) => number(iso_duration_to_days(iso)?),
-        Data::Error(_) => matches!(
-            model.get_cell_type(sheet, row, col),
-            Ok(CellType::ErrorValue)
-        ),
+        // The same error: `=SUM(_On2)` over a name Kantor left out is #NAME?
+        // where the file has #REF!.
+        Data::Error(e) => {
+            matches!(
+                model.get_cell_type(sheet, row, col),
+                Ok(CellType::ErrorValue)
+            ) && matches!(&value, CellValue::String(v) if *v == e.to_string())
+        }
     })
 }
 
@@ -1218,6 +1222,20 @@ fn quote_sheet(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cached_error_must_be_the_same_error() {
+        // 30978-deleted.xls: `=SUM(On2)` over a name whose sheet was deleted
+        // is #REF! in the file; Kantor leaves the name out and gets #NAME?.
+        let mut model = empty_model_for_tests();
+        model
+            .set_user_input(0, 1, 1, "=SUM(_On2)".to_owned())
+            .unwrap();
+        model.evaluate();
+        let check = |e| same_result(&model, 0, 1, 1, &Data::Error(e), false);
+        assert_eq!(check(calamine::CellErrorType::Name), Some(true));
+        assert_eq!(check(calamine::CellErrorType::Ref), Some(false));
+    }
 
     #[test]
     fn open_formula_references() {

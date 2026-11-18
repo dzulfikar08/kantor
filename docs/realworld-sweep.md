@@ -4,7 +4,7 @@
 Kantor's engines, with the saved files checked by Microsoft's Open XML SDK.
 First run: 2026-11-15; second, third and fourth runs on main: 2026-11-16;
 fifth run, before v0.11.0, and sixth, before v0.12.0: 2026-11-17;
-seventh, before v0.13.0: 2026-11-18.
+seventh, before v0.13.0, and eighth, before v0.14.0: 2026-11-18.
 
 ## What was swept
 
@@ -460,6 +460,79 @@ Results: `~/.cache/realworld-out/pre0130-2026-11-18/` (a second sweep with
 a clean rebuild of the probe, identical apart from one timing flag:
 `pre0130-2026-11-18-b/`).
 
+## Eighth run, before v0.14.0 (2026-11-18)
+
+Rerun of all 424 files on main at `f7d65e9` (after Sheets' grid in Excel's
+pixel sizes, styled columns written with the default width, `.xlsb` Excel
+2010 conditional formats and average rules, `.ods` array formulas and more
+`.xls` names imported as formulas, Docs exact line spacing with a new
+baseline, the column ruler, notes and spacing at column tops, pictures cut
+to their shapes, sparklines drawn on screen and in PDFs, plain cells drawn
+per row in Sheets, gpui-kit menus shielding hover, and Circular Picture
+Callout had merged), release build, compared file by file with the seventh
+run.
+
+| | seventh run | main, `f7d65e9` |
+|---|---:|---:|
+| crash, panic or timeout | 0 | 0 |
+| refused to open | 6 | 6 |
+| saved file Office would repair | 0 | 0 |
+| content changed by a save | 0 | 0 |
+| page count changed by a save (Docs, Slides) | 0 of 199 | 0 of 199 |
+| ok | 418 | 418 |
+| slowest file | 4.6 s | 4.0 s |
+| all files' probe time added up | 78 s | 66 s |
+
+What changed:
+
+- **Formulas.** LibreOffice's tdf112780.ods keeps its 33 matrix formulas
+  (CSE array formulas now; the other cells of their areas are results, not inputs,
+  so the file counts 1,039 cells instead of 1,196) and POI's 49612.xls its 2
+  formulas that name a local name through `PtgNameX`; both "kept as values"
+  notes are gone. Every cached value in the 21 `.ods` files was compared with
+  Kantor's (numbers, booleans, formula results): none differ. The 4,623
+  `.xls` formulas xlrd reads still match the files' results, after one fix
+  (below).
+- **Printed pages and sizes.** Every workbook prints the same number of
+  pages as in the seventh run (12,112 in all), and every Docs and Slides
+  file too, including the files with exact line spacing (the new baseline
+  moves text inside its line only). Column widths, row heights and
+  `sheetFormatPr` saved from all 220 workbooks that open are identical to
+  what v0.13.0 saved (both probes run on every file).
+- **Timing**, against a probe built from the `v0.13.0` tag (min of 5–15
+  interleaved runs): the 12 slowest files, the sparkline workbook (its PDF
+  now draws the sparklines: 65 → 66 ms), the decks with shaped pictures or
+  picture fills, and the documents with the most exact-spaced lines took the
+  same time (0.96–1.03×).
+
+**Fixed:** POI's 30978-deleted.xls has `=SUM(On2)` where `On2` names cells on
+a deleted sheet; the file's result is #REF!. Since `On2` is a cell in
+today's grid, the name now gets Excel's underscore and the formula came in as
+`=SUM(_On2)`, but IronCalc doesn't take a name that is `#REF!`, so the
+formula showed #NAME?. The import check took any error for the file's error;
+a formula's error must now be the same one as the file's, else the cached
+value is kept (as in v0.13: #REF!, "1 formula kept as values"). Test:
+sheets_engine `import::tests::a_cached_error_must_be_the_same_error`. The
+sweep's other files gave the same results with the stricter check.
+
+The Office validation scenarios (`tools/fidelity/office_check.py`): 214
+saved files, 0 new Open XML SDK errors, all converted to PDF by LibreOffice.
+Five scenarios were added for markup v0.14 writes:
+`sheets_columns_resized.xlsx` (column widths set as a header drag and as an
+autofit leaves them, in odd pixels, and row heights; reopened at the same
+pixels, saved twice), `sheets_styled_column.xlsx` (a column with a style of
+its own and no width, in a sheet naming its default width: written with
+that width and `customWidth="0"`, the same width after two saves),
+`sheets_sparklines_saved.xlsx` (the sparkline fixture edited and saved
+twice), `columns_ruler_drag.docx` (the space between two columns dragged on
+the ruler, equal and then unequal columns, saved twice) and
+`circular_picture_callout.pptx` (a SmartArt changed to Circular Picture
+Callout and given an item, saved twice).
+
+Results: `~/.cache/realworld-out/pre0140-2026-11-18/` (the run on main;
+`fixed/` the rerun with the fix, `office-check/`, `ab1.txt`, `widths.txt`,
+and the helper scripts in `tools/`: `odsvals.py`, `widths.py`, `ab.py`).
+
 ## Left
 
 Refused (6):
@@ -469,8 +542,11 @@ Refused (6):
 - 1 `.xlsb` that calamine can't read (an error, not a crash).
 
 Import notes left (content Kantor doesn't bring in): formulas kept as their
-values in 5 `.xls`/`.ods` files (53 formulas; the 11 3-D formulas of POI's
-55906-MultiSheetRefs.xls come in as formulas since v0.13), 2 controls in SimpleWithAutofilter.xls, the
+values in 3 `.xls`/`.ods` files (18 formulas: 8 in tdf170565_empty_functions.ods,
+9 in ex45046-21984.xls, and 30978-deleted.xls's name on a deleted sheet,
+which IronCalc can't hold as `#REF!`; tdf112780.ods's matrix formulas and
+49612.xls's come in as formulas since v0.14, the 11 3-D formulas of POI's
+55906-MultiSheetRefs.xls since v0.13), 2 controls in SimpleWithAutofilter.xls, the
 formatting of one damaged `.xls` (cfb_dir_short_chunk_panic), and 13 `.ods`
 sheet names Excel doesn't allow (renamed). The `.ods` polygon of tdf137216
 imports since v0.12.
