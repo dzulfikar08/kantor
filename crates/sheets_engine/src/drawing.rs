@@ -254,14 +254,16 @@ pub enum DrawingKind {
         current_refs: bool,
     },
     /// A picture: its media part, bytes and cropping (left, top, right,
-    /// bottom as fractions of the picture; negative = padding), and the
+    /// bottom as fractions of the picture; negative = padding), the
     /// shape it's cut to: its `a:prstGeom` (other than a rectangle) or
-    /// `a:custGeom` as XML that parses on its own.
+    /// `a:custGeom` as XML that parses on its own, and its outline: its
+    /// `a:ln`, the same way (drawn along the shape).
     Picture {
         part: Arc<str>,
         data: Arc<Vec<u8>>,
         crop: [f32; 4],
         shape: Option<Arc<str>>,
+        outline: Option<Arc<str>>,
     },
     /// A shape, text box, connector or group: its element's XML, which
     /// declares the namespaces it uses (it parses on its own), and the
@@ -656,6 +658,17 @@ fn picture_shape(pic: Node) -> Option<Arc<str>> {
     Some(standalone(src, &in_scope(geom)).into())
 }
 
+/// A picture's outline: its `xdr:spPr`'s `a:ln` as XML that parses on its
+/// own; `None` without one, or when it draws nothing (`a:noFill`).
+fn picture_outline(pic: Node) -> Option<Arc<str>> {
+    let ln = child(child(pic, NS_XDR, "spPr")?, NS_A, "ln")?;
+    if child(ln, NS_A, "noFill").is_some() {
+        return None;
+    }
+    let src = &pic.document().input_text()[ln.range()];
+    Some(standalone(src, &in_scope(ln)).into())
+}
+
 /// `a:srcRect` as fractions (it's in 1/1000 of a percent).
 fn crop(blip_fill: Node) -> [f32; 4] {
     let Some(r) = child(blip_fill, NS_A, "srcRect") else {
@@ -719,6 +732,7 @@ fn kind(
                     crop: crop(fill),
                     part: part.into(),
                     shape: picture_shape(obj),
+                    outline: picture_outline(obj),
                 },
                 None => other(),
             }

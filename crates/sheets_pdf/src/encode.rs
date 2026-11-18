@@ -451,14 +451,30 @@ fn overlay_items(
             data,
             crop,
             shape,
-        } => Arc::new(sheets_scene::picture_items(
-            part,
-            data,
-            *crop,
-            shape.as_deref(),
-            w,
-            h,
-        )),
+            outline,
+            theme,
+        } => {
+            let mut items = sheets_scene::picture_items(part, data, *crop, shape.as_deref(), w, h);
+            if let Some(outline) = outline {
+                let engine = engine.get_or_insert_with(|| {
+                    docs_layout::Engine::with_fonts(shaper.font_context().clone())
+                });
+                let look = sheets_scene::ChartTheme::new(theme.as_deref());
+                let xml = sheets_scene::picture_outline_xml(shape.as_deref(), outline);
+                items.extend(sheets_scene::shape_items_on(
+                    &slides_scene::Builder::new(),
+                    engine,
+                    &look,
+                    &xml,
+                    &Default::default(),
+                    &[],
+                    w,
+                    h,
+                    None,
+                ));
+            }
+            Arc::new(items)
+        }
         OverlayKind::Chart {
             key,
             hash,

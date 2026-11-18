@@ -394,6 +394,10 @@ pub(crate) struct PictureSave {
     pub ext: String,
     pub crop: [f32; 4],
     pub descr: String,
+    /// Its `a:prstGeom` / `a:custGeom` (`None`: a rectangle) and `a:ln`,
+    /// each XML that parses on its own.
+    pub shape: Option<std::sync::Arc<str>>,
+    pub outline: Option<std::sync::Arc<str>>,
 }
 
 /// The content type of a picture part with extension `ext`.
@@ -6312,8 +6316,13 @@ fn object_anchor(p: &str, c: &ChartSave, id: u32, rid: &str, shape: Option<&str>
         } else {
             format!(" descr=\"{}\"", esc_attr(&pic.descr))
         };
+        let geom = pic
+            .shape
+            .as_deref()
+            .unwrap_or("<a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>");
+        let outline = pic.outline.as_deref().unwrap_or_default();
         return format!(
-            "{open}{pos}<{p}pic xmlns:a=\"{A}\"><{p}nvPicPr><{p}cNvPr id=\"{id}\" name=\"{name}\"{descr}/><{p}cNvPicPr><a:picLocks noChangeAspect=\"1\"/></{p}cNvPicPr></{p}nvPicPr><{p}blipFill><a:blip xmlns:r=\"{NS_R}\" r:embed=\"{rid}\"/>{src}<a:stretch><a:fillRect/></a:stretch></{p}blipFill><{p}spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></{p}spPr></{p}pic><{p}clientData/>{close}",
+            "{open}{pos}<{p}pic xmlns:a=\"{A}\"><{p}nvPicPr><{p}cNvPr id=\"{id}\" name=\"{name}\"{descr}/><{p}cNvPicPr><a:picLocks noChangeAspect=\"1\"/></{p}cNvPicPr></{p}nvPicPr><{p}blipFill><a:blip xmlns:r=\"{NS_R}\" r:embed=\"{rid}\"/>{src}<a:stretch><a:fillRect/></a:stretch></{p}blipFill><{p}spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"0\" cy=\"0\"/></a:xfrm>{geom}{outline}</{p}spPr></{p}pic><{p}clientData/>{close}",
             pos = c.anchor.position_xml(p),
             name = esc_attr(&c.name),
             rid = esc_attr(rid),

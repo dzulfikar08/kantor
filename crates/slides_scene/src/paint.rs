@@ -134,6 +134,29 @@ pub fn mix(fg: Rgba, bg: Rgba, bits: &[u8; 8]) -> Rgba {
     Rgba([m(0), m(1), m(2), m(3)])
 }
 
+/// A pattern's grid on screen, for [`pattern_cells`]: `cell` and `origin`
+/// (item px) as a view with `device` device px per item px shows them, the
+/// item's (0, 0) at `view_origin` (device px). The cell becomes a whole number `n` ≥ 1 of
+/// device px and the origin moves (by less than half a device px) onto a
+/// device pixel, so every cell edge falls on a device pixel: cells of
+/// fractional size would leave uneven one-pixel bands and faint seams where
+/// they meet. Returns `(n, origin, cell)`, item px.
+pub fn snap_pattern_grid(
+    origin: P,
+    cell: f32,
+    view_origin: (f32, f32),
+    device: f32,
+) -> (u32, P, f32) {
+    let device = device.max(1e-4);
+    let n = (cell * device).round().max(1.0);
+    let snap = |o: f32, v: f32| ((v + o * device).round() - v) / device;
+    (
+        n as u32,
+        p(snap(origin.x, view_origin.0), snap(origin.y, view_origin.1)),
+        n / device,
+    )
+}
+
 /// Most rectangles a pattern is drawn with on screen (beyond that, its
 /// mixed colour).
 pub const PATTERN_CELLS: usize = 60_000;

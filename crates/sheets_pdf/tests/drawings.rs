@@ -423,3 +423,30 @@ fn patterns_and_grouped_charts_print() {
     let text = texts(&doc).join(" ");
     assert!(text.matches("North").count() >= 2, "{text}");
 }
+
+/// Pictures cut to a shape print their outline along it: the oval's dark
+/// red, the rounded one's theme accent 1, the frame's grey; pictures
+/// without one print none.
+#[test]
+fn shaped_pictures_print_their_outline() {
+    let mut book = open("xlsx/28_shaped_pictures.xlsx");
+    let opts = only(&book, "Pictures");
+    let doc = export(&mut book, &opts);
+    let mut content = String::new();
+    for obj in doc.objects.values() {
+        if let Ok(s) = obj.as_stream() {
+            let bytes = s
+                .decompressed_content()
+                .unwrap_or_else(|_| s.content.clone());
+            content.push_str(&String::from_utf8_lossy(&bytes));
+        }
+    }
+    // #C00000, #4472C4, #404040 as stroke colours, once each.
+    for rg in [
+        "0.7529412 0 0 RG",
+        "0.26666668 0.44705883 0.76862746 RG",
+        "0.2509804 0.2509804 0.2509804 RG",
+    ] {
+        assert_eq!(content.matches(rg).count(), 1, "{rg} in {content}");
+    }
+}

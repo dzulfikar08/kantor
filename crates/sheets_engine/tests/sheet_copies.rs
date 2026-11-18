@@ -336,3 +336,134 @@ fn chart_sheet_zoom_saves() {
     back.save_as(&path2).unwrap();
     assert_eq!(Workbook::open(&path2).unwrap().chart_sheet_zoom(k), fit);
 }
+
+/// Each picture on `sheet` by name: (geometry XML, outline XML), so a
+/// test can say which shape and outline it has.
+fn picture_looks(wb: &Workbook, sheet: u32) -> BTreeMap<String, (String, String)> {
+    wb.drawings(sheet)
+        .into_iter()
+        .filter_map(|d| match &*d.kind {
+            DrawingKind::Picture { shape, outline, .. } => Some((
+                d.name.clone(),
+                (
+                    shape.as_deref().unwrap_or("rect").to_owned(),
+                    outline.as_deref().unwrap_or("none").to_owned(),
+                ),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// What a picture's look says, without namespace declarations: its preset
+/// and outline colour (or "none").
+fn summary(looks: &BTreeMap<String, (String, String)>) -> BTreeMap<String, String> {
+    let attr = |xml: &str, key: &str| {
+        xml.split(key)
+            .nth(1)
+            .and_then(|r| r.split('"').nth(1))
+            .unwrap_or("-")
+            .to_owned()
+    };
+    looks
+        .iter()
+        .map(|(name, (shape, outline))| {
+            let prst = if shape == "rect" {
+                "rect".to_owned()
+            } else {
+                attr(shape, "prst=")
+            };
+            let line = if outline == "none" {
+                "none".to_owned()
+            } else {
+                format!(
+                    "{} {} {}",
+                    attr(outline, " w="),
+                    attr(outline, "val="),
+                    outline.contains("prstDash")
+                )
+            };
+            (name.clone(), format!("{prst} / {line}"))
+        })
+        .collect()
+}
+
+/// Pictures cut to a shape keep their shape and outline through Move or
+/// Copy, its save and reopening, and a copy of the copy.
+#[test]
+fn copied_pictures_keep_their_shape_and_outline() {
+    let mut wb = Workbook::open(corpus("28_shaped_pictures.xlsx")).unwrap();
+    let src = sheet(&wb, "Pictures");
+    let want = summary(&picture_looks(&wb, src));
+    let expect: BTreeMap<String, String> = [
+        ("Oval photo", "ellipse / 38100 C00000 false"),
+        ("Rounded photo", "roundRect / 25400 accent1 true"),
+        ("Star photo", "star5 / none"),
+        ("Framed photo", "rect / 50800 404040 false"),
+        ("No line", "ellipse / none"),
+    ]
+    .into_iter()
+    .map(|(a, b)| (a.to_owned(), b.to_owned()))
+    .collect();
+    assert_eq!(want, expect);
+
+    let copy = wb.copy_sheet(src, 1).unwrap();
+    assert_eq!(summary(&picture_looks(&wb, copy)), want);
+    // The copies' parts end in their extension, which says how the screen
+    // decodes them.
+    for d in wb.drawings(copy) {
+        let DrawingKind::Picture { part, .. } = &*d.kind else {
+            continue;
+        };
+        assert!(part.ends_with(".png"), "{part}");
+    }
+
+    let path = scratch("shaped.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(wb.save_notes().is_empty(), "{:?}", wb.save_notes());
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    // The copy's drawing part says so in Excel's terms.
+    let p = parts(&path);
+    let drawings: Vec<&String> = p
+        .iter()
+        .filter(|(n, _)| n.starts_with("xl/drawings/drawing") && n.ends_with(".xml"))
+        .map(|(_, x)| x)
+        .collect();
+    assert_eq!(drawings.len(), 2, "{:?}", p.keys().collect::<Vec<_>>());
+    for x in &drawings {
+        assert!(
+            x.contains("prst=\"star5\"") && x.contains("val=\"C00000\""),
+            "{x}"
+        );
+        roxmltree::Document::parse(x).expect("well-formed drawing");
+    }
+
+    let back = Workbook::open(&path).unwrap();
+    let bc = sheet(&back, "Pictures (2)");
+    assert_eq!(summary(&picture_looks(&back, bc)), want);
+    assert_eq!(
+        summary(&picture_looks(&back, sheet(&back, "Pictures"))),
+        want
+    );
+
+    // A copy of the copy (pictures made in Kantor) keeps them too, saved
+    // again.
+    let again = wb.copy_sheet(copy, 2).unwrap();
+    assert_eq!(summary(&picture_looks(&wb, again)), want);
+    wb.save_as(&path).unwrap();
+    let back = Workbook::open(&path).unwrap();
+    let names = back.sheet_names();
+    assert_eq!(names.len(), 4, "{names:?}");
+    for (i, _) in names
+        .iter()
+        .enumerate()
+        .filter(|(_, n)| n.starts_with("Pictures"))
+    {
+        assert_eq!(
+            summary(&picture_looks(&back, i as u32)),
+            want,
+            "{}",
+            names[i]
+        );
+    }
+}

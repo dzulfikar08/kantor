@@ -437,6 +437,21 @@ pub fn picture_items(
     }]
 }
 
+/// A shape that draws a picture's outline: no fill, the picture's
+/// geometry (`shape`: an `a:prstGeom` / `a:custGeom`; `None`: a rectangle)
+/// and its `a:ln` (`outline`), each XML that parses on its own (see
+/// [`sheets_engine::drawing::DrawingKind::Picture`]). Drawn with
+/// [`shape_items`] over the picture, it follows the picture's shape as
+/// Excel draws it.
+pub fn picture_outline_xml(shape: Option<&str>, outline: &str) -> String {
+    const XDR: &str = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+    const A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+    let geom = shape.unwrap_or(r#"<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>"#);
+    format!(
+        r#"<xdr:sp xmlns:xdr="{XDR}" xmlns:a="{A}"><xdr:nvSpPr><xdr:cNvPr id="1" name="Picture outline"/><xdr:cNvSpPr/></xdr:nvSpPr><xdr:spPr>{geom}<a:noFill/>{outline}</xdr:spPr></xdr:sp>"#
+    )
+}
+
 /// Where an IMAGE formula's picture goes in its `w` × `h` cell (px), as
 /// `[x, y, w, h]` of the whole picture, centred: sizing 0 fits it keeping
 /// its aspect ratio, 1 fills the cell, 2 keeps the picture's own size, 3 is
@@ -684,8 +699,46 @@ impl DrawingScenes {
                 data,
                 crop,
                 shape,
+                outline,
             } => {
-                return Arc::new(picture_items(part, data, *crop, shape.as_deref(), w, h));
+                let Some(outline) = outline else {
+                    return Arc::new(picture_items(part, data, *crop, shape.as_deref(), w, h));
+                };
+                // Cached as a whole, so the screen keeps its prepared form.
+                let xml = picture_outline_xml(shape.as_deref(), outline);
+                let hash = {
+                    let mut s = DefaultHasher::new();
+                    xml.hash(&mut s);
+                    part.hash(&mut s);
+                    data.len().hash(&mut s);
+                    crop.map(f32::to_bits).hash(&mut s);
+                    s.finish()
+                };
+                let k = (d.key, q(w), q(h));
+                if let Some((h0, items)) = self.built.get(&k)
+                    && *h0 == hash
+                {
+                    return items.clone();
+                }
+                let theme = self.theme(book);
+                let mut items = picture_items(part, data, *crop, shape.as_deref(), w, h);
+                items.extend(shape_items_on(
+                    &self.shapes,
+                    engine,
+                    &theme,
+                    &xml,
+                    &ShapeMedia::default(),
+                    &[],
+                    w,
+                    h,
+                    None,
+                ));
+                let items = Arc::new(items);
+                if self.built.len() >= MAX_BUILT {
+                    self.built.clear();
+                }
+                self.built.insert(k, (hash, items.clone()));
+                return items;
             }
             DrawingKind::Other(_) => return Arc::new(placeholder(w, h)),
             DrawingKind::Slicer { .. } | DrawingKind::Timeline { .. } => {

@@ -1668,6 +1668,42 @@ fn sp(g: &Geometry, page: usize, q: [f32; 2]) -> Point<Pixels> {
     g.page_to_screen(page, q[0], q[1])
 }
 
+/// A pattern fill with its cells on whole device pixels at this zoom (see
+/// [`slides_scene::paint::snap_pattern_grid`]), so they meet without seams;
+/// other fills as they are.
+fn on_device_pixels(
+    paint: &slides_scene::Paint,
+    g: &Geometry,
+    page: usize,
+    scale_factor: f32,
+) -> slides_scene::Paint {
+    let slides_scene::Paint::Pattern {
+        fg,
+        bg,
+        bits,
+        origin,
+        cell,
+    } = paint
+    else {
+        return paint.clone();
+    };
+    let o = g.page_to_screen(page, 0.0, 0.0);
+    let k = f32::from(g.page_to_screen(page, 1.0, 0.0).x - o.x);
+    let (_, origin, cell) = slides_scene::paint::snap_pattern_grid(
+        *origin,
+        *cell,
+        (f32::from(o.x) * scale_factor, f32::from(o.y) * scale_factor),
+        k * scale_factor,
+    );
+    slides_scene::Paint::Pattern {
+        fg: *fg,
+        bg: *bg,
+        bits: *bits,
+        origin,
+        cell,
+    }
+}
+
 fn build_segs(pb: &mut PathBuilder, g: &Geometry, page: usize, segs: &[Seg]) {
     for s in segs {
         match *s {
@@ -1705,7 +1741,8 @@ pub(crate) fn paint_floats(
             match prim {
                 FloatPrim::Path(p) => {
                     if let Some(gr) = &p.gradient {
-                        for (segs, piece) in docs_pdf::floats::gradient_pieces(&p.segs, gr) {
+                        let gr = on_device_pixels(gr, g, page, window.scale_factor());
+                        for (segs, piece) in docs_pdf::floats::gradient_pieces(&p.segs, &gr) {
                             let mut pb = PathBuilder::fill();
                             build_segs(&mut pb, g, page, &segs);
                             let Ok(path) = pb.build() else { continue };

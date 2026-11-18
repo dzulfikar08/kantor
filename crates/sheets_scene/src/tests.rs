@@ -760,3 +760,65 @@ fn pictures_are_cut_to_their_shape() {
             .any(|s| matches!(s, slides_scene::geom::Seg::Cubic(..)))
     );
 }
+
+/// Pictures cut to a shape draw their outline along it (`a:ln`, theme
+/// colours too), over the picture; no outline, no stroke.
+#[test]
+fn shaped_pictures_draw_their_outline() {
+    let book = Workbook::open(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/xlsx/28_shaped_pictures.xlsx"),
+    )
+    .unwrap();
+    let mut engine = Engine::new();
+    let mut scenes = DrawingScenes::default();
+    let strokes = |scenes: &mut DrawingScenes, engine: &mut Engine, name: &str| {
+        let d = get_in(&book, name);
+        let items = scenes.items(engine, &book, &d, 200.0, 160.0);
+        assert!(
+            matches!(items[0].prim, Prim::Picture(_)),
+            "{name}: the picture first"
+        );
+        items
+            .iter()
+            .filter_map(|i| match &i.prim {
+                Prim::Stroke { path, stroke } => {
+                    Some((path.transformed(&i.transform), stroke.clone()))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    // The oval's outline: dark red, 3 pt, a curve round the box.
+    let oval = strokes(&mut scenes, &mut engine, "Oval photo");
+    assert_eq!(oval.len(), 1);
+    let (path, stroke) = &oval[0];
+    assert_eq!(stroke.color.0, [0xC0, 0, 0, 255]);
+    assert!(
+        (stroke.width - 38100.0 / 9525.0).abs() < 0.01,
+        "{}",
+        stroke.width
+    );
+    assert!(
+        path.segs
+            .iter()
+            .any(|s| matches!(s, slides_scene::Seg::Cubic(..)))
+    );
+    let b = path.bounds().unwrap();
+    assert!(
+        (b[2] - 200.0).abs() < 0.5 && (b[3] - 160.0).abs() < 0.5,
+        "{b:?}"
+    );
+    // The rounded one: the theme's accent 1, dashed.
+    let round = strokes(&mut scenes, &mut engine, "Rounded photo");
+    assert_eq!(round.len(), 1);
+    assert_eq!(round[0].1.color.0, [0x44, 0x72, 0xC4, 255]);
+    assert!(round[0].1.dash.is_some());
+    // A rectangle's frame is drawn too.
+    let framed = strokes(&mut scenes, &mut engine, "Framed photo");
+    assert_eq!(framed.len(), 1);
+    assert_eq!(framed[0].1.color.0, [0x40, 0x40, 0x40, 255]);
+    // No outline: nothing stroked.
+    assert!(strokes(&mut scenes, &mut engine, "Star photo").is_empty());
+    assert!(strokes(&mut scenes, &mut engine, "No line").is_empty());
+}

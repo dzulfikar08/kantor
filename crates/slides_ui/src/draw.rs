@@ -22,8 +22,11 @@
 //!   into its own raster, anti-aliased ([`slides_scene::mask`]), cached
 //!   like turned ones.
 //! - Pattern fills are their foreground cells as rectangles (edges step by
-//!   one cell); a shape needing more than
-//!   [`slides_scene::paint::PATTERN_CELLS`] of them shows the mixed colour.
+//!   one cell), laid out when painted: a cell is a whole number of device
+//!   pixels and the cells start on a device pixel, so neighbouring cells
+//!   meet exactly at any zoom (no seams, no uneven bands). A shape needing
+//!   more than [`slides_scene::paint::PATTERN_CELLS`] of them shows the
+//!   mixed colour.
 //!
 //! Slide content is painted in the file's own colours; only chrome
 //! (selection, handles, placeholders for objects Kantor can't draw) uses
@@ -165,6 +168,8 @@ pub(crate) enum GPrim {
     Text(Vec<GRun>),
     /// Turned text, drawn as a raster (see [`crate::turned_text`]).
     TurnedText(Box<crate::turned_text::TurnedText>),
+    /// A pattern fill (see [`PatternPrim`]).
+    Pattern(Box<PatternPrim>),
     /// An object Kantor can't draw: a chrome box.
     Other([P; 4]),
     /// The editor's dashed outline of an empty placeholder; `upright` is
@@ -631,11 +636,37 @@ fn band_params([x, y, w, h]: [f32; 4], u: P, s0: f32, s1: f32) -> (f32, f32, f32
     (r.to_degrees() + 90.0, pct(s0), pct(s1))
 }
 
-/// A pattern fill as GPUI primitives: the background colour, then the
-/// foreground cells as one path (the mixed colour for huge shapes). The
-/// cells line up with the page, not the shape: Office keeps a pattern
-/// upright when the shape is rotated or flipped (as the PDF does,
-/// `slides_pdf`).
+/// A pattern fill ready to paint: its outline (slide px), colours, bitmap
+/// and grid. The cells line up with the page, not the shape: Office keeps
+/// a pattern upright when the shape is rotated or flipped (as the PDF
+/// does, `slides_pdf`). They are laid out on the device pixel grid when
+/// painted ([`slides_scene::paint::snap_pattern_grid`]) and kept for the next frames at the
+/// same scale.
+pub(crate) struct PatternPrim {
+    segs: Vec<Seg>,
+    even_odd: bool,
+    fg: Hsla,
+    bg: Hsla,
+    mixed: Hsla,
+    bits: [u8; 8],
+    /// Where a cell starts and a cell's side, in slide px.
+    origin: P,
+    cell: f32,
+    cells: RefCell<Option<PatternCells>>,
+}
+
+/// A pattern's cells laid out for one scale.
+struct PatternCells {
+    /// Device px per cell and per slide px (bits).
+    n: u32,
+    device: u32,
+    /// `[x, y, w, h]` from the grid's origin (slide px); `None`: too many,
+    /// the mixed colour shows.
+    cells: Option<Vec<[f32; 4]>>,
+}
+
+/// A pattern fill as a [`GPrim::Pattern`], in slide px (`t`: the item's
+/// transform, which scales the cell).
 #[allow(clippy::too_many_arguments)]
 fn pattern_prims(
     segs: Vec<Seg>,
@@ -647,42 +678,94 @@ fn pattern_prims(
     out: &mut Vec<GPrim>,
 ) {
     let k = (t.a * t.a + t.b * t.b).sqrt().max(1e-3);
-    let (origin, cell) = (t.apply(origin), cell * k);
-    let page = slides_scene::Path { segs: segs.clone() };
-    let Some(cells) = slides_scene::paint::pattern_cells(
-        &page,
-        even_odd,
-        bits,
-        origin,
-        cell,
-        slides_scene::paint::PATTERN_CELLS,
-    ) else {
-        out.push(GPrim::Fill {
-            segs,
-            even_odd,
-            bg: rgba_hsla(slides_scene::paint::mix(fg, bg, bits)).into(),
-        });
-        return;
-    };
-    out.push(GPrim::Fill {
+    out.push(GPrim::Pattern(Box::new(PatternPrim {
         segs,
         even_odd,
-        bg: rgba_hsla(bg).into(),
-    });
-    let mut fs = Vec::with_capacity(cells.len() * 5);
-    for [x, y, w, h] in cells {
-        fs.push(Seg::Move(pt(x, y)));
-        fs.push(Seg::Line(pt(x + w, y)));
-        fs.push(Seg::Line(pt(x + w, y + h)));
-        fs.push(Seg::Line(pt(x, y + h)));
-        fs.push(Seg::Close);
+        fg: rgba_hsla(fg),
+        bg: rgba_hsla(bg),
+        mixed: rgba_hsla(slides_scene::paint::mix(fg, bg, bits)),
+        bits: *bits,
+        origin: t.apply(origin),
+        cell: (cell * k).max(0.05),
+        cells: RefCell::new(None),
+    })));
+}
+
+impl PatternPrim {
+    /// The foreground cells as `view` shows them at `scale_factor` device
+    /// px per screen px, in slide px (`None`: too many, paint the mixed
+    /// colour).
+    fn cells(&self, view: View, scale_factor: f32) -> Option<Vec<[f32; 4]>> {
+        let device = view.px_scale() * scale_factor;
+        let o = (
+            f32::from(view.origin.x) * scale_factor,
+            f32::from(view.origin.y) * scale_factor,
+        );
+        let (n, origin, cell) =
+            slides_scene::paint::snap_pattern_grid(self.origin, self.cell, o, device);
+        let mut cache = self.cells.borrow_mut();
+        let fresh = cache
+            .as_ref()
+            .is_some_and(|c| c.n == n && c.device == device.to_bits());
+        if !fresh {
+            let page = slides_scene::Path {
+                segs: self.segs.clone(),
+            };
+            let cells = slides_scene::paint::pattern_cells(
+                &page,
+                self.even_odd,
+                &self.bits,
+                origin,
+                cell,
+                slides_scene::paint::PATTERN_CELLS,
+            )
+            .map(|v| {
+                v.into_iter()
+                    .map(|[x, y, w, h]| [x - origin.x, y - origin.y, w, h])
+                    .collect()
+            });
+            *cache = Some(PatternCells {
+                n,
+                device: device.to_bits(),
+                cells,
+            });
+        }
+        let cells = cache.as_ref()?.cells.as_ref()?;
+        Some(
+            cells
+                .iter()
+                .map(|&[x, y, w, h]| [x + origin.x, y + origin.y, w, h])
+                .collect(),
+        )
     }
-    if !fs.is_empty() {
-        out.push(GPrim::Fill {
-            segs: fs,
-            even_odd: false,
-            bg: rgba_hsla(fg).into(),
-        });
+
+    fn paint(&self, view: View, window: &mut Window) {
+        let opts = if self.even_odd {
+            FillOptions::even_odd()
+        } else {
+            FillOptions::non_zero()
+        };
+        let cells = self.cells(view, window.scale_factor());
+        let mut pb = PathBuilder::fill().with_style(PathStyle::Fill(opts));
+        build_segs(&mut pb, &self.segs, view);
+        if let Ok(path) = pb.build() {
+            let under = if cells.is_some() { self.bg } else { self.mixed };
+            window.paint_path(path, under);
+        }
+        let Some(cells) = cells.filter(|c| !c.is_empty()) else {
+            return;
+        };
+        let mut pb = PathBuilder::fill();
+        for [x, y, w, h] in cells {
+            pb.move_to(view.slide_px(pt(x, y)));
+            pb.line_to(view.slide_px(pt(x + w, y)));
+            pb.line_to(view.slide_px(pt(x + w, y + h)));
+            pb.line_to(view.slide_px(pt(x, y + h)));
+            pb.close();
+        }
+        if let Ok(path) = pb.build() {
+            window.paint_path(path, self.fg);
+        }
     }
 }
 
@@ -1066,6 +1149,7 @@ fn paint_prims(
                     false,
                 );
             }
+            GPrim::Pattern(p) => p.paint(view, window),
             GPrim::Text(runs) => paint_runs(runs, view, bridge, window),
             GPrim::TurnedText(tt) => {
                 let device = k * window.scale_factor();
@@ -1192,19 +1276,25 @@ mod tests {
         assert_eq!(&px_[4..8], &[0, 0, 255, 128]);
     }
 
+    fn pattern_of(prims: &[GPrim]) -> &PatternPrim {
+        match prims.first() {
+            Some(GPrim::Pattern(p)) => p,
+            _ => panic!("no pattern"),
+        }
+    }
+
     /// A pattern in a turned shape stays upright, as in Office: its cells
-    /// are page-aligned rectangles, not turned ones.
+    /// are page-aligned rectangles (not turned ones) inside the shape's box.
     #[std::prelude::v1::test]
     fn patterns_stay_upright_in_turned_shapes() {
         let bits = kantor_ooxml::pattern::bits("ltVert");
         let t = Affine::rotate(30f32.to_radians()).then(Affine::translate(50.0, 50.0));
-        let segs = slides_scene::Path::rect(0.0, 0.0, 40.0, 20.0)
-            .transformed(&t)
-            .segs;
+        let path = slides_scene::Path::rect(0.0, 0.0, 40.0, 20.0).transformed(&t);
+        let [bx, by, bw, bh] = path.bounds().unwrap();
         let mut out = Vec::new();
         let colours = (SRgba([0, 0, 0, 255]), SRgba([255, 255, 255, 255]));
         pattern_prims(
-            segs,
+            path.segs,
             &t,
             false,
             colours,
@@ -1212,28 +1302,84 @@ mod tests {
             (pt(0.0, 0.0), 1.0),
             &mut out,
         );
-        let Some(GPrim::Fill { segs: cells, .. }) = out.get(1) else {
-            panic!("no pattern cells");
-        };
+        let view = View::px(point(px(0.), px(0.)), 1.0);
+        let cells = pattern_of(&out).cells(view, 1.0).expect("cells");
         assert!(!cells.is_empty());
-        // Every cell edge is horizontal or vertical.
-        let mut last = None;
-        for s in cells {
-            let q = match *s {
-                Seg::Move(q) => {
-                    last = Some(q);
-                    continue;
-                }
-                Seg::Line(q) => q,
-                _ => continue,
-            };
-            let a = last.unwrap();
-            assert!(
-                (a.x - q.x).abs() < 1e-3 || (a.y - q.y).abs() < 1e-3,
-                "{a:?} -> {q:?}"
-            );
-            last = Some(q);
+        for [x, y, w, h] in cells {
+            assert!(w > 0.0 && h > 0.0);
+            assert!(x >= bx - 1.0 && y >= by - 1.0, "{x} {y}");
+            assert!(x + w <= bx + bw + 1.0 && y + h <= by + bh + 1.0);
         }
+    }
+
+    /// At zooms and scale factors where a cell isn't a whole number of
+    /// device pixels (125 %, 150 %), every cell still starts and ends on a
+    /// device pixel and all cells are the same size: no seams where cells
+    /// meet, no uneven bands.
+    #[std::prelude::v1::test]
+    fn pattern_cells_fall_on_device_pixels() {
+        let bits = kantor_ooxml::pattern::bits("pct50");
+        let path = slides_scene::Path::ellipse(60.0, 40.0, 50.3, 30.7);
+        for (zoom, sf, origin) in [
+            (1.25, 1.0, 13.3),
+            (1.5, 1.0, 7.71),
+            (1.0, 1.25, 3.37),
+            (1.25, 1.25, 101.9),
+            (0.83, 1.5, 0.5),
+            (3.1, 1.0, 1.0),
+        ] {
+            let (zoom, sf, origin): (f32, f32, f32) = (zoom, sf, origin);
+            let mut out = Vec::new();
+            pattern_prims(
+                path.segs.clone(),
+                &Affine::translate(0.0, 0.0),
+                false,
+                (SRgba([0, 0, 0, 255]), SRgba([255, 255, 255, 255])),
+                &bits,
+                (pt(0.4, 0.2), 1.0),
+                &mut out,
+            );
+            let device = zoom * sf;
+            let n = f32::max(device.round(), 1.0);
+            let pat = pattern_of(&out);
+            // Twice: laid out, then from the cache (the view moved by a
+            // fraction of a pixel).
+            for shift in [0.0f32, 0.37] {
+                let v = View::px(point(px(origin + shift), px(origin * 0.5)), zoom);
+                let cells = pat.cells(v, sf).expect("cells");
+                assert!(!cells.is_empty());
+                let on_pixel = |slide: f32, o: f32| {
+                    let d = (o + slide * zoom) * sf;
+                    (d - d.round()).abs() < 0.01
+                };
+                let (ox, oy) = (origin + shift, origin * 0.5);
+                for [x, y, w, h] in cells {
+                    assert!(on_pixel(x, ox) && on_pixel(y, oy), "{zoom} {sf}: {x} {y}");
+                    assert!(on_pixel(x + w, ox) && on_pixel(y + h, oy));
+                    // Whole cells: n device px each.
+                    let cw = w * device / n;
+                    let ch = h * device / n;
+                    assert!((cw - cw.round()).abs() < 0.01, "{zoom} {sf}: w {w}");
+                    assert!((ch - ch.round()).abs() < 0.01, "{zoom} {sf}: h {h}");
+                }
+            }
+        }
+    }
+
+    #[std::prelude::v1::test]
+    fn pattern_grids_snap_to_device_pixels() {
+        use slides_scene::paint::snap_pattern_grid;
+        // 1 slide px cells at 125 %: 1 device px each (not 1.25).
+        let (n, o, c) = snap_pattern_grid(pt(0.3, 0.0), 1.0, (10.2, 0.0), 1.25);
+        assert_eq!(n, 1);
+        assert!((c - 0.8).abs() < 1e-6);
+        let d = 10.2 + o.x * 1.25;
+        assert!((d - d.round()).abs() < 1e-4, "{d}");
+        // At 150 %: 2 device px (1.5 rounds up), at 300 %: 3.
+        assert_eq!(snap_pattern_grid(pt(0.0, 0.0), 1.0, (0.0, 0.0), 1.5).0, 2);
+        assert_eq!(snap_pattern_grid(pt(0.0, 0.0), 1.0, (0.0, 0.0), 3.0).0, 3);
+        // Tiny (thumbnails): never less than one device pixel.
+        assert_eq!(snap_pattern_grid(pt(0.0, 0.0), 1.0, (0.0, 0.0), 0.1).0, 1);
     }
 
     #[std::prelude::v1::test]
