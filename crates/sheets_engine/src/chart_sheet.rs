@@ -137,6 +137,42 @@ impl Workbook {
         Ok(())
     }
 
+    /// Chart sheet `k`'s view zoom (Excel zooms chart sheets too).
+    pub fn chart_sheet_zoom(&self, k: usize) -> crate::drawing::ChartSheetZoom {
+        self.drawings.chart_sheet_zoom(k)
+    }
+
+    /// Zoom chart sheet `k`'s view. A view change: saved in the file
+    /// (`sheetView@zoomScale`, `zoomToFit`), not undone, as in Excel.
+    /// Returns whether it changed.
+    pub fn set_chart_sheet_zoom(&mut self, k: usize, zoom: crate::drawing::ChartSheetZoom) -> bool {
+        let zoom = crate::drawing::ChartSheetZoom {
+            scale: zoom
+                .scale
+                .clamp(crate::SHEET_ZOOM_MIN, crate::SHEET_ZOOM_MAX),
+            ..zoom
+        };
+        if self.chart_sheet_name(k).is_none() || self.chart_sheet_zoom(k) == zoom {
+            return false;
+        }
+        self.drawings.zoomed.insert(k, zoom);
+        self.history.view_changed = true;
+        self.history.view_changes += 1;
+        true
+    }
+
+    /// Chart sheets' zooms a save writes (those zoomed this session).
+    pub(crate) fn chart_sheet_zoom_patches(&self, out: &mut crate::preserve::Patches) {
+        let mut ks: Vec<(&usize, &crate::drawing::ChartSheetZoom)> =
+            self.drawings.zoomed.iter().collect();
+        ks.sort_by_key(|(k, _)| **k);
+        for (k, z) in ks {
+            if let Some(parts) = self.drawings.chart_sheet_parts(*k) {
+                out.chart_sheet_zooms.push((parts.part, *z));
+            }
+        }
+    }
+
     /// Chart sheets' tab colours a save writes (those changed this session).
     pub(crate) fn chart_sheet_tab_patches(&self, out: &mut crate::preserve::Patches) {
         let now = self.chart_sheets_now();

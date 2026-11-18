@@ -733,7 +733,7 @@ impl SheetsView {
                         Self::close_dv,
                     )),
             );
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     pub(crate) fn dv_actions(&self, root: Div, cx: &mut Context<Self>) -> Div {

@@ -1314,9 +1314,10 @@ impl Workbook {
             steps += 1;
         }
         for &(col, w) in &changed {
-            let res =
-                self.model
-                    .set_columns_width(sheet, col as i32 + 1, col as i32 + 1, w.max(4.0));
+            let iron = self.iron_width(sheet, w);
+            let res = self
+                .model
+                .set_columns_width(sheet, col as i32 + 1, col as i32 + 1, iron);
             if let Err(e) = res {
                 for _ in 0..steps {
                     let _ = self.model.undo();

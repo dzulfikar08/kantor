@@ -9,6 +9,27 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Changed
+
+- Sheets draws columns and rows in Excel's proportions: a column's width in pixels follows
+  Excel's rule for the workbook's default font (64 px for Excel's default column with Calibri
+  11) and a row is 4/3 px per point (20 px for the default 15 pt), at 100 % zoom. Shapes,
+  pictures and charts no longer look about a quarter taller than wide, a 2 cm square is square,
+  and objects cover the same cells as in Excel. Default rows are lower than before, and rows
+  fitted to wrapped text or larger fonts get Excel's line heights, so a fitted height saved to the
+  file shows the same lines in Excel. Column widths set by dragging or autofit are saved in whole
+  pixels, as Excel saves them.
+- Sheets' dialog cards (Manage Rules, Zoom, Move or Copy, Tab Color, Unhide, Delete sheet and the
+  others) take the keyboard focus when they open, as Excel's dialogs do, so Escape closes them even
+  when no field in them is focused.
+
+### Added
+
+- Chart sheets zoom, as in Excel: the zoom slider, Ctrl+mouse wheel, Ctrl+= / Ctrl+- and the Zoom
+  dialog show the chart at its own size times the zoom (scrolling when it is larger than the
+  window), and Zoom to Selection makes it follow the window's size. The zoom is saved with the
+  chart sheet (`zoomScale`, `zoomToFit`).
+
 ## [0.13.0] - 2026-11-18
 
 Sheets gets zoom (10–400 %, saved with each sheet; Page Break Preview opens at 60 % as in Excel), and Docs lays

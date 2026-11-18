@@ -410,10 +410,10 @@ impl Spans {
     /// keeps its size and shape.
     pub(crate) fn for_sheet(model: &ironcalc_base::Model<'_>, sheet: u32) -> Self {
         let ws = model.workbook.worksheet(sheet).ok();
-        // IronCalc's px are 9 per character, Excel's 7 plus 5 of padding.
-        let default_col = model
-            .get_column_width(sheet, crate::MAX_COLS as i32)
-            .map_or(DEFAULT_COL_PX, |w| w / 9.0 * 7.0 + 5.0);
+        // Unsized columns are Excel's default width for the default font, as
+        // the grid shows them (`Workbook::column_scale`, `baseColWidth` 8).
+        let digit = crate::print::digit_px(crate::look::font_defaults(model).size);
+        let default_col = crate::print::base_default_px(8.0, digit);
         let default_row = ws
             .and_then(|ws| ws.default_row_height)
             .unwrap_or(crate::rows::DEFAULT_ROW_POINTS)

@@ -18,7 +18,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use gpui_kit::component::Size;
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{Tokens, metrics::*};
@@ -28,10 +27,10 @@ use sheets_engine::{
 
 use crate::row_heights::RowHeights;
 
-/// Height of a default grid row (the table's `small` size): a row of the
-/// sheet's default height in Excel.
+/// Height of a 15 pt row at 100 % (Excel's default row, 20 px), also the
+/// height of the column headings.
 pub(crate) fn row_height() -> Pixels {
-    Size::Small.table_row_height()
+    px(20.)
 }
 
 /// `len` (logical px) rounded to whole device pixels at `scale`, the way

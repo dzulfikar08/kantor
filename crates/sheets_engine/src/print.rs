@@ -285,6 +285,103 @@ impl SheetPrint {
     }
 }
 
+/// Excel's default column width in characters (Calibri 11, `baseColWidth`
+/// 8), as IronCalc reads a `<col>` that gives none.
+const EXCEL_DEFAULT_CHARS: f64 = 8.43;
+
+/// IronCalc's own "default width" marker: a column it creates for a style
+/// (not resized) gets 90 of its px, i.e. 10 characters, and no
+/// `customWidth`.
+const IRONCALC_DEFAULT_CHARS: f64 = 10.0;
+
+/// The maximum digit width (px) of a default font of `size` points: 7 for
+/// Calibri 11 and Arial 10, about in proportion for other sizes.
+pub(crate) fn digit_px(size: i32) -> f64 {
+    let size = size.max(1) as f64;
+    if (10.0..=11.0).contains(&size) {
+        7.0
+    } else {
+        (size * 7.0 / 11.0).round().max(1.0)
+    }
+}
+
+/// Excel's default column (px) for `baseColWidth` `base`: the characters,
+/// padding and gridline, rounded up to a multiple of 8 px.
+pub(crate) fn base_default_px(base: f64, digit_px: f64) -> f64 {
+    ((base * digit_px + 5.0) / 8.0).ceil() * 8.0
+}
+
+/// How a sheet's column widths (characters, as `<col width>` stores them)
+/// map to pixels at 100 %, by Excel's rule: a width of `w` characters is
+/// `trunc((256 w + trunc(128 / d)) / 256 × d)` px, `d` being the default
+/// font's maximum digit width (7 px for Calibri 11 and Arial 10). The grid,
+/// printouts and drawing anchors all use these pixels, so a column is as
+/// wide next to its rows as in Excel (64 by 20 px by default).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColumnScale {
+    /// Maximum digit width of the default font, px.
+    pub digit_px: f64,
+    /// Width of a column the sheet says nothing about, px.
+    pub default_px: f64,
+    /// The width (characters) a `<col>` without one was given on import.
+    default_chars: f64,
+}
+
+impl ColumnScale {
+    /// Pixels of a column `width` characters wide.
+    pub fn px(&self, width: f64) -> f64 {
+        if !width.is_finite() || width <= 0.0 {
+            return 0.0;
+        }
+        let d = self.digit_px;
+        ((256.0 * width + (128.0 / d).trunc()) / 256.0 * d).trunc()
+    }
+
+    /// The width in characters to store for a column `px` pixels wide (whole
+    /// pixels, as Excel keeps them), written the way Excel writes it:
+    /// `px` back through [`Self::px`] gives the same pixels.
+    pub fn width_of(&self, px: f64) -> f64 {
+        let px = px.round();
+        if !px.is_finite() || px <= 0.0 {
+            return 0.0;
+        }
+        let d = self.digit_px;
+        // Excel: characters shown = trunc((px - 5) / d × 100 + 0.5) / 100,
+        // stored = trunc((chars × d + 5) / d × 256) / 256.
+        let chars = ((px - 5.0) / d * 100.0 + 0.5).trunc() / 100.0;
+        let excel = ((chars * d + 5.0) / d * 256.0).trunc() / 256.0;
+        let mut w = if chars > 0.0 && self.px(excel) == px {
+            excel
+        } else {
+            // The smallest 1/256 step that truncates to `px`.
+            ((px * 256.0 / d).ceil() - (128.0 / d).trunc()) / 256.0
+        };
+        // Exactly IronCalc's default marker would read back as the default.
+        if w == IRONCALC_DEFAULT_CHARS {
+            let up = w + 1.0 / 256.0;
+            w = if self.px(up) == px {
+                up
+            } else {
+                w - 1.0 / 256.0
+            };
+        }
+        w
+    }
+
+    /// Pixels of a `<col>` entry (hidden or not). A column IronCalc made for
+    /// a style or a hidden flag only, or one the file gave no width, is the
+    /// sheet's default width.
+    pub(crate) fn col_px(&self, c: &ironcalc_base::types::Col) -> f64 {
+        if !c.width.is_finite() || c.width < 0.0 {
+            return self.default_px;
+        }
+        if !c.custom_width && (c.width == IRONCALC_DEFAULT_CHARS || c.width == self.default_chars) {
+            return self.default_px;
+        }
+        self.px(c.width)
+    }
+}
+
 /// Column widths as Excel prints them.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrintColumns {
@@ -765,39 +862,41 @@ impl Workbook {
             .is_ok_and(|ws| ws.state != ironcalc_base::types::SheetState::Visible)
     }
 
-    /// Column widths of `sheet` as Excel prints them: a width of `w`
-    /// characters is `trunc((256 w + trunc(128 / d)) / 256 × d)` pixels,
-    /// `d` being the default font's maximum digit width (7 px for Calibri
-    /// 11 and Arial 10), and a pixel is ¾ pt.
-    pub fn print_columns(&self, sheet: u32) -> PrintColumns {
-        let size = self.default_font_size().max(1) as f64;
-        let digit_px = if (10.0..=11.0).contains(&size) {
-            7.0
-        } else {
-            (size * 7.0 / 11.0).round().max(1.0)
-        };
-        let px = |w: f64| ((256.0 * w + (128.0 / digit_px).trunc()) / 256.0 * digit_px).trunc();
+    /// How `sheet`'s column widths map to pixels, by Excel's rules (see
+    /// [`ColumnScale`]): the default font's maximum digit width and the
+    /// sheet's default column width.
+    pub fn column_scale(&self, sheet: u32) -> ColumnScale {
+        let digit_px = digit_px(self.default_font_size());
         let raw = self.prints.sheets.get(&self.sheet_id(sheet));
-        let default_px = match raw.and_then(|r| r.default_col_width) {
-            Some(w) => px(w),
-            None => {
-                // baseColWidth characters, plus padding and the gridline,
-                // rounded up to a multiple of 8 px.
-                let base = raw.and_then(|r| r.base_col_width).unwrap_or(8.0);
-                ((base * digit_px + 5.0) / 8.0).ceil() * 8.0
-            }
+        let file_default = raw.and_then(|r| r.default_col_width);
+        let scale = ColumnScale {
+            digit_px,
+            default_px: 0.0,
+            default_chars: file_default.unwrap_or(EXCEL_DEFAULT_CHARS),
         };
+        let default_px = match file_default {
+            Some(w) => scale.px(w),
+            // baseColWidth characters, plus padding and the gridline,
+            // rounded up to a multiple of 8 px.
+            None => base_default_px(raw.and_then(|r| r.base_col_width).unwrap_or(8.0), digit_px),
+        };
+        ColumnScale {
+            default_px,
+            ..scale
+        }
+    }
+
+    /// Column widths of `sheet` as Excel prints them ([`ColumnScale`]; a
+    /// pixel is ¾ pt).
+    pub fn print_columns(&self, sheet: u32) -> PrintColumns {
+        let scale = self.column_scale(sheet);
         let mut spans = Vec::new();
         if let Ok(ws) = self.model.get_model().workbook.worksheet(sheet) {
             for c in &ws.cols {
                 if c.min < 1 || c.max < c.min {
                     continue;
                 }
-                let w = if c.width.is_finite() && c.width >= 0.0 {
-                    px(c.width) * 0.75
-                } else {
-                    default_px * 0.75
-                };
+                let w = scale.col_px(c) * 0.75;
                 let first = c.min as u32 - 1;
                 let last = (c.max as u32 - 1).min(MAX_COLS - 1);
                 spans.push((first, last, w, c.hidden || c.width == 0.0));
@@ -805,9 +904,9 @@ impl Workbook {
         }
         spans.sort_by_key(|s| s.0);
         PrintColumns {
-            default_pt: default_px * 0.75,
+            default_pt: scale.default_px * 0.75,
             spans,
-            digit_px,
+            digit_px: scale.digit_px,
         }
     }
 
@@ -1414,6 +1513,37 @@ impl Workbook {
 
 #[cfg(test)]
 mod tests {
+
+    /// Excel's column pixels: the default 8.43 characters (stored as
+    /// 9.140625) are 64 px with a 7 px digit, and every whole pixel width
+    /// is stored as a width that reads back as the same pixels.
+    #[std::prelude::v1::test]
+    fn column_scale_round_trips_pixels() {
+        // Calibri 11, Excel's default font.
+        let s = ColumnScale {
+            digit_px: 7.0,
+            default_px: 64.0,
+            default_chars: EXCEL_DEFAULT_CHARS,
+        };
+        assert_eq!(s.px(9.140625), 64.0);
+        assert_eq!(s.width_of(64.0), 9.140625);
+        // 100 px: 13.57 characters shown, stored with the padding.
+        assert_eq!(s.width_of(100.0), 14.28125);
+        for px in 1..=600 {
+            let w = s.width_of(f64::from(px));
+            assert_eq!(s.px(w), f64::from(px), "{px} px -> {w}");
+            assert_ne!(w, 10.0, "IronCalc's default marker");
+        }
+        // Fractional pixels are rounded; nothing is zero.
+        assert_eq!(s.px(s.width_of(101.7)), 102.0);
+        // A new workbook's default font is 12 pt (IronCalc's): an 8 px
+        // digit, so 8 characters plus padding round up to 72 px.
+        let wb = Workbook::new_empty().unwrap();
+        let s = wb.column_scale(0);
+        assert_eq!((s.digit_px, s.default_px), (8.0, 72.0));
+        assert_eq!(wb.column_width(0, 5), 72.0);
+    }
+
     use super::*;
 
     #[test]

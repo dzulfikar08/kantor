@@ -234,6 +234,6 @@ impl SheetsView {
                 Self::apply_move_chart,
                 Self::close_move_chart,
             ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 }

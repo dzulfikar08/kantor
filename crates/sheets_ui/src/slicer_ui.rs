@@ -682,7 +682,7 @@ impl SheetsView {
                 Self::apply_insert_slicer,
                 Self::close_insert_slicer,
             ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     // ------------------------------------------------------ Slicer Settings
@@ -917,7 +917,7 @@ impl SheetsView {
                 Self::apply_slicer_settings,
                 Self::close_slicer_settings,
             ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     // ----------------------------------------------------- Insert Timeline
@@ -1051,7 +1051,7 @@ impl SheetsView {
                 Self::apply_insert_timeline,
                 Self::close_insert_timeline,
             ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     // --------------------------------------------------- Timeline Settings
@@ -1239,6 +1239,6 @@ impl SheetsView {
                 Self::apply_timeline_settings,
                 Self::close_timeline_settings,
             ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 }

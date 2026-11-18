@@ -279,3 +279,60 @@ fn copied_formulas_follow_the_renamed_tables() {
     let copy = sheet(&wb, "Sales (2)");
     assert_eq!(wb.input(copy, 0, 6), "=MAX(Sales2[Amount])");
 }
+
+/// Chart sheets keep their zoom (Excel's `sheetView@zoomScale` and
+/// `zoomToFit`): a zoomed one saves it, the others stay as they were.
+#[test]
+fn chart_sheet_zoom_saves() {
+    use sheets_engine::drawing::ChartSheetZoom;
+    let mut wb = Workbook::open(corpus("22_chart_sheets.xlsx")).unwrap();
+    let Tab::Chart(k) = wb.tabs()[0] else {
+        panic!()
+    };
+    assert_eq!(wb.chart_sheet_zoom(k), ChartSheetZoom::default());
+    let z = ChartSheetZoom {
+        scale: 150,
+        fit: false,
+    };
+    assert!(wb.set_chart_sheet_zoom(k, z));
+    assert!(!wb.set_chart_sheet_zoom(k, z), "no change");
+    // A view change, not undone.
+    assert!(!wb.can_undo());
+    let path = scratch("cs-zoom.xlsx");
+    wb.save_as(&path).unwrap();
+    assert!(sheets_engine::package_problems(&std::fs::read(&path).unwrap()).is_empty());
+    let mut zip = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+    let names: Vec<String> = zip
+        .file_names()
+        .filter_map(Result::ok)
+        .map(|n| n.into_owned())
+        .filter(|n| n.starts_with("xl/chartsheets/sheet") && n.ends_with(".xml"))
+        .collect();
+    let mut zoomed = Vec::new();
+    for n in names {
+        let mut xml = String::new();
+        zip.by_name(&n).unwrap().read_to_string(&mut xml).unwrap();
+        if xml.contains("zoomScale") {
+            zoomed.push(xml);
+        }
+    }
+    assert_eq!(zoomed.len(), 1, "{zoomed:?}");
+    assert!(
+        zoomed[0].contains(r#"<sheetView workbookViewId="0" zoomScale="150" zoomToFit="0"/>"#),
+        "{}",
+        zoomed[0]
+    );
+    let mut back = Workbook::open(&path).unwrap();
+    assert_eq!(back.chart_sheet_zoom(k), z);
+    let other = (0..3).find(|&o| o != k).unwrap();
+    assert_eq!(back.chart_sheet_zoom(other), ChartSheetZoom::default());
+    // Zoom with Window, saved again.
+    let fit = ChartSheetZoom {
+        scale: 150,
+        fit: true,
+    };
+    assert!(back.set_chart_sheet_zoom(k, fit));
+    let path2 = scratch("cs-zoom-fit.xlsx");
+    back.save_as(&path2).unwrap();
+    assert_eq!(Workbook::open(&path2).unwrap().chart_sheet_zoom(k), fit);
+}

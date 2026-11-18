@@ -33,25 +33,28 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::{metrics::*, tokens};
+use sheets_engine::drawing::ChartSheetZoom;
 use sheets_engine::{SHEET_ZOOM_MAX, SHEET_ZOOM_MIN, Workbook};
 
 use crate::{SheetsView, dialog, look};
 
 actions!(sheets_zoom, [ZoomIn, ZoomOut]);
 
-/// Ctrl+= (Ctrl++) and Ctrl+-, on the grid.
+/// Ctrl+= (Ctrl++) and Ctrl+-, on the grid and on a chart sheet.
 pub(crate) fn bind_keys(cx: &mut App) {
-    let ctx = Some(crate::GRID_CONTEXT);
-    cx.bind_keys(
-        [
-            kantor_ui::keys::primary_pair("ctrl-=", ZoomIn, ctx),
-            kantor_ui::keys::primary_pair("ctrl-+", ZoomIn, ctx),
-            kantor_ui::keys::primary_pair("ctrl-shift-=", ZoomIn, ctx),
-            kantor_ui::keys::primary_pair("ctrl--", ZoomOut, ctx),
-        ]
-        .into_iter()
-        .flatten(),
-    );
+    for ctx in [crate::GRID_CONTEXT, crate::CHART_SHEET_CONTEXT] {
+        let ctx = Some(ctx);
+        cx.bind_keys(
+            [
+                kantor_ui::keys::primary_pair("ctrl-=", ZoomIn, ctx),
+                kantor_ui::keys::primary_pair("ctrl-+", ZoomIn, ctx),
+                kantor_ui::keys::primary_pair("ctrl-shift-=", ZoomIn, ctx),
+                kantor_ui::keys::primary_pair("ctrl--", ZoomOut, ctx),
+            ]
+            .into_iter()
+            .flatten(),
+        );
+    }
 }
 
 /// The grid's zoom actions.
@@ -113,6 +116,28 @@ pub(crate) fn fit_zoom(size: (f32, f32), headers: (f32, f32), room: (f32, f32)) 
         .clamp(SHEET_ZOOM_MIN, SHEET_ZOOM_MAX)
 }
 
+/// Zoom steps of a wheel event (positive: in, wheel turned away), with
+/// pixel travel left over kept in `carry`; `None` when Ctrl (Cmd) isn't
+/// held, so the grid scrolls instead.
+pub(crate) fn wheel_steps(e: &ScrollEvent, carry: &Cell<f32>) -> Option<i32> {
+    if !(e.modifiers.control || e.modifiers.platform) {
+        return None;
+    }
+    let dy = match e.delta {
+        ScrollDelta::Lines(l) => l.y * WHEEL_PX_PER_STEP,
+        ScrollDelta::Pixels(p) => f32::from(p.y),
+    };
+    let total = carry.get() + dy;
+    let steps = (total / WHEEL_PX_PER_STEP).trunc();
+    carry.set(total - steps * WHEEL_PX_PER_STEP);
+    Some(steps as i32)
+}
+
+/// The zoom after `steps` wheel steps from `z` (at most 10 at once).
+pub(crate) fn wheel_zoom(z: u16, steps: i32) -> u16 {
+    (0..steps.unsigned_abs().min(10)).fold(z, |z, _| step_zoom(z, steps > 0))
+}
+
 /// The Zoom dialog's choices, as Excel's.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum ZoomChoice {
@@ -150,16 +175,46 @@ impl SheetsView {
         self.table.read(cx).delegate().zoom()
     }
 
-    /// The shown sheet's zoom, in percent.
+    /// The shown sheet's zoom (or the chart sheet's), in percent.
     pub fn zoom_percent(&self, cx: &App) -> u16 {
         let grid = self.table.read(cx).delegate();
-        percent(&grid.book, grid.sheet)
+        match self.chart_tab {
+            Some(k) => grid.book.chart_sheet_zoom(k).scale,
+            None => percent(&grid.book, grid.sheet),
+        }
+    }
+
+    /// Zoom chart sheet `k` (see [`sheets_engine::drawing::ChartSheetZoom`]).
+    fn set_chart_sheet_zoom(
+        &mut self,
+        k: usize,
+        zoom: ChartSheetZoom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let changed = self.table.update(cx, |t, _| {
+            t.delegate_mut().book.set_chart_sheet_zoom(k, zoom)
+        });
+        if changed {
+            self.status = if zoom.fit {
+                i18n::t("Zoom with window").into()
+            } else {
+                tf("Zoom {}%", &[&zoom.scale]).into()
+            };
+            self.update_title(window, cx);
+        }
+        cx.notify();
     }
 
     /// Zoom the shown sheet to `percent` (10–400), keeping the cell at the
-    /// top left in place.
+    /// top left in place. A chart sheet shows its chart at that zoom.
     pub fn set_zoom_doc(&mut self, percent: u16, window: &mut Window, cx: &mut Context<Self>) {
-        if self.chart_tab.is_some() {
+        if let Some(k) = self.chart_tab {
+            let zoom = ChartSheetZoom {
+                scale: percent,
+                fit: false,
+            };
+            self.set_chart_sheet_zoom(k, zoom, window, cx);
             return;
         }
         let changed = self.table.update(cx, |table, cx| {
@@ -203,8 +258,12 @@ impl SheetsView {
     }
 
     /// Zoom to Selection: the selected cells fill the window, as in Excel.
+    /// On a chart sheet, the chart fills the window and follows its size
+    /// (Excel's "Zoom with Window").
     pub fn zoom_to_selection_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.chart_tab.is_some() {
+        if let Some(k) = self.chart_tab {
+            let scale = self.zoom_percent(cx);
+            self.set_chart_sheet_zoom(k, ChartSheetZoom { scale, fit: true }, window, cx);
             return;
         }
         let range = self.range(cx);
@@ -259,7 +318,7 @@ impl SheetsView {
 
     /// View ▸ Zoom…: the Zoom dialog.
     pub fn zoom_dialog_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.chart_tab.is_some() || self.blocked(cx) {
+        if self.blocked(cx) {
             return;
         }
         let now = self.zoom_percent(cx);
@@ -404,7 +463,7 @@ impl SheetsView {
                 Self::apply_zoom_dialog,
                 Self::close_zoom_dialog,
             ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     /// The zoom slider, its − and + buttons and the percentage, at the
@@ -495,28 +554,18 @@ impl SheetsView {
                 let view = view.clone();
                 let wheel = wheel.clone();
                 window.on_mouse_event(move |e: &ScrollEvent, phase, window, cx| {
-                    if phase != DispatchPhase::Capture
-                        || !(e.modifiers.control || e.modifiers.platform)
-                        || !bounds.contains(&e.position)
-                    {
+                    if phase != DispatchPhase::Capture || !bounds.contains(&e.position) {
                         return;
                     }
-                    cx.stop_propagation();
-                    let dy = match e.delta {
-                        ScrollDelta::Lines(l) => l.y * WHEEL_PX_PER_STEP,
-                        ScrollDelta::Pixels(p) => f32::from(p.y),
+                    let Some(steps) = wheel_steps(e, &wheel) else {
+                        return;
                     };
-                    let total = wheel.get() + dy;
-                    let steps = (total / WHEEL_PX_PER_STEP).trunc();
-                    wheel.set(total - steps * WHEEL_PX_PER_STEP);
-                    if steps == 0.0 {
+                    cx.stop_propagation();
+                    if steps == 0 {
                         return;
                     }
                     let _ = view.update(cx, |this, cx| {
-                        let mut z = this.zoom_percent(cx);
-                        for _ in 0..(steps.abs() as usize).min(10) {
-                            z = step_zoom(z, steps > 0.0);
-                        }
+                        let z = wheel_zoom(this.zoom_percent(cx), steps);
                         this.set_zoom_doc(z, window, cx);
                     });
                 });
@@ -542,6 +591,39 @@ mod tests {
         }
         assert_eq!(slider_zoom(-5.0), 10);
         assert_eq!(slider_zoom(500.0), 400);
+    }
+
+    /// Ctrl+wheel (and Cmd+wheel) zooms by 10 % a notch, touchpad pixels
+    /// add up to notches, and a plain wheel is left to scroll the grid.
+    #[std::prelude::v1::test]
+    fn ctrl_wheel_zooms() {
+        let wheel = |delta: ScrollDelta, control: bool, platform: bool| ScrollEvent {
+            position: point(px(10.), px(10.)),
+            delta,
+            modifiers: Modifiers {
+                control,
+                platform,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let carry = Cell::new(0.0);
+        let up = ScrollDelta::Lines(point(0.0, 1.0));
+        assert_eq!(wheel_steps(&wheel(up, false, false), &carry), None);
+        let steps = wheel_steps(&wheel(up, true, false), &carry).unwrap();
+        assert_eq!(steps, 1);
+        assert_eq!(wheel_zoom(100, steps), 110);
+        let down = ScrollDelta::Lines(point(0.0, -3.0));
+        let steps = wheel_steps(&wheel(down, false, true), &carry).unwrap();
+        assert_eq!(wheel_zoom(110, steps), 80);
+        // A touchpad: 25 px is not a notch yet, 25 more make one.
+        let pixels = ScrollDelta::Pixels(point(px(0.), px(25.)));
+        assert_eq!(wheel_steps(&wheel(pixels, true, false), &carry), Some(0));
+        assert_eq!(wheel_steps(&wheel(pixels, true, false), &carry), Some(1));
+        assert!((carry.get() - 10.0).abs() < 1e-4);
+        // Limits hold.
+        assert_eq!(wheel_zoom(390, 5), 400);
+        assert_eq!(wheel_zoom(20, -5), 10);
     }
 
     #[std::prelude::v1::test]

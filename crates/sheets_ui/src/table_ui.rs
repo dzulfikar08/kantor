@@ -355,7 +355,7 @@ impl SheetsView {
                 Self::table_dialog_ok,
                 Self::close_table_dialog,
             ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     /// The workbook's own styles (Custom) and the built-in ones as small

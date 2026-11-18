@@ -1426,6 +1426,9 @@ pub struct SheetsView {
     sort_panel: Option<filter_menu::SortPanel>,
     /// The Custom Lists card ([`custom_lists_ui`]).
     custom_lists: Option<custom_lists_ui::CustomListsDialog>,
+    /// The open dialog card's focus ([`dialog::place`]): it takes the focus
+    /// when it opens, so Escape closes it wherever the pointer is.
+    dialog_focus: Rc<dialog::CardFocus>,
     /// Charts and pictures over the grid (see [`drawings`]).
     drawings: Rc<RefCell<drawings::DrawLayer>>,
     /// Page Break Preview's pages and drags ([`break_preview`]).
@@ -1562,6 +1565,7 @@ impl SheetsView {
             filter_menu: None,
             sort_panel: None,
             custom_lists: None,
+            dialog_focus: Rc::new(dialog::CardFocus::new(cx.focus_handle())),
             drawings: Rc::default(),
             break_layer: Rc::default(),
             break_drag_panes: Vec::new(),
@@ -2870,6 +2874,7 @@ impl SheetsView {
 impl Render for SheetsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_print_preview(window, cx);
+        self.dialog_focus.begin_frame();
         let _span = kantor_ui::perf::span("sheets view");
         let t = tokens(cx);
         // Column widths are snapped to device pixels: new ones on a new scale.
@@ -3123,7 +3128,7 @@ impl Render for SheetsView {
                     .border_color(t.border)
                     .child(div().flex_1().min_w_0().child(tabs))
                     .child(self.render_view_buttons(cx))
-                    .when(chart_sheet.is_none(), |d| d.child(zoom_control)),
+                    .child(zoom_control),
             )
             .children(completion)
             .children(self.render_find_bar(cx))
