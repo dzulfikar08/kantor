@@ -202,3 +202,37 @@ fn filter_database_name_stays_hidden_and_moves() {
     assert!(name.contains(r#"hidden="1""#), "{name}");
     assert!(name.contains("$A$2:$C$11"), "{name}");
 }
+
+#[test]
+fn sparklines_are_read_with_their_values_and_follow_rows() {
+    use sheets_engine::SparkKind;
+    let mut wb = Workbook::open(corpus("15_sparklines_cf_dv.xlsx")).unwrap();
+    let s = sheet_index(&wb, "Metrics");
+    assert!(wb.has_sparklines(s));
+    // F2: a line of B2:E2 (10, 23, 36, -1).
+    let line = wb.sparkline(s, 1, 5).expect("F2");
+    assert_eq!(line.kind, SparkKind::Line);
+    assert_eq!(
+        line.values,
+        vec![Some(10.0), Some(23.0), Some(36.0), Some(-1.0)]
+    );
+    assert_eq!((line.min, line.max), (-1.0, 36.0));
+    assert_eq!(line.series, 0x264264, "theme colour 4, 50 % darker");
+    assert_eq!(wb.sparkline(s, 2, 5).unwrap().kind, SparkKind::Column);
+    let win_loss = wb.sparkline(s, 3, 5).unwrap();
+    assert_eq!(win_loss.kind, SparkKind::WinLoss);
+    assert!(win_loss.negative.is_some(), "negative points marked");
+    let markers = wb.sparkline(s, 4, 5).unwrap();
+    assert_eq!(markers.series, 0xC00000);
+    assert!(markers.markers.is_some());
+    assert!(wb.sparkline(s, 1, 4).is_none());
+
+    // The values follow the cells; the sparklines follow inserted rows.
+    wb.set_inputs(s, &[(1, 1, "50".into())]).unwrap();
+    assert_eq!(wb.sparkline(s, 1, 5).unwrap().values[0], Some(50.0));
+    wb.insert_rows(s, 2, 1).unwrap(); // before row 3
+    assert_eq!(wb.sparkline(s, 1, 5).unwrap().kind, SparkKind::Line);
+    assert!(wb.sparkline(s, 2, 5).is_none());
+    assert_eq!(wb.sparkline(s, 3, 5).unwrap().kind, SparkKind::Column);
+    assert_eq!(wb.sparkline(s, 3, 5).unwrap().values[0], Some(17.0));
+}

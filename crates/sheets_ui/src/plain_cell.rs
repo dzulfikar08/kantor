@@ -50,13 +50,20 @@ pub(crate) type CellMouseHandler = Rc<dyn Fn((usize, usize), CellMouse<'_>, &mut
 /// the release, e.g. when the press selects it).
 pub(crate) type PendingClick = Rc<RefCell<Option<((usize, usize), MouseDownEvent)>>>;
 
+/// A table's handler for clicks on cell `(row_ix, col_ix)`.
+pub(crate) type CellClick = Rc<dyn Fn(&ClickEvent, (usize, usize), &mut Window, &mut App)>;
+/// A table's handler for right presses on cell `(row_ix, col_ix)`.
+pub(crate) type CellRightDown = Rc<dyn Fn(&MouseDownEvent, (usize, usize), &mut Window, &mut App)>;
+/// A row's cells for the shown columns, given the columns reported visible.
+type RowItems = Box<dyn Fn(Range<usize>, Range<usize>, &mut Window, &mut App) -> Vec<RowItem>>;
+
 /// What a table does with presses on its body cells.
 #[derive(Clone)]
 pub(crate) struct CellHandlers {
     pub mouse: Option<CellMouseHandler>,
     pub pending: PendingClick,
-    pub click: Rc<dyn Fn(&ClickEvent, (usize, usize), &mut Window, &mut App)>,
-    pub right_down: Rc<dyn Fn(&MouseDownEvent, (usize, usize), &mut Window, &mut App)>,
+    pub click: CellClick,
+    pub right_down: CellRightDown,
 }
 
 impl CellHandlers {
@@ -360,12 +367,14 @@ impl Element for PlainCell {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
-        let mut style = Style::default();
-        style.size = size(
-            self.width.map_or(relative(1.).into(), |w| w.into()),
-            relative(1.).into(),
-        );
-        style.flex_shrink = 0.;
+        let style = Style {
+            size: size(
+                self.width.map_or(relative(1.).into(), |w| w.into()),
+                relative(1.).into(),
+            ),
+            flex_shrink: 0.,
+            ..Style::default()
+        };
         (window.request_layout(style, [], cx), ())
     }
 
@@ -400,6 +409,9 @@ impl Element for PlainCell {
 }
 
 /// A cell of a [`RowCells`] row.
+// Not boxed: most cells are plain, and a box each would be an allocation
+// per cell and frame.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum RowItem {
     Plain(PlainCell),
     Element(AnyElement),
@@ -423,7 +435,7 @@ pub(crate) struct RowCells {
     offset: Point<Pixels>,
     /// The cells of the shown columns, given the columns reported as
     /// visible (two more).
-    items: Box<dyn Fn(Range<usize>, Range<usize>, &mut Window, &mut App) -> Vec<RowItem>>,
+    items: RowItems,
     handlers: CellHandlers,
 }
 
@@ -514,8 +526,10 @@ impl Element for RowCells {
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, ()) {
-        let mut style = Style::default();
-        style.size = size(relative(1.).into(), relative(1.).into());
+        let style = Style {
+            size: size(relative(1.).into(), relative(1.).into()),
+            ..Style::default()
+        };
         (window.request_layout(style, [], cx), ())
     }
 

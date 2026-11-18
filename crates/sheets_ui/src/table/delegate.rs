@@ -13,6 +13,8 @@ use super::{Column, ColumnGroup, ColumnSort, TableState, loading::Loading};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Size, h_flex, menu::PopupMenu};
 
 /// A body cell from [`TableDelegate::render_body_td`].
+// Not boxed, as `RowItem`: an allocation per cell and frame.
+#[allow(clippy::large_enum_variant)]
 pub enum BodyTd {
     Plain(crate::plain_cell::PlainCell),
     Element(AnyElement),

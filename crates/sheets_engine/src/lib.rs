@@ -51,6 +51,7 @@ mod shift;
 pub mod slicer;
 pub mod slicer_edit;
 mod sort;
+mod sparkline;
 mod table;
 mod table_edit;
 mod table_style_edit;
@@ -294,6 +295,7 @@ pub use print::{
 };
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
 pub use sort::SortKey;
+pub use sparkline::{SparkGeometry, SparkKind, Sparkline};
 pub use table::{Elem as TableElementFormat, FillPattern, TableCellLook, TableInfo};
 pub use table_style_edit::{
     DEFAULT_PIVOT_STYLE, DEFAULT_TABLE_STYLE, TableElement, TableStyleSpec,
@@ -331,6 +333,8 @@ pub struct Workbook {
     cond: cond_format::CondState,
     /// Data validation of the opened file.
     validation: validation::Validations,
+    /// Sparklines of the opened file.
+    sparklines: sparkline::Sparklines,
     /// The workbook's own table styles (`<tableStyles>` in `styles.xml`).
     table_styles: table::CustomStyles,
     /// Charts and pictures of the opened file (`drawing`).
@@ -673,6 +677,7 @@ impl Workbook {
             cache: RefCell::default(),
             cond: Default::default(),
             validation: Default::default(),
+            sparklines: Default::default(),
             table_styles,
             drawings: Default::default(),
             prints: Default::default(),
@@ -783,6 +788,7 @@ impl Workbook {
         }
         let Extras {
             validation,
+            sparklines,
             drawings,
             mut prints,
             pivots,
@@ -884,6 +890,7 @@ impl Workbook {
             cache: RefCell::default(),
             cond: Default::default(),
             validation,
+            sparklines,
             table_styles,
             drawings,
             prints,
@@ -1825,6 +1832,7 @@ struct SheetViews {
 #[derive(Default)]
 struct Extras {
     validation: validation::Validations,
+    sparklines: sparkline::Sparklines,
     drawings: drawing::Drawings,
     prints: print::Prints,
     pivots: pivot::Pivots,
@@ -1848,6 +1856,7 @@ impl Extras {
         let skeletons = preserve::worksheet_skeletons(bytes);
         Extras {
             validation: validation::Validations::read(&skeletons),
+            sparklines: sparkline::Sparklines::read(&skeletons),
             drawings: drawing::Drawings::read(bytes),
             prints: print::Prints::read(bytes, &skeletons),
             pivots: pivot::Pivots::read(bytes),

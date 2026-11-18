@@ -136,6 +136,9 @@ impl Encoder {
         for icon in &page.icons {
             draw_icon(&mut surface, icon);
         }
+        for spark in &page.sparklines {
+            draw_sparkline(&mut surface, spark);
+        }
         for t in &page.texts {
             pen.cell_text(&mut surface, t);
         }
@@ -347,6 +350,54 @@ fn draw_bar(surface: &mut Surface, b: &crate::Bar) {
             Some(vec![1.0, 1.0]),
             b.bar.axis_color.unwrap_or(0x000000),
         );
+    }
+}
+
+/// A sparkline in its cell ([`sheets_engine::Sparkline::geometry`], as on
+/// screen), in points.
+fn draw_sparkline(surface: &mut Surface, s: &crate::Spark) {
+    let [x, y, w, h] = s.rect;
+    let g = s.spark.geometry(w, h, 1.0);
+    let ink = |c: u32| if s.black { 0x000000 } else { c };
+    if let Some((ay, c)) = g.axis {
+        fill_rect(surface, [x, y + ay - 0.375, w, 0.75], ink(c));
+    }
+    for ([bx, by, bw, bh], c) in &g.bars {
+        fill_rect(surface, [x + bx, y + by, *bw, *bh], ink(*c));
+    }
+    for run in g.lines.iter().filter(|r| r.len() >= 2) {
+        let mut pb = PathBuilder::new();
+        pb.move_to(x + run[0][0], y + run[0][1]);
+        for p in &run[1..] {
+            pb.line_to(x + p[0], y + p[1]);
+        }
+        let Some(path) = pb.finish() else { continue };
+        surface.set_fill(None);
+        surface.set_stroke(Some(Stroke {
+            paint: krgb(ink(s.spark.series)).into(),
+            width: g.line_width,
+            line_join: krilla::paint::LineJoin::Round,
+            line_cap: krilla::paint::LineCap::Round,
+            ..Stroke::default()
+        }));
+        surface.draw_path(&path);
+        surface.set_stroke(None);
+    }
+    let r = g.marker_size / 2.0;
+    for ([mx, my], c) in &g.markers {
+        // A circle as four Bézier quarters.
+        let (cx, cy, k) = (x + mx, y + my, r * 0.552_284_8);
+        let mut pb = PathBuilder::new();
+        pb.move_to(cx + r, cy);
+        pb.cubic_to(cx + r, cy + k, cx + k, cy + r, cx, cy + r);
+        pb.cubic_to(cx - k, cy + r, cx - r, cy + k, cx - r, cy);
+        pb.cubic_to(cx - r, cy - k, cx - k, cy - r, cx, cy - r);
+        pb.cubic_to(cx + k, cy - r, cx + r, cy - k, cx + r, cy);
+        pb.close();
+        let Some(path) = pb.finish() else { continue };
+        surface.set_stroke(None);
+        surface.set_fill(Some(fill(color(ink(*c)))));
+        surface.draw_path(&path);
     }
 }
 

@@ -1041,12 +1041,30 @@ impl TableDelegate for SheetGrid {
             None => Vec::new(),
         };
         let validation = self.validation_layers(row, col, row_height, cx);
+        // A sparkline (a merged cell's fills the merged block).
+        let sparkline = self.book.sparkline(sheet, vr, vc);
         let note_edited = self.note_editing == Some((sheet, row, col));
         let has_note = self.book.note_at(sheet, row, col).is_some();
         let editing_here = self
             .editor
             .as_ref()
             .is_some_and(|e| e.cell == (row, col) && e.sheet == self.sheet);
+        // The in-cell editor writes in the cell's font, at the size the cell
+        // shows it (the sheet's zoom, capped to the row as the cell's text).
+        let editor_font = editing_here.then(|| {
+            let own = &look.style;
+            cell_editor::EditorFont {
+                size: look::text_size(
+                    own,
+                    self.book.default_font_size(),
+                    FONT_BODY * self.zoom(),
+                    geometry.map_or(row_height, |g| g.3),
+                ),
+                family: self.fonts.for_style(own, cx),
+                bold: own.bold,
+                italic: own.italic,
+            }
+        });
         let frozen_rows = self.book.frozen(self.sheet).0;
         // Most cells have nothing but a fill, gridlines and one line of
         // text: one element draws those ([`plain_cell`]).
@@ -1062,6 +1080,7 @@ impl TableDelegate for SheetGrid {
             && !break_above
             && !break_left
             && cond_layers.is_empty()
+            && sparkline.is_none()
             && validation.is_empty()
             && !has_note
             && !note_edited
@@ -1107,6 +1126,20 @@ impl TableDelegate for SheetGrid {
             .when(break_above, |d| d.child(page_break_line(false, t.fg_muted)))
             .when(break_left, |d| d.child(page_break_line(true, t.fg_muted)));
         let cell = cell.children(cond_layers);
+        // Under the text, as in Excel.
+        let cell = match (sparkline, geometry) {
+            (Some(spark), Some((x, y, w, h))) => cell.child(
+                div()
+                    .absolute()
+                    .left(-x)
+                    .top(-y)
+                    .w(w)
+                    .h(h)
+                    .child(cond_paint::sparkline_layer(spark, self.zoom())),
+            ),
+            (Some(spark), None) => cell.child(cond_paint::sparkline_layer(spark, self.zoom())),
+            (None, _) => cell,
+        };
         let cell = match geometry {
             // The whole merged block, shifted so this cell shows its slice.
             Some((x, y, w, h)) => {
@@ -1286,10 +1319,17 @@ impl TableDelegate for SheetGrid {
                     .filter(|e| e.cell == (row, col) && e.sheet == self.sheet),
                 |d, editor| {
                     let (fr, fc) = self.book.frozen(self.sheet);
+                    let editor_font = editor_font.unwrap_or(cell_editor::EditorFont {
+                        size: FONT_BODY * self.zoom(),
+                        family: None,
+                        bold: false,
+                        italic: false,
+                    });
                     d.child(editor.render(
                         self.ref_span_colors(&t),
                         (row < fr, col < fc),
                         self.zoom(),
+                        editor_font,
                         cx,
                     ))
                 },

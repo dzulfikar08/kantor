@@ -25,6 +25,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Sheets draws sparklines (Excel's line, column and win/loss charts in a cell) on screen and in
+  the PDF: their colours, markers, high, low, first, last and negative points, the horizontal axis,
+  how empty cells show (gaps, zero or a joined line), hidden data, date axes and each group's
+  vertical axis scaling (each sparkline, the whole group or fixed values).
 - Chart sheets zoom, as in Excel: the zoom slider, Ctrl+mouse wheel, Ctrl+= / Ctrl+- and the Zoom
   dialog show the chart at its own size times the zoom (scrolling when it is larger than the
   window), and Zoom to Selection makes it follow the window's size. The zoom is saved with the
@@ -48,6 +52,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Fixed
 
+- Sheets scrolls as smoothly as before its cells took Excel's proportions (which put about twice
+  as many cells on screen): ordinary cells are drawn without building a layout tree each, which
+  cuts a frame's work by about a third (a scrolled frame of a 20-column sheet no longer misses the
+  screen's refresh twice in a row).
+- Editing in a cell writes in the cell's font, size, bold and italic, at the sheet's zoom, as Excel
+  does, instead of the grid's default size.
 - Pictures cut to a shape (an oval or star picture, a shape filled with a picture, the round
   pictures of SmartArt picture layouts) show only inside their shape on screen in Slides, Sheets and
   Docs, with a smooth edge and their outline round the shape, as they already did in the PDF; they
