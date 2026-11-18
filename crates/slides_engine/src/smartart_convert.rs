@@ -70,7 +70,8 @@ pub fn change_layout(
             if matches!(
                 to,
                 Family::VerticalPictureList | Family::BendingPictureAccentList
-            ) {
+            ) || to == Family::CircularPictureCallout && i > 0
+            {
                 paras = paras.replace("algn=\"ctr\"", "algn=\"l\"");
             }
             if !to.sub_boxes() {
@@ -121,8 +122,14 @@ pub fn change_layout(
                         lbl = f.picture_style(),
                     ));
                     let text = if text_only(f) {
-                        // A caption: text without a shape of its own.
-                        scratch(id, "rect", NO_FILL, "ctr", &paras, "")
+                        // A caption: text without a shape of its own (the
+                        // big callout's text at the bottom of its circle).
+                        let anchor = if f == Family::CircularPictureCallout && i == 0 {
+                            "b"
+                        } else {
+                            "ctr"
+                        };
+                        scratch(id, "rect", NO_FILL, anchor, &paras, "")
                     } else {
                         node(&t, id, prst, &paras, None)
                     };
@@ -173,6 +180,20 @@ pub fn change_layout(
                     name = to.sub_name(),
                 ));
             }
+        }
+        // A Circular Picture Callout's line to the second item (the
+        // relayout copies it for the others), behind everything.
+        if to == Family::CircularPictureCallout
+            && let Some(sib) = model.top.get(1).and_then(|t| model.sib.get(t))
+        {
+            shapes.back.push_str(&scratch(
+                sib,
+                "line",
+                "<a:noFill/><a:ln w=\"12700\"><a:solidFill><a:schemeClr val=\"accent1\"/></a:solidFill></a:ln>",
+                "",
+                "",
+                "",
+            ));
         }
         if to.arrows()
             && model.top.len() > 1
@@ -239,7 +260,10 @@ struct Shapes {
 fn text_only(f: Family) -> bool {
     matches!(
         f,
-        Family::PictureAccentList | Family::PictureCaptionList | Family::PictureGrid
+        Family::PictureAccentList
+            | Family::PictureCaptionList
+            | Family::PictureGrid
+            | Family::CircularPictureCallout
     )
 }
 
@@ -247,7 +271,7 @@ fn text_only(f: Family) -> bool {
 fn picture_geometry(f: Family) -> &'static str {
     match f {
         Family::HorizontalPictures | Family::VerticalPictureList => "roundRect",
-        Family::BendingPictureAccentList => "ellipse",
+        Family::BendingPictureAccentList | Family::CircularPictureCallout => "ellipse",
         _ => "rect",
     }
 }
@@ -263,7 +287,8 @@ fn geometry(f: Family) -> &'static str {
         | Family::BendingPictureAccentList
         | Family::PictureCaptionList
         | Family::TitledPictureBlocks
-        | Family::PictureGrid => "rect",
+        | Family::PictureGrid
+        | Family::CircularPictureCallout => "rect",
         Family::VerticalPictureList => "roundRect",
         Family::Cycle | Family::RadialCycle | Family::Venn => "ellipse",
         Family::Pyramid => "trapezoid",
@@ -988,6 +1013,7 @@ pub fn layout_def(f: Family) -> String {
             ("hierRoot", "<dgm:param type=\"hierAlign\" val=\"lCtrCV\"/>")
         }
         Family::Pyramid => ("pyra", "<dgm:param type=\"linDir\" val=\"fromT\"/>"),
+        Family::CircularPictureCallout => ("composite", ""),
     };
     let sib = if f.arrows() {
         format!(

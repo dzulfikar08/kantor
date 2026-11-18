@@ -12,6 +12,10 @@ as raw WordprocessingML (deterministic: same bytes every run):
   a simple `INDEX`, and tables of contents limited to a bookmark (`\\b`)
   and built from `TC` entries (`\\f`). Every result is saved wrong on
   purpose ("0"), so tests see Kantor work it out.
+* columns_long.docx: about 20 pages of exact 14 pt lines in two equal
+  columns (with a line between), three columns and two unequal ones,
+  continuous section breaks between them, footnotes, exact-height tables and
+  pictures: checked against LibreOffice 25.8 (crates/docs_pdf/tests).
 * styleref_index.docx: a header with `STYLEREF "Heading 1"` over four
   pages (two chapters, a page without a heading, the index page), and an
   `INDEX \\h "A"` of `XE` entries with sub-entries and a cross-reference
@@ -72,8 +76,10 @@ SECT = (
 )
 
 
-def package(body, media=(), numbering=None, header=None, sect=None):
-    """A .docx's bytes: `body` inside w:body, `media` = [(rId, name, bytes)]."""
+def package(body, media=(), numbering=None, header=None, sect=None, footnotes=None, settings=None):
+    """A .docx's bytes: `body` inside w:body, `media` = [(rId, name, bytes)],
+    `footnotes` the w:footnote elements of a footnotes part (separators
+    added)."""
     rels = [
         '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
     ]
@@ -91,6 +97,16 @@ def package(body, media=(), numbering=None, header=None, sect=None):
             '<Relationship Id="rIdHeader1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>'
         )
         sect = SECT.replace("<w:sectPr>", '<w:sectPr><w:headerReference w:type="default" r:id="rIdHeader1"/>')
+    if settings:
+        rels.append(
+            '<Relationship Id="rIdSettings" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>'
+        )
+        overrides += '<Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>'
+    if footnotes:
+        rels.append(
+            '<Relationship Id="rIdFootnotes" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/footnotes" Target="footnotes.xml"/>'
+        )
+        overrides += '<Override PartName="/word/footnotes.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"/>'
     if numbering:
         rels.append(
             '<Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>'
@@ -113,6 +129,15 @@ def package(body, media=(), numbering=None, header=None, sect=None):
     }
     if numbering:
         files["word/numbering.xml"] = numbering
+    if settings:
+        files["word/settings.xml"] = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings {NS}>{settings}</w:settings>'
+    if footnotes:
+        files["word/footnotes.xml"] = (
+            f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:footnotes {NS}>'
+            '<w:footnote w:type="separator" w:id="-1"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:separator/></w:r></w:p></w:footnote>'
+            '<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:pPr><w:spacing w:after="0" w:line="240" w:lineRule="auto"/></w:pPr><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>'
+            f"{footnotes}</w:footnotes>"
+        )
     if header:
         files["word/header1.xml"] = f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr {NS}>{header}</w:hdr>'
         files["[Content_Types].xml"] = files["[Content_Types].xml"].replace(
@@ -382,11 +407,115 @@ def columns():
     return package(body, sect=col_sect(left))
 
 
+# ── columns_long.docx ──────────────────────────────────────────────────────
+# 20-odd pages of the same 14 pt exact lines in 2 and 3 columns (equal and
+# unequal), continuous section breaks between them, footnotes, tables with
+# exact-height rows and pictures in exact-height lines: page breaks and
+# line places don't depend on fonts, so Kantor's can be compared with
+# LibreOffice's line for line (tools: ~/.cache LibreOffice, pdftotext).
+
+
+def note_ref(n):
+    return (
+        '<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr>'
+        f'<w:footnoteReference w:id="{n}"/></w:r>'
+    )
+
+
+def footnote(n, t):
+    return (
+        f'<w:footnote w:id="{n}"><w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="240" '
+        'w:lineRule="exact"/></w:pPr><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteRef/></w:r>'
+        f'<w:r><w:t xml:space="preserve"> {esc(t)}</w:t></w:r></w:p></w:footnote>'
+    )
+
+
+def exact_table(label, rows, widths):
+    """A Table Grid table, rows exactly 14 pt, no cell padding top/bottom."""
+    grid = "".join(f'<w:gridCol w:w="{w}"/>' for w in widths)
+    body = ""
+    for r in range(rows):
+        cells = ""
+        for c, w in enumerate(widths):
+            cells += (
+                f'<w:tc><w:tcPr><w:tcW w:w="{w}" w:type="dxa"/></w:tcPr><w:p><w:pPr><w:spacing w:before="0" '
+                'w:after="0" w:line="280" w:lineRule="exact"/></w:pPr>'
+                f'<w:r><w:t>{esc(label)} {r + 1}.{c + 1}</w:t></w:r></w:p></w:tc>'
+            )
+        body += f'<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="280" w:hRule="exact"/></w:trPr>{cells}</w:tr>'
+    return (
+        '<w:tbl><w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:w="0" w:type="auto"/>'
+        '<w:tblLook w:val="04A0"/></w:tblPr>'
+        f"<w:tblGrid>{grid}</w:tblGrid>{body}</w:tbl>"
+    )
+
+
+def picture_line(rid, doc_id):
+    """An inline 1.5 x 0.75 in picture in a line of exactly 1.5 in (room
+    above the baseline for it whatever the font)."""
+    cx, cy = 1371600, 685800
+    return (
+        '<w:p><w:pPr><w:spacing w:before="0" w:after="0" w:line="2160" w:lineRule="exact"/></w:pPr>'
+        + inline_picture(rid, cx, cy, doc_id, f"Picture {doc_id}")
+        + "</w:p>"
+    )
+
+
+def columns_long():
+    one = '<w:cols w:space="720"/>'
+    two = '<w:cols w:num="2" w:sep="1" w:space="720"/>'
+    three = '<w:cols w:num="3" w:space="567"/>'
+    left = (
+        '<w:cols w:num="2" w:space="720" w:equalWidth="0">'
+        '<w:col w:w="2600" w:space="720"/><w:col w:w="5706"/></w:cols>'
+    )
+    notes = []
+    pics = 0
+
+    def items(prefix, n, note_every, table_every, pic_every, widths):
+        nonlocal pics
+        out = ""
+        for i in range(1, n + 1):
+            ref = ""
+            if note_every and i % note_every == 0:
+                notes.append(footnote(len(notes) + 1, f"Note on {prefix} {i}"))
+                ref = note_ref(len(notes))
+            out += line(f"{prefix} {i}") if not ref else line(f"{prefix} {i}")[:-6] + ref + "</w:p>"
+            if table_every and i % table_every == 0:
+                out += exact_table(f"{prefix}{i}", 4, widths)
+                out += line(f"{prefix} {i} after table")
+            if pic_every and i % pic_every == 0:
+                pics += 1
+                out += picture_line("rIdLongPic", 100 + pics)
+        return out
+
+    body = line("Long columns") + line("One column, then two.", sect=col_sect(one))
+    # Two equal columns with a line between: notes, tables, pictures.
+    body += items("A", 700, 37, 90, 120, [1800, 1800])
+    body += line("A end", sect=col_sect(two, "continuous"))
+    # One column between, five lines.
+    for i in range(1, 6):
+        body += line(f"Between {i}", sect=col_sect(one, "continuous") if i == 5 else "")
+    # Three columns.
+    body += items("B", 900, 53, 110, 150, [1100, 1100])
+    body += line("B end", sect=col_sect(three, "continuous"))
+    # A narrow left column and a wide one, from a new page.
+    body += items("C", 300, 41, 0, 100, [])
+    body += line("C end", sect=col_sect(left, "nextPage"))
+    for i in range(1, 11):
+        body += line(f"Last {i}")
+    media = [("rIdLongPic", "long.png", png(36, 18, (90, 140, 200)))]
+    # Word 2013's table placement (the border at the margin), as Kantor.
+    settings = '<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>'
+    return package(body, media=media, sect=col_sect(one), footnotes="".join(notes), settings=settings)
+
+
 FILES = {
     "textboxes.docx": textboxes,
     "formulas.docx": formulas,
     "styleref_index.docx": styleref_index,
     "columns.docx": columns,
+    "columns_long.docx": columns_long,
 }
 
 

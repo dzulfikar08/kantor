@@ -11,10 +11,17 @@
 //! stop moves it, dragging it off the ruler removes it, and double-clicking
 //! one opens the Tabs popover.
 //!
+//! Columns, as Word: in a section with columns the spaces between them are
+//! shaded like the margins, the caret's column holds the indent markers
+//! and tab stops (measured from its left edge), and dragging either edge
+//! of a space changes the columns' widths and spacing (equal columns stay
+//! equal), as one undo step.
+//!
 //! It shares the page canvas's [`Geometry`](crate::Geometry), so it scrolls
 //! and zooms with the page. Visibility is a user setting
 //! (`docs_ruler` in `kantor_core::settings`), on by default.
 
+use docs_engine::columns::{ColumnEdge, Columns, ColumnsApply};
 use docs_engine::tabs::TabEdit;
 use docs_engine::{Indent, TabKind, TabStop};
 use gpui_kit::component::tooltip::Tooltip;
@@ -75,8 +82,10 @@ pub(crate) enum Handle {
     /// The left indent; the first line stays where it is (hanging indent).
     Left,
     Right,
-    /// A tab stop, by its position (twips from the left margin).
+    /// A tab stop, by its position (twips from the column's left edge).
     Tab(i32),
+    /// An edge of the space between two columns.
+    Col(ColumnEdge),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -94,13 +103,19 @@ pub(crate) struct Drag {
 const OFF_PX: f32 = 28.0;
 
 /// The caret paragraph's indents and the page margins, in page px.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Marks {
     pub page_w: f32,
     pub margin_left: f32,
     pub margin_right: f32,
     /// `None` in a table (cell indents aren't on the page ruler).
     pub indents: Option<Indents>,
+    /// The section's columns (one: no column marks), on a text area
+    /// `text_tw` twips wide.
+    pub columns: Columns,
+    pub text_tw: u32,
+    /// The column holding the caret.
+    pub col: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -111,20 +126,56 @@ pub(crate) struct Indents {
 }
 
 impl Marks {
+    /// The columns (left edge and width, page px); empty with one.
+    pub fn column_boxes(&self) -> Vec<(f32, f32)> {
+        if self.columns.count() <= 1 {
+            return Vec::new();
+        }
+        self.columns
+            .layout(self.text_tw)
+            .into_iter()
+            .map(|(x, w)| (self.margin_left + x as f32 / 15.0, w as f32 / 15.0))
+            .collect()
+    }
+
+    /// The caret column's edges (the margins without columns): indents and
+    /// tab stops are measured from them.
+    pub fn text_left(&self) -> f32 {
+        self.column_boxes()
+            .get(self.col)
+            .map_or(self.margin_left, |c| c.0)
+    }
+
+    pub fn text_right(&self) -> f32 {
+        self.column_boxes()
+            .get(self.col)
+            .map_or(self.page_w - self.margin_right, |c| c.0 + c.1)
+    }
+
     /// Where a handle sits, in page px.
     pub fn x(&self, h: Handle) -> Option<f32> {
         let i = self.indents;
         Some(match h {
             Handle::MarginLeft => self.margin_left,
             Handle::MarginRight => self.page_w - self.margin_right,
-            Handle::FirstLine => self.margin_left + i?.left + i?.first,
-            Handle::Left => self.margin_left + i?.left,
-            Handle::Right => self.page_w - self.margin_right - i?.right,
+            Handle::FirstLine => self.text_left() + i?.left + i?.first,
+            Handle::Left => self.text_left() + i?.left,
+            Handle::Right => self.text_right() - i?.right,
             Handle::Tab(pos) => {
                 i?;
-                self.margin_left + pos as f32 / 15.0
+                self.text_left() + pos as f32 / 15.0
+            }
+            Handle::Col(e) => {
+                self.margin_left + self.columns.edge_at(self.text_tw, e)? as f32 / 15.0
             }
         })
+    }
+
+    /// The columns after a column edge drag ending at `x` (`None`:
+    /// nothing changes).
+    pub fn columns_for(&self, e: ColumnEdge, x: f32) -> Option<Columns> {
+        let at = ((x - self.margin_left) * 15.0).round().max(0.0) as u32;
+        self.columns.dragged(self.text_tw, e, at.min(self.text_tw))
     }
 
     /// Snap and clamp a dragged position.
@@ -137,30 +188,35 @@ impl Marks {
                     snap(self.page_w - x).clamp(0.0, self.page_w - self.margin_left - MIN_TEXT_PX);
                 self.page_w - m
             }
-            // Indents snap relative to the margin they're measured from.
+            // Indents snap relative to the edge they're measured from.
             Handle::FirstLine | Handle::Left => {
-                self.margin_left
-                    + snap(x - self.margin_left).clamp(-self.margin_left, self.text_w())
+                let left = self.text_left();
+                left + snap(x - left).clamp(-left, self.text_w())
             }
             Handle::Right => {
-                let edge = self.page_w - self.margin_right;
-                edge - snap(edge - x).clamp(-self.margin_right, self.text_w())
+                let edge = self.text_right();
+                edge - snap(edge - x).clamp(-(self.page_w - edge), self.text_w())
             }
             Handle::Tab(_) => {
-                self.margin_left + snap(x - self.margin_left).clamp(0.0, self.text_w())
+                let left = self.text_left();
+                left + snap(x - left).clamp(0.0, self.text_w())
+            }
+            Handle::Col(_) => {
+                let m = self.margin_left;
+                m + snap(x - m).clamp(0.0, self.page_w - self.margin_right - m)
             }
         }
     }
 
     fn text_w(&self) -> f32 {
-        self.page_w - self.margin_left - self.margin_right
+        self.text_right() - self.text_left()
     }
 
     /// The new indent for an indent drag ending at `x` (twips).
     pub fn indent_for(&self, h: Handle, x: f32) -> Option<Indent> {
         let i = self.indents?;
         let tw = |px: f32| (px * 15.0).round() as i32;
-        let rel = x - self.margin_left;
+        let rel = x - self.text_left();
         Some(match h {
             Handle::FirstLine => Indent {
                 first: Some(tw(rel - i.left)),
@@ -173,10 +229,12 @@ impl Marks {
                 right: None,
             },
             Handle::Right => Indent {
-                right: Some(tw(self.page_w - self.margin_right - x)),
+                right: Some(tw(self.text_right() - x)),
                 ..Indent::default()
             },
-            Handle::MarginLeft | Handle::MarginRight | Handle::Tab(_) => return None,
+            Handle::MarginLeft | Handle::MarginRight | Handle::Tab(_) | Handle::Col(_) => {
+                return None;
+            }
         })
     }
 }
@@ -231,9 +289,9 @@ pub(crate) fn next_kind(k: TabKind) -> TabKind {
     all[(i + 1) % all.len()]
 }
 
-/// Twips from the left margin for a ruler x (page px).
+/// Twips from the caret column's left edge for a ruler x (page px).
 pub(crate) fn tab_pos(marks: &Marks, x: f32) -> i32 {
-    ((x - marks.margin_left) * 15.0).round() as i32
+    ((x - marks.text_left()) * 15.0).round() as i32
 }
 
 /// The edit a finished tab-stop drag makes (`None`: nothing changes).
@@ -314,7 +372,7 @@ impl DocsView {
             return;
         }
         let px = self.page_x_at(x);
-        if px < marks.margin_left || px > marks.page_w - marks.margin_right {
+        if px < marks.text_left() || px > marks.text_right() {
             return;
         }
         let x = marks.constrain(Handle::Tab(0), px);
@@ -341,12 +399,40 @@ impl DocsView {
                 right: px(r.indent_right_pt),
             }
         });
-        Marks {
+        // The section's columns (none while editing a header or footer),
+        // and the one holding the caret.
+        let (columns, text_tw) = if self.part.is_some() {
+            (Columns::one(), 0)
+        } else {
+            let para = self.sel.head.para;
+            (
+                self.doc.section_columns(para),
+                self.doc.section_text_width(para),
+            )
+        };
+        let mut marks = Marks {
             page_w: s.width,
             margin_left: s.margin_left,
             margin_right: s.margin_right,
             indents,
+            columns,
+            text_tw,
+            col: 0,
+        };
+        if let Some(c) = self.laid.caret(self.sel.head.para, self.sel.head.offset)
+            && self.part.is_none()
+        {
+            let boxes = marks.column_boxes();
+            marks.col = boxes
+                .iter()
+                .enumerate()
+                .min_by(|a, b| {
+                    let d = |b: &(f32, f32)| (c.x - (b.0 + b.1 / 2.0)).abs();
+                    d(a.1).total_cmp(&d(b.1))
+                })
+                .map_or(0, |(i, _)| i);
         }
+        marks
     }
 
     /// Page x (unzoomed) under a window x.
@@ -398,6 +484,10 @@ impl DocsView {
                 p.margin_right = tw(marks.page_w - d.x);
                 self.set_page_doc(p, window, cx);
             }
+            Handle::Col(e) => match marks.columns_for(e, d.x) {
+                Some(cols) => self.set_columns_doc(cols, ColumnsApply::ThisSection, window, cx),
+                None => cx.notify(),
+            },
             h => {
                 if let Some(ind) = marks.indent_for(h, d.x) {
                     self.doc.set_indent(self.sel, ind);
@@ -457,6 +547,12 @@ impl DocsView {
             .child(
                 band(marks.page_w - marks.margin_right, marks.margin_right).bg(t.bg.opacity(0.6)),
             );
+        // The spaces between columns, shaded like the margins.
+        let boxes = marks.column_boxes();
+        for pair in boxes.windows(2) {
+            let (a, b) = (pair[0].0 + pair[0].1, pair[1].0);
+            ruler = ruler.child(band(a, (b - a).max(0.0)).bg(t.bg.opacity(0.6)));
+        }
         // Ticks and numbers; numbers thin out when zoomed far out.
         let every = [1, 2, 5, 10]
             .into_iter()
@@ -539,6 +635,29 @@ impl DocsView {
                     .on_mouse_down(MouseButton::Left, start_drag(hd, cx)),
             );
         }
+        // Column edges: either side of each space, like the margin edges.
+        for i in 0..boxes.len().saturating_sub(1) {
+            for (e, side) in [(ColumnEdge::End(i), "end"), (ColumnEdge::Start(i), "start")] {
+                let hd = Handle::Col(e);
+                let Some(x) = at(hd) else { continue };
+                ruler = ruler.child(
+                    div()
+                        .id(SharedString::from(format!("docs-ruler-col-{side}-{i}")))
+                        .absolute()
+                        .top(SPACE_4)
+                        .bottom(SPACE_4)
+                        .left(sx(x) - SPACE_2)
+                        .w(SPACE_4)
+                        .cursor(CursorStyle::ResizeLeftRight)
+                        .child(div().mx_auto().w(px(2.)).h_full().bg(if dragging(hd) {
+                            t.accent
+                        } else {
+                            t.fg_dim
+                        }))
+                        .on_mouse_down(MouseButton::Left, start_drag(hd, cx)),
+                );
+            }
+        }
         // Indent markers: first line on top, left and right at the bottom.
         for (hd, id, top) in [
             (Handle::FirstLine, "docs-ruler-first", true),
@@ -570,18 +689,19 @@ impl DocsView {
         // the last one, as Word.
         if marks.indents.is_some() {
             let tabs = self.ruler_tabs();
-            let text_end = marks.page_w - marks.margin_right;
+            let text_end = marks.text_right();
+            let text_start = marks.text_left();
             let last = tabs.iter().map(|s| s.pos).max().unwrap_or(0).max(0) as f32 / 15.0;
             let step = (self.doc.default_tab() as f32 / 15.0).max(4.0);
             let mut d = ((last / step).floor() + 1.0) * step;
-            while marks.margin_left + d < text_end {
+            while text_start + d < text_end {
                 ruler = ruler.child(
                     div()
                         .absolute()
                         .bottom(px(1.))
                         .h(px(3.))
                         .w(px(1.))
-                        .left(sx(marks.margin_left + d))
+                        .left(sx(text_start + d))
                         .bg(t.fg_dim),
                 );
                 d += step;
@@ -694,7 +814,42 @@ mod tests {
                 first: 0.0,
                 right: 0.0,
             }),
+            columns: Columns::one(),
+            text_tw: 0,
+            col: 0,
         }
+    }
+
+    #[std::prelude::v1::test]
+    fn columns_show_and_drag_on_the_ruler() {
+        let mut m = a4();
+        m.text_tw = ((m.page_w - m.margin_left - m.margin_right) * 15.0).round() as u32;
+        m.columns = Columns::equal(2, 720);
+        m.col = 1;
+        let boxes = m.column_boxes();
+        assert_eq!(boxes.len(), 2);
+        // Indents and tab stops are measured from the caret's column.
+        assert!((m.text_left() - boxes[1].0).abs() < 0.01);
+        assert!((m.text_right() - (m.page_w - m.margin_right)).abs() < 0.1);
+        assert!((m.x(Handle::Left).unwrap() - boxes[1].0).abs() < 0.01);
+        assert_eq!(tab_pos(&m, boxes[1].0 + CM), 567);
+        let left = m.indent_for(Handle::Left, boxes[1].0 + CM).unwrap();
+        assert_eq!(left.left, Some(567));
+        // The space's edges sit at the columns' edges.
+        let end = m.x(Handle::Col(ColumnEdge::End(0))).unwrap();
+        assert!((end - (boxes[0].0 + boxes[0].1)).abs() < 0.1);
+        let start = m.x(Handle::Col(ColumnEdge::Start(0))).unwrap();
+        assert!((start - boxes[1].0).abs() < 0.1);
+        assert!(m.x(Handle::Col(ColumnEdge::End(1))).is_none());
+        // Dragging the first column's end left widens the space; equal
+        // columns stay equal.
+        let x = m.constrain(Handle::Col(ColumnEdge::End(0)), end - 1.1 * CM);
+        let c = m.columns_for(ColumnEdge::End(0), x).unwrap();
+        assert!(c.equal && c.space > 720 + 1000);
+        let lay = c.layout(m.text_tw);
+        assert_eq!(lay[0].1, lay[1].1);
+        // Released where it was: nothing.
+        assert!(m.columns_for(ColumnEdge::End(0), end).is_none());
     }
 
     #[std::prelude::v1::test]

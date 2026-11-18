@@ -95,6 +95,11 @@ pub enum Family {
     /// Picture Grid: square pictures in rows, each item's text over its
     /// picture.
     PictureGrid,
+    /// Circular Picture Callout: the first item's round picture at the
+    /// left with its text inside, the other items (up to six) as smaller
+    /// round pictures beside it, each joined to the big one by a line and
+    /// its text at its right.
+    CircularPictureCallout,
 }
 
 /// The SmartArt layouts Kantor lays out: family, layout id (`loTypeId`),
@@ -216,6 +221,12 @@ pub const LAYOUTS: &[(Family, &str, &str, &str)] = &[
         "Picture Grid",
     ),
     (
+        Family::CircularPictureCallout,
+        "urn:microsoft.com/office/officeart/2008/layout/CircularPictureCallout",
+        "picture",
+        "Circular Picture Callout",
+    ),
+    (
         Family::Venn,
         "urn:microsoft.com/office/officeart/2005/8/layout/venn1",
         "relationship",
@@ -270,6 +281,12 @@ impl Family {
         matches!(self, Family::Process | Family::Cycle)
     }
 
+    /// A line joins each item but the first to the first one (Circular
+    /// Picture Callout; drawn as the item's arrow, in [`Boxes::arrow`]).
+    fn callout_lines(self) -> bool {
+        self == Family::CircularPictureCallout
+    }
+
     /// Items' sub-items go in a box of their own (else they're bullets in
     /// the item's shape).
     fn sub_boxes(self) -> bool {
@@ -305,6 +322,7 @@ impl Family {
                 | Family::PictureCaptionList
                 | Family::TitledPictureBlocks
                 | Family::PictureGrid
+                | Family::CircularPictureCallout
         )
     }
 
@@ -318,6 +336,7 @@ impl Family {
             Family::PictureCaptionList => "pictRect",
             Family::TitledPictureBlocks => "Image",
             Family::PictureGrid => "rect1",
+            Family::CircularPictureCallout => "pictureRepeatNode",
             _ => "imagNode",
         }
     }
@@ -327,7 +346,7 @@ impl Family {
         match self {
             Family::BendingPictureAccentList => "fgAccFollowNode1",
             Family::TitledPictureBlocks => "bgImgPlace1",
-            Family::PictureGrid => "alignImgPlace1",
+            Family::PictureGrid | Family::CircularPictureCallout => "alignImgPlace1",
             _ => "fgImgPlace1",
         }
     }
@@ -538,13 +557,25 @@ impl View {
         if target == self.doc {
             return Role::Back;
         }
+        let callout = self.family.callout_lines();
+        if callout {
+            // Its composites (`picture_N` holding the picture,
+            // `textparent_N` the text) draw nothing themselves.
+            let lower = name.to_ascii_lowercase();
+            if lower.starts_with("textparent") || lower.starts_with("picture_") {
+                return Role::Other;
+            }
+        }
         for (i, it) in self.items.iter().enumerate() {
             if it.par.as_deref() == Some(target) {
                 return Role::Deco(i);
             }
             if it.id == target {
                 let name = name.to_ascii_lowercase();
-                return if name.contains("child") {
+                return if callout && name.starts_with("line") {
+                    // Circular Picture Callout's `line_N`.
+                    Role::Arrow(i)
+                } else if name.contains("child") {
                     Role::Sub(i)
                 } else if is_picture_name(&name)
                     || self.family == Family::PictureGrid && name == "rect1"
@@ -559,6 +590,11 @@ impl View {
                 };
             }
             if it.sib.as_deref() == Some(target) {
+                // Circular Picture Callout hangs each item's picture on its
+                // sibling transition (`pictureRepeatNode`).
+                if callout && is_picture_name(&name.to_ascii_lowercase()) {
+                    return Role::Pic(i);
+                }
                 return Role::Arrow(i);
             }
             if it.subs.iter().any(|s| s == target) {
@@ -950,6 +986,7 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                 })
                 .collect()
         }
+        Family::CircularPictureCallout => callout_boxes(n, w, h),
         Family::ContinuousBlock => {
             // Boxes in a row over the middle of the arrow (back_box), the
             // arrow's head clear of the last one.
@@ -1102,6 +1139,81 @@ fn boxes(family: Family, subs: &[bool], sub_ratio: f64, w: f64, h: f64) -> Vec<B
                 .collect()
         }
     }
+}
+
+/// Circular Picture Callout's places, from its layout definition (left to
+/// right; `dir="norm"`): for 2 to 7 items, the callouts' size and, for
+/// each, its left edge and the y of its centre, all in heights of the big
+/// picture.
+const CALLOUTS: [(f64, &[(f64, f64)]); 6] = [
+    (0.5, &[(1.21, 0.5)]),
+    (0.375, &[(1.21, 0.1875), (1.21, 0.8125)]),
+    (0.3, &[(1.354, 0.15), (1.21, 0.5), (1.354, 0.85)]),
+    (
+        0.22,
+        &[(1.375, 0.11), (1.21, 0.353), (1.21, 0.647), (1.375, 0.89)],
+    ),
+    (
+        0.18,
+        &[
+            (1.4238, 0.09),
+            (1.2667, 0.261),
+            (1.21, 0.5),
+            (1.2667, 0.739),
+            (1.4238, 0.91),
+        ],
+    ),
+    (
+        0.15,
+        &[
+            (1.4363, 0.075),
+            (1.2898, 0.227),
+            (1.21, 0.405),
+            (1.21, 0.595),
+            (1.2898, 0.773),
+            (1.4363, 0.925),
+        ],
+    ),
+];
+
+/// Circular Picture Callout (its composite at least twice as wide as
+/// tall): the first item's picture a circle as tall as the diagram at the
+/// left, its text over the circle's lower part (64 % × 33 %, from 18 % /
+/// 53.1 %); each later item a smaller circle, a line from the big
+/// circle's centre to its centre (behind both), and its text from its
+/// right edge to the diagram's. Items past the seventh aren't shown
+/// (zero-sized), as PowerPoint.
+fn callout_boxes(n: usize, w: f64, h: f64) -> Vec<Boxes> {
+    let d = h.min(w / 2.0);
+    let y0 = (h - d) / 2.0;
+    let (size, places) = CALLOUTS[n.clamp(2, 7) - 2];
+    (0..n)
+        .map(|i| {
+            if i == 0 {
+                return Boxes {
+                    pic: Some(Xfrm::new(0, r(y0), r(d), r(d))),
+                    node: Xfrm::new(r(0.18 * d), r(y0 + 0.531 * d), r(0.64 * d), r(0.33 * d)),
+                    ..Boxes::default()
+                };
+            }
+            let Some(&(l, cy)) = places.get(i - 1).filter(|_| i < 7) else {
+                return Boxes {
+                    pic: Some(Xfrm::new(0, 0, 0, 0)),
+                    node: Xfrm::new(0, 0, 0, 0),
+                    ..Boxes::default()
+                };
+            };
+            let s = size * d;
+            let (x, cy) = (l * d, y0 + cy * d);
+            let right = x + s;
+            Boxes {
+                pic: Some(Xfrm::new(r(x), r(cy - s / 2.0), r(s), r(s))),
+                node: Xfrm::new(r(right), r(cy - s / 2.0), r((w - right).max(0.0)), r(s)),
+                arrow: Some(Xfrm::new(r(d / 2.0), r(cy), r(x + s / 2.0 - d / 2.0), 0)),
+                ..Boxes::default()
+            }
+        })
+        .collect()
 }
 
 /// `n` cells `aspect` times as tall as wide in rows (PowerPoint's `snake`
@@ -1350,7 +1462,7 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
             &arrow_drawn,
             |b| b.arrow,
             |it| it.sib.as_deref(),
-            v.family.arrows(),
+            v.family.arrows() || v.family.callout_lines(),
         ),
         (
             |r| matches!(r, Role::Deco(_)),
@@ -1377,7 +1489,8 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
             if is_kind(Role::Deco(0)) && !b.deco_adj.is_empty() {
                 xml = set_geom_adj(&xml, &b.deco_adj);
             }
-            if is_kind(Role::Deco(0)) {
+            // Steps, and callout lines, behind the items.
+            if is_kind(Role::Deco(0)) || v.family.callout_lines() {
                 steps.push_str(&xml);
             } else {
                 arrows.push_str(&xml);
@@ -1905,6 +2018,120 @@ mod tests {
         assert_eq!(family(&d4, &data4), Some(Family::HorizontalPictures));
         let b = boxes_of(&d4, &data4);
         assert_eq!(b.iter().filter(|x| matches!(x.0, Role::Pic(_))).count(), 3);
+    }
+
+    /// A Circular Picture Callout as PowerPoint writes it: each item's
+    /// picture (`pictureRepeatNode`) on its sibling transition, its text
+    /// (`text_N`), and for the later items a line (`line_N`) and a text
+    /// composite without a shape (`textparent_N`).
+    fn callout(n: usize) -> (String, String) {
+        let mut pts = r#"<dgm:pt modelId="D" type="doc"><dgm:prSet loTypeId="urn:microsoft.com/office/officeart/2008/layout/CircularPictureCallout" loCatId="picture"/></dgm:pt>"#.to_owned();
+        let mut cxns = String::new();
+        let (mut lines, mut sps) = (String::new(), String::new());
+        let sp = |id: &str, prst: &str, text: &str| {
+            let body = if text.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    r#"<dsp:txBody><a:bodyPr/><a:p><a:r><a:t>{text}</a:t></a:r></a:p></dsp:txBody><dsp:txXfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></dsp:txXfrm>"#
+                )
+            };
+            format!(
+                r#"<dsp:sp modelId="{id}"><dsp:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="10" cy="10"/></a:xfrm><a:prstGeom prst="{prst}"><a:avLst/></a:prstGeom></dsp:spPr>{body}</dsp:sp>"#
+            )
+        };
+        for i in 0..n {
+            let k = i + 1;
+            pts += &format!(
+                r#"<dgm:pt modelId="N{i}"><dgm:prSet/><dgm:t><a:bodyPr/><a:p><a:r><a:t>Item {i}</a:t></a:r></a:p></dgm:t></dgm:pt><dgm:pt modelId="P{i}" type="parTrans" cxnId="X{i}"/><dgm:pt modelId="S{i}" type="sibTrans" cxnId="X{i}"/><dgm:pt modelId="R{i}" type="pres"><dgm:prSet presAssocID="S{i}" presName="pictureRepeatNode" presStyleLbl="alignImgPlace1"/></dgm:pt><dgm:pt modelId="T{i}" type="pres"><dgm:prSet presAssocID="N{i}" presName="text_{k}"/></dgm:pt><dgm:pt modelId="Q{i}" type="pres"><dgm:prSet presAssocID="S{i}" presName="picture_{k}"/></dgm:pt>"#
+            );
+            if i > 0 {
+                pts += &format!(
+                    r#"<dgm:pt modelId="L{i}" type="pres"><dgm:prSet presAssocID="N{i}" presName="line_{k}"/></dgm:pt><dgm:pt modelId="U{i}" type="pres"><dgm:prSet presAssocID="N{i}" presName="textparent_{k}"/></dgm:pt>"#
+                );
+                lines += &sp(&format!("L{i}"), "line", "");
+            }
+            cxns += &format!(
+                r#"<dgm:cxn modelId="X{i}" srcId="D" destId="N{i}" srcOrd="{i}" destOrd="0" parTransId="P{i}" sibTransId="S{i}"/>"#
+            );
+            sps += &sp(&format!("R{i}"), "ellipse", "");
+            sps += &sp(&format!("T{i}"), "rect", &format!("Item {i}"));
+        }
+        let data = format!(
+            r#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst>{pts}</dgm:ptLst><dgm:cxnLst>{cxns}</dgm:cxnLst></dgm:dataModel>"#
+        );
+        let drawing = format!(
+            r#"<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/>{lines}{sps}</dsp:spTree></dsp:drawing>"#
+        );
+        (drawing, data)
+    }
+
+    #[test]
+    fn circular_picture_callouts_follow_their_layout() {
+        let (dr, data) = callout(3);
+        assert_eq!(family(&dr, &data), Some(Family::CircularPictureCallout));
+        let d2 = relayout(&dr, &data, 20_000, 8_000).unwrap();
+        let b = boxes_of(&d2, &data);
+        let get = |b: &[(Role, Xfrm)], r: Role| b.iter().find(|x| x.0 == r).unwrap().1;
+        // The big circle as tall as the diagram at the left, its text in
+        // its lower part.
+        let big = get(&b, Role::Pic(0));
+        assert_eq!(big, Xfrm::new(0, 0, 8_000, 8_000));
+        let t0 = get(&b, Role::Node(0));
+        assert_eq!(t0, Xfrm::new(1_440, 4_248, 5_120, 2_640));
+        // Three items: callouts 0.375 of it, 1.21 of it from the left, at
+        // 18.75 % and 81.25 % down; a line from the big circle's centre
+        // to each callout's; the text from the callout to the right edge.
+        for (i, cy) in [(1, 1_500), (2, 6_500)] {
+            let p = get(&b, Role::Pic(i));
+            assert_eq!(p, Xfrm::new(9_680, cy - 1_500, 3_000, 3_000));
+            let l = get(&b, Role::Arrow(i));
+            assert_eq!(
+                (l.x, l.y, l.cx, l.cy),
+                (4_000, cy, 9_680 + 1_500 - 4_000, 0)
+            );
+            let t = get(&b, Role::Node(i));
+            assert_eq!(t, Xfrm::new(12_680, cy - 1_500, 20_000 - 12_680, 3_000));
+        }
+        // Narrower than twice its height: the circle shrinks to fit.
+        let d = relayout(&dr, &data, 10_000, 8_000).unwrap();
+        assert_eq!(get(&boxes_of(&d, &data), Role::Pic(0)).cx, 5_000);
+        // An item added: a picture placeholder and a line of its own; the
+        // callouts move to the four-item places.
+        let (d3, data3, id) = add_item(&d2, &data, "T2", AddPlace::After, 20_000, 8_000).unwrap();
+        assert_eq!(family(&d3, &data3), Some(Family::CircularPictureCallout));
+        assert!(data3.contains(&format!(
+            "presAssocID=\"{id}\" presName=\"pictureRepeatNode\""
+        )));
+        let b3 = boxes_of(&d3, &data3);
+        assert_eq!(b3.iter().filter(|x| matches!(x.0, Role::Pic(_))).count(), 4);
+        assert_eq!(
+            b3.iter().filter(|x| matches!(x.0, Role::Arrow(_))).count(),
+            3
+        );
+        let p3 = get(&b3, Role::Pic(3));
+        assert_eq!((p3.cx, p3.x), (2_400, 10_832));
+        // The new line is drawn behind the pictures.
+        let line = d3.find(&format!(
+            "modelId=\"{}\"",
+            view(&data3).unwrap().items[3].sib.clone().unwrap()
+        ));
+        assert!(line.unwrap() < d3.find("modelId=\"R0\"").unwrap());
+        // Removing a callout takes its picture and line with it.
+        let (d4, data4) = remove_item(&d3, &data3, "T1", 20_000, 8_000).unwrap();
+        assert_eq!(family(&d4, &data4), Some(Family::CircularPictureCallout));
+        assert!(!d4.contains("\"R1\"") && !d4.contains("\"L1\""));
+        let b4 = boxes_of(&d4, &data4);
+        assert_eq!(
+            b4.iter().filter(|x| matches!(x.0, Role::Arrow(_))).count(),
+            2
+        );
+        // Down to one item: no lines left.
+        let (d5, data5) = remove_item(&d4, &data4, "T2", 20_000, 8_000).unwrap();
+        let (d6, data6) = remove_item(&d5, &data5, &id, 20_000, 8_000).unwrap();
+        let b6 = boxes_of(&d6, &data6);
+        assert!(b6.iter().all(|x| !matches!(x.0, Role::Arrow(_))), "{d6}");
+        assert_eq!(get(&b6, Role::Pic(0)), Xfrm::new(0, 0, 8_000, 8_000));
     }
 
     #[test]

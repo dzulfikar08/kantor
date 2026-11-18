@@ -784,6 +784,7 @@ fn layouts_change_into_picture_layouts() {
         SmartArtFamily::PictureCaptionList,
         SmartArtFamily::TitledPictureBlocks,
         SmartArtFamily::PictureGrid,
+        SmartArtFamily::CircularPictureCallout,
     ] {
         p.smartart_change_layout(f, fam).unwrap();
         assert_eq!(p.smartart_family(f), Some(fam));
@@ -797,4 +798,71 @@ fn layouts_change_into_picture_layouts() {
             std::fs::write(format!("{dir}/convert-{fam:?}.pptx"), p.to_bytes().unwrap()).unwrap();
         }
     }
+}
+
+#[test]
+fn circular_picture_callout_lays_out_takes_items_and_changes_layout() {
+    let mut p = Presentation::open(&corpus()).unwrap();
+    let f = frame(&p, 17);
+    assert_eq!(
+        p.smartart_family(f),
+        Some(SmartArtFamily::CircularPictureCallout)
+    );
+    let x = widen(&mut p, f);
+    let d = drawn(&p, f);
+    // Four items: a big circle (as tall as the frame), three callouts
+    // 0.3 of it, a line to each.
+    let circles = |d: &[(String, slides_engine::Xfrm)]| {
+        let mut v: Vec<slides_engine::Xfrm> = d
+            .iter()
+            .filter(|(t, b)| t.is_empty() && b.cy > 0 && b.cx == b.cy)
+            .map(|x| x.1)
+            .collect();
+        v.sort_by_key(|b| std::cmp::Reverse(b.cx));
+        v
+    };
+    let c = circles(&d);
+    assert_eq!(c.len(), 4, "{d:?}");
+    assert_eq!(c[0].cy, x.cy);
+    assert_eq!((c[1].cx as f64 / c[0].cx as f64 * 100.0).round(), 30.0);
+    let lines = |d: &[(String, slides_engine::Xfrm)]| d.iter().filter(|x| x.1.cy == 0).count();
+    assert_eq!(lines(&d), 3);
+    let team = d.iter().find(|(t, _)| t == "Team").unwrap().1;
+    assert!(team.x > c[0].x && team.x + team.cx < c[0].x + c[0].cx);
+    let plan = d.iter().find(|(t, _)| t == "Plan").unwrap().1;
+    assert_eq!(plan.x + plan.cx, x.cx);
+    // An item after Plan: a picture placeholder and a line of its own.
+    p.smartart_add_shape(find_start(&p, f, "Plan"), AddPlace::After)
+        .unwrap();
+    let d = drawn(&p, f);
+    assert_eq!((circles(&d).len(), lines(&d)), (5, 4), "{d:?}");
+    assert_eq!(
+        p.smartart_family(f),
+        Some(SmartArtFamily::CircularPictureCallout)
+    );
+    // Deleting Team (the big picture's item) takes its picture with it.
+    p.delete_shape(find_start(&p, f, "Team")).unwrap();
+    let d = drawn(&p, f);
+    assert_eq!((circles(&d).len(), lines(&d)), (4, 3), "{d:?}");
+    let saved = parts(&p.to_bytes().unwrap());
+    assert!(!saved["ppt/diagrams/drawing18.xml"].contains("r:embed="));
+    // To a Basic Block List and back.
+    p.smartart_change_layout(f, SmartArtFamily::Blocks).unwrap();
+    assert_eq!(p.smartart_family(f), Some(SmartArtFamily::Blocks));
+    p.smartart_change_layout(f, SmartArtFamily::CircularPictureCallout)
+        .unwrap();
+    assert_eq!(
+        p.smartart_family(f),
+        Some(SmartArtFamily::CircularPictureCallout)
+    );
+    let d = drawn(&p, f);
+    assert_eq!((circles(&d).len(), lines(&d)), (4, 3), "{d:?}");
+    for t in ["Plan", "Build", "Ship"] {
+        assert!(d.iter().any(|x| x.0 == t), "{t} {d:?}");
+    }
+    let back = Presentation::from_bytes(p.to_bytes().unwrap()).unwrap();
+    assert_eq!(
+        back.smartart_family(frame(&back, 17)),
+        Some(SmartArtFamily::CircularPictureCallout)
+    );
 }

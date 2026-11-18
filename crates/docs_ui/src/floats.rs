@@ -564,10 +564,15 @@ impl DocsView {
         };
         let paged = &self.laid.paged;
         let setup = paged.page_setup(page);
-        let para_top = paged
+        let first = paged
             .placed_line(s.para, 0)
-            .map(|(p, i)| paged.pages[p].lines[i].top)
-            .unwrap_or(setup.margin_top);
+            .map(|(p, i)| (p, paged.pages[p].lines[i]));
+        let para_top = first.map_or(setup.margin_top, |(_, l)| l.top);
+        // In a section with columns, from the anchor's column (Word's
+        // "Column" is the column holding the anchor).
+        let column_left = first
+            .and_then(|(p, l)| paged.pages[p].column_at(l.x, l.top))
+            .map_or(setup.margin_left, |c| c.0);
         let emu = |v: f32| (v * EMU_PER_PX).round() as i64;
         let mut at = f.at;
         if self.part.is_some() {
@@ -576,10 +581,7 @@ impl DocsView {
             at.h = (RelH::Page, Place::Offset(emu(rect[0])));
             at.v = (RelV::Page, Place::Offset(emu(rect[1])));
         } else {
-            at.h = (
-                RelH::Column,
-                Place::Offset(emu(rect[0] - setup.margin_left)),
-            );
+            at.h = (RelH::Column, Place::Offset(emu(rect[0] - column_left)));
             at.v = (RelV::Paragraph, Place::Offset(emu(rect[1] - para_top)));
         }
         at.cx = emu(rect[2]);

@@ -437,3 +437,90 @@ fn org_chart_layouts_and_assistants() {
         slides_engine::smartart_layout::ASSISTANT_ORG
     );
 }
+
+/// Word's Circular Picture Callout: the Slides corpus's (slide 18) in the
+/// fixture's SmartArt object, laid out again, items added and removed,
+/// layout changed away and back.
+#[test]
+fn circular_picture_callout_takes_items_and_changes_layout() {
+    let mut doc = open();
+    let (para, index) = anchor(&doc);
+    let f = doc.float_at(para, index).unwrap().clone();
+    let docs_engine::FloatKind::SmartArt { data, drawings, .. } = &f.kind else {
+        panic!()
+    };
+    let callout = vec![
+        (data.clone(), pptx_part("ppt/diagrams/data18.xml").into()),
+        (
+            drawings[0].1.clone(),
+            pptx_part("ppt/diagrams/drawing18.xml").into(),
+        ),
+    ];
+    assert!(doc.set_float_parts(para, index, callout));
+    let f = doc.float_at(para, index).unwrap().clone();
+    assert!(docs_pdf::smartart::can_relayout(&doc, &f));
+    let texts = |v: &[String]| {
+        let mut t: Vec<String> = v.iter().filter(|s| !s.is_empty()).cloned().collect();
+        t.sort();
+        t
+    };
+    let before = shown(&doc);
+    assert_eq!(texts(&before), ["Build", "Plan", "Ship", "Team"]);
+    let plan = box_of(&doc, "Plan");
+    let parts = docs_pdf::smartart::add_item(&doc, &f, plan, true).unwrap();
+    assert!(doc.set_float_parts(para, index, parts));
+    let added = shown(&doc);
+    assert!(added.len() > before.len(), "{before:?} → {added:?}");
+    let f = doc.float_at(para, index).unwrap().clone();
+    let build = box_of(&doc, "Build");
+    let parts = docs_pdf::smartart::remove_item(&doc, &f, build).unwrap();
+    assert!(doc.set_float_parts(para, index, parts));
+    assert_eq!(texts(&shown(&doc)), ["Plan", "Ship", "Team"]);
+    // Resized: laid out again.
+    let f = doc.float_at(para, index).unwrap().clone();
+    let mut at = f.at;
+    at.cx = at.cx * 3 / 4;
+    let parts = docs_pdf::smartart::relaid(&doc, &f, (at.cx, at.cy)).unwrap();
+    assert!(doc.set_float_placement_parts(para, index, at, parts));
+    // To a Basic Block List and back, keeping the text.
+    let f = doc.float_at(para, index).unwrap().clone();
+    let parts =
+        docs_pdf::smartart::change_layout(&doc, &f, slides_engine::SmartArtFamily::Blocks).unwrap();
+    assert!(doc.set_float_parts(para, index, parts));
+    let f = doc.float_at(para, index).unwrap().clone();
+    let parts = docs_pdf::smartart::change_layout(
+        &doc,
+        &f,
+        slides_engine::SmartArtFamily::CircularPictureCallout,
+    )
+    .unwrap();
+    assert!(doc.set_float_parts(para, index, parts));
+    let f = doc.float_at(para, index).unwrap().clone();
+    assert!(docs_pdf::smartart::can_relayout(&doc, &f));
+    assert_eq!(texts(&shown(&doc)), ["Plan", "Ship", "Team"]);
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("callout.docx");
+    std::fs::write(&path, doc.to_docx_bytes().unwrap()).unwrap();
+    if let Ok(out) = std::env::var("KANTOR_SA_OUT") {
+        std::fs::copy(&path, PathBuf::from(out).join("smartart-callout.docx")).unwrap();
+    }
+    let back = Document::open(&path).unwrap();
+    assert_eq!(shown(&back), shown(&doc));
+}
+
+/// The drawing shape (its index) showing text `t`.
+fn box_of(doc: &Document, t: &str) -> usize {
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(doc, &mut engine);
+    let it = laid
+        .floats
+        .iter()
+        .flatten()
+        .find(|it| it.float(doc).unwrap().name == "Diagram 1")
+        .unwrap();
+    it.boxes
+        .iter()
+        .find(|b| b.layout.paras.len() == 1 && b.layout.shown(0) == t)
+        .unwrap_or_else(|| panic!("{t}: {:?}", shown(doc)))
+        .which
+}
