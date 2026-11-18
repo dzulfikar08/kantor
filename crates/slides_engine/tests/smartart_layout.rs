@@ -658,7 +658,11 @@ fn org_chart_assistants_and_hanging_layouts() {
     assert!(p.smartart_is_org_item(s));
     assert!(!p.smartart_is_org_item(f));
     assert_eq!(p.smartart_org_layout(s), Some(OrgLayout::LeftHanging));
-    assert_eq!(p.smartart_org_layout(find(&p, f, "Labs")), None);
+    // Labs has PowerPoint's initial layout: one leaf, hanging right.
+    assert_eq!(
+        p.smartart_org_layout(find(&p, f, "Labs")),
+        Some(OrgLayout::RightHanging)
+    );
     p.smartart_set_org_layout(s, OrgLayout::Standard).unwrap();
     let b = items(&p, f);
     assert_eq!(b["North"].y, b["South"].y);
