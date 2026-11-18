@@ -747,7 +747,7 @@ impl SheetsView {
                 Self::cf_dialog_ok,
                 Self::close_cf_dialog,
             ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     fn render_cf_kind(&self, d: &CfDialog, view: &WeakEntity<Self>, cx: &mut Context<Self>) -> Div {
@@ -1799,7 +1799,7 @@ impl SheetsView {
                             }),
                     ),
             );
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     pub(crate) fn cf_actions(&self, root: Div, cx: &mut Context<Self>) -> Div {

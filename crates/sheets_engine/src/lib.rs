@@ -289,7 +289,7 @@ pub use pivot_edit::{
 pub use pivot_group::DateLevel;
 pub use pivot_tools::pivot_style_names;
 pub use print::{
-    HEADER_FOOTER_PRESETS, HeaderFooter, HfPicture, Margins, PAPERS, PageSetup, Paper,
+    ColumnScale, HEADER_FOOTER_PRESETS, HeaderFooter, HfPicture, Margins, PAPERS, PageSetup, Paper,
     PrintColumns, PrintComments, PrintOptions, SheetPrint, join_sections, split_sections,
 };
 pub use rows::{DEFAULT_ROW_POINTS, FitCell, MAX_ROW_POINTS, RowEntry, RowHeight, RowSpec};
@@ -1695,6 +1695,7 @@ impl Workbook {
                 self.file_chart_patches(&mut p);
                 self.note_patches(&mut p);
                 self.chart_sheet_tab_patches(&mut p);
+                self.chart_sheet_zoom_patches(&mut p);
                 self.table_style_patches(&mut p);
                 self.shape_picture_patches(&mut p);
                 p

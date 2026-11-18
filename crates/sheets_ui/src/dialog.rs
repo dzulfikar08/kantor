@@ -8,11 +8,13 @@
 use gpui_kit::component::{
     Sizable as _,
     button::{Button, ButtonVariants as _},
-    h_flex, v_flex,
+    h_flex, input, v_flex,
 };
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::{metrics::*, tokens};
+
+use std::cell::Cell;
 
 use crate::SheetsView;
 
@@ -48,10 +50,76 @@ pub(crate) fn card(
         )
 }
 
+/// The focus of the dialog card shown, and whether it has taken the focus
+/// since it opened ([`place`]).
+pub(crate) struct CardFocus {
+    handle: FocusHandle,
+    /// A card was placed in the frame being built.
+    placed: Cell<bool>,
+    /// 0: just opened; 1: shown one frame (fields it focused are in the
+    /// tree now); 2: focus settled.
+    stage: Cell<u8>,
+}
+
+impl CardFocus {
+    pub(crate) fn new(handle: FocusHandle) -> Self {
+        Self {
+            handle,
+            placed: Cell::new(false),
+            stage: Cell::new(0),
+        }
+    }
+
+    /// Called as the view renders: a card that isn't shown any more starts
+    /// over when it opens again.
+    pub(crate) fn begin_frame(&self) {
+        if !self.placed.replace(false) {
+            self.stage.set(0);
+        }
+    }
+}
+
 /// Where a dialog card sits: centred horizontally, below the toolbar and
 /// formula bar, over a backdrop that keeps the sheet around it from taking
 /// hover and clicks while it is open (modal, as Excel's dialogs).
-pub(crate) fn place(card: impl IntoElement) -> Div {
+///
+/// Like Excel's dialogs, the card takes the focus when it opens, unless the
+/// dialog put it in one of its own fields, so Escape reaches the card's
+/// `input::Escape` handler even when no field in it is focused. It does so
+/// once: what is focused later (a field, a menu, the palette) keeps it.
+pub(crate) fn place(card: Stateful<Div>, view: &SheetsView, _cx: &App) -> Div {
+    let state = view.dialog_focus.clone();
+    state.placed.set(true);
+    let own = state.handle.clone();
+    let card = card
+        .track_focus(&state.handle)
+        .on_key_down(move |e, window, cx| {
+            if e.keystroke.key == "escape" && own.is_focused(window) {
+                cx.stop_propagation();
+                window.dispatch_action(Box::new(input::Escape), cx);
+            }
+        })
+        .child(
+            canvas(
+                move |_, window, cx| match state.stage.get() {
+                    0 => {
+                        // Let fields the dialog focused show up first.
+                        state.stage.set(1);
+                        window.refresh();
+                    }
+                    1 => {
+                        state.stage.set(2);
+                        if !state.handle.contains_focused(window, cx) {
+                            window.focus(&state.handle, cx);
+                        }
+                    }
+                    _ => {}
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .size_0(),
+        );
     kantor_ui::overlay::backdrop().child(
         h_flex()
             .absolute()

@@ -498,7 +498,7 @@ impl SheetsView {
         let card = card
             .key_context("KantorTableStyleDialog")
             .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.format_cancel(w, cx)));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     fn render_style_main(

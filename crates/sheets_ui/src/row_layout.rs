@@ -1,9 +1,9 @@
 //! Row heights in the grid, like Excel's:
 //!
 //! * A row the file gives a custom height (`customHeight`) is drawn at it,
-//!   relative to the sheet's default row height: a default-height row is
-//!   Kantor's usual [`look::row_height`], a row twice as tall in Excel is
-//!   twice as tall here. Hidden rows take no room.
+//!   at Excel's 96 / 72 px per point (a 15 pt row is 20 px at 100 %, as
+//!   columns are Excel's px too: [`sheets_engine::ColumnScale`]). Hidden
+//!   rows take no room.
 //! * Other rows grow to fit their wrapped text and larger fonts (Excel's
 //!   auto-fit), never below the default. Fitting needs text shaping, so it
 //!   runs lazily for the rows about to be shown ([`RowLayout::fit`], called
@@ -33,8 +33,9 @@ use crate::SheetsView;
 use crate::look::{self, FontCache};
 use crate::row_heights::{RowHeights, device_px};
 
-/// Room above and below fitted text.
-const FIT_PAD: f32 = 4.0;
+/// Excel's line of fitted text, relative to the font's size: a line of
+/// Calibri 11 makes a 15 pt row.
+const FIT_LINE: f32 = 15.0 / 11.0;
 /// Thinnest row a drag makes (logical px).
 const MIN_DRAG_PX: f32 = 4.0;
 /// Most rows a height command changes at once.
@@ -87,15 +88,18 @@ impl Default for RowLayout {
     }
 }
 
-/// Logical pixels per point of row height on `sheet` at its zoom: the
-/// sheet's default row height is drawn as Kantor's default row at 100 %.
+/// Logical pixels per point of row height on `sheet` at its zoom: Excel's
+/// 96 / 72, so a row is as tall next to its columns as in Excel.
 pub(crate) fn px_per_point(book: &Workbook, sheet: u32) -> f64 {
-    f64::from(f32::from(default_row(book, sheet))) / book.default_row_points(sheet)
+    PX_PER_PT * f64::from(look::zoom(book, sheet))
 }
 
-/// A default-height row of `sheet` at its zoom.
+/// Excel's pixels per point at 100 %.
+pub(crate) const PX_PER_PT: f64 = 96.0 / 72.0;
+
+/// A default-height row of `sheet` at its zoom (20 px for 15 pt at 100 %).
 pub(crate) fn default_row(book: &Workbook, sheet: u32) -> Pixels {
-    look::row_height() * look::zoom(book, sheet)
+    px((book.default_row_points(sheet) * px_per_point(book, sheet)) as f32)
 }
 
 impl RowLayout {
@@ -242,7 +246,9 @@ pub(crate) fn fit_row_height(
     for cell in cells.into_iter().take(FIT_MAX_CELLS) {
         let s = &cell.style;
         let size = FONT_BODY * z * (s.font_size.max(1) as f32 / default_size);
-        let line = f32::from(size) * look::LINE_HEIGHT;
+        // Lines as tall as Excel's (the text drawn in them is smaller), so a
+        // fitted height saved to the file shows the same lines in Excel.
+        let line = s.font_size.max(1) as f32 * FIT_LINE * PX_PER_PT as f32 * z;
         let lines = if s.wrap {
             let width = look::column_width(book, sheet, cell.col, window.scale_factor())
                 - SPACE_3 * z * 2.
@@ -276,7 +282,7 @@ pub(crate) fn fit_row_height(
         } else {
             1
         };
-        tallest = tallest.max(lines as f32 * line + 2. * FIT_PAD * z);
+        tallest = tallest.max(lines as f32 * line);
     }
     tallest
 }
@@ -692,7 +698,8 @@ mod tests {
         assert_eq!(layout.heights.borrow().height_dp(5), 100);
         layout.preview = None;
         layout.sync(&book, 0, 1000, 1.0);
-        assert_eq!(layout.heights.borrow().height_dp(5), 30);
+        // Back to a default row: 15 pt at 96 / 72 px per point.
+        assert_eq!(layout.heights.borrow().height_dp(5), 20);
     }
 
     #[std::prelude::v1::test]

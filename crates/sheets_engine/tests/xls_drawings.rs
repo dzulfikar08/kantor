@@ -491,12 +491,12 @@ fn ods_freeforms_groups_and_controls() {
 }
 
 /// odsdraw.ods sets no column widths or row heights: its 2 cm × 2 cm
-/// shapes are placed on the sheet's own default cells (Excel px: 75 by 20),
+/// shapes are placed on the sheet's own default cells (Excel px: 64 by 20),
 /// so they stay square on screen and in print.
 #[test]
 fn ods_shapes_keep_their_size_on_default_cells() {
     let wb = Workbook::open(corpus("odsdraw.ods")).unwrap();
-    let col = wb.column_width(0, 1000) / 9.0 * 7.0 + 5.0;
+    let col = wb.column_width(0, 1000);
     let row = wb.default_row_points(0) * 96.0 / 72.0;
     let all = wb.drawings(0);
     for name in ["Pie", "Ring"] {

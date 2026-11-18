@@ -392,6 +392,6 @@ impl SheetsView {
                 Self::custom_lists_ok,
                 Self::close_custom_lists,
             ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 }

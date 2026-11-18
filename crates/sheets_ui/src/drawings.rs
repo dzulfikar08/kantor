@@ -44,8 +44,6 @@ use kantor_ui::metrics::ROW_GUTTER_WIDTH;
 const HANDLE: f32 = 8.0;
 /// Smallest object a resize makes.
 const MIN_SIZE: f64 = 8.0;
-/// Excel's pixels per point.
-const PX_PER_PT: f64 = 4.0 / 3.0;
 
 /// The grid as laid out now, for placing anchors (logical px from the top
 /// left of cell A1).
@@ -85,10 +83,6 @@ impl<'a> GridGeometry<'a> {
             x += w;
         }
         lefts.push(x);
-        // Excel's default column is `width * 7 + 5` px wide for a width in
-        // characters; IronCalc's px are `width * 9`.
-        let iron_default = book.column_width(grid.sheet, MAX_COLS - 1);
-        let excel_default = iron_default / 9.0 * 7.0 + 5.0;
         let default_col = f64::from(f32::from(look::column_width(
             book,
             grid.sheet,
@@ -96,17 +90,15 @@ impl<'a> GridGeometry<'a> {
             scale,
         )));
         let default_row = f64::from(f32::from(crate::row_layout::default_row(book, grid.sheet)));
-        let excel_row = book.default_row_points(grid.sheet) * PX_PER_PT;
+        // The grid's px are Excel's at the sheet's zoom.
+        let z = f64::from(look::zoom(book, grid.sheet));
         Self {
             lefts,
             widths,
             default_col,
             rows,
             default_row,
-            scale: (
-                default_col / excel_default.max(1.0),
-                default_row / excel_row.max(1.0),
-            ),
+            scale: (z, z),
         }
     }
 
@@ -1310,42 +1302,78 @@ impl SheetsView {
         name: String,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        use kantor_ui::metrics::*;
         let t = kantor_ui::tokens(cx);
-        gpui_kit::component::v_flex()
+        let pane = gpui_kit::component::v_flex()
             .flex_1()
             .min_w_0()
             .h_full()
             .track_focus(&self.chart_focus)
             .key_context(crate::CHART_SHEET_CONTEXT)
             .on_action(cx.listener(SheetsView::undo))
-            .on_action(cx.listener(SheetsView::redo))
+            .on_action(cx.listener(SheetsView::redo));
+        crate::zoom::zoom_actions(pane, cx)
             .child(self.render_chart_sheet_bar(&name, cx))
             .child(
                 div()
                     .id("chart-sheet")
+                    .relative()
                     .flex_1()
                     .min_h_0()
                     .w_full()
-                    .p(SPACE_5)
                     .bg(t.surface)
-                    .child(self.render_chart_sheet(k, cx)),
+                    .child(self.render_chart_sheet(k, cx))
+                    .child(self.render_wheel_zoom(cx)),
             )
     }
 
-    /// Chart sheet `k` filling the pane (its chart is edited in the Chart
-    /// panel; it isn't moved or resized).
-    pub(crate) fn render_chart_sheet(&self, k: usize, cx: &mut Context<Self>) -> impl IntoElement {
+    /// Chart sheet `k`: its chart at its own size times the sheet's zoom
+    /// (scrolling when larger than the pane), or filling the pane when the
+    /// sheet zooms with the window (`zoomToFit`). The chart is edited in the
+    /// Chart panel; it isn't moved or resized.
+    pub(crate) fn render_chart_sheet(&self, k: usize, cx: &mut Context<Self>) -> AnyElement {
+        use kantor_ui::metrics::SPACE_5;
         let layer = self.drawings.clone();
         let table = self.table.clone();
         let other = kantor_ui::tokens(cx).fg_muted;
-        canvas(
+        let chart = canvas(
             |_, _, _| {},
             move |bounds, _, window, cx| {
                 paint_chart_sheet(&layer, &table, k, bounds, other, window, cx)
             },
-        )
-        .size_full()
+        );
+        let book = &self.table.read(cx).delegate().book;
+        let zoom = book.chart_sheet_zoom(k);
+        let size = sheets_engine::drawing::chart_sheet_size(&book.chart_sheet_drawings(k));
+        match size {
+            Some((w, h)) if !zoom.fit => {
+                let z = f32::from(zoom.scale) / 100.0;
+                // Centred while smaller than the pane; from its top left
+                // (scrolling) when larger.
+                div()
+                    .id("chart-sheet-scroll")
+                    .size_full()
+                    .flex()
+                    .items_start()
+                    .overflow_scroll()
+                    .child(
+                        div()
+                            .flex_none()
+                            .min_w_full()
+                            .min_h_full()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .p(SPACE_5)
+                            .child(chart.flex_none().w(px(w as f32 * z)).h(px(h as f32 * z))),
+                    )
+                    .into_any_element()
+            }
+            _ => div()
+                .size_full()
+                .p(SPACE_5)
+                .child(chart.size_full())
+                .into_any_element(),
+        }
     }
 }
 

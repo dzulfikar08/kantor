@@ -632,14 +632,25 @@ impl Workbook {
         Ok(true)
     }
 
-    /// Width of a column in pixels (IronCalc's unit; the default is 90).
+    /// Width of a column in pixels at 100 %, by Excel's rule
+    /// ([`crate::ColumnScale`]; 64 for a default column with Calibri 11),
+    /// 0 when hidden.
     pub fn column_width(&self, sheet: u32, col: u32) -> f64 {
-        self.model
-            .get_column_width(sheet, col as i32 + 1)
-            .unwrap_or(90.0)
+        let scale = self.column_scale(sheet);
+        let Ok(ws) = self.model.get_model().workbook.worksheet(sheet) else {
+            return scale.default_px;
+        };
+        let c1 = col as i32 + 1;
+        match ws.cols.iter().find(|c| c.min <= c1 && c1 <= c.max) {
+            Some(c) if c.hidden => 0.0,
+            Some(c) => scale.col_px(c),
+            None => scale.default_px,
+        }
     }
 
-    /// Set the width (pixels) of columns `first..=last`, as one undo step.
+    /// Set the width (pixels at 100 %, see [`Self::column_width`]) of
+    /// columns `first..=last`, as one undo step. The width is stored in
+    /// characters, as Excel stores it, for whole pixels.
     pub fn set_column_width(
         &mut self,
         sheet: u32,
@@ -653,16 +664,19 @@ impl Workbook {
         if !width.is_finite() {
             bail!("invalid column width");
         }
+        let iron = self.iron_width(sheet, width);
         self.model
-            .set_columns_width(
-                sheet,
-                first as i32 + 1,
-                last as i32 + 1,
-                width.max(MIN_SIZE),
-            )
+            .set_columns_width(sheet, first as i32 + 1, last as i32 + 1, iron)
             .map_err(|e| anyhow!("{e}"))?;
         self.history.edited();
         Ok(())
+    }
+
+    /// The width to hand IronCalc for a column `px` pixels wide: IronCalc
+    /// stores its argument divided by 9 as the `<col width>` characters.
+    pub(crate) fn iron_width(&self, sheet: u32, px: f64) -> f64 {
+        let chars = self.column_scale(sheet).width_of(px.max(MIN_SIZE));
+        chars * ironcalc_base::COLUMN_WIDTH_FACTOR
     }
 
     /// Height of a row in pixels (IronCalc's unit; the default is 25).

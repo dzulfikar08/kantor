@@ -375,7 +375,7 @@ fn merge_range(m: &ironcalc_base::types::MergedCell) -> Option<CellRange> {
     Some(CellRange::from_corners((top, left), (bottom, right)))
 }
 
-fn font_defaults(model: &ironcalc_base::Model) -> FontDefaults {
+pub(crate) fn font_defaults(model: &ironcalc_base::Model) -> FontDefaults {
     let styles = &model.workbook.styles;
     // The "Normal" cell style's font: `cellXfs[0]`'s, which is `fonts[0]`
     // in practically every file.

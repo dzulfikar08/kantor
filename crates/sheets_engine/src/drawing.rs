@@ -370,6 +370,9 @@ pub(crate) struct Drawings {
     /// writes their colour (a change saved, then undone, is undone in the
     /// next file too).
     pub(crate) tab_touched: HashSet<usize>,
+    /// Chart sheets zoomed this session (a view change, not undone): every
+    /// save writes their zoom.
+    pub(crate) zoomed: HashMap<usize, ChartSheetZoom>,
 }
 
 impl Drawings {
@@ -420,6 +423,50 @@ struct ChartSheet {
     print: crate::SheetPrint,
     /// Its tab colour as opened (see [`ChartSheetNow::tab`]).
     tab: Option<String>,
+    /// Its view's zoom as opened (see [`ChartSheetZoom`]).
+    zoom: ChartSheetZoom,
+}
+
+/// A chart sheet's view zoom (`<sheetView zoomScale zoomToFit>`): its chart
+/// shown at its own size × `scale`, or (`fit`, Excel's "Zoom with Window")
+/// filling the window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChartSheetZoom {
+    /// Percent (10–400).
+    pub scale: u16,
+    pub fit: bool,
+}
+
+impl Default for ChartSheetZoom {
+    fn default() -> Self {
+        Self {
+            scale: 100,
+            fit: false,
+        }
+    }
+}
+
+/// The zoom of a chart sheet part's first `<sheetView>`.
+pub(crate) fn chart_sheet_zoom(xml: &str) -> ChartSheetZoom {
+    let mut out = ChartSheetZoom::default();
+    let Ok(doc) = Document::parse(xml) else {
+        return out;
+    };
+    let Some(view) = doc
+        .descendants()
+        .find(|n| n.is_element() && n.tag_name().name() == "sheetView")
+    else {
+        return out;
+    };
+    if let Some(z) = view
+        .attribute("zoomScale")
+        .and_then(|v| v.trim().parse::<u16>().ok())
+        .filter(|z| *z != 0)
+    {
+        out.scale = z.clamp(crate::SHEET_ZOOM_MIN, crate::SHEET_ZOOM_MAX);
+    }
+    out.fit = matches!(view.attribute("zoomToFit"), Some("1" | "true"));
+    out
 }
 
 /// The attributes of a chart sheet part's `<sheetPr><tabColor>`.
@@ -938,11 +985,13 @@ impl Drawings {
                     .unwrap_or_default(),
                 print: crate::print::chart_sheet_print(c.xml.as_deref().unwrap_or_default()),
                 tab: c.xml.as_deref().and_then(chart_sheet_tab),
+                zoom: chart_sheet_zoom(c.xml.as_deref().unwrap_or_default()),
             })
             .collect();
         Drawings {
             opened_chart_sheets: chart_sheets.len(),
             tab_touched: HashSet::new(),
+            zoomed: HashMap::new(),
             sheets,
             theme: src.theme.map(Into::into),
             names: src
@@ -980,10 +1029,20 @@ impl Drawings {
             rel_kind: crate::move_chart::CHARTSHEET_REL.to_owned(),
             print: crate::print::chart_sheet_print(&new.sheet_xml),
             tab: chart_sheet_tab(&new.sheet_xml),
+            zoom: chart_sheet_zoom(&new.sheet_xml),
             bundle: Arc::new(new.bundle),
             objects,
         });
         k
+    }
+
+    /// Chart sheet `k`'s view zoom: as zoomed this session, else as opened.
+    pub(crate) fn chart_sheet_zoom(&self, k: usize) -> ChartSheetZoom {
+        self.zoomed
+            .get(&k)
+            .copied()
+            .or_else(|| self.chart_sheets.get(k).map(|c| c.zoom))
+            .unwrap_or_default()
     }
 
     /// Chart sheet `k`'s parts as opened, for a save.
@@ -1120,6 +1179,20 @@ fn current_anchor(obj: &Object, key: DrawingKey, edits: &Edits, now: &Layout) ->
                 .moved(&Layout::default().moves_to(now), key.sheet_id),
         ),
     }
+}
+
+/// The size (px at 100 %) of a chart sheet's objects together: the extent
+/// of their absolute anchors (Excel sizes a chart sheet's chart to the
+/// page). `None` when none has one.
+pub fn chart_sheet_size(drawings: &[Drawing]) -> Option<(f64, f64)> {
+    let (mut ew, mut eh) = (0i64, 0i64);
+    for d in drawings.iter().filter(|d| !d.hidden) {
+        if let Anchor::Absolute { x, y, cx, cy } = d.anchor {
+            ew = ew.max(x + cx);
+            eh = eh.max(y + cy);
+        }
+    }
+    (ew > 0 && eh > 0).then(|| (ew as f64 / EMU_PER_PX, eh as f64 / EMU_PER_PX))
 }
 
 /// Where the objects of a chart sheet go in a `w` × `h` pane: absolute

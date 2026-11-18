@@ -1879,7 +1879,7 @@ pub(super) const COMMANDS: &[Command] = &[
             ws.with_docs(window, cx, |v, _, cx| {
                 v.zoom_by(kantor_ui::metrics::ZOOM_STEP, cx)
             });
-            ws.with_sheets(window, cx, |v, w, cx| v.zoom_step_doc(true, w, cx));
+            ws.with_sheets_any(window, cx, |v, w, cx| v.zoom_step_doc(true, w, cx));
         },
     },
     Command {
@@ -1890,26 +1890,28 @@ pub(super) const COMMANDS: &[Command] = &[
             ws.with_docs(window, cx, |v, _, cx| {
                 v.zoom_by(1.0 / kantor_ui::metrics::ZOOM_STEP, cx)
             });
-            ws.with_sheets(window, cx, |v, w, cx| v.zoom_step_doc(false, w, cx));
+            ws.with_sheets_any(window, cx, |v, w, cx| v.zoom_step_doc(false, w, cx));
         },
     },
     Command {
         title: tk("Zoom to 100%"),
         detail: tk("Sheets · show the sheet at its actual size"),
         keys: "",
-        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.set_zoom_doc(100, w, cx)),
+        run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.set_zoom_doc(100, w, cx)),
     },
     Command {
         title: tk("Zoom to Selection"),
         detail: tk("Sheets · zoom so the selected cells fill the window"),
         keys: "",
-        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.zoom_to_selection_doc(w, cx)),
+        run: |ws, window, cx| {
+            ws.with_sheets_any(window, cx, |v, w, cx| v.zoom_to_selection_doc(w, cx))
+        },
     },
     Command {
         title: tk("Zoom…"),
         detail: tk("Sheets · View ▸ Zoom: 200%, 100%, 75%, 50%, 25%, fit selection or custom"),
         keys: "",
-        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.zoom_dialog_doc(w, cx)),
+        run: |ws, window, cx| ws.with_sheets_any(window, cx, |v, w, cx| v.zoom_dialog_doc(w, cx)),
     },
     Command {
         title: tk("Actual Size"),

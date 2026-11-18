@@ -604,7 +604,7 @@ impl SheetsView {
             Self::page_setup_ok,
             Self::close_page_setup,
         ));
-        Some(dialog::place(card).into_any_element())
+        Some(dialog::place(card, self, cx).into_any_element())
     }
 
     fn render_ps_page(

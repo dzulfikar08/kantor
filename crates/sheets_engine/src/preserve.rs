@@ -332,6 +332,8 @@ pub(crate) struct Patches {
     /// Chart sheet parts whose tab colour changed: `<tabColor>`'s
     /// attributes (`None`: no colour).
     pub chart_sheet_tabs: Vec<(String, Option<String>)>,
+    /// Chart sheet parts zoomed this session, and their zoom.
+    pub chart_sheet_zooms: Vec<(String, crate::drawing::ChartSheetZoom)>,
     /// Charts an earlier save of this session added that are gone since.
     pub removed_charts: Vec<SavedChart>,
     /// Filled by the save: where each chart made in Kantor went, by id.
@@ -453,6 +455,7 @@ impl Patches {
             && self.file_charts.is_empty()
             && self.notes.is_empty()
             && self.chart_sheet_tabs.is_empty()
+            && self.chart_sheet_zooms.is_empty()
             && self.cf_x14.is_empty()
             && self.table_styles.is_none()
     }
@@ -1972,6 +1975,65 @@ fn set_tab_color(xml: &str, color: Option<&str>) -> Result<Option<String>, Strin
             };
             let at = first.range().start;
             (at..at, format!("<sheetPr>{tab}</sheetPr>"))
+        }
+    };
+    if xml[edit.0.clone()] == edit.1 {
+        return Ok(None);
+    }
+    Ok(Some(apply_edits(xml, vec![edit])))
+}
+
+/// A chart sheet part with its view zoomed to `zoom`: the first
+/// `<sheetView>`'s `zoomScale` and `zoomToFit` set (other attributes and
+/// children kept), or a `<sheetViews>` added after `<sheetPr>`. `None` when
+/// nothing changes.
+fn set_view_zoom(
+    xml: &str,
+    zoom: crate::drawing::ChartSheetZoom,
+) -> Result<Option<String>, String> {
+    let doc = Document::parse(xml).map_err(|e| e.to_string())?;
+    let root = doc.root_element();
+    if root.lookup_namespace_uri(None) != Some(NS_MAIN) {
+        return Err("unexpected namespaces".into());
+    }
+    let fit = if zoom.fit { "1" } else { "0" };
+    let view = root
+        .children()
+        .find(|n| is_main(*n, "sheetViews"))
+        .and_then(|v| v.children().find(|n| is_main(*n, "sheetView")));
+    let edit = match view {
+        Some(v) => {
+            let end = start_tag_end(&xml[v.range()]).ok_or("sheetView is not closed")?;
+            let tag = &xml[v.range().start..v.range().start + end];
+            let self_closing = tag.ends_with("/>");
+            let mut out = String::from("<sheetView");
+            for a in v.attributes() {
+                if a.namespace().is_none() && matches!(a.name(), "zoomScale" | "zoomToFit") {
+                    continue;
+                }
+                write_attr_same(&mut out, a, v)?;
+            }
+            out.push_str(&format!(
+                " zoomScale=\"{}\" zoomToFit=\"{fit}\"",
+                zoom.scale
+            ));
+            out.push_str(if self_closing { "/>" } else { ">" });
+            (v.range().start..v.range().start + end, out)
+        }
+        None => {
+            let views = format!(
+                "<sheetViews><sheetView zoomScale=\"{}\" zoomToFit=\"{fit}\" workbookViewId=\"0\"/></sheetViews>",
+                zoom.scale
+            );
+            let at = match root.children().find(|n| is_main(*n, "sheetPr")) {
+                Some(pr) => pr.range().end,
+                None => root
+                    .children()
+                    .find(|n| n.is_element())
+                    .map(|n| n.range().start)
+                    .ok_or("empty chart sheet")?,
+            };
+            (at..at, views)
         }
     };
     if xml[edit.0.clone()] == edit.1 {
@@ -4901,6 +4963,16 @@ fn apply_patches(pkg: &mut Package, patches: &Patches) -> Result<(), String> {
         };
         if let Some(fixed) =
             set_tab_color(xml, tab.as_deref()).map_err(|e| format!("tab colour of {part}: {e}"))?
+        {
+            pkg.set(part, fixed.into_bytes());
+        }
+    }
+    for (part, zoom) in &patches.chart_sheet_zooms {
+        let Some(xml) = pkg.text(part)? else {
+            continue;
+        };
+        if let Some(fixed) =
+            set_view_zoom(xml, *zoom).map_err(|e| format!("zoom of {part}: {e}"))?
         {
             pkg.set(part, fixed.into_bytes());
         }

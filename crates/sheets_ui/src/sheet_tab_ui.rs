@@ -571,6 +571,7 @@ impl SheetsView {
             Tab::Chart(_) => tf("“{}” will be deleted with its chart.", &[&name]),
         };
         let card = dialog::card("tab-delete", t("Delete sheet"), px(380.), cx)
+            .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_tab_dialog(w, cx)))
             .child(div().child(text))
             .child(note(t("Undo brings it back."), false, cx))
             .child(dialog::buttons(
@@ -581,7 +582,7 @@ impl SheetsView {
                 Self::confirm_delete,
                 Self::cancel_tab_dialog,
             ));
-        dialog::place(card).into_any_element()
+        dialog::place(card, self, cx).into_any_element()
     }
 
     fn render_move_copy(
@@ -641,6 +642,7 @@ impl SheetsView {
             }));
         let cv = view.clone();
         let card = dialog::card("tab-move", t("Move or Copy"), px(360.), cx)
+            .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_tab_dialog(w, cx)))
             .child(div().child(tf("Move “{}”", &[&name])))
             .child(
                 div()
@@ -672,7 +674,7 @@ impl SheetsView {
                 Self::apply_move_copy,
                 Self::cancel_tab_dialog,
             ));
-        dialog::place(card).into_any_element()
+        dialog::place(card, self, cx).into_any_element()
     }
 
     fn render_tab_colors(&self, tab: Tab, cx: &mut Context<Self>) -> AnyElement {
@@ -744,6 +746,7 @@ impl SheetsView {
         );
         let nv = view.clone();
         let card = dialog::card("tab-colors", t("Tab Color"), px(300.), cx)
+            .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_tab_dialog(w, cx)))
             .child(heading(tk("Theme Colors")))
             .child(theme)
             .child(heading(tk("Standard Colors")))
@@ -772,7 +775,7 @@ impl SheetsView {
                             })
                     }),
             );
-        dialog::place(card).into_any_element()
+        dialog::place(card, self, cx).into_any_element()
     }
 
     fn render_unhide(&self, chosen: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -815,6 +818,7 @@ impl SheetsView {
                     })
             }));
         let card = dialog::card("tab-unhide", t("Unhide"), px(320.), cx)
+            .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_tab_dialog(w, cx)))
             .child(
                 div()
                     .text_size(FONT_SMALL)
@@ -830,7 +834,7 @@ impl SheetsView {
                 Self::apply_unhide,
                 Self::cancel_tab_dialog,
             ));
-        dialog::place(card).into_any_element()
+        dialog::place(card, self, cx).into_any_element()
     }
 }
 
