@@ -344,11 +344,12 @@ impl Builder {
                 }
             }
             ShapeKind::Picture { part, .. } => {
+                let clip = crate::geom::picture_clip(shape, w, h);
                 if let Some(paint) = fill_paint(&fill, PathFill::Norm, w, h, &t) {
                     push(
                         out,
                         Prim::Fill {
-                            path: Path::rect(0.0, 0.0, w, h),
+                            path: clip.clone().unwrap_or_else(|| Path::rect(0.0, 0.0, w, h)),
                             paint,
                             rule: FillRule::NonZero,
                         },
@@ -362,7 +363,7 @@ impl Builder {
                         rect: [0.0, 0.0, w, h],
                         crop: look.picture.crop.map(|v| v as f32 / 100_000.0),
                         alpha: look.picture.alpha as f32 / 255.0,
-                        clip: None,
+                        clip: clip.clone(),
                     })
                 });
                 match pic {
@@ -372,7 +373,7 @@ impl Builder {
                 if let Some((color, width, style)) = &line
                     && *width > 0.0
                 {
-                    let rect = vec![Path::rect(0.0, 0.0, w, h)];
+                    let rect = picture_lines(shape, w, h);
                     strokes(rect, *color, *width, style, &mut |prim| push(out, prim));
                 }
             }
@@ -800,4 +801,14 @@ pub(crate) fn strokes(
             }),
         }
     }
+}
+
+/// The lines of a picture shape: its outline's stroked parts (the box for
+/// a plain picture).
+pub(crate) fn picture_lines(shape: &slides_engine::Shape, w: f32, h: f32) -> Vec<Path> {
+    shape_outline(shape, w, h)
+        .into_iter()
+        .filter(|s| s.stroke)
+        .map(|s| s.path)
+        .collect()
 }

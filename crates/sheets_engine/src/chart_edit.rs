@@ -871,6 +871,7 @@ impl Workbook {
                             part: format!("{NEW_CHART_PART}picture/{}", c.id).into(),
                             data: pic.data.clone(),
                             crop: pic.crop,
+                            shape: None,
                         }),
                         editable: true,
                         hidden: false,

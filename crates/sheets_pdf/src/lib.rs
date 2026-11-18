@@ -522,6 +522,8 @@ pub enum OverlayKind {
         part: Arc<str>,
         data: Arc<Vec<u8>>,
         crop: [f32; 4],
+        /// The shape it's cut to (see `DrawingKind::Picture`).
+        shape: Option<Arc<str>>,
     },
     /// A chart with the cells' values read when the page was extracted;
     /// laid out by the encoder. `hash` identifies the data, so a chart split

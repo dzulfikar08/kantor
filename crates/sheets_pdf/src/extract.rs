@@ -979,6 +979,7 @@ fn image_overlay(
             part: p.part.clone(),
             data: p.data.clone(),
             crop: p.crop,
+            shape: None,
         },
     })
 }

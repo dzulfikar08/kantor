@@ -17,7 +17,10 @@
 //!   own two-stop gradient, so the result is exact. Radial and path
 //!   gradients are drawn as 32 nested ellipses (solid colour steps), so
 //!   translucent radial gradients come out a little denser.
-//! - Picture fills of non-rectangular shapes fill the shape's box.
+//! - Pictures can't be clipped to a path at paint time: a picture cut to a
+//!   shape (an oval picture, a shape's picture fill) is cut on the CPU
+//!   into its own raster, anti-aliased ([`slides_scene::mask`]), cached
+//!   like turned ones.
 //! - Pattern fills are their foreground cells as rectangles (edges step by
 //!   one cell); a shape needing more than
 //!   [`slides_scene::paint::PATTERN_CELLS`] of them shows the mixed colour.
@@ -44,6 +47,9 @@ use slides_scene::{
 
 /// Largest side of a turned picture's raster, px.
 const TURNED_MAX: f32 = 1600.0;
+/// Smallest side of a picture cut to a shape, px (so a small picture
+/// shown large still gets a smooth edge).
+const CLIPPED_MIN: u32 = 800;
 /// Steps of a radial gradient on screen.
 const RADIAL_STEPS: usize = 32;
 
@@ -52,7 +58,10 @@ const RADIAL_STEPS: usize = 32;
 /// edges, flipped, then turned clockwise by `angle` radians, resampled
 /// (nearest pixel) into the box around the turned one, with its opacity
 /// multiplied by `alpha`. Corners outside the picture are transparent.
-/// Returns the pixels and their size.
+/// The raster has about as many pixels as `rw` × `rh` (the picture's
+/// own size, or more for a smooth cut edge), at most [`TURNED_MAX`] on a
+/// side. Returns the pixels and their size.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn turn_pixels(
     src: &[u8],
     (sw, sh): (u32, u32),
@@ -61,8 +70,9 @@ pub(crate) fn turn_pixels(
     (flip_h, flip_v): (bool, bool),
     crop: [f32; 4],
     alpha: f32,
+    (rw, rh): (f32, f32),
 ) -> (Vec<u8>, u32, u32) {
-    let k = (TURNED_MAX.min(sw.max(sh) as f32) / w.max(h).max(1e-3)).max(1e-3);
+    let k = (TURNED_MAX.min(rw.max(rh)) / w.max(h).max(1e-3)).max(1e-3);
     let (w, h) = ((w * k).max(1.0), (h * k).max(1.0));
     let (sin, cos) = angle.sin_cos();
     // Less a hair, so 90° turns don't gain a pixel from rounding.
@@ -172,7 +182,7 @@ pub struct Painted {
     pub loading: bool,
 }
 
-type TurnKey = (Arc<str>, i32, bool, i64, [i32; 4], u8);
+type TurnKey = (Arc<str>, i32, bool, i64, [i32; 4], u8, u64);
 type SceneKey = (usize, bool, Option<usize>);
 /// A cached slide: the revision it was built from, and the result.
 type SceneEntry = (Arc<Slide>, Rc<Painted>);
@@ -327,11 +337,19 @@ impl Painter {
     ) -> Arc<RenderImage> {
         let (angle, flip) = t.angle_flip();
         let deg = (angle.to_degrees().round() as i32).rem_euclid(360);
-        let [_, _, w, h] = pic.rect;
+        let [x, y, w, h] = pic.rect;
         let aspect = (w as f64 / h.max(1e-3) as f64 * 1000.0) as i64;
         let crop = pic.crop.map(|c| (c * 10_000.0) as i32);
         let alpha = (pic.alpha * 255.0).round() as u8;
-        let key = (pic.part.clone(), deg, flip, aspect, crop, alpha);
+        let key = (
+            pic.part.clone(),
+            deg,
+            flip,
+            aspect,
+            crop,
+            alpha,
+            pic.clip.as_ref().map_or(0, |c| clip_hash(c, w, h)),
+        );
         if let Some(t) = self.turned.borrow().get(&key) {
             return t.clone();
         }
@@ -343,7 +361,15 @@ impl Painter {
         else {
             return img.clone();
         };
-        let (px_, bw, bh) = turn_pixels(
+        // A cut picture gets enough pixels for a smooth edge.
+        let (rw, rh) = match &pic.clip {
+            Some(_) if sw.max(sh) < CLIPPED_MIN => {
+                let k = CLIPPED_MIN as f32 / sw.max(sh) as f32;
+                (sw as f32 * k, sh as f32 * k)
+            }
+            _ => (sw as f32, sh as f32),
+        };
+        let (mut px_, bw, bh) = turn_pixels(
             bytes,
             (sw, sh),
             (w, h),
@@ -351,7 +377,19 @@ impl Painter {
             (flip, false),
             pic.crop,
             pic.alpha,
+            (rw, rh),
         );
+        if let Some(clip) = &pic.clip {
+            // The shape's own box → slide px (turned with the picture) →
+            // the raster of the turned box's bounding box.
+            let c = corners(t, x, y, w, h);
+            let [bx, by, bbw, bbh] = bbox(&c);
+            let to_raster = t.then(Affine::translate(-bx, -by)).then(Affine::scale(
+                bw as f32 / bbw.max(1e-3),
+                bh as f32 / bbh.max(1e-3),
+            ));
+            slides_scene::mask::cut_to(&mut px_, (bw, bh), &clip.transformed(&to_raster));
+        }
         let Some(buf) = image::RgbaImage::from_raw(bw, bh, px_) else {
             return img.clone();
         };
@@ -426,7 +464,7 @@ impl Painter {
                         continue;
                     };
                     let [x, y, w, h] = pic.rect;
-                    if t.is_upright() && pic.alpha >= 0.999 {
+                    if t.is_upright() && pic.alpha >= 0.999 && pic.clip.is_none() {
                         let a = t.apply(pt(x, y));
                         let b = t.apply(pt(x + w, y + h));
                         let [ix, iy, iw, ih] = pic.image_rect();
@@ -500,6 +538,29 @@ impl Painter {
             loading: self.pending.get(),
         }
     }
+}
+
+/// A cache key for a clip path in a `w` × `h` box: its points as
+/// fractions of the box.
+fn clip_hash(clip: &slides_scene::Path, w: f32, h: f32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hs = std::collections::hash_map::DefaultHasher::new();
+    let q = |p: P| {
+        (
+            (p.x / w.max(1e-3) * 4096.0) as i32,
+            (p.y / h.max(1e-3) * 4096.0) as i32,
+        )
+    };
+    for seg in &clip.segs {
+        match *seg {
+            Seg::Move(a) => (0, q(a)).hash(&mut hs),
+            Seg::Line(a) => (1, q(a)).hash(&mut hs),
+            Seg::Quad(c, a) => (2, q(c), q(a)).hash(&mut hs),
+            Seg::Cubic(c1, c2, a) => (3, q(c1), q(c2), q(a)).hash(&mut hs),
+            Seg::Close => 4.hash(&mut hs),
+        }
+    }
+    hs.finish() | 1
 }
 
 fn corners(t: &Affine, x: f32, y: f32, w: f32, h: f32) -> [P; 4] {
@@ -1086,11 +1147,21 @@ mod tests {
             (false, false),
             none,
             1.0,
+            (2.0, 1.0),
         );
         assert_eq!((w, h), (1, 2));
         assert_eq!(&px_[0..4], &red);
         assert_eq!(&px_[4..8], &blue);
-        let (px_, w, h) = turn_pixels(&src, (2, 1), (2.0, 1.0), 0.0, (true, false), none, 1.0);
+        let (px_, w, h) = turn_pixels(
+            &src,
+            (2, 1),
+            (2.0, 1.0),
+            0.0,
+            (true, false),
+            none,
+            1.0,
+            (2.0, 1.0),
+        );
         assert_eq!((w, h), (2, 1));
         assert_eq!(&px_[0..4], &blue);
         // 45°: the corners of the bounding box are transparent.
@@ -1102,6 +1173,7 @@ mod tests {
             (false, false),
             none,
             1.0,
+            (2.0, 1.0),
         );
         assert_eq!(&px_[0..4], &[0, 0, 0, 0]);
         assert!(w > 2);
@@ -1114,6 +1186,7 @@ mod tests {
             (false, false),
             [0.5, 0.0, 0.0, 0.0],
             0.5,
+            (2.0, 1.0),
         );
         assert_eq!(&px_[0..4], &[0, 0, 255, 128]);
         assert_eq!(&px_[4..8], &[0, 0, 255, 128]);

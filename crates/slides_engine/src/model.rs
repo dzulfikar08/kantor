@@ -742,8 +742,14 @@ pub enum ShapeKind {
         /// See [`crate::geom::outline`] and [`ShapeKind::geometry`].
         geometry: Option<Geometry>,
     },
-    /// `p:pic`: `rel` in the slide's relationships, `part` the media part.
-    Picture { rel: String, part: Option<String> },
+    /// `p:pic`: `rel` in the slide's relationships, `part` the media part,
+    /// `geometry` the shape it's cut to (`a:prstGeom` other than a plain
+    /// rectangle, or `a:custGeom`; `None` = the whole box).
+    Picture {
+        rel: String,
+        part: Option<String>,
+        geometry: Option<Geometry>,
+    },
     /// Groups, tables, charts, SmartArt...: kept verbatim. `frame` is what
     /// they hold, for display ([`crate::frame`]); without it they're drawn
     /// as a labelled box.

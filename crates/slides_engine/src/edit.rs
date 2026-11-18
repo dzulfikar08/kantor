@@ -345,6 +345,7 @@ impl Presentation {
                 kind: ShapeKind::Picture {
                     rel,
                     part: Some(part.clone()),
+                    geometry: None,
                 },
                 xfrm: Some(xfrm),
                 ph: None,

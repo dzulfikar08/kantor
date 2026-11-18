@@ -280,7 +280,18 @@ pub(crate) fn parse_shape_in(n: Node, cx: &ParseCtx, grp_fill: Option<&Fill>) ->
                 .find(|r| r.id == rel)
                 .and_then(|r| r.part(cx.part));
             look.picture = crate::fill::picture_look(child(n, ns, "blipFill"));
-            ShapeKind::Picture { rel, part }
+            let geometry = sp_pr
+                .and_then(|s| {
+                    s.children()
+                        .find(|c| is_in(*c, NS_A, &["prstGeom", "custGeom"]))
+                        .and_then(Geometry::from_xml)
+                })
+                .filter(|g| g.preset_name() != Some("rect"));
+            ShapeKind::Picture {
+                rel,
+                part,
+                geometry,
+            }
         }
         _ => {
             let own = (in_p && local == "grpSp").then_some(xfrm_el).flatten();

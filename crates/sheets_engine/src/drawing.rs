@@ -254,11 +254,14 @@ pub enum DrawingKind {
         current_refs: bool,
     },
     /// A picture: its media part, bytes and cropping (left, top, right,
-    /// bottom as fractions of the picture; negative = padding).
+    /// bottom as fractions of the picture; negative = padding), and the
+    /// shape it's cut to: its `a:prstGeom` (other than a rectangle) or
+    /// `a:custGeom` as XML that parses on its own.
     Picture {
         part: Arc<str>,
         data: Arc<Vec<u8>>,
         crop: [f32; 4],
+        shape: Option<Arc<str>>,
     },
     /// A shape, text box, connector or group: its element's XML, which
     /// declares the namespaces it uses (it parses on its own), and the
@@ -640,6 +643,19 @@ fn r_id<'a>(n: Node<'a, '_>, name: &str) -> Option<&'a str> {
         .map(|a| a.value())
 }
 
+/// The shape a picture is cut to (see [`DrawingKind::Picture`]).
+fn picture_shape(pic: Node) -> Option<Arc<str>> {
+    let geom = child(pic, NS_XDR, "spPr")?.children().find(|c| {
+        c.tag_name().namespace() == Some(NS_A)
+            && matches!(c.tag_name().name(), "prstGeom" | "custGeom")
+    })?;
+    if geom.tag_name().name() == "prstGeom" && geom.attribute("prst").is_none_or(|p| p == "rect") {
+        return None;
+    }
+    let src = &pic.document().input_text()[geom.range()];
+    Some(standalone(src, &in_scope(geom)).into())
+}
+
 /// `a:srcRect` as fractions (it's in 1/1000 of a percent).
 fn crop(blip_fill: Node) -> [f32; 4] {
     let Some(r) = child(blip_fill, NS_A, "srcRect") else {
@@ -702,6 +718,7 @@ fn kind(
                     data: Arc::new(data.to_vec()),
                     crop: crop(fill),
                     part: part.into(),
+                    shape: picture_shape(obj),
                 },
                 None => other(),
             }

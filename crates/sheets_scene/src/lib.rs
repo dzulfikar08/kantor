@@ -411,14 +411,18 @@ fn placeholder(w: f32, h: f32) -> Vec<Item> {
     }]
 }
 
-/// The items of a picture drawn into `w` × `h`.
+/// The items of a picture drawn into `w` × `h`, cut to `shape` (an
+/// `a:prstGeom` or `a:custGeom` element, see
+/// [`sheets_engine::drawing::DrawingKind::Picture`]).
 pub fn picture_items(
     part: &Arc<str>,
     data: &Arc<Vec<u8>>,
     crop: [f32; 4],
+    shape: Option<&str>,
     w: f32,
     h: f32,
 ) -> Vec<Item> {
+    let clip = shape.and_then(|xml| slides_scene::geom::geometry_xml_clip(xml, w, h));
     vec![Item {
         layer: None,
         transform: Affine::translate(0.0, 0.0),
@@ -428,7 +432,7 @@ pub fn picture_items(
             rect: [0.0, 0.0, w, h],
             crop,
             alpha: 1.0,
-            clip: None,
+            clip,
         }),
     }]
 }
@@ -675,8 +679,13 @@ impl DrawingScenes {
         h: f32,
     ) -> Arc<Vec<Item>> {
         match &*d.kind {
-            DrawingKind::Picture { part, data, crop } => {
-                return Arc::new(picture_items(part, data, *crop, w, h));
+            DrawingKind::Picture {
+                part,
+                data,
+                crop,
+                shape,
+            } => {
+                return Arc::new(picture_items(part, data, *crop, shape.as_deref(), w, h));
             }
             DrawingKind::Other(_) => return Arc::new(placeholder(w, h)),
             DrawingKind::Slicer { .. } | DrawingKind::Timeline { .. } => {

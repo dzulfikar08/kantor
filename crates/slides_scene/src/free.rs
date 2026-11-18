@@ -296,7 +296,7 @@ impl Builder {
                         [0.0, 0.0, w, h],
                         look.picture.crop,
                         look.picture.alpha,
-                        None,
+                        crate::geom::picture_clip(shape, w, h),
                     )
                 }) {
                     push(out, Prim::Picture(pic));
@@ -304,7 +304,7 @@ impl Builder {
                 if let Some((c, wd)) = look.line {
                     let width = (wd as f32 / EMU_PER_PX).max(0.0);
                     if width > 0.0 {
-                        let rect = vec![Path::rect(0.0, 0.0, w, h)];
+                        let rect = crate::build::picture_lines(shape, w, h);
                         strokes(
                             rect,
                             rgba(c, look.line_style.alpha),

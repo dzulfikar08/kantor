@@ -734,3 +734,29 @@ fn get_in(book: &Workbook, name: &str) -> Drawing {
         .find(|d| d.name == name)
         .unwrap()
 }
+
+#[test]
+fn pictures_are_cut_to_their_shape() {
+    let part: Arc<str> = Arc::from("xl/media/image1.png");
+    let data = Arc::new(vec![1, 2, 3]);
+    let oval = r#"<a:prstGeom xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" prst="ellipse"/>"#;
+    let clip = |shape| {
+        let items = picture_items(&part, &data, [0.0; 4], shape, 120.0, 60.0);
+        let Prim::Picture(p) = &items[0].prim else {
+            panic!()
+        };
+        p.clip.clone()
+    };
+    assert_eq!(clip(None), None);
+    let c = clip(Some(oval)).expect("cut to the ellipse");
+    let b = c.bounds().unwrap();
+    assert!(
+        (b[2] - 120.0).abs() < 0.01 && (b[3] - 60.0).abs() < 0.01,
+        "{b:?}"
+    );
+    assert!(
+        c.segs
+            .iter()
+            .any(|s| matches!(s, slides_scene::geom::Seg::Cubic(..)))
+    );
+}
