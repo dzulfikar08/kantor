@@ -244,10 +244,22 @@ pub struct Paragraph {
     pub floats: Vec<FloatSpec>,
     /// Footnotes that may continue on the next page: where each may break.
     pub note_splits: Vec<NoteSplit>,
+    /// The footnotes laid out at other widths, for a section's columns of
+    /// unequal widths (Word lays a note out at its column's width).
+    pub note_widths: Vec<NoteWidth>,
     /// Byte ranges laid out with no width and drawn in no colour (a
     /// field's result while its code shows, Word's Alt+F9). Offsets stay
     /// those of `text`.
     pub hidden: Vec<Range<usize>>,
+}
+
+/// A paragraph's footnotes laid out at another width: their heights and
+/// splits, as [`Paragraph::notes`] and [`Paragraph::note_splits`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NoteWidth {
+    pub width: f32,
+    pub notes: Vec<(usize, f32)>,
+    pub splits: Vec<NoteSplit>,
 }
 
 /// Where a footnote may break when it's too long for its page.
@@ -380,6 +392,7 @@ impl Paragraph {
             no_wrap: false,
             floats: Vec::new(),
             note_splits: Vec::new(),
+            note_widths: Vec::new(),
             hidden: Vec::new(),
         }
     }
@@ -980,6 +993,31 @@ pub struct Page {
     pub note_columns: Vec<NoteColumn>,
 }
 
+impl Page {
+    /// The text column (left edge and width) holding `(x, y)` on this
+    /// page, when that part of it has columns.
+    pub fn column_at(&self, x: f32, y: f32) -> Option<(f32, f32)> {
+        let region = self.columns.iter().find(|r| {
+            r.first()
+                .is_some_and(|c| y >= c[1] - 0.5 && y <= c[1] + c[3] + 0.5)
+        })?;
+        // The column it's in, else the nearest one.
+        region
+            .iter()
+            .min_by(|a, b| {
+                let d = |c: &[f32; 4]| {
+                    if x < c[0] {
+                        c[0] - x
+                    } else {
+                        (x - c[0] - c[2]).max(0.0)
+                    }
+                };
+                d(a).total_cmp(&d(b))
+            })
+            .map(|c| (c[0], c[2]))
+    }
+}
+
 /// The footnotes at the bottom of one column of a page (Word puts a
 /// column's notes under it).
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1363,7 +1401,7 @@ struct CellLines {
     height: f32,
 }
 
-impl Flow<'_> {
+impl<'a> Flow<'a> {
     /// Bottom of the text area: the margin, less the page's footnotes.
     fn bottom(&self) -> f32 {
         let notes = self.pages.last().map_or(0.0, |p| p.notes_height);
@@ -1377,6 +1415,33 @@ impl Flow<'_> {
     fn at_top(&self) -> bool {
         // The top of a page (its other columns start there too).
         self.y <= self.setup.margin_top
+    }
+
+    /// At the top of a page, or of a column after the first one (also in
+    /// columns that start part way down a page): Word drops the space
+    /// before a paragraph there.
+    fn at_column_top(&self) -> bool {
+        self.at_top() || (self.col > 0 && self.y <= self.col_top + 0.01)
+    }
+
+    /// Paragraph `pi`'s footnotes (heights, splits) as laid out for the
+    /// current column's width.
+    fn notes_here(&self, pi: usize) -> (&'a [(usize, f32)], &'a [NoteSplit]) {
+        self.notes_at(pi, self.column().1)
+    }
+
+    /// Paragraph `pi`'s footnotes laid out for a column `width` wide (the
+    /// section's first column's when there's no such layout).
+    fn notes_at(&self, pi: usize, width: f32) -> (&'a [(usize, f32)], &'a [NoteSplit]) {
+        let p: &'a Paragraph = &self.paras[pi];
+        match p
+            .note_widths
+            .iter()
+            .find(|n| (n.width - width).abs() < 0.5)
+        {
+            Some(n) if self.cols.len() > 1 => (&n.notes, &n.splits),
+            _ => (&p.notes, &p.note_splits),
+        }
     }
 
     /// Columns in the current stretch.
@@ -1533,8 +1598,8 @@ impl Flow<'_> {
     }
 
     /// The split of a footnote, if it may break across pages.
-    fn note_split(&self, pi: usize, index: usize) -> Option<&NoteSplit> {
-        self.paras[pi].note_splits.iter().find(|s| s.index == index)
+    fn note_split(&self, pi: usize, index: usize) -> Option<&'a NoteSplit> {
+        self.notes_here(pi).1.iter().find(|s| s.index == index)
     }
 
     /// Put the footnotes carried over at the bottom of the new page, under
@@ -1607,8 +1672,9 @@ impl Flow<'_> {
         };
         let r = line.text_range();
         let last = k + 1 == self.layouts[pi].layout.len();
-        let first = self.paras[pi]
-            .notes
+        let first = self
+            .notes_here(pi)
+            .0
             .iter()
             .filter(|(i, _)| *i >= r.start && (*i < r.end || last))
             .find_map(|(i, _)| self.note_split(pi, *i))
@@ -1731,8 +1797,7 @@ impl Flow<'_> {
     /// one it was laid out for.
     fn needs_wrap(&self, pi: usize) -> bool {
         let para = &self.paras[pi];
-        let text = para.text.trim_end_matches([PAGE_BREAK, COLUMN_BREAK]);
-        if para.no_wrap || text.contains([PAGE_BREAK, COLUMN_BREAK]) {
+        if para.no_wrap {
             return false;
         }
         let laid_for = self.layouts[pi].width;
@@ -1760,17 +1825,92 @@ impl Flow<'_> {
     /// A body paragraph whose lines are broken again around floating
     /// objects: each line gets the free stretches beside the objects at
     /// its height (one line per stretch), or moves below them; in a column
-    /// of another width each line gets that column's width. Widow and
-    /// orphan control doesn't apply here.
+    /// of another width each line gets that column's width (a page or
+    /// column break inside it goes on in the next one at its width).
+    /// Widow and orphan control doesn't apply here. Footnotes: which
+    /// lines hold them is only known once the lines are broken, so a
+    /// paragraph with notes is placed again knowing them (until the lines
+    /// stay the same, at most three times).
     fn place_para_wrapped(&mut self, pi: usize) {
-        let para = &self.paras[pi];
         let base = self.layouts[pi].clone();
+        if self.paras[pi].notes.is_empty() {
+            self.wrapped_pass(pi, &base, None);
+            return;
+        }
+        let snap = self.snap_at(pi);
+        let mut known: Option<Vec<Vec<(usize, f32)>>> = None;
+        for attempt in 0..3 {
+            let got = self.wrapped_pass(pi, &base, known.as_deref());
+            let none = known.is_none() && got.iter().all(|n| n.is_empty());
+            if none || known.as_ref() == Some(&got) || attempt == 2 {
+                return;
+            }
+            self.restore(&snap);
+            self.layouts[pi] = base.clone();
+            known = Some(got);
+        }
+    }
+
+    /// The flow's state before paragraph `pi` is placed (to place it
+    /// again).
+    fn snap_at(&self, pi: usize) -> Snap {
+        let pages = self.pages.len();
+        Snap {
+            block: 0,
+            first_para: pi,
+            pages,
+            last: self.pages[pages - 1].clone(),
+            setup: self.setup,
+            excl: self.excl.clone(),
+            floats_placed: self.floats_placed,
+            carry: self.carry.clone(),
+            y: self.y,
+            section_pages: self.section_pages,
+            number: self.number,
+            col: self.col,
+            col_top: self.col_top,
+            col_max: self.col_max,
+            notes_base: self.notes_base,
+        }
+    }
+
+    /// One placement of a re-broken paragraph (see
+    /// [`Self::place_para_wrapped`]); `known`: per line, the footnotes it
+    /// holds from an earlier pass, placed with it. Returns the footnotes
+    /// each line holds now.
+    fn wrapped_pass(
+        &mut self,
+        pi: usize,
+        base: &Arc<ParaLayout>,
+        known: Option<&[Vec<(usize, f32)>]>,
+    ) -> Vec<Vec<(usize, f32)>> {
+        let para = &self.paras[pi];
         if para.page_break_before && !self.at_top() {
             self.new_page();
         }
-        if !self.at_top() {
+        if !self.at_column_top() {
             self.y += para.space_before_pt * PT;
         }
+        // The page and column breaks among the text's hard breaks, in
+        // order (parley ends a line at each hard break).
+        let hard: Vec<Option<char>> = para
+            .text
+            .chars()
+            .filter(|c| {
+                matches!(
+                    *c,
+                    '\n' | '\r'
+                        | '\u{000B}'
+                        | '\u{0085}'
+                        | '\u{2028}'
+                        | '\u{2029}'
+                        | PAGE_BREAK
+                        | COLUMN_BREAK
+                )
+            })
+            .map(|c| matches!(c, PAGE_BREAK | COLUMN_BREAK).then_some(c))
+            .collect();
+        let mut hard_seen = 0usize;
         let first_h = base
             .layout
             .get(0)
@@ -1786,9 +1926,13 @@ impl Flow<'_> {
             .iter()
             .map(|c| avail_in(c.1))
             .fold(avail_in(self.column().1), f32::max);
-        let mut laid = (*base).clone();
-        // (page, line, top, segment)
-        let mut placed: Vec<(usize, usize, f32, (f32, f32))> = Vec::new();
+        let mut laid = (**base).clone();
+        // (page, line, top, segment, column width)
+        let mut placed: Vec<(usize, usize, f32, (f32, f32), f32)> = Vec::new();
+        let note_of = |k: usize| -> (f32, Vec<(usize, f32)>) {
+            let here = known.and_then(|n| n.get(k)).cloned().unwrap_or_default();
+            (here.iter().map(|n| n.1).sum(), here)
+        };
         {
             let mut br = laid.layout.break_lines();
             br.state_mut().set_layout_max_advance(widest.max(1.0));
@@ -1822,6 +1966,7 @@ impl Flow<'_> {
                     }
                 };
                 let mut row_h = 0.0f32;
+                let mut forced = None;
                 for (a, b) in segs {
                     // Each line starts at its layout's x 0 (parley's carets
                     // ignore a line's own x): the stretch's left edge goes
@@ -1830,20 +1975,34 @@ impl Flow<'_> {
                         .set_line_max_advance((b - a).min(avail).max(1.0));
                     if let Some(parley::layout::YieldData::LineBreak(d)) = br.break_next() {
                         let h = d.metrics.line_height;
-                        if row_h == 0.0 && self.y + h > self.bottom() + 0.01 && !self.at_top() {
+                        let (note_h, here) = note_of(k);
+                        let room = self.bottom() - self.notes_cost(note_h);
+                        if row_h == 0.0 && self.y + h > room + 0.01 && !self.at_top() {
                             br.revert();
                             self.next_column();
                             continue 'lines;
                         }
-                        placed.push((self.pages.len() - 1, k, self.y, (a, b)));
+                        let page = self.pages.len() - 1;
+                        placed.push((page, k, self.y, (a, b), self.column().1));
+                        if !here.is_empty() {
+                            self.push_notes(page, pi, here, self.y + h);
+                        }
                         row_h = row_h.max(h);
                         k += 1;
+                        if d.reason == parley::layout::BreakReason::Explicit {
+                            forced = hard.get(hard_seen).copied().flatten();
+                            hard_seen += 1;
+                            break;
+                        }
                     }
                     if br.is_done() {
                         break;
                     }
                 }
                 self.y += row_h.max(0.5);
+                if let Some(c) = forced {
+                    self.take_break(c);
+                }
             }
             br.finish();
         }
@@ -1851,15 +2010,13 @@ impl Flow<'_> {
             .align(laid.alignment, AlignmentOptions::default());
         let laid = Arc::new(laid);
         self.layouts[pi] = laid.clone();
-        for &(page, k, top, (a, b)) in &placed {
-            self.push_line_on(page, pi, k, top, (a, b - a), a);
+        let mut got = Vec::with_capacity(placed.len());
+        for &(page, k, top, (a, b), width) in &placed {
+            self.push_line_bare(page, pi, k, top, (a, b - a), a);
+            got.push(self.notes_on_line(pi, k, width));
         }
-        if let Some(&(_, k, _, _)) = placed.last()
-            && let Some(c) = self.break_after(pi, k)
-        {
-            self.take_break(c);
-        }
-        self.y += para.space_after_pt * PT;
+        self.y += self.paras[pi].space_after_pt * PT;
+        got
     }
 
     /// Start section `i` (its first block is about to be placed).
@@ -1939,20 +2096,29 @@ impl Flow<'_> {
 
     /// Height of the footnotes referenced from line `k` of paragraph `pi`.
     fn line_notes(&self, pi: usize, k: usize) -> f32 {
-        let notes = &self.paras[pi].notes;
+        self.notes_on_line(pi, k, self.column().1)
+            .iter()
+            .map(|n| n.1)
+            .sum()
+    }
+
+    /// The footnotes referenced from line `k` of paragraph `pi` (byte
+    /// index, height laid out for a column `width` wide).
+    fn notes_on_line(&self, pi: usize, k: usize, width: f32) -> Vec<(usize, f32)> {
+        let notes = self.notes_at(pi, width).0;
         if notes.is_empty() {
-            return 0.0;
+            return Vec::new();
         }
         let Some(line) = self.layouts[pi].layout.get(k) else {
-            return 0.0;
+            return Vec::new();
         };
         let r = line.text_range();
         let last = k + 1 == self.layouts[pi].layout.len();
         notes
             .iter()
             .filter(|(i, _)| *i >= r.start && (*i < r.end || last))
-            .map(|(_, h)| h)
-            .sum()
+            .copied()
+            .collect()
     }
 
     /// Extra room the footnotes of a line need on the current page (the
@@ -1975,7 +2141,7 @@ impl Flow<'_> {
     }
 
     /// Place line `k` of paragraph `pi` on `page` at `top`, in the column
-    /// `x`/`width`, its layout's origin at `dx`.
+    /// `x`/`width`, its layout's origin at `dx`, with its footnotes.
     fn push_line_on(
         &mut self,
         page: usize,
@@ -1985,6 +2151,23 @@ impl Flow<'_> {
         (x, width): (f32, f32),
         dx: f32,
     ) {
+        let bottom = self.push_line_bare(page, pi, k, top, (x, width), dx);
+        let here = self.notes_on_line(pi, k, self.column().1);
+        if !here.is_empty() {
+            self.push_notes(page, pi, here, bottom);
+        }
+    }
+
+    /// Place a line without its footnotes; returns its bottom.
+    fn push_line_bare(
+        &mut self,
+        page: usize,
+        pi: usize,
+        k: usize,
+        top: f32,
+        (x, width): (f32, f32),
+        dx: f32,
+    ) -> f32 {
         let layout = &self.layouts[pi];
         let m = *layout.layout.get(k).expect("line exists").metrics();
         let dy = top - m.block_min_coord;
@@ -2000,21 +2183,13 @@ impl Flow<'_> {
             repeat: false,
         });
         self.line_pages[pi].push((page, dy, dx));
-        // Its footnotes go to the bottom of this page; one too long for
-        // what's left starts here and goes on on the next page.
-        let notes = &self.paras[pi].notes;
-        if notes.is_empty() {
-            return;
-        }
-        let line = layout.layout.get(k).expect("line exists");
-        let r = line.text_range();
-        let last = k + 1 == layout.layout.len();
-        let here: Vec<(usize, f32)> = notes
-            .iter()
-            .filter(|(i, _)| *i >= r.start && (*i < r.end || last))
-            .copied()
-            .collect();
-        let line_bottom = top + m.line_height;
+        top + m.line_height
+    }
+
+    /// The footnotes `here` of a line of paragraph `pi` ending at
+    /// `line_bottom` go to the bottom of this page's column; one too long
+    /// for what's left starts here and goes on in the next column or page.
+    fn push_notes(&mut self, page: usize, pi: usize, here: Vec<(usize, f32)>, line_bottom: f32) {
         for (i, h) in here {
             self.pages[page].notes.push((pi, i));
             if !self.carry.is_empty() {
@@ -2107,7 +2282,7 @@ impl Flow<'_> {
         let forced: Vec<Option<char>> = (0..n).map(|k| self.break_after(pi, k)).collect();
         let keep_together = !forced.iter().any(|f| f.is_some());
         // Space before is dropped at the top of a page, as in Word.
-        if !self.at_top() {
+        if !self.at_column_top() {
             self.y += para.space_before_pt * PT;
         }
         let mut i = 0;
@@ -2431,7 +2606,7 @@ impl Flow<'_> {
     }
 }
 
-impl Flow<'_> {
+impl<'a> Flow<'a> {
     /// Place blocks `range`, remembering where balancing could start
     /// again (`snap`).
     fn run(&mut self, blocks: &[Block], range: Range<usize>, snap: bool) {
@@ -4613,6 +4788,104 @@ mod column_tests {
             r.end - r.start
         };
         assert!(range(wide[0]) > range(narrow[0]) * 2);
+    }
+
+    #[test]
+    fn space_before_is_dropped_at_later_column_tops() {
+        let s = PageSetup::a4();
+        // Columns starting mid-page: the paragraph that opens the second
+        // column loses its space before, as at a page top (Word).
+        let cols = two_columns(None);
+        let mut paras = short(40);
+        for p in &mut paras {
+            p.space_before_pt = 30.0;
+        }
+        let doc = lay(
+            &paras,
+            &[
+                section(0, SectionBreak::NextPage, Vec::new()),
+                section(2, SectionBreak::Continuous, cols.clone()),
+            ],
+        );
+        let page = &doc.pages[0];
+        let top = page.columns[0][0][1];
+        let first = page.lines.iter().find(|l| l.para == 2).unwrap();
+        // The first column keeps it (the text before is on the page).
+        assert!(first.top >= top + 30.0 * PT - 0.5, "{} {top}", first.top);
+        let second = page.lines.iter().find(|l| l.x > first.x + 100.0).unwrap();
+        assert!(top > s.margin_top + 50.0);
+        assert!((second.top - top).abs() < 0.5, "{} {top}", second.top);
+    }
+
+    #[test]
+    fn a_break_mid_paragraph_rebreaks_in_a_column_of_another_width() {
+        let s = PageSetup::a4();
+        let cols = two_columns(Some((150.0, s.content_width() - 150.0 - GAP)));
+        let words = "word ".repeat(60);
+        let doc = lay(
+            &[Paragraph::new(format!("{words}{COLUMN_BREAK}{words}"))],
+            &[section(0, SectionBreak::NextPage, cols.clone())],
+        );
+        assert_eq!(doc.pages.len(), 1);
+        let page = &doc.pages[0];
+        let wide: Vec<&PlacedLine> = page
+            .lines
+            .iter()
+            .filter(|l| l.x > s.margin_left + 100.0)
+            .collect();
+        assert!(!wide.is_empty());
+        assert!(wide.iter().all(|l| l.width > 300.0));
+        // The text after the break starts the wide column, its lines
+        // broken at its width.
+        let first = doc.layouts[0].layout.get(wide[0].line).unwrap().text_range();
+        assert_eq!(first.start, words.len() + COLUMN_BREAK.len_utf8());
+        assert!((wide[0].top - s.margin_top).abs() < 0.5);
+        assert!(wide.len() * 2 < page.lines.len() - wide.len());
+    }
+
+    #[test]
+    fn footnotes_in_unequal_columns_use_their_column_width() {
+        let s = PageSetup::a4();
+        let cols = two_columns(Some((150.0, s.content_width() - 150.0 - GAP)));
+        let mut paras = short(80);
+        // A reference in each column: tall at the narrow width, short at
+        // the wide one.
+        for i in [2usize, 40] {
+            let p = &mut paras[i];
+            p.notes.push((0, 60.0));
+            p.note_widths.push(NoteWidth {
+                width: cols[1].1,
+                notes: vec![(0, 20.0)],
+                splits: Vec::new(),
+            });
+        }
+        let doc = lay(&paras, &[section(0, SectionBreak::NextPage, cols.clone())]);
+        let page = &doc.pages[0];
+        assert_eq!(page.note_columns.len(), 2);
+        let (a, b) = (&page.note_columns[0], &page.note_columns[1]);
+        assert!(a.width < 151.0 && b.width > 300.0);
+        assert!((a.height - (60.0 + NOTE_SEPARATOR)).abs() < 0.5, "{}", a.height);
+        assert!((b.height - (20.0 + NOTE_SEPARATOR)).abs() < 0.5, "{}", b.height);
+    }
+
+    #[test]
+    fn column_at_finds_the_column_of_a_point() {
+        let s = PageSetup::a4();
+        let cols = two_columns(None);
+        let doc = lay(
+            &short(200),
+            &[section(0, SectionBreak::NextPage, cols.clone())],
+        );
+        let page = &doc.pages[0];
+        let y = s.margin_top + 10.0;
+        assert_eq!(
+            page.column_at(s.margin_left + 5.0, y),
+            Some((s.margin_left, cols[0].1))
+        );
+        let second = s.margin_left + cols[1].0;
+        assert_eq!(page.column_at(second + 5.0, y), Some((second, cols[1].1)));
+        let one = lay(&short(3), &[section(0, SectionBreak::NextPage, Vec::new())]);
+        assert_eq!(one.pages[0].column_at(s.margin_left + 5.0, y), None);
     }
 
     #[test]

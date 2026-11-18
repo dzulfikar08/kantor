@@ -326,6 +326,103 @@ impl Columns {
     }
 }
 
+/// An edge of the space between two columns, as the ruler shows it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ColumnEdge {
+    /// The right edge of column `.0` (the space after it starts here).
+    End(usize),
+    /// The left edge of column `.0 + 1` (the space after column `.0`
+    /// ends here).
+    Start(usize),
+}
+
+/// A ruler drag never makes a column narrower than this: 0.5 cm, twips.
+pub const MIN_COLUMN: u32 = 283;
+
+impl Columns {
+    /// Where an edge sits, twips from the text area's left (`None`: no
+    /// such edge).
+    pub fn edge_at(&self, text: u32, edge: ColumnEdge) -> Option<u32> {
+        let lay = self.layout(text);
+        match edge {
+            ColumnEdge::End(i) if i + 1 < lay.len() => Some(lay[i].0 + lay[i].1),
+            ColumnEdge::Start(i) if i + 1 < lay.len() => Some(lay[i + 1].0),
+            _ => None,
+        }
+    }
+
+    /// These columns with `edge` dragged to `at` (twips from the text
+    /// area's left), as Word's ruler: equal columns stay equal (every
+    /// space and width changes to put the edge there); with unequal ones
+    /// the edge's column and the space beside it change, the other
+    /// columns stay. `None` when nothing changes.
+    pub fn dragged(&self, text: u32, edge: ColumnEdge, at: u32) -> Option<Self> {
+        let lay = self.layout(text);
+        let n = lay.len();
+        let old = self.edge_at(text, edge)?;
+        if old == at {
+            return None;
+        }
+        let t = text as f64;
+        let x = at as f64;
+        if self.equal || self.cols.is_empty() {
+            let nf = n as f64;
+            let (w, s) = match edge {
+                ColumnEdge::End(i) => {
+                    // x = (i+1)w + i s and t = n w + (n-1) s.
+                    let (a, b) = ((i + 1) as f64, i as f64);
+                    let det = a * (nf - 1.0) - b * nf;
+                    ((x * (nf - 1.0) - b * t) / det, (a * t - nf * x) / det)
+                }
+                ColumnEdge::Start(i) => {
+                    // x = (i+1)(w + s) and t = n w + (n-1) s.
+                    let p = x / (i + 1) as f64;
+                    let s = nf * p - t;
+                    (p - s, s)
+                }
+            };
+            if w < MIN_COLUMN as f64 || s < 0.0 {
+                return None;
+            }
+            let space = s.round() as u32;
+            return (space != self.space).then(|| Self {
+                space,
+                ..self.clone()
+            });
+        }
+        let mut cols: Vec<Column> = (0..n)
+            .map(|i| Column {
+                width: lay[i].1,
+                space: lay
+                    .get(i + 1)
+                    .map_or(0, |next| next.0.saturating_sub(lay[i].0 + lay[i].1)),
+            })
+            .collect();
+        match edge {
+            ColumnEdge::End(i) => {
+                let next = lay[i + 1].0;
+                let at = at.clamp(lay[i].0 + MIN_COLUMN, next);
+                cols[i].width = at - lay[i].0;
+                cols[i].space = next - at;
+            }
+            ColumnEdge::Start(i) => {
+                let end = lay[i].0 + lay[i].1;
+                let right = lay[i + 1].0 + lay[i + 1].1;
+                let at = at.clamp(end, right.saturating_sub(MIN_COLUMN).max(end));
+                cols[i].space = at - end;
+                cols[i + 1].width = right - at;
+            }
+        }
+        let out = Self {
+            num: n as u16,
+            equal: false,
+            cols,
+            ..self.clone()
+        };
+        (out != *self).then_some(out)
+    }
+}
+
 impl Document {
     /// The columns of the section holding paragraph `para`.
     pub fn section_columns(&self, para: usize) -> Columns {
@@ -523,6 +620,39 @@ mod tests {
             Columns::parse(r#"<w:sectPr><w:cols w:space="720"/></w:sectPr>"#).count(),
             1
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn ruler_drags_change_widths_and_spacing() {
+        // Equal columns stay equal: dragging the first column's right
+        // edge left widens the space, every column narrower.
+        let c = Columns::equal(2, 720);
+        assert_eq!(c.edge_at(9000, ColumnEdge::End(0)), Some(4140));
+        let d = c.dragged(9000, ColumnEdge::End(0), 4000).unwrap();
+        assert!(d.equal);
+        assert_eq!(d.space, 1000);
+        assert_eq!(d.layout(9000), vec![(0, 4000), (5000, 4000)]);
+        let d = c.dragged(9000, ColumnEdge::Start(0), 4600).unwrap();
+        assert_eq!(d.layout(9000), vec![(0, 4400), (4600, 4400)]);
+        let three = Columns::equal(3, 720);
+        let d = three.dragged(9000, ColumnEdge::End(1), 5800).unwrap();
+        let lay = d.layout(9000);
+        assert_eq!(lay[1].0 + lay[1].1, 5800);
+        assert!(lay.iter().all(|c| c.1 == lay[0].1));
+        // No room left: refused; no move: nothing.
+        assert_eq!(c.dragged(9000, ColumnEdge::End(0), 100), None);
+        assert_eq!(c.dragged(9000, ColumnEdge::End(0), 4140), None);
+        assert_eq!(c.dragged(9000, ColumnEdge::End(1), 100), None);
+        // Unequal: the edge's column and the space beside it.
+        let u = ColumnPreset::Left.columns(9000);
+        let lay = u.layout(9000);
+        let d = u.dragged(9000, ColumnEdge::End(0), 2000).unwrap();
+        assert_eq!(d.layout(9000), vec![(0, 2000), lay[1]]);
+        let d = u.dragged(9000, ColumnEdge::Start(0), 4000).unwrap();
+        assert_eq!(d.layout(9000), vec![lay[0], (4000, 5000)]);
+        // An edge never crosses the space's other edge.
+        let d = u.dragged(9000, ColumnEdge::End(0), 8000).unwrap();
+        assert_eq!(d.layout(9000), vec![(0, lay[1].0), lay[1]]);
     }
 
     #[std::prelude::v1::test]

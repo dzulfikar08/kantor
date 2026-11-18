@@ -42,6 +42,10 @@ slide, in the layout families Kantor lays out itself:
   (`layout/vList4`), Picture Caption List (`layout/pList1`), Titled Picture
   Blocks and Picture Grid (`2008/layout/TitledPictureBlocks`,
   `2008/layout/PictureGrid`).
+- Slide 18: Circular Picture Callout (`2008/layout/CircularPictureCallout`):
+  "Team" in the big round picture (holding the PNG), "Plan", "Build" and
+  "Ship" as callouts joined to it by lines; each picture's presentation
+  item hangs on the item's sibling transition, as PowerPoint writes it.
 
 Regenerate with
 `uv run --with python-pptx==1.0.2 scripts/corpus/gen_pptx_smartart.py tests/corpus/pptx`.
@@ -419,6 +423,64 @@ def pic_layout(lo):
 
 
 # The org chart layouts slide: (text, assistant, hierBranch, children).
+# Circular Picture Callout's places (layout definition, dir="norm"): per
+# item count 2..7, the callouts' size and each one's left edge and centre y,
+# in heights of the big picture.
+CALLOUTS = {
+    2: (0.5, [(1.21, 0.5)]),
+    3: (0.375, [(1.21, 0.1875), (1.21, 0.8125)]),
+    4: (0.3, [(1.354, 0.15), (1.21, 0.5), (1.354, 0.85)]),
+    5: (0.22, [(1.375, 0.11), (1.21, 0.353), (1.21, 0.647), (1.375, 0.89)]),
+    6: (0.18, [(1.4238, 0.09), (1.2667, 0.261), (1.21, 0.5), (1.2667, 0.739), (1.4238, 0.91)]),
+    7: (0.15, [(1.4363, 0.075), (1.2898, 0.227), (1.21, 0.405), (1.21, 0.595), (1.2898, 0.773), (1.4363, 0.925)]),
+}
+
+
+def callout(ids):
+    """2008/layout/CircularPictureCallout as PowerPoint writes it: each
+    item's picture (`pictureRepeatNode`) hangs on its sibling transition,
+    its text is `text_N`; later items have a `line_N` from the big circle's
+    centre (drawn first, behind) and a `textparent_N` with no shape."""
+    pres, lines, shapes = [], [], []
+    n = len(ids)
+    d = min(H, W / 2)
+    y0 = (H - d) / 2
+    size, places = CALLOUTS[max(2, min(n, 7))]
+    nofill = '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill><a:ln w="12700"><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:ln>'
+    for k, (node, sib, _kids, text, _subs) in enumerate(ids):
+        pid, tid, lid, uid = (gid("9", 4 * k + j) for j in range(4))
+        if k == 0:
+            pic_box = (0, y0, d, d)
+            text_box = (0.18 * d, y0 + 0.531 * d, 0.64 * d, 0.33 * d)
+        else:
+            l, cy = places[k - 1]
+            sz = size * d
+            x, cy = l * d, y0 + cy * d
+            pic_box = (x, cy - sz / 2, sz, sz)
+            text_box = (x + sz, cy - sz / 2, W - x - sz, sz)
+            line = sp(lid, "line", (d / 2, cy, x + sz / 2 - d / 2, 0), [""]).replace(
+                nofill, '<a:noFill/><a:ln w="12700"><a:solidFill><a:schemeClr val="accent1"/></a:solidFill></a:ln>', 1)
+            lines.append(line)
+            pres.append((lid, node, f"line_{k + 1}", k - 1, n - 1))
+            pres.append((uid, node, f"textparent_{k + 1}", 0, 0))
+        pic = sp(pid, "ellipse", pic_box, [""]).replace(
+            '<a:solidFill><a:schemeClr val="accent1"/></a:solidFill>',
+            '<a:solidFill><a:schemeClr val="accent1"><a:tint val="50000"/></a:schemeClr></a:solidFill>', 1)
+        if k == 0:
+            pic = pic.replace(
+                '<a:solidFill><a:schemeClr val="accent1"><a:tint val="50000"/></a:schemeClr></a:solidFill><a:ln',
+                f'<a:blipFill><a:blip xmlns:r="{REL[:-1]}" r:embed="rIdImg1"/>'
+                '<a:stretch><a:fillRect/></a:stretch></a:blipFill><a:ln', 1)
+        txt = sp(tid, "rect", text_box, [text], fill="lt1", font="lt1" if k == 0 else "tx1").replace(
+            '<a:solidFill><a:schemeClr val="lt1"/></a:solidFill><a:ln w="12700"><a:solidFill><a:schemeClr val="lt1"/></a:solidFill></a:ln>',
+            '<a:noFill/><a:ln><a:noFill/></a:ln>', 1)
+        pres.append((pid, sib, "pictureRepeatNode", k, n))
+        pres.append((tid, node, f"text_{k + 1}", k, n))
+        shapes.append(pic)
+        shapes.append(txt)
+    return pres, lines + shapes
+
+
 ORG = ("CEO", False, "init", [
     ("Aide", True, "init", []),
     ("Sales", False, "l", [("North", False, "init", []), ("South", False, "init", [])]),
@@ -767,6 +829,8 @@ SLIDES = [
     ("Titled picture blocks", "2008/layout/TitledPictureBlocks", "picture", PICS,
      pic_layout("2008/layout/TitledPictureBlocks")),
     ("Picture grid", "2008/layout/PictureGrid", "picture", PICS, pic_layout("2008/layout/PictureGrid")),
+    ("Circular picture callout", "2008/layout/CircularPictureCallout", "picture",
+     [("Team", []), ("Plan", []), ("Build", []), ("Ship", [])], callout),
 ]
 
 for title, *_ in SLIDES:

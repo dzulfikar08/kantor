@@ -9,6 +9,24 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Docs: in a section with columns the ruler shows the spaces between the columns, and the caret's
+  column holds the indent markers and tab stops (measured from its edge, as in Word). Drag either
+  edge of a space to change the columns' widths and spacing (equal columns stay equal); one undo
+  step.
+- SmartArt: Circular Picture Callout (a big round picture with smaller ones beside it, each joined
+  by a line, up to seven items) is laid out again when resized, takes items added and removed, and
+  can be chosen with Change Layout, in Slides and Docs.
+
+### Fixed
+
+- Docs columns: footnotes in columns of different widths are laid out at their own column's
+  width; the space before a paragraph is dropped at the top of the second and later columns, also
+  when the columns start part way down a page; a paragraph with a page or column break inside it
+  is broken again at the next column's width; dragging a floating object placed relative to its
+  column keeps it relative to the column it's in.
+
 ## [0.13.0] - 2026-11-18
 
 Sheets gets zoom (10–400 %, saved with each sheet; Page Break Preview opens at 60 % as in Excel), and Docs lays

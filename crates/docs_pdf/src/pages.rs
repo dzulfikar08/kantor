@@ -370,9 +370,44 @@ fn body_with_notes(
         let l = cached_note(cache, doc, i, width, &r.label, layout);
         let notice =
             notice_layout(doc, NoteKind::Footnote, width, cache, layout).map_or(0.0, |n| n.height);
-        if let Some(lp) = lps.get_mut(r.pos.para) {
-            lp.notes.push((r.pos.offset, l.height));
-            lp.note_splits.push(docs_layout::NoteSplit {
+        let Some(lp) = lps.get_mut(r.pos.para) else {
+            continue;
+        };
+        lp.notes.push((r.pos.offset, l.height));
+        lp.note_splits.push(docs_layout::NoteSplit {
+            index: r.pos.offset,
+            breaks: breaks(&l),
+            notice,
+        });
+        // Columns of other widths: the note laid out at each (Word puts
+        // a note under its column, as wide as it).
+        let mut others: Vec<f32> = sections
+            .get(r.section)
+            .map(section_columns)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|c| c.1)
+            .filter(|w| (w - width).abs() > 0.5)
+            .collect();
+        others.sort_by(f32::total_cmp);
+        others.dedup_by(|a, b| (*a - *b).abs() < 0.5);
+        for w in others {
+            let l = cached_note(cache, doc, i, w, &r.label, layout);
+            let notice =
+                notice_layout(doc, NoteKind::Footnote, w, cache, layout).map_or(0.0, |n| n.height);
+            let at = match lp.note_widths.iter().position(|n| (n.width - w).abs() < 0.5) {
+                Some(at) => at,
+                None => {
+                    lp.note_widths.push(docs_layout::NoteWidth {
+                        width: w,
+                        ..Default::default()
+                    });
+                    lp.note_widths.len() - 1
+                }
+            };
+            let nw = &mut lp.note_widths[at];
+            nw.notes.push((r.pos.offset, l.height));
+            nw.splits.push(docs_layout::NoteSplit {
                 index: r.pos.offset,
                 breaks: breaks(&l),
                 notice,
@@ -993,7 +1028,8 @@ fn place_notes(
                 let Some(i) = doc.note_index(r.kind, &r.id) else {
                     continue;
                 };
-                let width = section_width(sections, r.section);
+                // The note as wide as its column.
+                let width = nc.width;
                 let l = cached_note(cache, doc, i, width, &r.label, layout);
                 let l = note_part(l, part.from, part.to);
                 let h = l.height;
