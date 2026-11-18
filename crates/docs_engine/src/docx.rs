@@ -315,6 +315,41 @@ fn resolve(base: &str, target: &str) -> String {
     parts.join("/")
 }
 
+/// The pictures of the SmartArt drawing parts (`dsp:drawing`) that part
+/// `owner`'s relationships `rels` point to: each drawing's own image
+/// relationships, keyed by [`crate::float::diagram_media_key`].
+fn diagram_media<'r>(
+    zip: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    owner: &str,
+    rels: impl Iterator<Item = &'r Rel>,
+    media: &mut HashMap<String, Media>,
+) -> anyhow::Result<()> {
+    for r in rels.filter(|r| r.ty.ends_with("/diagramDrawing") && !r.external) {
+        let drawing = resolve(owner, &r.target);
+        let Some(src) = zip_text(zip, &rels_name(&drawing))? else {
+            continue;
+        };
+        for pic in parse_rels(&src) {
+            if pic.external || !pic.ty.ends_with("/image") {
+                continue;
+            }
+            let part = resolve(&drawing, &pic.target);
+            let data = zip_bytes(zip, &part)?;
+            let drawable = data.as_deref().is_some_and(|d| {
+                ImageFormat::sniff(d) != ImageFormat::Other || kantor_metafile::kind(d).is_some()
+            });
+            media.insert(
+                crate::float::diagram_media_key(&drawing, &pic.id),
+                Media {
+                    part,
+                    bytes: data.filter(|_| drawable).map(Into::into),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
 fn rels_name(part: &str) -> String {
     match part.rsplit_once('/') {
         Some((dir, file)) => format!("{dir}/_rels/{file}.rels"),
@@ -2472,6 +2507,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
             },
         );
     }
+    diagram_media(&mut zip, &document_part, doc_rels.iter(), &mut media)?;
     let package = Package {
         bytes: bytes.clone(),
         document_part,
@@ -2618,6 +2654,7 @@ fn read_story(
             },
         );
     }
+    diagram_media(zip, name, rels.values(), &mut media)?;
     let locked = (!body.unsupported.is_empty()).then(|| {
         format!(
             "It has content Kantor can't edit ({}); it is shown and kept as it is",

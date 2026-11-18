@@ -110,7 +110,7 @@ jobs:
       - name: Chartex docx fixture matches its generator
         run: python3 scripts/corpus/gen_docx_chartex.py --check
 
-      - name: Text box and formula docx fixtures match their generator
+      - name: Text box, formula, column and picture docx fixtures match their generator
         run: python3 scripts/corpus/gen_docx_more.py --check
 
       - name: Metafile (WMF, EMF, PICT, BMP) fixtures match their generator

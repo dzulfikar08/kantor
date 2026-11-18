@@ -1779,7 +1779,7 @@ impl DocsView {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> HashMap<(usize, usize), Arc<RenderImage>> {
+    ) -> HashMap<(usize, usize), floats::InlinePic> {
         let mut out = HashMap::new();
         let laid = self.laid.clone();
         let paged = &laid.paged;
@@ -1792,6 +1792,7 @@ impl DocsView {
                 let Some(Object::Image(img)) = self.doc.paragraph(o.para).object_at(o.index) else {
                     continue;
                 };
+                let img = img.clone();
                 let image = match self.images.get(&img.rel_id) {
                     Some(i) => i.clone(),
                     None => {
@@ -1807,7 +1808,16 @@ impl DocsView {
                     }
                 };
                 if let Some(data) = image.use_render_image(window, cx) {
-                    out.insert((o.para, o.index), data);
+                    let pic = floats::inline_pic(
+                        &self.painter,
+                        &mut self.turned_images,
+                        &img.rel_id,
+                        &img,
+                        o.whole,
+                        data,
+                        window,
+                    );
+                    out.insert((o.para, o.index), pic);
                 }
             }
         }
@@ -1820,7 +1830,7 @@ impl DocsView {
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> HashMap<(usize, usize, usize), Arc<RenderImage>> {
+    ) -> HashMap<(usize, usize, usize), floats::InlinePic> {
         let mut out = HashMap::new();
         let laid = self.laid.clone();
         let g = self.geometry();
@@ -1850,6 +1860,7 @@ impl DocsView {
                     else {
                         continue;
                     };
+                    let img = img.clone();
                     let key = format!("hf{}:{}", l.key(), img.rel_id);
                     let image = match self.images.get(&key) {
                         Some(i) => i.clone(),
@@ -1861,12 +1872,21 @@ impl DocsView {
                                 continue;
                             };
                             let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes));
-                            self.images.insert(key, i.clone());
+                            self.images.insert(key.clone(), i.clone());
                             i
                         }
                     };
                     if let Some(data) = image.use_render_image(window, cx) {
-                        out.insert((l.key(), o.para, o.index), data);
+                        let pic = floats::inline_pic(
+                            &self.painter,
+                            &mut self.turned_images,
+                            &key,
+                            &img,
+                            o.whole,
+                            data,
+                            window,
+                        );
+                        out.insert((l.key(), o.para, o.index), pic);
                     }
                 }
             }
@@ -2076,8 +2096,8 @@ macro_rules! listeners {
 struct Frame {
     laid: Rc<Laid>,
     /// Decoded pictures on the visible pages, by `(paragraph, byte index)`.
-    images: HashMap<(usize, usize), Arc<RenderImage>>,
-    hf_images: HashMap<(usize, usize, usize), Arc<RenderImage>>,
+    images: HashMap<(usize, usize), floats::InlinePic>,
+    hf_images: HashMap<(usize, usize, usize), floats::InlinePic>,
     /// Floating objects on the visible pages, their pictures, the selected
     /// one's box and a drag going on.
     floats: Vec<floats::FloatPaint>,
@@ -2345,17 +2365,9 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     .then(|| f.images.get(&(o.para, o.index)))
                     .flatten();
                 match picture {
-                    Some(data) => {
+                    Some(pic) => {
                         // Cut at an exact line's top (`whole` is taller).
-                        let whole = rect(page, o.whole);
-                        let _ = window.paint_image(
-                            b,
-                            whole,
-                            Corners::default(),
-                            data.clone(),
-                            0,
-                            false,
-                        );
+                        floats::paint_inline(window, &g, page, pic, o.rect, o.whole, (0.0, 0.0));
                     }
                     None => {
                         window.paint_quad(fill(b, f.t.paper_selection.opacity(0.35)));
@@ -2411,18 +2423,10 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     0.7
                 };
                 for o in l.paged.objects(0) {
-                    if let Some(data) = f.hf_images.get(&(l.key(), o.para, o.index)) {
-                        let at =
-                            |[x, y, w, h]: [f32; 4]| rect(page, [x + placed.x, y + placed.y, w, h]);
-                        let (b, whole) = (at(o.rect), at(o.whole));
-                        let _ = window.paint_image(
-                            b,
-                            whole,
-                            Corners::default(),
-                            data.clone(),
-                            0,
-                            false,
-                        );
+                    if let Some(pic) = f.hf_images.get(&(l.key(), o.para, o.index)) {
+                        let at = |[x, y, w, h]: [f32; 4]| [x + placed.x, y + placed.y, w, h];
+                        let off = (placed.x, placed.y);
+                        floats::paint_inline(window, &g, page, pic, at(o.rect), at(o.whole), off);
                     }
                 }
                 let first = l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]);

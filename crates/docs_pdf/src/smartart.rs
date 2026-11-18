@@ -99,7 +99,13 @@ pub fn draw(
     let dd = &sa.drawing;
     let (w, h) = design_size(f, &sa.drawing_xml, &sa.data_xml);
     let k = (rect[2] / w as f32, rect[3] / h as f32);
-    let prims = painter.smartart_prims(&dd.drawing_with_edits(&[]), rect, k);
+    let mut prims = painter.smartart_prims(&dd.drawing_with_edits(&[]), rect, k);
+    // Picture fills name the drawing part's own relationships.
+    for p in &mut prims {
+        if let FloatPrim::Picture { rel_id, .. } = p {
+            *rel_id = docs_engine::float::diagram_media_key(&dd.part, rel_id);
+        }
+    }
     let base = ListStyle::default();
     let minor = painter.minor_font();
     let mut texts = Vec::new();
