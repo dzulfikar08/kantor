@@ -154,6 +154,11 @@ impl Model<'_> {
             if dn.sheet_id == Some(sheet_id) {
                 continue;
             }
+            // KANTOR PATCH (§33): already a reference to a deleted sheet.
+            if crate::model::is_ref_error_name_formula(&dn.formula) {
+                names.push(dn.clone());
+                continue;
+            }
             let had_equals = dn.formula.trim_start().starts_with('=');
             let body = dn.formula.strip_prefix('=').unwrap_or(&dn.formula);
             let mut node = self.parse_internal_formula(body, &context);

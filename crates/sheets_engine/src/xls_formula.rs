@@ -354,7 +354,20 @@ fn decompile_in(rgce: &[u8], ctx: &Context, b12: bool) -> Option<String> {
             }
             0x3A | 0x3B => {
                 let ixti = r.u16()? as usize;
-                let (first, last) = (*ctx.xti.get(ixti)?)?;
+                let Some((first, last)) = *ctx.xti.get(ixti)? else {
+                    // A sheet of this workbook that was deleted: Excel shows
+                    // #REF! (`#REF!A1`; IronCalc takes the error alone).
+                    if !ctx.own_book.get(ixti).copied().unwrap_or(false) {
+                        return None;
+                    }
+                    let (rows, cols) = if ptg == 0x3A { (1, 1) } else { (2, 2) };
+                    for _ in 0..rows {
+                        row(&mut r)?;
+                    }
+                    r.take(2 * cols)?;
+                    stack.push("#REF!".into());
+                    continue;
+                };
                 let name = |i: u16| ctx.sheets.get(i as usize).cloned();
                 let prefix = if first == last {
                     sheet_prefix(&name(first)?)
@@ -473,6 +486,26 @@ mod tests {
         assert_eq!(decompile(&rgce, &c).as_deref(), Some("SUM(BOB+JIM)"));
         // Through another workbook's entry: not decoded.
         let other = [0x59, 1, 0, 1, 0, 0, 0];
+        assert_eq!(decompile(&other, &c), None);
+    }
+
+    #[test]
+    fn reference_to_a_deleted_sheet_is_ref() {
+        // EXTERNSHEET 0: a deleted sheet of this workbook; 1: another workbook.
+        let xti = [None, None];
+        let own = [true, false];
+        let c = Context {
+            xti: &xti,
+            own_book: &own,
+            ..ctx()
+        };
+        // SUM(<deleted>!A1:C1) as PtgArea3d, <deleted>!B2+1 as PtgRef3d.
+        let area = [0x3B, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0x22, 1, 0x04, 0];
+        assert_eq!(decompile(&area, &c).as_deref(), Some("SUM(#REF!)"));
+        let cell = [0x5A, 0, 0, 1, 0, 1, 0xC0, 0x1E, 1, 0, 0x03];
+        assert_eq!(decompile(&cell, &c).as_deref(), Some("#REF!+1"));
+        // Another workbook's sheet is not decoded.
+        let other = [0x5A, 1, 0, 1, 0, 1, 0xC0];
         assert_eq!(decompile(&other, &c), None);
     }
 

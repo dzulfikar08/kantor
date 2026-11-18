@@ -119,10 +119,15 @@ impl<'a> Model<'a> {
         let mut parsed_defined_names = HashMap::new();
 
         for (name, formula, sheet_id) in entries {
-            let parsed_defined_name_formula = if let Ok(reference) =
+            // KANTOR PATCH (§33): a reference to a deleted sheet.
+            let deleted = crate::model::is_ref_error_name_formula(&formula);
+            let parsed_defined_name_formula = if deleted {
+                ParsedDefinedName::RefError
+            } else if let Ok(reference) =
                 ParsedReference::parse_reference_formula(None, &formula, self.locale, |n| {
                     self.get_sheet_index_by_name(n)
-                }) {
+                })
+            {
                 match reference {
                     ParsedReference::CellReference(cell_reference) => {
                         ParsedDefinedName::CellReference(cell_reference)

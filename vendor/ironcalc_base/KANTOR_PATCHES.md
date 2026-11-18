@@ -885,6 +885,27 @@ in a new sheet; `new_empty.rs`), filled by the reader.
 
 Tests: vendor/ironcalc `tests/test_kantor_fidelity.rs`.
 
+## 33. Defined names that point at a deleted sheet
+
+Why: when a sheet is deleted, Excel keeps the names that pointed at it with
+the formula `#REF!$A$1:$C$1` (or `#REF!`), and formulas using them show
+#REF!. Upstream refused such names (`Formula: Invalid defined name formula`),
+and a name stored that way (from an `.xlsx`, or by Kantor's own Delete Sheet,
+§ "kantor_sheets") evaluated to #NAME?. Apache POI's 30978-deleted.xls
+(`=SUM(On2)`, cached #REF!) was imported as a value because of it.
+
+What: `model::is_ref_error_name_formula` recognises `#REF!` optionally
+followed by a cell or range (`#REF!$A$1`, `#REF!$A$1:$C$1`, `#REF!$2:$3`).
+`is_valid_defined_name` accepts it; `new_defined_name` and
+`update_defined_name` store it as written (not through the parser, which
+can't read it); `parse_defined_names` gives the new
+`ParsedDefinedName::RefError`, which evaluates to #REF! (`SHEET()` of it too).
+`get_defined_name_list`, row/column moves and Delete Sheet leave the text as
+it is. The xlsx writer keeps it too (vendor/ironcalc §19).
+
+Tests: `test/test_kantor_ref_names.rs`; Kantor's
+`crates/sheets_engine/tests/xls_import.rs` (`references_to_a_deleted_sheet`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

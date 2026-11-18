@@ -107,6 +107,30 @@ pub(crate) enum ParsedDefinedName {
     LambdaDefinition(Vec<NamedVariable>, Node),
     /// `=SomethingElse`
     InvalidDefinedNameFormula,
+    /// KANTOR PATCH (§33): `=#REF!` or `=#REF!$A$1:$C$1`, a reference to a
+    /// deleted sheet or deleted cells; using the name gives #REF!.
+    RefError,
+}
+
+/// KANTOR PATCH (§33): whether a defined name's formula is Excel's reference
+/// to a deleted sheet or deleted cells: `#REF!`, optionally followed by the
+/// cell or range it pointed at (`#REF!$A$1:$C$1`, `#REF!$2:$3`).
+pub(crate) fn is_ref_error_name_formula(formula: &str) -> bool {
+    let body = formula.trim();
+    let body = body.strip_prefix('=').unwrap_or(body).trim();
+    let Some(head) = body.get(..5) else {
+        return false;
+    };
+    if !head.eq_ignore_ascii_case("#REF!") {
+        return false;
+    }
+    let rest = &body[5..];
+    rest.is_empty()
+        || rest.split(':').count() <= 2
+            && rest.split(':').all(|part| {
+                !part.trim_start_matches('$').is_empty()
+                    && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '$')
+            })
 }
 
 /// Formatting settings for a locale
@@ -415,7 +439,8 @@ impl<'a> Model<'a> {
                             };
                         }
                         ParsedDefinedName::LambdaDefinition(..)
-                        | ParsedDefinedName::InvalidDefinedNameFormula => {}
+                        | ParsedDefinedName::InvalidDefinedNameFormula
+                        | ParsedDefinedName::RefError => {}
                     }
                 }
                 self.evaluate_node_in_context(node, cell)
@@ -859,6 +884,12 @@ impl<'a> Model<'a> {
                             Error::NAME,
                             cell,
                             format!("Defined name \"{name}\" is not a reference."),
+                        ),
+                        // KANTOR PATCH (§33)
+                        ParsedDefinedName::RefError => CalcResult::new_error(
+                            Error::REF,
+                            cell,
+                            format!("Defined name \"{name}\" refers to deleted cells."),
                         ),
                     }
                 } else {
@@ -3064,7 +3095,12 @@ impl<'a> Model<'a> {
             .get_defined_names_with_scope()
             .into_iter()
             .map(|(name, scope, formula)| {
-                let formula = self.internal_formula_to_display(&formula, &context);
+                // KANTOR PATCH (§33): the parser can't read `#REF!$A$1`.
+                let formula = if is_ref_error_name_formula(&formula) {
+                    formula
+                } else {
+                    self.internal_formula_to_display(&formula, &context)
+                };
                 (name, scope, formula)
             })
             .collect()
@@ -3686,7 +3722,12 @@ impl<'a> Model<'a> {
         // Defined-name formulas are stored internally in English so they keep
         // working when the user switches language/locale.
         let context = self.defined_name_context();
-        let internal_formula = self.user_formula_to_internal(formula, &context)?;
+        // KANTOR PATCH (§33): a reference to a deleted sheet is kept as written.
+        let internal_formula = if is_ref_error_name_formula(formula) {
+            formula.trim().to_string()
+        } else {
+            self.user_formula_to_internal(formula, &context)?
+        };
         self.workbook.defined_names.push(DefinedName {
             name: name.to_string(),
             formula: internal_formula,
@@ -3738,6 +3779,10 @@ impl<'a> Model<'a> {
             }
         }
 
+        // KANTOR PATCH (§33): Excel's reference to a deleted sheet (`#REF!$A$1`).
+        if is_ref_error_name_formula(formula) {
+            return Ok(sheet_id);
+        }
         // Make sure the formula is valid — accept cell/range references OR a LAMBDA definition.
         let is_reference =
             common::ParsedReference::parse_reference_formula(None, formula, self.locale, |name| {
@@ -3849,7 +3894,12 @@ impl<'a> Model<'a> {
         }
         // Defined-name formulas are stored internally in English.
         let context = self.defined_name_context();
-        let internal_formula = self.user_formula_to_internal(new_formula, &context)?;
+        let internal_formula = if is_ref_error_name_formula(new_formula) {
+            // KANTOR PATCH (§33)
+            new_formula.trim().to_string()
+        } else {
+            self.user_formula_to_internal(new_formula, &context)?
+        };
         if let Some(i) = index {
             if let Some(df) = self.workbook.defined_names.get_mut(i) {
                 if new_name != df.name {

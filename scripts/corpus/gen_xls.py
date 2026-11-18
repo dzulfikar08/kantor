@@ -89,6 +89,15 @@ Files:
   by a CFEX with fIsCF12 (as Excel writes a block mixing both; the CF12's
   own ref8 is zeros, as in Excel's files). Not converted:
   run `gen_xls.py --cf12` (needs xlwt only); `--cf12 --check` compares.
+* deleted.xls: references to a deleted sheet, as Excel leaves them: sheet
+  "Sheet1" only, whose EXTERNSHEET still lists the deleted sheet as
+  itab 0xFFFF (Apache POI's 30978-deleted.xls has the same layout). Name
+  "On2" (a cell address in Excel 2007, so Kantor calls it "_On2") is a
+  PtgArea3d through that entry ($A$1:$C$1); A1 =SUM(On2), A2
+  =SUM(<deleted>!A1:C1), A3 =<deleted>!B2+1, A4 =1+1; the first three
+  cache #REF!, A4 caches 2. xlwt writes the workbook with a second sheet
+  "Gone" that this script then leaves out (see deleted_book).
+  `gen_xls.py --deleted` (needs xlwt only); `--deleted --check` compares.
 """
 
 import os
@@ -602,6 +611,75 @@ def dates1904(path: Path) -> None:
     wb.save(path)
 
 
+def deleted_book(path: Path) -> None:
+    import importlib
+    import struct
+
+    import xlwt
+
+    records = importlib.import_module("xlwt.BIFFRecords")
+    formula_mod = importlib.import_module("xlwt.ExcelFormula")
+
+    class Rpn(formula_mod.Formula):
+        """A formula given as its token array (xlwt can't parse names)."""
+
+        def __init__(self, rgce: bytes):
+            super().__init__("0")
+            self._rgce = rgce
+
+        def rpn(self):
+            return struct.pack("<H", len(self._rgce)) + self._rgce
+
+    wb = xlwt.Workbook()
+    ws = wb.add_sheet("Sheet1")
+    gone = wb.add_sheet("Gone")
+    gone.write(0, 0, 1)
+    # SUM(On2): PtgName 1 (reference class), tAttrSum.
+    ws.write(0, 0, Rpn(bytes([0x23, 1, 0, 0, 0, 0x19, 0x10, 0, 0])))
+    ws.write(1, 0, xlwt.Formula("SUM(Gone!A1:C1)"))
+    ws.write(2, 0, xlwt.Formula("Gone!B2+1"))
+    ws.write(3, 0, xlwt.Formula("1+1"))
+    # Cached results: #REF! (error 0x17) for A1:A3, 2 for A4.
+    ref_error = 0xFFFF000000170002
+    two = struct.unpack("<Q", struct.pack("<d", 2.0))[0]
+    results = {0: ref_error, 1: ref_error, 2: ref_error, 3: two}
+    original_formula = records.FormulaRecord.__init__
+    original_refs = records.ExternSheetRecord.__init__
+    links = "_Workbook__all_links_rec"
+    original_links = getattr(xlwt.Workbook, links)
+
+    def formula_record(self, row, col, xf_index, rpn, calc_flags=0):
+        self._rec_data = (
+            struct.pack("<3HQHL", row, col, xf_index, results[row], calc_flags & 3, 0) + rpn
+        )
+
+    def extern_sheet(self, refs):
+        # The deleted sheet ("Gone", index 1) becomes itab 0xFFFF.
+        original_refs(self, [(sb, 0xFFFF, 0xFFFF) if first == 1 else (sb, first, last)
+                             for sb, first, last in refs])
+
+    def all_links(self):
+        # NAME "On2" = PtgArea3d $A$1:$C$1 through EXTERNSHEET 1 (xlwt's
+        # entry 0 is its workbook-level 0xFFFE one), after EXTERNSHEET.
+        rgce = struct.pack("<BHHHHH", 0x3B, 1, 0, 0, 0, 2)
+        name = b"On2"
+        body = struct.pack("<HBBHHH4B", 0, 0, len(name), len(rgce), 0, 0, 0, 0, 0, 0)
+        body += b"\x00" + name + rgce
+        return original_links(self) + struct.pack("<HH", 0x0018, len(body)) + body
+
+    records.FormulaRecord.__init__ = formula_record
+    records.ExternSheetRecord.__init__ = extern_sheet
+    setattr(xlwt.Workbook, links, all_links)
+    sheets = wb._Workbook__worksheets
+    try:
+        sheets.remove(gone)
+        wb.save(str(path))
+    finally:
+        records.FormulaRecord.__init__ = original_formula
+        records.ExternSheetRecord.__init__ = original_refs
+        setattr(xlwt.Workbook, links, original_links)
+
+
 def xlwt_book(path: Path) -> None:
     import xlwt
 
@@ -1038,6 +1116,20 @@ def main() -> None:
         cf12_book(out)
         print(out)
         return
+    if "--deleted" in sys.argv:
+        out = OUT / "deleted.xls"
+        if "--check" in sys.argv:
+            tmp = Path(tempfile.mkdtemp())
+            try:
+                deleted_book(tmp / "deleted.xls")
+                if (tmp / "deleted.xls").read_bytes() != out.read_bytes():
+                    sys.exit(f"{out} is out of date: run {sys.argv[0]} --deleted")
+            finally:
+                shutil.rmtree(tmp)
+            return
+        deleted_book(out)
+        print(out)
+        return
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
     lo = Path(args[0] if args else Path.home() / ".cache/lo/lo.AppImage")
     OUT.mkdir(parents=True, exist_ok=True)
@@ -1119,6 +1211,7 @@ def main() -> None:
         biff5_file(OUT / "excel95.xls")
         xlwt_book(OUT / "xlwt.xls")
         cf12_book(OUT / "cf12.xls")
+        deleted_book(OUT / "deleted.xls")
     finally:
         shutil.rmtree(tmp)
 

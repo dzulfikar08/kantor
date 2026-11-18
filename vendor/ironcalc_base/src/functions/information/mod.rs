@@ -301,6 +301,14 @@ impl<'a> Model<'a> {
                         ParsedDefinedName::RangeReference(range) => {
                             return CalcResult::Number(range.left.sheet as f64 + 1.0)
                         }
+                        // KANTOR PATCH (§33): a deleted sheet has no number.
+                        ParsedDefinedName::RefError => {
+                            return CalcResult::new_error(
+                                Error::REF,
+                                cell,
+                                "Invalid reference".to_string(),
+                            );
+                        }
                         ParsedDefinedName::InvalidDefinedNameFormula
                         | ParsedDefinedName::LambdaDefinition(..) => {
                             return CalcResult::Error {
