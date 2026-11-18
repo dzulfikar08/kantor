@@ -346,6 +346,57 @@ pub(crate) fn text_size(
 const FILL_REPEAT: usize = 256;
 
 impl Content<'_> {
+    /// The box the text sits in, with its text style.
+    fn text_div(&self, size: Pixels) -> Div {
+        let s = self.style;
+        div()
+            .min_w_0()
+            .w_full()
+            .text_size(size)
+            .line_height(relative(LINE_HEIGHT))
+            .text_color(self.color)
+            .when_some(self.family.clone(), |d, f| d.font_family(f))
+            .when(s.bold, |d| d.font_weight(FontWeight::BOLD))
+            .when(s.italic, |d| d.italic())
+            .when(s.underline, |d| d.underline())
+            .when(s.strikethrough, |d| d.line_through())
+            .when(self.align == HAlign::Center, |d| d.text_center())
+            .when(self.align == HAlign::Right, |d| d.text_right())
+    }
+
+    /// The text as [`crate::plain_cell`] draws it, when [`Self::apply`]
+    /// would lay out one truncated line: `None` for wrapped or spilling
+    /// text, a repeat fill, an indent or several lines.
+    pub(crate) fn plain(&self) -> Option<crate::plain_cell::CellText> {
+        let s = self.style;
+        if self.text.is_empty() {
+            return Some(crate::plain_cell::CellText::default());
+        }
+        let fill = self
+            .fill
+            .filter(|&(_, at)| !s.wrap && self.text.is_char_boundary(at));
+        if s.wrap || self.spill || fill.is_some() || s.indent > 0 || self.text.contains('\n') {
+            return None;
+        }
+        let size = text_size(s, self.default_font_size, self.base_size, self.height);
+        let slack = (self.height - size * LINE_HEIGHT).max(px(0.));
+        let z = zoom_of(self.base_size);
+        let (pad, v_pad) = (SPACE_3 * z, V_PAD * z);
+        let mut text = self.text_div(size).truncate();
+        let (top, bottom) = match s.valign {
+            VAlign::Top => (Some(v_pad.min(slack / 2.)), None),
+            VAlign::Center => (None, None),
+            VAlign::Bottom => (None, Some(slack * 0.4)),
+        };
+        Some(crate::plain_cell::CellText {
+            style: text.style().text.clone(),
+            text: self.text.clone(),
+            pad,
+            top,
+            bottom,
+        })
+    }
+
     /// Lay the text out in `d` (which becomes a flex box); an empty cell
     /// gets no text element.
     pub(crate) fn apply(self, d: Div) -> Div {
@@ -362,19 +413,7 @@ impl Content<'_> {
         let slack = (self.height - size * LINE_HEIGHT).max(px(0.));
         let z = zoom_of(self.base_size);
         let (pad, v_pad) = (SPACE_3 * z, V_PAD * z);
-        let text = div()
-            .min_w_0()
-            .w_full()
-            .text_size(size)
-            .line_height(relative(LINE_HEIGHT))
-            .text_color(self.color)
-            .when_some(self.family, |d, f| d.font_family(f))
-            .when(s.bold, |d| d.font_weight(FontWeight::BOLD))
-            .when(s.italic, |d| d.italic())
-            .when(s.underline, |d| d.underline())
-            .when(s.strikethrough, |d| d.line_through())
-            .when(self.align == HAlign::Center, |d| d.text_center())
-            .when(self.align == HAlign::Right, |d| d.text_right());
+        let text = self.text_div(size);
         let fill = self
             .fill
             .filter(|&(_, at)| !s.wrap && self.text.is_char_boundary(at));

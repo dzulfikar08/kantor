@@ -21,6 +21,12 @@ pub(crate) struct ScrollBench {
     created: Instant,
     /// When the jump to the end was asked for, and the frames since.
     jumped: Option<(Instant, u32)>,
+    /// When this frame's render started, and each frame's time from there
+    /// to the end of painting ([`SheetsView::bench_probe`]).
+    started: std::rc::Rc<std::cell::Cell<Option<Instant>>>,
+    work: std::rc::Rc<std::cell::RefCell<Vec<f64>>>,
+    /// The same to the end of prepaint (layout and prepaint).
+    pre: std::rc::Rc<std::cell::RefCell<Vec<f64>>>,
 }
 
 impl ScrollBench {
@@ -33,6 +39,9 @@ impl ScrollBench {
             intervals: Vec::new(),
             created: Instant::now(),
             jumped: None,
+            started: Default::default(),
+            work: Default::default(),
+            pre: Default::default(),
         })
     }
 }
@@ -54,6 +63,30 @@ fn stats(mut v: Vec<f64>) -> String {
 }
 
 impl SheetsView {
+    /// While benchmarking: an empty element painted last, which records the
+    /// time from the start of the frame's render to the end of its paint.
+    pub(crate) fn bench_probe(&self) -> Option<impl IntoElement> {
+        let bench = self.bench.as_ref()?;
+        let (started, work) = (bench.started.clone(), bench.work.clone());
+        let (started2, pre) = (bench.started.clone(), bench.pre.clone());
+        Some(
+            canvas(
+                move |_, _, _| {
+                    if let Some(t) = started2.get() {
+                        pre.borrow_mut().push(t.elapsed().as_secs_f64() * 1000.0);
+                    }
+                },
+                move |_, _, _, _| {
+                    if let Some(t) = started.take() {
+                        work.borrow_mut().push(t.elapsed().as_secs_f64() * 1000.0);
+                    }
+                },
+            )
+            .absolute()
+            .size_0(),
+        )
+    }
+
     /// One benchmark step per frame (called from `render` while a workbook
     /// is shown).
     pub(crate) fn bench_step(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -61,6 +94,7 @@ impl SheetsView {
             return;
         };
         let now = Instant::now();
+        bench.started.set(Some(now));
         if bench.last.is_none() {
             eprintln!(
                 "[bench] open: {:.0} ms to the first frame of the workbook",
@@ -95,6 +129,18 @@ impl SheetsView {
                 stats(bench.intervals[skip..].to_vec())
             );
             eprintln!("[bench] cell elements:  {}", stats(cells));
+            let work = bench.work.borrow();
+            eprintln!(
+                "[bench] frame work:     {}",
+                stats(work[10.min(work.len())..].to_vec())
+            );
+            drop(work);
+            let pre = bench.pre.borrow();
+            eprintln!(
+                "[bench] to prepaint:    {}",
+                stats(pre[10.min(pre.len())..].to_vec())
+            );
+            drop(pre);
             bench.jumped = Some((Instant::now(), 0));
             let last = {
                 let grid = self.table.read(cx).delegate();
