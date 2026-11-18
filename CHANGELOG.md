@@ -9,6 +9,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-11-19
+
+Docs now draws pictures inside SmartArt picture layouts, cuts pictures in the text to their shape with their border, and
+draws SmartArt placed in line with the text; a Top and Bottom picture that doesn't fit moves to the next page as in Word.
+Sheets pictures draw their outline along their shape and keep it through Move or Copy, pattern fills have no seams at
+any zoom, formulas pointing at a deleted sheet show #REF! as in Excel, and on Linux the first mouse-wheel notch scrolls.
+
 ### Added
 
 - Docs draws the pictures in SmartArt picture layouts (Horizontal Picture List, Bending Picture
@@ -27,7 +34,6 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs: a floating picture, shape or SmartArt with Top and Bottom wrapping that doesn't fit at the
   bottom of a page moves to the next page with its paragraph, as in Word; it used to run off the
   bottom of the page.
-
 - Docs: pictures in the text with a blurred shadow (Word's framed picture styles) no longer slow
   down PDF export and scrolling; their shadow was worked out and thrown away each time.
 - Docs PDF export: SmartArt text shapes with no fill and no outline (the captions of Circular
@@ -2035,7 +2041,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/dzulfikar08/kantor/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/dzulfikar08/kantor/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/dzulfikar08/kantor/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/dzulfikar08/kantor/compare/v0.11.0...v0.12.0
