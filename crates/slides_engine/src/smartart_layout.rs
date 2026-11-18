@@ -414,6 +414,8 @@ struct View {
     items: Vec<Item>,
     /// Presentation item → (data item it shows, `presName`).
     pres: HashMap<String, (String, String)>,
+    /// Laid out right to left (PowerPoint's *Right to Left*).
+    rtl: bool,
 }
 
 /// Each item's children: `(srcOrd, child, its sibling and parent
@@ -487,12 +489,58 @@ fn view(data: &str) -> anyhow::Result<View> {
             ))
         })
         .collect();
+    let rtl = right_to_left(&pts, &doc_id);
     Ok(View {
         family,
         doc: doc_id,
         items,
         pres,
+        rtl,
     })
+}
+
+/// Whether a SmartArt is laid out right to left: PowerPoint's *Right to
+/// Left* sets the layout variable `dir` to `rev` on the diagram's own
+/// presentation item (the one standing for the document item), which the
+/// layout definitions test (`<dgm:if func="var" arg="dir" val="norm">`).
+fn right_to_left(pts: &[Node], doc_id: &str) -> bool {
+    pts.iter().any(|p| {
+        let Some(set) = child(*p, NS_DGM, "prSet") else {
+            return false;
+        };
+        let own = match p.attribute("type") {
+            Some("doc") => true,
+            Some("pres") => set.attribute("presAssocID") == Some(doc_id),
+            _ => false,
+        };
+        own && child(set, NS_DGM, "presLayoutVars")
+            .and_then(|v| child(v, NS_DGM, "dir"))
+            .is_some_and(|d| d.attribute("val") == Some("rev"))
+    })
+}
+
+/// `lay` mirrored left to right in a frame `w` wide (lines keep running
+/// from where they started).
+fn mirrored(lay: Vec<Boxes>, w: f64) -> Vec<Boxes> {
+    let w = r(w);
+    let m = |x: Xfrm| Xfrm {
+        x: w - x.x - x.cx,
+        ..x
+    };
+    lay.into_iter()
+        .map(|b| Boxes {
+            node: m(b.node),
+            sub: b.sub.map(m),
+            pic: b.pic.map(m),
+            tx: b.tx.map(m),
+            arrow: b.arrow.map(|a| Xfrm {
+                flip_h: !a.flip_h,
+                ..m(a)
+            }),
+            deco: b.deco.map(m),
+            ..b
+        })
+        .collect()
 }
 
 pub const LAYOUT_REFUSAL: &str = "Kantor can't lay out this SmartArt layout yet: choose another layout with Change Layout to add or remove items";
@@ -1380,7 +1428,10 @@ pub fn relayout(drawing: &str, data: &str, w: Emu, h: Emu) -> anyhow::Result<Str
         (Some(s), Some(n)) if n > 0.0 => (s / n).clamp(0.3, 4.0),
         _ => 1.4,
     };
-    let lay = boxes(v.family, &subs, ratio, w as f64, h as f64);
+    let mut lay = boxes(v.family, &subs, ratio, w as f64, h as f64);
+    if v.rtl && v.family == Family::CircularPictureCallout {
+        lay = mirrored(lay, w as f64);
+    }
     let back = back_box(v.family, w as f64, h as f64);
     let mut edits: Vec<(Range<usize>, String)> = Vec::new();
     let mut arrow_drawn = vec![false; n];
@@ -2064,6 +2115,41 @@ mod tests {
             r#"<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><dsp:spTree><dsp:nvGrpSpPr><dsp:cNvPr id="0" name=""/><dsp:cNvGrpSpPr/></dsp:nvGrpSpPr><dsp:grpSpPr/>{lines}{sps}</dsp:spTree></dsp:drawing>"#
         );
         (drawing, data)
+    }
+
+    #[test]
+    fn right_to_left_circular_picture_callouts_are_mirrored() {
+        let (dr, ltr) = callout(3);
+        // PowerPoint's Right to Left: `dir` = `rev` on the diagram's own
+        // presentation item.
+        let rtl = ltr.replace(
+            "<dgm:ptLst>",
+            r#"<dgm:ptLst><dgm:pt modelId="V" type="pres"><dgm:prSet presAssocID="D" presName="Name0"><dgm:presLayoutVars><dgm:dir val="rev"/></dgm:presLayoutVars></dgm:prSet></dgm:pt>"#,
+        );
+        assert!(!view(&ltr).unwrap().rtl);
+        assert!(view(&rtl).unwrap().rtl);
+        // `rev` on an item's own presentation item isn't the diagram's.
+        let item_only = ltr.replace(
+            r#"presAssocID="N1" presName="text_2"/>"#,
+            r#"presAssocID="N1" presName="text_2"><dgm:presLayoutVars><dgm:dir val="rev"/></dgm:presLayoutVars></dgm:prSet>"#,
+        );
+        assert!(!view(&item_only).unwrap().rtl);
+        let (w, h) = (20_000, 8_000);
+        let a = boxes_of(&relayout(&dr, &ltr, w, h).unwrap(), &ltr);
+        let b = boxes_of(&relayout(&dr, &rtl, w, h).unwrap(), &rtl);
+        assert_eq!(a.len(), b.len());
+        let get = |b: &[(Role, Xfrm)], r: Role| b.iter().find(|x| x.0 == r).unwrap().1;
+        // The big circle at the right, the callouts and their text to its
+        // left: each box mirrored.
+        assert_eq!(get(&b, Role::Pic(0)), Xfrm::new(12_000, 0, 8_000, 8_000));
+        for (role, x) in &a {
+            let m = get(&b, *role);
+            assert_eq!((m.x, m.y, m.cx, m.cy), (w - x.x - x.cx, x.y, x.cx, x.cy));
+        }
+        // The lines still start at the big circle's centre.
+        let l = get(&b, Role::Arrow(1));
+        assert_eq!(l.x + l.cx, 16_000);
+        assert!(l.flip_h);
     }
 
     #[test]

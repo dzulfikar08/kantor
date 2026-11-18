@@ -12,10 +12,10 @@
 //! one opens the Tabs popover.
 //!
 //! Columns, as Word: in a section with columns the spaces between them are
-//! shaded like the margins, the caret's column holds the indent markers
-//! and tab stops (measured from its left edge), and dragging either edge
-//! of a space changes the columns' widths and spacing (equal columns stay
-//! equal), as one undo step.
+//! shaded (a stronger tone than the margins), the caret's column holds the
+//! indent markers and tab stops (measured from its left edge), and dragging
+//! either edge of a space changes the columns' widths and spacing (equal
+//! columns stay equal), as one undo step.
 //!
 //! It shares the page canvas's [`Geometry`](crate::Geometry), so it scrolls
 //! and zooms with the page. Visibility is a user setting
@@ -547,11 +547,12 @@ impl DocsView {
             .child(
                 band(marks.page_w - marks.margin_right, marks.margin_right).bg(t.bg.opacity(0.6)),
             );
-        // The spaces between columns, shaded like the margins.
+        // The spaces between columns: a stronger tone than the margins, so
+        // they stand out from them as in Word.
         let boxes = marks.column_boxes();
         for pair in boxes.windows(2) {
             let (a, b) = (pair[0].0 + pair[0].1, pair[1].0);
-            ruler = ruler.child(band(a, (b - a).max(0.0)).bg(t.bg.opacity(0.6)));
+            ruler = ruler.child(band(a, (b - a).max(0.0)).bg(t.border_strong));
         }
         // Ticks and numbers; numbers thin out when zoomed far out.
         let every = [1, 2, 5, 10]

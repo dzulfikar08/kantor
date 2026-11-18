@@ -1309,6 +1309,8 @@ pub(crate) fn turned_box(clip: [f32; 4], rot: f32) -> [f32; 4] {
 
 /// Most pixels on the longer side of a turned picture.
 const TURNED_MAX: f32 = 2048.0;
+/// Fewest pixels on the longer side of a picture cut to a shape.
+const CUT_MIN: f32 = 800.0;
 
 /// A picture's shown part (`clip` of it drawn into `image`) cut to
 /// `shape` (page px, before flipping and turning; anti-aliased), flipped,
@@ -1330,8 +1332,15 @@ fn turn_image(
     let [cl, ct, cr, cb] = crop_of(image, clip);
     let (kw, kh) = (1.0 - cl - cr, 1.0 - ct - cb);
     let (w0, h0) = (clip[2].max(1e-3), clip[3].max(1e-3));
-    // As many pixels as the picture has, at most TURNED_MAX on a side.
-    let k = (TURNED_MAX.min((sw as f32 * kw).max(sh as f32 * kh)) / w0.max(h0)).max(1e-3);
+    // As many pixels as the picture has (a cut one enough for a smooth
+    // edge), at most TURNED_MAX on a side.
+    let own = (sw as f32 * kw).max(sh as f32 * kh);
+    let want = if shape.is_some() {
+        own.max(CUT_MIN)
+    } else {
+        own
+    };
+    let k = (TURNED_MAX.min(want) / w0.max(h0)).max(1e-3);
     let (w, h) = ((w0 * k).max(1.0), (h0 * k).max(1.0));
     // How much of each pixel of the unturned box the shape covers.
     let (mw, mh) = (w.ceil() as u32, h.ceil() as u32);
