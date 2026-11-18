@@ -288,6 +288,22 @@ impl Painter {
         rect: [f32; 4],
         out: &mut Vec<FloatPrim>,
     ) {
+        self.picture_with(sp, style, rel_id, crop, rect, true, out);
+    }
+
+    /// [`Self::picture`], its shadow left out when `shadow` is false (a
+    /// blurred one is drawn on the CPU).
+    #[allow(clippy::too_many_arguments)]
+    fn picture_with(
+        &self,
+        sp: Option<Node>,
+        style: Option<Node>,
+        rel_id: &str,
+        crop: [f32; 4],
+        rect: [f32; 4],
+        shadow: bool,
+        out: &mut Vec<FloatPrim>,
+    ) {
         let xform = Xform::of(sp, rect, (1.0, 1.0));
         // Cut to its shape (`a:prstGeom` other than a rectangle, or
         // `a:custGeom`), its line drawn round that shape.
@@ -314,7 +330,9 @@ impl Painter {
             }
             None => (None, vec![xform.rect_segs()]),
         };
-        out.extend(self.shadow(sp, &lines));
+        if shadow {
+            out.extend(self.shadow(sp, &lines));
+        }
         out.push(picture_prim(rel_id, crop, rect, &xform, shape));
         if let Some((color, width, dash)) = self.line(sp, style) {
             for segs in lines {
@@ -339,7 +357,8 @@ impl Painter {
             .find(|n| n.is_element() && n.tag_name().name() == "pic")?;
         let sp = child(pic, "spPr")?;
         let mut prims = Vec::new();
-        self.picture(Some(sp), None, "", [0.0; 4], rect, &mut prims);
+        // Without its shadow, which isn't used here (blurring one is slow).
+        self.picture_with(Some(sp), None, "", [0.0; 4], rect, false, &mut prims);
         let mut look = InlineLook::default();
         let mut after = false;
         for p in prims {
@@ -350,7 +369,7 @@ impl Painter {
                     (look.shape, look.rot, look.flip) = (shape, rot, flip);
                     after = true;
                 }
-                // Its outline (a shadow comes before it).
+                // Its outline.
                 FloatPrim::Path(d) if after => look.lines.push(d),
                 _ => {}
             }
@@ -1871,5 +1890,43 @@ mod tests {
         };
         assert!(d.stroke.is_none());
         assert!(d.fill.unwrap().0[3] < 255);
+    }
+
+    #[test]
+    fn an_inline_pictures_look_leaves_its_shadow_out() {
+        // A framed picture with a blurred shadow (Word's picture styles):
+        // its look is the frame; the shadow (blurred on the CPU) isn't
+        // made, since inline pictures don't use it.
+        let ns = r#"xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main""#;
+        let body = r#"<a:xfrm><a:off x="0" y="0"/><a:ext cx="952500" cy="476250"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:ln w="88900"><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:ln><a:effectLst><a:outerShdw blurRad="55000" dist="18000" dir="5400000"><a:srgbClr val="000000"><a:alpha val="40000"/></a:srgbClr></a:outerShdw></a:effectLst>"#;
+        let xml = format!(
+            r#"<w:drawing><wp:inline><a:graphic {ns}><a:graphicData><pic:pic><pic:blipFill><a:blip r:embed="rId9"/></pic:blipFill><pic:spPr>{body}</pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing>"#
+        );
+        let sp = format!("<pic:spPr {ns}>{body}</pic:spPr>");
+        let doc = Document::new();
+        let p = Painter::new(&doc);
+        let rect = [0.0, 0.0, 100.0, 50.0];
+        let look = p.inline_look(&xml, rect).expect("framed");
+        assert!(look.shape.is_none() && !look.turned());
+        assert_eq!(look.lines.len(), 1);
+        // The shadow is made only when asked for.
+        let d = roxmltree::Document::parse(&sp).unwrap();
+        let blurred = |shadow: bool| {
+            let mut out = Vec::new();
+            p.picture_with(
+                Some(d.root_element()),
+                None,
+                "",
+                [0.0; 4],
+                rect,
+                shadow,
+                &mut out,
+            );
+            out.iter()
+                .filter(|p| matches!(p, FloatPrim::Blurred(_)))
+                .count()
+        };
+        assert_eq!(blurred(true), 1);
+        assert_eq!(blurred(false), 0);
     }
 }
