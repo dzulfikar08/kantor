@@ -63,8 +63,8 @@ mod xls_ftab;
 mod xlsb;
 
 pub use cf_edit::{
-    COLOR_SCALES, CfBarAxis, CfBarDirection, CfBarOptions, CfCompare, CfFormat, CfIconRef,
-    CfIconStep, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp, CfValue, CfValueKind,
+    AVERAGE_CHOICES, COLOR_SCALES, CfBarAxis, CfBarDirection, CfBarOptions, CfCompare, CfFormat,
+    CfIconRef, CfIconStep, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp, CfValue, CfValueKind,
     DATA_BAR_COLORS, ICON_SETS, default_icon_steps, icon_choices, outline_border, sqref_of,
 };
 pub use chart_edit::{
@@ -856,6 +856,13 @@ impl Workbook {
                     .iter()
                     .map(|ws| (ws.sheet_id, ws.conditional_formatting.as_slice())),
             );
+            for (sheet, range, look) in std::mem::take(&mut imported.cf_looks) {
+                let Ok(ws) = wb.worksheet(sheet) else {
+                    continue;
+                };
+                cf_x14.add_imported(ws.sheet_id, &range, look, &ws.conditional_formatting);
+                touched.cf.insert(ws.sheet_id);
+            }
         }
         if macros {
             imported.notes.push(ImportNote::MacrosNotRun);

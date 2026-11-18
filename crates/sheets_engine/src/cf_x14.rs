@@ -434,6 +434,23 @@ pub(crate) fn read(skeletons: &Result<Vec<(u32, String)>, String>) -> CfX14 {
     out
 }
 
+/// An imported rule's Excel 2010 extras (`.xlsb`), for the model rule of
+/// that kind over its range.
+#[derive(Debug, Clone)]
+pub(crate) enum ImportedLook {
+    Bar {
+        look: BarLook,
+        gradient: bool,
+    },
+    /// Icons picked one by one: the set named, whether values show, and
+    /// each threshold's icon (set, index).
+    CustomIcons {
+        set: String,
+        show_value: bool,
+        icons: Vec<(String, u8)>,
+    },
+}
+
 /// Whether `rule` is the kind an x14 rule of this kind holds.
 fn same_kind(rule: &CfRule, data_bar: bool) -> bool {
     if data_bar {
@@ -468,6 +485,75 @@ impl CfX14 {
         }
         self.rules.retain(|r| r.rule.is_some());
         self.bars.retain(|_, (rule, _)| rule.is_some());
+    }
+
+    /// An import's extras (no package to carry them from): drawn like a
+    /// file's, and written back by a save (the sheet's rules are written
+    /// from the model, so `touched.cf` must hold it).
+    pub(crate) fn add_imported(
+        &mut self,
+        sheet_id: u32,
+        range: &str,
+        look: ImportedLook,
+        list: &[ConditionalFormatting],
+    ) {
+        let data_bar = matches!(look, ImportedLook::Bar { .. });
+        let Some(rule) = list
+            .iter()
+            .find(|cf| cf.range == range && same_kind(&cf.cf_rule, data_bar))
+            .map(|cf| cf.cf_rule.clone())
+        else {
+            return;
+        };
+        match look {
+            ImportedLook::Bar { look, gradient } => {
+                let CfRule::DataBar {
+                    min,
+                    max,
+                    negative_color,
+                    ..
+                } = &rule
+                else {
+                    return;
+                };
+                let bar_xml = look.x14_xml(gradient, min.as_ref(), max.as_ref(), negative_color);
+                self.bars
+                    .insert((sheet_id, range.to_owned()), (Some(rule.clone()), look));
+                self.rules.push(X14Rule {
+                    sheet_id,
+                    range: range.to_owned(),
+                    data_bar: true,
+                    xml: String::new(),
+                    bar_xml: Some(bar_xml),
+                    rule: Some(rule),
+                });
+            }
+            ImportedLook::CustomIcons {
+                set,
+                show_value,
+                icons,
+            } => {
+                let CfRule::IconSet { thresholds, .. } = &rule else {
+                    return;
+                };
+                if thresholds.len() != icons.len() {
+                    return;
+                }
+                let steps: Vec<_> = thresholds
+                    .iter()
+                    .zip(icons)
+                    .map(|(t, (s, i))| (t.cfvo.clone(), t.is_strict, s, i))
+                    .collect();
+                self.rules.push(X14Rule {
+                    sheet_id,
+                    range: range.to_owned(),
+                    data_bar: false,
+                    xml: custom_icons_xml(range, &set, show_value, &steps),
+                    bar_xml: None,
+                    rule: Some(rule),
+                });
+            }
+        }
     }
 
     /// How the data bar `rule` over `range` of sheet `sheet_id` is drawn:

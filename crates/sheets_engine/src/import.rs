@@ -320,6 +320,8 @@ pub(crate) struct Imported {
     pub drawings: crate::xls_drawing::XlsDrawings,
     /// Patterned cell fills by the model's fill index (`.xls`, `.xlsb`).
     pub patterns: Vec<Option<crate::FillPattern>>,
+    /// Conditional formats' Excel 2010 extras: sheet index, range (`.xlsb`).
+    pub cf_looks: Vec<(u32, String, crate::cf_x14::ImportedLook)>,
 }
 
 /// Read an `.ods` / `.xls` / `.xlsb` file via calamine (and `.xls`
@@ -605,6 +607,7 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
                 replaced |= a.cleared;
                 imported.patterns = a.patterns;
                 imported.validations = a.validations;
+                imported.cf_looks = a.cf_looks;
                 if a.skipped_validations > 0 {
                     imported
                         .notes

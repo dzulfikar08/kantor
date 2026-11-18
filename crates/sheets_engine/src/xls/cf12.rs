@@ -86,6 +86,8 @@ mod temp {
     pub const ABOVE_AVERAGE: u16 = 0x19;
     pub const BELOW_AVERAGE: u16 = 0x1A;
     pub const DUPLICATES: u16 = 0x1B;
+    pub const EQUAL_ABOVE_AVERAGE: u16 = 0x1D;
+    pub const EQUAL_BELOW_AVERAGE: u16 = 0x1E;
 }
 
 /// The `iIconSet` names, in `KPISets`'s order ([MS-XLS] 2.5.156).
@@ -489,15 +491,19 @@ pub(super) fn convert(cf: &RawCf, ctx: &Context, g: &Globals) -> Option<CfRuleIn
                         stop_if_true,
                     }
                 }
-                // Plain above / below average (no standard deviations):
-                // the "or equal" and deviation variants keep the formula.
-                temp::ABOVE_AVERAGE if param(0) == 0 => CfRuleInput::AboveAverage {
+                // Above / below average, "or equal", and standard
+                // deviations (CFExAveragesParams' iParam).
+                temp::ABOVE_AVERAGE | temp::EQUAL_ABOVE_AVERAGE => CfRuleInput::AboveAverage {
                     format: f,
                     stop_if_true,
+                    equal_average: t == temp::EQUAL_ABOVE_AVERAGE,
+                    std_dev: u32::from(param(0)),
                 },
-                temp::BELOW_AVERAGE if param(0) == 0 => CfRuleInput::BelowAverage {
+                temp::BELOW_AVERAGE | temp::EQUAL_BELOW_AVERAGE => CfRuleInput::BelowAverage {
                     format: f,
                     stop_if_true,
+                    equal_average: t == temp::EQUAL_BELOW_AVERAGE,
+                    std_dev: u32::from(param(0)),
                 },
                 temp::FILTER => return top10(),
                 _ => return formula(),

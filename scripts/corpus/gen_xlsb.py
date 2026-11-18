@@ -237,6 +237,73 @@ def cfvo(kind, num=0.0, gte=True):
     return rec(471, struct.pack("<IdIII", kind, num, 1, 1 if gte else 0, 0))
 
 
+def frt_header(sqrefs=(), formulas=()):
+    """An FRTHeader (MS-XLSB 2.5.61) with ranges and formulas."""
+    flags = (0x2 if sqrefs else 0) | (0x4 if formulas else 0)
+    out = struct.pack("<I", flags)
+    if sqrefs:
+        out += struct.pack("<III", 1, 0x2, len(sqrefs))  # one FRTSqref, fDoAdjust
+        out += b"".join(struct.pack("<IIII", r1, r2, c1, c2) for r1, r2, c1, c2 in sqrefs)
+    if formulas:
+        out += struct.pack("<I", len(formulas))
+        # FRTFormula: flags (reserved2 set), FRTParsedFormula: cce, cb, rgce.
+        out += b"".join(struct.pack("<III", 0x2, len(f), 0) + f for f in formulas)
+    return out
+
+
+def frt(body):
+    """A future record block (BrtFRTBegin, Excel 2010's version, BrtFRTEnd)."""
+    return rec(35, struct.pack("<HH", 0, 14)) + body + rec(36)
+
+
+def cf_rule_ext(guid):
+    return frt(rec(1146, struct.pack("<I", 0) + guid))  # BrtCFRuleExt
+
+
+def cf_block14(ranges, rules):
+    return (rec(1046, frt_header(sqrefs=ranges) + struct.pack("<II", len(rules), 0))
+            + b"".join(rules) + rec(1047))
+
+
+def cf_rule14(ty, template, pri, guid, dxf_id=-1, param=0, flags=0, body=b""):
+    return (rec(1048, frt_header() + struct.pack("<IIiiIIIH", ty, template, dxf_id, pri, param, 0, 0, flags)
+                + struct.pack("<IIII", 0, 0, 0, 0) + guid + struct.pack("<I", 1) + nullable(None))
+            + body + rec(1049))
+
+
+def cfvo14(kind, num=0.0, gte=True):
+    return rec(1050, frt_header() + struct.pack("<IdIII", kind, num, 1, 1 if gte else 0, 0))
+
+
+def color14(rgb):
+    return rec(1055, struct.pack("<I", 0) + color_rgb(*rgb))
+
+
+def conditional_formats14():
+    """Excel 2010's rules: the extras of column S's data bar (named by GUID),
+    and a custom icon set of its own on column T."""
+    bar = (rec(1051, struct.pack("<I", 0) + bytes([0, 100, 1, 0, 1]) + struct.pack("<H", 0x1 | 0x4 | 0x8))
+           + cfvo14(8) + cfvo14(9)
+           + color14((0x00, 0x00, 0x80))  # border
+           + color14((0xC0, 0x00, 0x00))  # negative fill
+           + color14((0x80, 0x00, 0x00))  # negative border
+           + color14((0x00, 0x80, 0x00))  # axis
+           + rec(1156))
+    icons = (rec(1052, struct.pack("<I", 0) + struct.pack("<IH", 0, 0x1))
+             + cfvo14(4, 0) + cfvo14(4, 33) + cfvo14(4, 67)
+             + rec(1112, struct.pack("<Iii", 0, 4, 0))    # 3TrafficLights2, red
+             + rec(1112, struct.pack("<Iii", 0, -1, -1))  # No Cell Icon
+             + rec(1112, struct.pack("<Iii", 0, 6, 2))    # 3Symbols, tick
+             + rec(1155))
+    blocks = (cf_block14([(0, 4, 18, 18)], [cf_rule14(4, 3, -1, GUID_BAR, body=bar)])
+              + cf_block14([(0, 4, 19, 19)], [cf_rule14(6, 4, 16, GUID_ICONS, body=icons)]))
+    return frt(rec(1135, b"") + blocks + rec(1136))
+
+
+GUID_BAR = bytes(range(1, 17))
+GUID_ICONS = bytes(range(17, 33))
+
+
 def conditional_formats():
     gt, lt = bytes([0x0D]), bytes([0x09])
     a3_text = (ptg_str("orth") + ptg_ref(2, 0) + bytes([0x42, 2]) + struct.pack("<H", 82)
@@ -266,6 +333,13 @@ def conditional_formats():
     rating = (rec(465, struct.pack("<IH", 15, 0)) + cfvo(4, 0) + cfvo(4, 20) + cfvo(4, 40)
               + cfvo(4, 60) + cfvo(4, 80) + rec(466))
     out += cf_block(col(17), [cf_rule(6, 4, 14, body=rating)])
+    # A data bar with Excel 2010 extras (conditional_formats14), "equal to
+    # or above average" and "2 std dev below average".
+    bar = (rec(467, bytes([10, 90, 1])) + cfvo(2) + cfvo(3) + rec(564, color_rgb(0x63, 0x8E, 0xC6))
+           + rec(468) + cf_rule_ext(GUID_BAR))
+    out += cf_block(col(18), [cf_rule(4, 3, 15, body=bar)])
+    out += cf_block(col(20), [cf_rule(2, 0x1D, 17, 1)])
+    out += cf_block(col(21), [cf_rule(2, 0x1A, 18, 0, param=2)])
     return out
 
 
@@ -280,6 +354,7 @@ def features_tail():
                 f1=ptg_int(1), f2=ptg_int(10))
     out += rec(574)  # BrtEndDVals
     out += rec(550, wide("rId1"))  # BrtDrawing
+    out += conditional_formats14()
     return out
 
 

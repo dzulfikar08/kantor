@@ -179,7 +179,8 @@ pub(crate) struct CfDialog {
     unique: bool,
     bottom: bool,
     percent: bool,
-    below: bool,
+    /// The average rule: `(below, equal, std_dev)` (`AVERAGE_CHOICES`).
+    average: (bool, bool, u32),
     not_blank: bool,
     bar_color: u32,
     gradient: bool,
@@ -320,7 +321,7 @@ impl SheetsView {
             unique: false,
             bottom: false,
             percent: false,
-            below: false,
+            average: (false, false, 0),
             not_blank: false,
             bar_color: DATA_BAR_COLORS[0].1,
             gradient: true,
@@ -414,9 +415,13 @@ impl SheetsView {
                 d.percent = *percent;
                 set(&d.rank, &rank.to_string(), window, cx);
             }
-            CfSpec::Average { below } => {
+            CfSpec::Average {
+                below,
+                equal,
+                std_dev,
+            } => {
                 d.kind = Kind::Average;
-                d.below = *below;
+                d.average = (*below, *equal, *std_dev);
             }
             CfSpec::Blanks { not } => {
                 d.kind = Kind::Blanks;
@@ -503,7 +508,11 @@ impl SheetsView {
                     .map_err(|_| t("Rank: type a whole number").to_owned())?,
                 percent: d.percent,
             },
-            Kind::Average => CfSpec::Average { below: d.below },
+            Kind::Average => CfSpec::Average {
+                below: d.average.0,
+                equal: d.average.1,
+                std_dev: d.average.2,
+            },
             Kind::Blanks => CfSpec::Blanks { not: d.not_blank },
             Kind::Formula => CfSpec::Formula {
                 formula: text(&d.formula),
@@ -904,12 +913,12 @@ impl SheetsView {
                     t("Values"),
                     choices(
                         "cf-avg",
-                        &[(false, t("Above average")), (true, t("Below average"))],
-                        d.below,
+                        &AVERAGE_LABELS.map(|(k, label)| (k, t(label))),
+                        d.average,
                         view,
                         |this, v| {
                             if let Some(d) = this.cf_dialog.as_mut() {
-                                d.below = v;
+                                d.average = v;
                             }
                         },
                     ),
@@ -1889,6 +1898,21 @@ fn error_text(e: &anyhow::Error) -> String {
     t_dyn(&s).to_owned()
 }
 
+/// Excel's average choices (`sheets_engine::AVERAGE_CHOICES`, whose labels
+/// are the rules' summaries), marked for the catalogue.
+const AVERAGE_LABELS: [((bool, bool, u32), &str); 10] = [
+    ((false, false, 0), tk("Above average")),
+    ((true, false, 0), tk("Below average")),
+    ((false, true, 0), tk("Equal to or above average")),
+    ((true, true, 0), tk("Equal to or below average")),
+    ((false, false, 1), tk("1 std dev above average")),
+    ((true, false, 1), tk("1 std dev below average")),
+    ((false, false, 2), tk("2 std dev above average")),
+    ((true, false, 2), tk("2 std dev below average")),
+    ((false, false, 3), tk("3 std dev above average")),
+    ((true, false, 3), tk("3 std dev below average")),
+];
+
 /// The Manage Rules line for a rule, in the interface language (the
 /// engine's `summary` is English).
 fn summary_text(r: &sheets_engine::CfRuleInfo) -> String {
@@ -1935,8 +1959,7 @@ fn summary_text(r: &sheets_engine::CfRuleInfo) -> String {
                 tf("Top {}", &[&n])
             }
         }
-        CfSpec::Average { below: false } => t("Above average").to_owned(),
-        CfSpec::Average { below: true } => t("Below average").to_owned(),
+        spec @ CfSpec::Average { .. } => t_dyn(&spec.average_summary()).to_owned(),
         CfSpec::Blanks { not: false } => t("Blank cells").to_owned(),
         CfSpec::Blanks { not: true } => t("Cells with something in them").to_owned(),
         CfSpec::Formula { formula } => tf("Formula: {}", &[formula]),
@@ -2158,7 +2181,7 @@ pub(crate) fn cf_menu(
             ))
             .item(open(
                 tk("Below Average…"),
-                || (Kind::Average, Box::new(|d| d.below = true)),
+                || (Kind::Average, Box::new(|d| d.average = (true, false, 0))),
                 &tv,
             ))
         })
@@ -2277,5 +2300,13 @@ mod tests {
             .filter(|k| kantor_ui::i18n::indonesian(k).is_none())
             .collect();
         assert!(missing.is_empty(), "no Indonesian for {missing:?}");
+    }
+}
+
+#[cfg(test)]
+mod average_label_tests {
+    #[std::prelude::v1::test]
+    fn average_labels_match_the_engine() {
+        assert_eq!(super::AVERAGE_LABELS, sheets_engine::AVERAGE_CHOICES);
     }
 }

@@ -222,8 +222,12 @@ pub enum CfSpec {
         rank: u32,
         percent: bool,
     },
+    /// Above or below the average; `equal`: "or equal to"; `std_dev`:
+    /// that many standard deviations above or below (0: none).
     Average {
         below: bool,
+        equal: bool,
+        std_dev: u32,
     },
     Blanks {
         not: bool,
@@ -483,7 +487,7 @@ impl CfIconRef {
     }
 
     /// The model's icon and colour for it (no colour: no icon).
-    fn model_icon(&self) -> Option<(ironcalc_base::cf_types::Icon, Color)> {
+    pub(crate) fn model_icon(&self) -> Option<(ironcalc_base::cf_types::Icon, Color)> {
         if self.is_none() {
             return Some((ironcalc_base::cf_types::Icon::Circle, Color::None));
         }
@@ -567,7 +571,44 @@ pub fn default_icon_steps(set: &str) -> Vec<CfIconStep> {
         .collect()
 }
 
+/// Excel's choices for an average rule ("Format values that are … the
+/// average"): `(below, equal, std_dev)` and the summary Kantor shows.
+pub const AVERAGE_CHOICES: [((bool, bool, u32), &str); 10] = [
+    ((false, false, 0), "Above average"),
+    ((true, false, 0), "Below average"),
+    ((false, true, 0), "Equal to or above average"),
+    ((true, true, 0), "Equal to or below average"),
+    ((false, false, 1), "1 std dev above average"),
+    ((true, false, 1), "1 std dev below average"),
+    ((false, false, 2), "2 std dev above average"),
+    ((true, false, 2), "2 std dev below average"),
+    ((false, false, 3), "3 std dev above average"),
+    ((true, false, 3), "3 std dev below average"),
+];
+
 impl CfSpec {
+    /// An average rule's summary (`Equal to or above average`, `2 std dev
+    /// below average`), in English.
+    pub fn average_summary(&self) -> String {
+        let CfSpec::Average {
+            below,
+            equal,
+            std_dev,
+        } = self
+        else {
+            return String::new();
+        };
+        let key = (*below, *equal, *std_dev);
+        match AVERAGE_CHOICES.iter().find(|(k, _)| *k == key) {
+            Some((_, label)) => (*label).to_owned(),
+            None => {
+                let side = if *below { "below" } else { "above" };
+                let or_equal = if *equal { " (or equal)" } else { "" };
+                format!("{std_dev} std dev {side} average{or_equal}")
+            }
+        }
+    }
+
     /// Whether icon set `set` is a rating (stars, bars, quarters): one icon
     /// filled in steps, not picked icon by icon.
     pub fn is_rating(set: &str) -> bool {
@@ -895,13 +936,25 @@ fn input(def: &CfRuleDef, num_fmt_id: &dyn Fn(&str) -> i32) -> Result<CfRuleInpu
                 }
             }
         }
-        CfSpec::Average { below: false } => CfRuleInput::AboveAverage {
+        CfSpec::Average {
+            below: false,
+            equal,
+            std_dev,
+        } => CfRuleInput::AboveAverage {
             format,
             stop_if_true,
+            equal_average: *equal,
+            std_dev: *std_dev,
         },
-        CfSpec::Average { below: true } => CfRuleInput::BelowAverage {
+        CfSpec::Average {
+            below: true,
+            equal,
+            std_dev,
+        } => CfRuleInput::BelowAverage {
             format,
             stop_if_true,
+            equal_average: *equal,
+            std_dev: *std_dev,
         },
         CfSpec::Blanks { not: false } => CfRuleInput::Blanks {
             format,
@@ -1154,14 +1207,26 @@ fn describe(
                 summary,
             )
         }
-        CfRule::AboveAverage { stop_if_true, .. } => (
-            def(CfSpec::Average { below: false }, *stop_if_true),
-            "Above average".into(),
-        ),
-        CfRule::BelowAverage { stop_if_true, .. } => (
-            def(CfSpec::Average { below: true }, *stop_if_true),
-            "Below average".into(),
-        ),
+        CfRule::AboveAverage {
+            stop_if_true,
+            equal_average,
+            std_dev,
+            ..
+        }
+        | CfRule::BelowAverage {
+            stop_if_true,
+            equal_average,
+            std_dev,
+            ..
+        } => {
+            let spec = CfSpec::Average {
+                below: matches!(rule, CfRule::BelowAverage { .. }),
+                equal: *equal_average,
+                std_dev: *std_dev,
+            };
+            let summary = spec.average_summary();
+            (def(spec, *stop_if_true), summary)
+        }
         CfRule::Blanks { stop_if_true, .. } => (
             def(CfSpec::Blanks { not: false }, *stop_if_true),
             "Blank cells".into(),

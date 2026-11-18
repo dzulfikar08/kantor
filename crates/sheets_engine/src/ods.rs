@@ -2161,13 +2161,17 @@ impl RuleCtx<'_, '_> {
                 format,
                 stop_if_true,
             }),
-            "above-average" => Some(CfRuleInput::AboveAverage {
+            "above-average" | "above-equal-average" => Some(CfRuleInput::AboveAverage {
                 format,
                 stop_if_true,
+                equal_average: v == "above-equal-average",
+                std_dev: 0,
             }),
-            "below-average" => Some(CfRuleInput::BelowAverage {
+            "below-average" | "below-equal-average" => Some(CfRuleInput::BelowAverage {
                 format,
                 stop_if_true,
+                equal_average: v == "below-equal-average",
+                std_dev: 0,
             }),
             "is-error" => Some(CfRuleInput::Errors {
                 format,

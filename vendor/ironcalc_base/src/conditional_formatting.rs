@@ -202,14 +202,20 @@ impl<'a> Model<'a> {
             CfRule::AboveAverage {
                 dxf_id,
                 stop_if_true,
+                equal_average,
+                std_dev,
             } => {
-                self.apply_cf_average(sheet, *dxf_id, true, *stop_if_true, ranges);
+                let how = (true, *equal_average, *std_dev);
+                self.apply_cf_average(sheet, *dxf_id, how, *stop_if_true, ranges);
             }
             CfRule::BelowAverage {
                 dxf_id,
                 stop_if_true,
+                equal_average,
+                std_dev,
             } => {
-                self.apply_cf_average(sheet, *dxf_id, false, *stop_if_true, ranges);
+                let how = (false, *equal_average, *std_dev);
+                self.apply_cf_average(sheet, *dxf_id, how, *stop_if_true, ranges);
             }
             CfRule::Top10 {
                 rank,
@@ -648,7 +654,7 @@ impl<'a> Model<'a> {
         &mut self,
         sheet: u32,
         dxf_id: u32,
-        above: bool,
+        (above, equal, std_dev): (bool, bool, u32),
         stop_if_true: bool,
         ranges: &[(i32, i32, i32, i32)],
     ) {
@@ -656,14 +662,34 @@ impl<'a> Model<'a> {
         if values.is_empty() {
             return;
         }
-        let avg = values.iter().sum::<f64>() / values.len() as f64;
+        let n = values.len() as f64;
+        let mean = values.iter().sum::<f64>() / n;
+        // Standard deviation rules: the sample standard deviation (as
+        // Apache POI, checked against Excel, computes it).
+        let avg = if std_dev > 0 {
+            let sd = if values.len() > 1 {
+                (values.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / (n - 1.0)).sqrt()
+            } else {
+                0.0
+            };
+            let shift = sd * f64::from(std_dev);
+            if above { mean + shift } else { mean - shift }
+        } else {
+            mean
+        };
 
         for &(r1, c1, r2, c2) in ranges {
             for row in r1..=r2 {
                 for col in c1..=c2 {
                     if let Ok(CellValue::Number(v)) = self.get_cell_value_by_index(sheet, row, col)
                     {
-                        if (above && v > avg) || (!above && v < avg) {
+                        let hit = match (above, equal) {
+                            (true, false) => v > avg,
+                            (true, true) => v >= avg,
+                            (false, false) => v < avg,
+                            (false, true) => v <= avg,
+                        };
+                        if hit {
                             self.update_cf_cache(
                                 sheet,
                                 row,
@@ -1325,16 +1351,24 @@ impl<'a> Model<'a> {
             CfRuleInput::AboveAverage {
                 format,
                 stop_if_true,
+                equal_average,
+                std_dev,
             } => CfRule::AboveAverage {
                 dxf_id: self.create_dxf(format),
                 stop_if_true,
+                equal_average,
+                std_dev,
             },
             CfRuleInput::BelowAverage {
                 format,
                 stop_if_true,
+                equal_average,
+                std_dev,
             } => CfRule::BelowAverage {
                 dxf_id: self.create_dxf(format),
                 stop_if_true,
+                equal_average,
+                std_dev,
             },
             CfRuleInput::Top10 {
                 rank,

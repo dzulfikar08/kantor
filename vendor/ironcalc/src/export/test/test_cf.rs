@@ -378,6 +378,8 @@ fn test_cf_round_trip() {
             CfRuleInput::AboveAverage {
                 format: fill_dxf("#FFEB9C"),
                 stop_if_true: false,
+                equal_average: false,
+                std_dev: 0,
             },
         )
         .unwrap();
@@ -390,6 +392,8 @@ fn test_cf_round_trip() {
             CfRuleInput::BelowAverage {
                 format: fill_dxf("#FFC7CE"),
                 stop_if_true: false,
+                equal_average: true,
+                std_dev: 2,
             },
         )
         .unwrap();
@@ -813,8 +817,26 @@ fn test_cf_round_trip() {
 
     let r14 = rule_of_type("N1:N10", &|r| matches!(r, CfRule::BelowAverage { .. }))
         .expect("BelowAverage not found");
-    if let CfRule::BelowAverage { dxf_id, .. } = r14 {
+    if let CfRule::BelowAverage {
+        dxf_id,
+        equal_average,
+        std_dev,
+        ..
+    } = r14
+    {
         assert_dxf_fill(&imported, *dxf_id, "#FFC7CE");
+        // Kantor §17: "equal or below" and standard deviations round-trip.
+        assert!(*equal_average);
+        assert_eq!(*std_dev, 2);
+    }
+    if let CfRule::AboveAverage {
+        equal_average,
+        std_dev,
+        ..
+    } = r13
+    {
+        assert!(!*equal_average);
+        assert_eq!(*std_dev, 0);
     }
 
     let r15 = rule_of_type("O1:O10", &|r| {

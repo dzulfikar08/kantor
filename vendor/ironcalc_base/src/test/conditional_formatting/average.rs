@@ -23,6 +23,8 @@ fn above_average_rule() -> CfRuleInput {
     CfRuleInput::AboveAverage {
         format: super::red_fill(),
         stop_if_true: false,
+        equal_average: false,
+        std_dev: 0,
     }
 }
 
@@ -30,6 +32,8 @@ fn below_average_rule() -> CfRuleInput {
     CfRuleInput::BelowAverage {
         format: super::red_fill(),
         stop_if_true: false,
+        equal_average: false,
+        std_dev: 0,
     }
 }
 
@@ -170,5 +174,64 @@ fn test_above_and_below_average_are_disjoint() {
         // Both rules write to bg_color via Dxf; if both matched the last one would win.
         // What we verify is that the value is never something impossible.
         let _ = style.style.fill.color; // just ensure no panic
+    }
+}
+
+// ---------------------------------------------------------------------------
+// "Equal or above / below" and standard deviations (Kantor §31)
+// ---------------------------------------------------------------------------
+
+fn red_rows(model: &crate::Model<'static>, rows: std::ops::RangeInclusive<i32>) -> Vec<i32> {
+    rows.filter(|r| is_red(model, *r)).collect()
+}
+
+#[test]
+fn test_equal_or_above_includes_the_average() {
+    let mut model = new_empty_model();
+    for (row, &v) in [10, 30, 50].iter().enumerate() {
+        model
+            .set_user_input(0, row as i32 + 1, 1, v.to_string())
+            .unwrap();
+    }
+    let rule = |above: bool| {
+        let (format, stop_if_true, equal_average, std_dev) = (super::red_fill(), false, true, 0);
+        if above {
+            CfRuleInput::AboveAverage { format, stop_if_true, equal_average, std_dev }
+        } else {
+            CfRuleInput::BelowAverage { format, stop_if_true, equal_average, std_dev }
+        }
+    };
+    model.add_conditional_formatting(0, "A1:A3", rule(true)).unwrap();
+    model.evaluate();
+    assert_eq!(red_rows(&model, 1..=3), [2, 3]);
+    model.delete_conditional_formatting(0, 0).unwrap();
+    model.add_conditional_formatting(0, "A1:A3", rule(false)).unwrap();
+    model.evaluate();
+    assert_eq!(red_rows(&model, 1..=3), [1, 2]);
+}
+
+#[test]
+fn test_standard_deviation_rules() {
+    // Mean 55, sample standard deviation 30.28: one above is 85.28, one
+    // below 24.72, two above 115.6 (nothing).
+    let rule = |above: bool, std_dev: u32| {
+        let (format, stop_if_true, equal_average) = (super::red_fill(), false, false);
+        if above {
+            CfRuleInput::AboveAverage { format, stop_if_true, equal_average, std_dev }
+        } else {
+            CfRuleInput::BelowAverage { format, stop_if_true, equal_average, std_dev }
+        }
+    };
+    for (above, n, want) in [
+        (true, 1, vec![9, 10]),
+        (false, 1, vec![1, 2]),
+        (true, 2, vec![]),
+    ] {
+        let mut model = model_with_values();
+        model
+            .add_conditional_formatting(0, "A1:A10", rule(above, n))
+            .unwrap();
+        model.evaluate();
+        assert_eq!(red_rows(&model, 1..=10), want, "above {above}, {n} std dev");
     }
 }

@@ -521,15 +521,27 @@ pub(super) fn load_conditional_formatting(
                     }
                 }
                 "aboveAverage" => {
-                    if cf_rule.attribute("aboveAverage") == Some("0") {
+                    let equal_average = matches!(
+                        cf_rule.attribute("equalAverage"),
+                        Some("1" | "true")
+                    );
+                    let std_dev = cf_rule
+                        .attribute("stdDev")
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(0);
+                    if matches!(cf_rule.attribute("aboveAverage"), Some("0" | "false")) {
                         CfRule::BelowAverage {
                             dxf_id,
                             stop_if_true,
+                            equal_average,
+                            std_dev,
                         }
                     } else {
                         CfRule::AboveAverage {
                             dxf_id,
                             stop_if_true,
+                            equal_average,
+                            std_dev,
                         }
                     }
                 }

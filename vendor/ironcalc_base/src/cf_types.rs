@@ -154,10 +154,22 @@ pub enum CfRule {
     AboveAverage {
         dxf_id: u32,
         stop_if_true: bool,
+        /// "Equal or above/below" (`equalAverage`).
+        #[serde(default)]
+        equal_average: bool,
+        /// Standard deviations away from the average (`stdDev`, 0: none).
+        #[serde(default)]
+        std_dev: u32,
     },
     BelowAverage {
         dxf_id: u32,
         stop_if_true: bool,
+        /// "Equal or above/below" (`equalAverage`).
+        #[serde(default)]
+        equal_average: bool,
+        /// Standard deviations away from the average (`stdDev`, 0: none).
+        #[serde(default)]
+        std_dev: u32,
     },
     Top10 {
         rank: u32,
@@ -271,10 +283,22 @@ pub enum CfRuleInput {
     AboveAverage {
         format: Dxf,
         stop_if_true: bool,
+        /// "Equal or above/below" (`equalAverage`).
+        #[serde(default)]
+        equal_average: bool,
+        /// Standard deviations away from the average (`stdDev`, 0: none).
+        #[serde(default)]
+        std_dev: u32,
     },
     BelowAverage {
         format: Dxf,
         stop_if_true: bool,
+        /// "Equal or above/below" (`equalAverage`).
+        #[serde(default)]
+        equal_average: bool,
+        /// Standard deviations away from the average (`stdDev`, 0: none).
+        #[serde(default)]
+        std_dev: u32,
     },
     Top10 {
         rank: u32,
