@@ -9,6 +9,21 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Docs draws the pictures in SmartArt picture layouts (Horizontal Picture List, Bending Picture
+  Accent List, Circular Picture Callout and the others) inside their shapes, on screen and in the
+  PDF, as Slides does; they used to be left empty.
+- Docs cuts pictures in the text to their shape (an oval, a rounded rectangle, a star…) and draws
+  their border along it, on screen and in the PDF, also in headers, footers and text boxes; a
+  turned picture in the text is drawn turned. They used to show as plain rectangles without a
+  border.
+
+### Fixed
+
+- Docs PDF export: SmartArt text shapes with no fill and no outline (the captions of Circular
+  Picture Callout) no longer print as black boxes.
+
 ## [0.14.0] - 2026-11-18
 
 Sheets now uses Excel's cell sizes (64 px columns, 20 px rows), so shapes, pictures and charts keep their proportions and

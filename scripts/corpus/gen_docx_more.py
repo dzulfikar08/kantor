@@ -21,10 +21,20 @@ as raw WordprocessingML (deterministic: same bytes every run):
   `INDEX \\h "A"` of `XE` entries with sub-entries and a cross-reference
   (`\\t "See Apples"`). Results saved wrong ("0").
 
+* pictures.docx: inline pictures cut to their shapes (`a:prstGeom` oval,
+  rounded rectangle, hexagon, five-point star) with outlines (`a:ln`, one
+  dashed), a rectangle with a border, a turned oval, an oval picture in the
+  header, a floating oval picture, and three SmartArt picture layouts whose
+  shapes are filled with a picture from the drawing part's own
+  relationships (Horizontal Picture List, Bending Picture Accent List,
+  Circular Picture Callout; their parts taken from
+  tests/corpus/pptx/smartart.pptx, drawn at 0.6 times its size).
+
 Regenerate with `python3 scripts/corpus/gen_docx_more.py tests/corpus/docx`;
 `--check` compares with the files in that folder instead.
 """
 import io
+import re
 import struct
 import sys
 import zipfile
@@ -76,10 +86,12 @@ SECT = (
 )
 
 
-def package(body, media=(), numbering=None, header=None, sect=None, footnotes=None, settings=None):
+def package(body, media=(), numbering=None, header=None, sect=None, footnotes=None, settings=None, extra=None):
     """A .docx's bytes: `body` inside w:body, `media` = [(rId, name, bytes)],
     `footnotes` the w:footnote elements of a footnotes part (separators
-    added)."""
+    added), `extra` = (more document relationships, more content type
+    overrides, more parts {name: bytes or text})."""
+    extra_rels, extra_overrides, extra_files = extra or ((), "", {})
     rels = [
         '<Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>'
     ]
@@ -91,6 +103,8 @@ def package(body, media=(), numbering=None, header=None, sect=None, footnotes=No
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
         '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>'
     )
+    rels.extend(extra_rels)
+    overrides += extra_overrides
     sect = sect or SECT
     if header:
         rels.append(
@@ -146,6 +160,7 @@ def package(body, media=(), numbering=None, header=None, sect=None, footnotes=No
         )
     for _, name, data in media:
         files[f"word/media/{name}"] = data
+    files.update(extra_files)
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for name, data in files.items():
@@ -510,12 +525,211 @@ def columns_long():
     return package(body, media=media, sect=col_sect(one), footnotes="".join(notes), settings=settings)
 
 
+# ── pictures.docx ──────────────────────────────────────────────────────────
+
+REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+THEME = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="Office Theme"><a:themeElements>'
+    '<a:clrScheme name="Office"><a:dk1><a:sysClr val="windowText" lastClr="000000"/></a:dk1>'
+    '<a:lt1><a:sysClr val="window" lastClr="FFFFFF"/></a:lt1><a:dk2><a:srgbClr val="44546A"/></a:dk2>'
+    '<a:lt2><a:srgbClr val="E7E6E6"/></a:lt2><a:accent1><a:srgbClr val="4472C4"/></a:accent1>'
+    '<a:accent2><a:srgbClr val="ED7D31"/></a:accent2><a:accent3><a:srgbClr val="A5A5A5"/></a:accent3>'
+    '<a:accent4><a:srgbClr val="FFC000"/></a:accent4><a:accent5><a:srgbClr val="5B9BD5"/></a:accent5>'
+    '<a:accent6><a:srgbClr val="70AD47"/></a:accent6><a:hlink><a:srgbClr val="0563C1"/></a:hlink>'
+    '<a:folHlink><a:srgbClr val="954F72"/></a:folHlink></a:clrScheme>'
+    '<a:fontScheme name="Office"><a:majorFont><a:latin typeface="Calibri Light"/><a:ea typeface=""/><a:cs typeface=""/></a:majorFont>'
+    '<a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface=""/></a:minorFont></a:fontScheme>'
+    '<a:fmtScheme name="Office"><a:fillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'
+    '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:fillStyleLst>'
+    '<a:lnStyleLst><a:ln w="6350"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>'
+    '<a:ln w="12700"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln>'
+    '<a:ln w="19050"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:ln></a:lnStyleLst>'
+    '<a:effectStyleLst><a:effectStyle><a:effectLst/></a:effectStyle><a:effectStyle><a:effectLst/></a:effectStyle>'
+    '<a:effectStyle><a:effectLst/></a:effectStyle></a:effectStyleLst><a:bgFillStyleLst><a:solidFill><a:schemeClr val="phClr"/></a:solidFill>'
+    '<a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:solidFill><a:schemeClr val="phClr"/></a:solidFill></a:bgFillStyleLst>'
+    "</a:fmtScheme></a:themeElements></a:theme>"
+)
+
+
+def checker(w, h):
+    """A w x h PNG: four coloured quarters with a light grid, so a cut or
+    turn shows."""
+    def chunk(kind, data):
+        c = struct.pack(">I", len(data)) + kind + data
+        return c + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    quarters = [(230, 80, 60), (60, 160, 90), (70, 110, 210), (240, 190, 50)]
+    rows = b""
+    for y in range(h):
+        row = b"\x00"
+        for x in range(w):
+            if x % 16 == 0 or y % 16 == 0:
+                row += bytes((250, 250, 250))
+            else:
+                row += bytes(quarters[(y * 2 // h) * 2 + x * 2 // w])
+        rows += row
+    ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b"")
+
+
+def shaped_picture(rid, cx, cy, doc_id, name, prst, ln="", rot=0):
+    """An inline picture cut to preset `prst`, with outline `ln`."""
+    r = f' rot="{rot}"' if rot else ""
+    return (
+        f'<w:r><w:drawing><wp:inline distT="0" distB="0" distL="114300" distR="114300"><wp:extent cx="{cx}" cy="{cy}"/>'
+        f'<wp:effectExtent l="0" t="0" r="0" b="0"/><wp:docPr id="{doc_id}" name="{name}"/>'
+        f'<wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect="1"/></wp:cNvGraphicFramePr>'
+        f'<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        f'<pic:pic><pic:nvPicPr><pic:cNvPr id="{doc_id}" name="{name}.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/>'
+        f'<a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm{r}><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        f'<a:prstGeom prst="{prst}"><a:avLst/></a:prstGeom>{ln}</pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>'
+    )
+
+
+def solid_ln(w_pt, color, dash=None):
+    d = f'<a:prstDash val="{dash}"/>' if dash else ""
+    return f'<a:ln w="{int(w_pt * 12700)}"><a:solidFill><a:srgbClr val="{color}"/></a:solidFill>{d}</a:ln>'
+
+
+def floating_oval(rid, doc_id):
+    cx = cy = 96 * EMU
+    return (
+        f'<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="{251659264 + doc_id}" '
+        'behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="margin"><wp:align>right</wp:align></wp:positionH>'
+        '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>'
+        f'<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapSquare wrapText="bothSides"/>'
+        f'<wp:docPr id="{doc_id}" name="Floating oval"/><wp:cNvGraphicFramePr/>'
+        '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        f'<pic:pic><pic:nvPicPr><pic:cNvPr id="{doc_id}" name="float.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/>'
+        f'<a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        f'<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom>{solid_ln(2.25, "7030A0")}</pic:spPr></pic:pic>'
+        "</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"
+    )
+
+
+SMARTART_PPTX = Path(__file__).resolve().parents[2] / "tests/corpus/pptx/smartart.pptx"
+# (slide in smartart.pptx, title): the picture layouts.
+SMARTART_PICS = [(10, "Horizontal Picture List"), (13, "Bending Picture Accent List"), (18, "Circular Picture Callout")]
+SA_SCALE = 0.6
+
+
+def scale_drawing(xml):
+    """smartart.pptx's 10 x 5 in drawing at SA_SCALE times its size."""
+    def num(m):
+        return f'{m.group(1)}="{round(int(m.group(2)) * SA_SCALE)}"'
+
+    def xfrm(m):
+        return re.sub(r'\b(x|y|cx|cy)="(-?\d+)"', num, m.group(0))
+
+    return re.sub(r"<a:(off|ext) [^>]*/>", xfrm, xml)
+
+
+def smartart_parts():
+    """For each picture layout: (anchor run XML, rels, overrides, files)."""
+    src = zipfile.ZipFile(SMARTART_PPTX)
+    rels, overrides, files, runs = [], "", {}, []
+    ct = "application/vnd.openxmlformats-officedocument.drawingml."
+    w, h = round(10 * 914400 * SA_SCALE), round(5 * 914400 * SA_SCALE)
+    for k, (slide, title) in enumerate(SMARTART_PICS):
+        n = k + 1
+        ids = {kind: f"rIdSa{n}{kind}" for kind in ("Dm", "Lo", "Qs", "Cs", "Dr")}
+        data = src.read(f"ppt/diagrams/data{slide}.xml").decode().replace('relId="rIdDr"', f'relId="{ids["Dr"]}"')
+        files[f"word/diagrams/data{n}.xml"] = data
+        files[f"word/diagrams/layout{n}.xml"] = src.read(f"ppt/diagrams/layout{slide}.xml")
+        files[f"word/diagrams/quickStyle{n}.xml"] = src.read(f"ppt/diagrams/quickStyle{slide}.xml")
+        files[f"word/diagrams/colors{n}.xml"] = src.read(f"ppt/diagrams/colors{slide}.xml")
+        files[f"word/diagrams/drawing{n}.xml"] = scale_drawing(src.read(f"ppt/diagrams/drawing{slide}.xml").decode())
+        # The drawing's picture: its own relationship (rIdImg1).
+        files[f"word/diagrams/_rels/drawing{n}.xml.rels"] = src.read(f"ppt/diagrams/_rels/drawing{slide}.xml.rels")
+        for kind, ty, part in [
+            ("Dm", "diagramData", "data"),
+            ("Lo", "diagramLayout", "layout"),
+            ("Qs", "diagramQuickStyle", "quickStyle"),
+            ("Cs", "diagramColors", "colors"),
+        ]:
+            rels.append(f'<Relationship Id="{ids[kind]}" Type="{REL}{ty}" Target="diagrams/{part}{n}.xml"/>')
+        rels.append(
+            f'<Relationship Id="{ids["Dr"]}" Type="http://schemas.microsoft.com/office/2007/relationships/diagramDrawing" '
+            f'Target="diagrams/drawing{n}.xml"/>'
+        )
+        for part, kind in [("data", "diagramData"), ("layout", "diagramLayout"), ("quickStyle", "diagramStyle"), ("colors", "diagramColors")]:
+            overrides += f'<Override PartName="/word/diagrams/{part}{n}.xml" ContentType="{ct}{kind}+xml"/>'
+        overrides += f'<Override PartName="/word/diagrams/drawing{n}.xml" ContentType="application/vnd.ms-office.drawingml.diagramDrawing+xml"/>'
+        doc_id = 40 + n
+        runs.append(
+            (
+                title,
+                f'<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="{251660000 + n}" '
+                'behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+                '<wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH>'
+                '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>'
+                f'<wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/>'
+                f'<wp:docPr id="{doc_id}" name="Diagram {n}"/><wp:cNvGraphicFramePr/>'
+                '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">'
+                f'<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="{ids["Dm"]}" '
+                f'r:lo="{ids["Lo"]}" r:qs="{ids["Qs"]}" r:cs="{ids["Cs"]}"/></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>',
+            )
+        )
+    files["word/media/smartart_pic1.png"] = src.read("ppt/media/smartart_pic1.png")
+    return runs, rels, overrides, files
+
+
+def pictures():
+    px = 110 * EMU
+    shapes = [
+        ("rIdPic", "Oval", "ellipse", solid_ln(3, "C00000"), 0, px, round(px * 0.75)),
+        ("rIdPic", "Rounded", "roundRect", solid_ln(2.25, "2F5597"), 0, px, round(px * 0.75)),
+        ("rIdPic", "Hexagon", "hexagon", solid_ln(1.5, "385723", "dash"), 0, px, round(px * 0.75)),
+        ("rIdPic", "Star", "star5", "", 0, px, px),
+    ]
+    line1 = "".join(shaped_picture(rid, cx, cy, 10 + k, n, prst, ln, rot) for k, (rid, n, prst, ln, rot, cx, cy) in enumerate(shapes))
+    line2 = (
+        shaped_picture("rIdPic", px, round(px * 0.75), 20, "Bordered", "rect", solid_ln(4.5, "000000"))
+        + shaped_picture("rIdPic", px, round(px * 0.6), 21, "Turned oval", "ellipse", solid_ln(2.25, "C55A11"), rot=30 * 60000)
+    )
+    runs, rels, overrides, files = smartart_parts()
+    body = (
+        para("Pictures cut to shapes", "Heading1")
+        + para("Inline pictures cut to an oval, a rounded rectangle, a hexagon (dashed outline) and a star:")
+        + f"<w:p>{line1}</w:p>"
+        + para("A rectangle with a thick border, and an oval turned 30 degrees:")
+        + f"<w:p>{line2}</w:p>"
+        + f'<w:p>{floating_oval("rIdPic", 30)}<w:r><w:t xml:space="preserve">{LOREM * 3}</w:t></w:r></w:p>'
+    )
+    for k, (title, run) in enumerate(runs):
+        if k == 1:
+            body += '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+        body += para(title, "Heading1") + f"<w:p>{run}</w:p>" + para(f"After the {title}.")
+    header = (
+        '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr>'
+        + shaped_picture("rIdHdrPic", 40 * EMU, 40 * EMU, 50, "Header oval", "ellipse", solid_ln(1.5, "2F5597"))
+        + '<w:r><w:t xml:space="preserve"> Pictures letterhead</w:t></w:r></w:p>'
+    )
+    files["word/_rels/header1.xml.rels"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f'<Relationship Id="rIdHdrPic" Type="{REL}image" Target="media/pic.png"/></Relationships>'
+    )
+    files["word/theme/theme1.xml"] = THEME
+    rels.append(f'<Relationship Id="rIdTheme" Type="{REL}theme" Target="theme/theme1.xml"/>')
+    overrides += '<Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>'
+    return package(
+        body,
+        media=[("rIdPic", "pic.png", checker(128, 96))],
+        header=header,
+        extra=(rels, overrides, files),
+    )
+
+
 FILES = {
     "textboxes.docx": textboxes,
     "formulas.docx": formulas,
     "styleref_index.docx": styleref_index,
     "columns.docx": columns,
     "columns_long.docx": columns_long,
+    "pictures.docx": pictures,
 }
 
 

@@ -1228,6 +1228,121 @@ impl DocsView {
     }
 }
 
+/// An inline picture as it's painted: its decoded image (already cut to
+/// its shape and turned, when it is) and its look.
+#[derive(Clone)]
+pub(crate) struct InlinePic {
+    pub data: Arc<RenderImage>,
+    /// In the coordinates the picture was looked up at.
+    pub look: Option<docs_pdf::floats::InlineLook>,
+}
+
+/// Inline picture `img` decoded as `data` (cached as `key`), drawn into
+/// `whole`: cut to its shape and turned as it's drawn (cut images cached
+/// in `turned`).
+pub(crate) fn inline_pic(
+    painter: &docs_pdf::floats::Painter,
+    turned: &mut HashMap<String, Arc<RenderImage>>,
+    key: &str,
+    img: &docs_engine::Image,
+    whole: [f32; 4],
+    data: Arc<RenderImage>,
+    window: &mut Window,
+) -> InlinePic {
+    let look = img
+        .xml
+        .as_deref()
+        .and_then(|x| painter.inline_look(x, whole));
+    let Some(l) = look.as_ref().filter(|l| l.shape.is_some() || l.turned()) else {
+        return InlinePic { data, look };
+    };
+    let pk = picture_key(key, l.rot, l.flip, whole, whole, l.shape.as_deref());
+    let cut = match turned.get(&pk) {
+        Some(t) => t.clone(),
+        None => {
+            let Some(t) = turn_image(&data, l.rot, l.flip, whole, whole, l.shape.as_deref()) else {
+                return InlinePic { data, look: None };
+            };
+            if turned.len() >= 24 {
+                for (_, old) in turned.drain() {
+                    window.drop_image(old).ok();
+                }
+            }
+            turned.insert(pk, t.clone());
+            t
+        }
+    };
+    InlinePic { data: cut, look }
+}
+
+/// Paint inline picture `pic` on `page`: `rect` is the part of it shown
+/// (page px; cut at an exact line's top), `whole` its box, `offset` where
+/// its look's coordinates' (0, 0) is on the page.
+pub(crate) fn paint_inline(
+    window: &mut Window,
+    g: &Geometry,
+    page: usize,
+    pic: &InlinePic,
+    rect: [f32; 4],
+    whole: [f32; 4],
+    offset: (f32, f32),
+) {
+    let at = |r: [f32; 4]| {
+        Bounds::from_corners(
+            g.page_to_screen(page, r[0], r[1]),
+            g.page_to_screen(page, r[0] + r[2], r[1] + r[3]),
+        )
+    };
+    let look = pic.look.as_ref();
+    match look.filter(|l| l.turned()) {
+        // Its own image of the turned box.
+        Some(l) => {
+            let b = turned_box(whole, l.rot);
+            let _ =
+                window.paint_image(at(b), at(b), Corners::default(), pic.data.clone(), 0, false);
+        }
+        None => {
+            let _ = window.paint_image(
+                at(rect),
+                at(whole),
+                Corners::default(),
+                pic.data.clone(),
+                0,
+                false,
+            );
+        }
+    }
+    for line in look.into_iter().flat_map(|l| &l.lines) {
+        let moved: Vec<Seg> = line
+            .segs
+            .iter()
+            .map(|s| s.moved(offset.0, offset.1))
+            .collect();
+        stroke_segs(window, g, page, &moved, line.stroke.as_ref());
+    }
+}
+
+/// Stroke `segs` (page px) with `stroke` (colour, width px, dashes px).
+fn stroke_segs(
+    window: &mut Window,
+    g: &Geometry,
+    page: usize,
+    segs: &[Seg],
+    stroke: Option<&(docs_layout::Rgba, f32, Option<Vec<f32>>)>,
+) {
+    let Some((c, w, dash)) = stroke else { return };
+    let z = g.zoom;
+    let mut pb = PathBuilder::stroke(px((w * z).max(1.0)));
+    if let Some(d) = dash {
+        let d: Vec<Pixels> = d.iter().map(|v| px((v * z).max(0.5))).collect();
+        pb = pb.dash_array(&d);
+    }
+    build_segs(&mut pb, g, page, segs);
+    if let Ok(path) = pb.build() {
+        window.paint_path(path, layout_color(*c));
+    }
+}
+
 /// How a floating picture is looked up: its relationship id, plus its
 /// turn, flips, crop and shape when it's drawn turned.
 pub(crate) fn picture_key(
@@ -1613,17 +1728,7 @@ pub(crate) fn paint_floats(
                             window.paint_path(path, layout_color(c));
                         }
                     }
-                    if let Some((c, w, dash)) = &p.stroke {
-                        let mut pb = PathBuilder::stroke(px((w * z).max(1.0)));
-                        if let Some(d) = dash {
-                            let d: Vec<Pixels> = d.iter().map(|v| px((v * z).max(0.5))).collect();
-                            pb = pb.dash_array(&d);
-                        }
-                        build_segs(&mut pb, g, page, &p.segs);
-                        if let Ok(path) = pb.build() {
-                            window.paint_path(path, layout_color(*c));
-                        }
-                    }
+                    stroke_segs(window, g, page, &p.segs, p.stroke.as_ref());
                 }
                 FloatPrim::Picture {
                     rel_id,
@@ -1660,8 +1765,7 @@ pub(crate) fn paint_floats(
                                 false,
                             );
                         }
-                        // A picture cut to a shape that isn't found (a
-                        // SmartArt's picture fill, kept in its own part)
+                        // A picture cut to a shape that isn't found
                         // shows nothing; other pictures show a box.
                         None if shape.is_some() => {}
                         None => {
@@ -1693,16 +1797,9 @@ pub(crate) fn paint_floats(
         // Pictures in text boxes (decoded with the headers' ones).
         let pictures = |window: &mut Window, l: &docs_pdf::StoryLayout, (x, y): (f32, f32)| {
             for o in l.paged.objects(0) {
-                if let Some(data) = f.hf_images.get(&(l.key(), o.para, o.index)) {
-                    let at = |[ox, oy, w, h]: [f32; 4]| {
-                        Bounds::from_corners(
-                            g.page_to_screen(page, x + ox, y + oy),
-                            g.page_to_screen(page, x + ox + w, y + oy + h),
-                        )
-                    };
-                    let (b, whole) = (at(o.rect), at(o.whole));
-                    let _ =
-                        window.paint_image(b, whole, Corners::default(), data.clone(), 0, false);
+                if let Some(pic) = f.hf_images.get(&(l.key(), o.para, o.index)) {
+                    let at = |[ox, oy, w, h]: [f32; 4]| [x + ox, y + oy, w, h];
+                    paint_inline(window, g, page, pic, at(o.rect), at(o.whole), (x, y));
                 }
             }
         };

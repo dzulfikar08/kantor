@@ -324,6 +324,13 @@ pub enum FloatKind {
     Other(String),
 }
 
+/// How [`Document::image_bytes`] names a picture that SmartArt drawing
+/// part `drawing` relates to as `rel_id` (its own relationships, not the
+/// body's): `"{drawing}#{rel_id}"` (a relationship id can't hold `#`).
+pub fn diagram_media_key(drawing: &str, rel_id: &str) -> String {
+    format!("{drawing}#{rel_id}")
+}
+
 /// A text box's content: its own small document (styles shared with the
 /// main one), inner margins and vertical alignment.
 #[derive(Clone)]

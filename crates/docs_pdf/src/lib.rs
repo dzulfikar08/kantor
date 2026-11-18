@@ -66,6 +66,8 @@ pub struct PageScene {
     /// Filled rectangles (table borders), `[x, y, w, h]`.
     pub rules: Vec<([f32; 4], Rgba)>,
     pub pictures: Vec<Picture>,
+    /// Inline pictures' outlines, drawn over them.
+    pub outlines: Vec<floats::DrawPath>,
     pub runs: Vec<TextRun>,
     /// Floating objects behind the text and in front of it, back to
     /// front.
@@ -227,6 +229,7 @@ fn add_page(
     (dx, dy): (f32, f32),
     pictures: &mut HashMap<(usize, String), Option<PictureData>>,
     doc_key: usize,
+    painter: &floats::Painter,
 ) {
     let texts: Vec<Arc<str>> = paras.iter().map(|p| Arc::from(p.text.as_str())).collect();
     out.rules.extend(
@@ -258,16 +261,29 @@ fn add_page(
         if let Some((format, bytes)) = found {
             let [x, y, w, h] = o.whole;
             let [cx, cy, cw, ch] = o.rect;
+            let whole = [x + dx, y + dy, w, h];
+            // Cut to its shape, turned, outlined.
+            let look = img
+                .xml
+                .as_deref()
+                .and_then(|x| painter.inline_look(x, whole))
+                .unwrap_or_default();
             out.pictures.push(Picture {
-                rect: [x + dx, y + dy, w, h],
-                // Cut at an exact line's top.
-                clip: (o.whole != o.rect).then_some([cx + dx, cy + dy, cw, ch]),
-                shape: None,
-                turn: 0.0,
-                flip: (false, false),
+                rect: whole,
+                // Cut at an exact line's top; a turned picture turns
+                // about its box's centre.
+                clip: if look.turned() {
+                    Some(whole)
+                } else {
+                    (o.whole != o.rect).then_some([cx + dx, cy + dy, cw, ch])
+                },
+                shape: look.shape,
+                turn: look.rot,
+                flip: look.flip,
                 format: *format,
                 bytes: bytes.clone(),
             });
+            out.outlines.extend(look.lines);
         }
     }
     let mut markers: HashMap<usize, Arc<str>> = HashMap::new();
@@ -394,6 +410,7 @@ fn float_scene(
             (*x, *y),
             pictures,
             l.key() + 1,
+            painter,
         );
         out.content
             .rules
@@ -414,7 +431,7 @@ pub fn scene_of(
     strikes: &[docs_layout::Paragraph],
 ) -> Scene {
     let mut pictures = HashMap::new();
-    let painter = floats::Painter::new(doc);
+    let painter = &floats::Painter::new(doc);
     let pages = (0..paged.pages.len())
         .map(|page| {
             let setup = paged.page_setup(page);
@@ -433,6 +450,7 @@ pub fn scene_of(
                     (f.x, f.y),
                     &mut pictures,
                     f.layout.key() + 1,
+                    painter,
                 );
                 out.rules
                     .extend(f.layout.strike_rules().into_iter().map(|r| {
@@ -449,6 +467,7 @@ pub fn scene_of(
                 (0.0, 0.0),
                 &mut pictures,
                 0,
+                painter,
             );
             if !strikes.is_empty() {
                 out.rules.extend(
@@ -459,7 +478,7 @@ pub fn scene_of(
                 );
             }
             for it in float_items.get(page).into_iter().flatten() {
-                let mut scenes = vec![float_scene(doc, it, &painter, &mut pictures)];
+                let mut scenes = vec![float_scene(doc, it, painter, &mut pictures)];
                 // A chart's labels, each turned on its own.
                 for l in it.chart.iter().flat_map(|c| &c.labels) {
                     let mut fs = FloatScene::default();
@@ -472,6 +491,7 @@ pub fn scene_of(
                         (l.x, l.y),
                         &mut pictures,
                         l.layout.key() + 1,
+                        painter,
                     );
                     if l.rot != 0.0 {
                         let [x, y, w, h] = l.rect;
@@ -491,6 +511,7 @@ pub fn scene_of(
                         (b.x, b.y),
                         &mut pictures,
                         b.layout.key() + 1,
+                        painter,
                     );
                     fs.content
                         .rules
@@ -940,6 +961,9 @@ fn draw_content(
     for pic in &content.pictures {
         draw_picture(surface, pic, images);
     }
+    for p in &content.outlines {
+        draw_path(surface, p);
+    }
     for run in &content.runs {
         let Some(font) = fonts.get(&run.font) else {
             continue;
@@ -963,15 +987,13 @@ fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
     let (Some(image), Some(size)) = (image, Size::from_wh(w * TO_PT, h * TO_PT)) else {
         return;
     };
-    let clip = match &pic.shape {
-        Some(shape) => krilla_path(shape),
-        None => pic.clip.and_then(|[cx, cy, cw, ch]| {
-            let rect = Rect::from_xywh(cx * TO_PT, cy * TO_PT, cw * TO_PT, ch * TO_PT)?;
-            let mut pb = PathBuilder::new();
-            pb.push_rect(rect);
-            pb.finish()
-        }),
-    };
+    let shape = pic.shape.as_deref().and_then(krilla_path);
+    let clip = pic.clip.and_then(|[cx, cy, cw, ch]| {
+        let rect = Rect::from_xywh(cx * TO_PT, cy * TO_PT, cw * TO_PT, ch * TO_PT)?;
+        let mut pb = PathBuilder::new();
+        pb.push_rect(rect);
+        pb.finish()
+    });
     // Turned and flipped about the box's centre.
     let turned = pic.turn != 0.0 || pic.flip.0 || pic.flip.1;
     if turned {
@@ -983,18 +1005,73 @@ fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
         );
         surface.push_transform(&turn_about(pic.turn, (sx, sy), (mx, my)));
     }
-    if let Some(c) = &clip {
+    // Cut to its box (crop, an exact line's top) and its shape.
+    let clips: Vec<_> = clip.iter().chain(shape.iter()).collect();
+    for c in &clips {
         surface.push_clip_path(c, &krilla::paint::FillRule::NonZero);
     }
     surface.push_transform(&Transform::from_translate(x * TO_PT, y * TO_PT));
     image.draw(surface, size);
     surface.pop();
-    if clip.is_some() {
+    for _ in &clips {
         surface.pop();
     }
     if turned {
         surface.pop();
     }
+}
+
+/// A filled and/or stroked outline.
+fn draw_path(surface: &mut Surface, p: &floats::DrawPath) {
+    // Nothing to paint (krilla fills a path drawn with neither in black).
+    if p.fill.is_none() && p.gradient.is_none() && p.stroke.is_none() {
+        return;
+    }
+    let Some(path) = krilla_path(&p.segs) else {
+        return;
+    };
+
+    if let Some(slides_scene::Paint::Pattern {
+        fg,
+        bg,
+        bits,
+        origin,
+        cell,
+    }) = &p.gradient
+    {
+        fill_pattern(
+            surface,
+            &path,
+            Default::default(),
+            *fg,
+            *bg,
+            bits,
+            (origin.x * TO_PT, origin.y * TO_PT),
+            cell * TO_PT,
+        );
+    }
+    let patterned = matches!(p.gradient, Some(slides_scene::Paint::Pattern { .. }));
+    surface.set_fill(match &p.gradient {
+        _ if patterned => None,
+        Some(g) => Some(gradient_fill(g)),
+        None => p.fill.map(fill),
+    });
+    surface.set_stroke(p.stroke.as_ref().map(|(c, w, dash)| {
+        let [r, g, b, a] = c.0;
+        Stroke {
+            paint: rgb::Color::new(r, g, b).into(),
+            width: w * TO_PT,
+            opacity: NormalizedF32::new(a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
+            dash: dash.as_ref().map(|d| krilla::paint::StrokeDash {
+                array: d.iter().map(|v| v * TO_PT).collect(),
+                offset: 0.0,
+            }),
+            ..Stroke::default()
+        }
+    }));
+    surface.draw_path(&path);
+    surface.set_fill(None);
+    surface.set_stroke(None);
 }
 
 /// A floating object: its outline's fill and stroke, its picture, its
@@ -1007,51 +1084,9 @@ fn draw_float(surface: &mut Surface, f: &FloatScene, images: &mut Images, fonts:
             }
             continue;
         }
-        let Some(p) = f.paths.get(i) else { continue };
-        let Some(path) = krilla_path(&p.segs) else {
-            continue;
-        };
-        if let Some(slides_scene::Paint::Pattern {
-            fg,
-            bg,
-            bits,
-            origin,
-            cell,
-        }) = &p.gradient
-        {
-            fill_pattern(
-                surface,
-                &path,
-                Default::default(),
-                *fg,
-                *bg,
-                bits,
-                (origin.x * TO_PT, origin.y * TO_PT),
-                cell * TO_PT,
-            );
+        if let Some(p) = f.paths.get(i) {
+            draw_path(surface, p);
         }
-        let patterned = matches!(p.gradient, Some(slides_scene::Paint::Pattern { .. }));
-        surface.set_fill(match &p.gradient {
-            _ if patterned => None,
-            Some(g) => Some(gradient_fill(g)),
-            None => p.fill.map(fill),
-        });
-        surface.set_stroke(p.stroke.as_ref().map(|(c, w, dash)| {
-            let [r, g, b, a] = c.0;
-            Stroke {
-                paint: rgb::Color::new(r, g, b).into(),
-                width: w * TO_PT,
-                opacity: NormalizedF32::new(a as f32 / 255.0).unwrap_or(NormalizedF32::ONE),
-                dash: dash.as_ref().map(|d| krilla::paint::StrokeDash {
-                    array: d.iter().map(|v| v * TO_PT).collect(),
-                    offset: 0.0,
-                }),
-                ..Stroke::default()
-            }
-        }));
-        surface.draw_path(&path);
-        surface.set_fill(None);
-        surface.set_stroke(None);
     }
     if let Some((deg, [cx, cy])) = f.content_turn {
         let (mx, my) = (cx * TO_PT, cy * TO_PT);

@@ -99,6 +99,20 @@ pub enum Seg {
     Close,
 }
 
+impl Seg {
+    /// Moved by `(dx, dy)`.
+    pub fn moved(self, dx: f32, dy: f32) -> Self {
+        let m = |[x, y]: [f32; 2]| [x + dx, y + dy];
+        match self {
+            Seg::Move(a) => Seg::Move(m(a)),
+            Seg::Line(a) => Seg::Line(m(a)),
+            Seg::Quad(c, a) => Seg::Quad(m(c), m(a)),
+            Seg::Cubic(c1, c2, a) => Seg::Cubic(m(c1), m(c2), m(a)),
+            Seg::Close => Seg::Close,
+        }
+    }
+}
+
 /// A filled and/or stroked outline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrawPath {
@@ -134,6 +148,45 @@ pub enum FloatPrim {
     Placeholder([f32; 4], String),
     /// A blurred shadow, drawn as a picture.
     Blurred(crate::blur::Blurred),
+}
+
+/// How an inline picture is drawn when it isn't a plain picture in its
+/// box ([`Painter::inline_look`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct InlineLook {
+    /// The shape it's cut to (page px, in its box before it's flipped and
+    /// turned).
+    pub shape: Option<Vec<Seg>>,
+    /// Turned clockwise (degrees) about its box's centre, flipped
+    /// (horizontally, vertically) first.
+    pub rot: f32,
+    pub flip: (bool, bool),
+    /// Its outline (`a:ln`) round its shape, turned with it.
+    pub lines: Vec<DrawPath>,
+}
+
+impl InlineLook {
+    pub fn turned(&self) -> bool {
+        self.rot.rem_euclid(360.0) != 0.0 || self.flip.0 || self.flip.1
+    }
+
+    /// The same look for the picture moved by `(dx, dy)`.
+    pub fn moved(&self, (dx, dy): (f32, f32)) -> Self {
+        let mv = |segs: &[Seg]| segs.iter().map(|s| s.moved(dx, dy)).collect::<Vec<_>>();
+        Self {
+            shape: self.shape.as_deref().map(mv),
+            rot: self.rot,
+            flip: self.flip,
+            lines: self
+                .lines
+                .iter()
+                .map(|d| DrawPath {
+                    segs: mv(&d.segs),
+                    ..d.clone()
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Colours of a document's shapes.
@@ -273,6 +326,37 @@ impl Painter {
                 }));
             }
         }
+    }
+
+    /// How an inline picture (`xml`: its `w:drawing`) drawn into `rect`
+    /// (page px) is cut, turned and outlined; `None` for a plain picture
+    /// in its box.
+    pub fn inline_look(&self, xml: &str, rect: [f32; 4]) -> Option<InlineLook> {
+        let src = wrap(xml);
+        let doc = roxmltree::Document::parse(&src).ok()?;
+        let pic = doc
+            .descendants()
+            .find(|n| n.is_element() && n.tag_name().name() == "pic")?;
+        let sp = child(pic, "spPr")?;
+        let mut prims = Vec::new();
+        self.picture(Some(sp), None, "", [0.0; 4], rect, &mut prims);
+        let mut look = InlineLook::default();
+        let mut after = false;
+        for p in prims {
+            match p {
+                FloatPrim::Picture {
+                    shape, rot, flip, ..
+                } => {
+                    (look.shape, look.rot, look.flip) = (shape, rot, flip);
+                    after = true;
+                }
+                // Its outline (a shadow comes before it).
+                FloatPrim::Path(d) if after => look.lines.push(d),
+                _ => {}
+            }
+        }
+        let plain = look.shape.is_none() && !look.turned() && look.lines.is_empty();
+        (!plain).then_some(look)
     }
 
     /// A shape whose outline is `geom` at `size` (EMU) drawn into `rect`
