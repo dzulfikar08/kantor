@@ -28,6 +28,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   bottom of a page moves to the next page with its paragraph, as in Word; it used to run off the
   bottom of the page.
 
+- Docs: pictures in the text with a blurred shadow (Word's framed picture styles) no longer slow
+  down PDF export and scrolling; their shadow was worked out and thrown away each time.
 - Docs PDF export: SmartArt text shapes with no fill and no outline (the captions of Circular
   Picture Callout) no longer print as black boxes.
 - Sheets: formulas that use a name pointing at a deleted sheet (Excel shows its formula as `#REF!$A$1:$C$1`), or that

@@ -464,6 +464,87 @@ fn main() -> Result<()> {
         );
         Ok(None)
     });
+    // Pictures cut to shapes and outlined, copied with Move or Copy (shape
+    // and outline kept), the copy edited and saved twice.
+    run.scenario("sheets_shaped_pictures_copied.xlsx", |o| {
+        let src = corpus.join("xlsx/28_shaped_pictures.xlsx");
+        let mut wb = Workbook::open(&src)?;
+        let from = wb
+            .sheet_names()
+            .iter()
+            .position(|n| n == "Pictures")
+            .context("no Pictures sheet")? as u32;
+        let looks = |wb: &Workbook, sheet: u32| -> Vec<(String, Option<String>, Option<String>)> {
+            let mut v: Vec<_> = wb
+                .drawings(sheet)
+                .into_iter()
+                .filter_map(|d| match &*d.kind {
+                    sheets_engine::drawing::DrawingKind::Picture { shape, outline, .. } => Some((
+                        d.name.clone(),
+                        shape.as_deref().map(str::to_owned),
+                        outline.as_deref().map(str::to_owned),
+                    )),
+                    _ => None,
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        let want = looks(&wb, from);
+        anyhow::ensure!(
+            want.iter().filter(|l| l.1.is_some()).count() >= 3,
+            "the fixture's shaped pictures weren't read"
+        );
+        let copy = wb.copy_sheet(from, 1)?;
+        let path = o.join("sheets_shaped_pictures_copied.xlsx");
+        wb.save_as(&path)?;
+        let mut again = Workbook::open(&path)?;
+        let copy_name = wb.sheet_names()[copy as usize].clone();
+        let copied = again
+            .sheet_names()
+            .iter()
+            .position(|n| *n == copy_name)
+            .context("copied sheet lost")? as u32;
+        anyhow::ensure!(
+            looks(&again, copied) == want,
+            "the copy lost its pictures' shapes or outlines"
+        );
+        // A copy of the copy, saved again.
+        again.copy_sheet(copied, 2)?;
+        again.set_input(copied, 0, 0, "again")?;
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
+    // A name on a sheet deleted in Kantor: formulas using it show #REF!,
+    // and the name is saved as Excel writes it (`#REF!$B$3:$B$6`).
+    run.scenario("sheets_deleted_sheet_name.xlsx", |o| {
+        let src = corpus.join("xlsx/08_defined_names.xlsx");
+        let mut wb = Workbook::open(&src)?;
+        let inputs = wb
+            .sheet_names()
+            .iter()
+            .position(|n| n == "Inputs")
+            .context("no Inputs sheet")? as u32;
+        wb.delete_sheet(inputs)?;
+        let report = wb
+            .sheet_names()
+            .iter()
+            .position(|n| n == "Report")
+            .context("no Report sheet")? as u32;
+        let shown = wb.display_value(report, 0, 1);
+        anyhow::ensure!(shown == "#REF!", "SUM(Prices) shows {shown}");
+        wb.set_input(report, 10, 0, "=SUM(Prices)+1")?;
+        let path = o.join("sheets_deleted_sheet_name.xlsx");
+        wb.save_as(&path)?;
+        let mut again = Workbook::open(&path)?;
+        for (r, c) in [(0, 1), (10, 0)] {
+            let v = again.display_value(0, r, c);
+            anyhow::ensure!(v == "#REF!", "reopened: row {r} col {c} shows {v}");
+        }
+        again.set_input(0, 11, 0, "again")?;
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
     run.scenario("sheets_sparklines_saved.xlsx", |o| {
         let src = corpus.join("xlsx/15_sparklines_cf_dv.xlsx");
         let mut wb = Workbook::open(&src)?;
@@ -704,6 +785,28 @@ fn main() -> Result<()> {
         columns_edits(&mut doc);
         doc.save_as(&o.join("new_doc_columns.docx"))?;
         Ok(None)
+    });
+    // Inline SmartArt resized (wp:extent only), saved twice.
+    run.scenario("smartart_inline_resized.docx", |o| {
+        let src = corpus.join("docx/smartart_inline.docx");
+        let mut doc = Document::open(&src)?;
+        let found = doc.paragraphs().iter().enumerate().find_map(|(pi, p)| {
+            p.objects().into_iter().find_map(|(index, ob)| match ob {
+                docs_engine::Object::Float(f) if f.inline => Some((pi, index)),
+                _ => None,
+            })
+        });
+        let (pi, index) = found.context("no inline SmartArt")?;
+        let mut at = doc.float_at(pi, index).context("float")?.at;
+        at.cx = at.cx * 3 / 4;
+        at.cy = at.cy * 3 / 4;
+        anyhow::ensure!(doc.set_float_placement(pi, index, at), "not resized");
+        let path = o.join("smartart_inline_resized.docx");
+        doc.save_as(&path)?;
+        let mut again = Document::open(&path)?;
+        again.insert_text(Selection::caret(Position::new(0, 0)), "Again. ", None);
+        again.save_as(&path)?;
+        Ok(Some(src))
     });
     run.scenario("columns_ruler_drag.docx", |o| {
         let src = corpus.join("docx/columns.docx");

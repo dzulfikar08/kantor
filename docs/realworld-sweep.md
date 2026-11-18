@@ -533,6 +533,75 @@ Results: `~/.cache/realworld-out/pre0140-2026-11-18/` (the run on main;
 `fixed/` the rerun with the fix, `office-check/`, `ab1.txt`, `widths.txt`,
 and the helper scripts in `tools/`: `odsvals.py`, `widths.py`, `ab.py`).
 
+## Ninth run, before v0.15.0 (2026-11-18)
+
+Rerun of all 424 files on main at `d1922b3` (after Docs SmartArt picture
+fills, inline pictures cut to their shapes, inline SmartArt and
+top-and-bottom floats moving to the next page; Sheets picture outlines along
+shapes and Move or Copy keeping them; pattern fills on whole device pixels;
+names and formulas on deleted sheets giving #REF!; the first wheel notch on
+X11 had merged), release build, compared file by file with the eighth run.
+
+| | eighth run | main, `d1922b3` |
+|---|---:|---:|
+| crash, panic or timeout | 0 | 0 |
+| refused to open | 6 | 6 |
+| saved file Office would repair | 0 | 0 |
+| content changed by a save | 0 | 0 |
+| page count changed by a save (Docs, Slides) | 0 of 199 | 0 of 199 |
+| ok | 418 | 418 |
+| slowest file | 4.0 s | 3.9 s |
+| all files' probe time added up | 63 s | 64 s |
+
+What changed:
+
+- **Formulas.** POI's 30978-deleted.xls keeps `=SUM(_On2)` as a formula
+  showing #REF! (its name on a deleted sheet is saved as Excel's
+  `#REF!$A$1:$A$3`); its "1 formula kept as values" note is gone. Nothing
+  else changed: kinds, counts, import notes and validator results are the
+  same file by file. The 4,623 `.xls` formulas xlrd reads still match the
+  files' results, and the `.ods` cached values compare as with v0.14.0
+  (the same text-spacing noise in one file and covered.ods's covered cell,
+  identical with both probes).
+- **Printed pages and sizes.** Every workbook, document and deck prints the
+  same number of pages as in the eighth run (12,739 in all, including the
+  199 Docs and Slides files). Column widths, row heights and
+  `sheetFormatPr` saved from all 220 workbooks that open are identical to
+  what v0.14.0 saved.
+- **Timing**, against a probe built from the `v0.14.0` tag (min of 5–15
+  interleaved runs): the 12 slowest files, documents with SmartArt, group
+  shapes and comments, decks with shaped pictures, and workbooks with
+  pictures and sparklines took the same time (0.88–1.04×; a 46 ms comments
+  document at 1.11× was 1.00× over 15 runs), except one.
+
+**Fixed:** a Docs PDF export slowdown. A manual with 87 pictures in the text
+(MANUAL-BOOK.docx) exported 3 % slower (787 → 810 ms, steady over several
+rounds of 11–15 runs). Two of its pictures have Word's framed picture style
+with a blurred shadow. Working out how an inline picture is cut and
+outlined went through the floating-picture painter, which also blurred the
+shadow on the CPU, and then dropped it (inline pictures don't draw their
+shadow). On screen this ran on every paint of such a picture. The shadow
+is now left out there: 786 ms, as v0.14.0. Test: docs_pdf
+`floats::tests::an_inline_pictures_look_leaves_its_shadow_out`. The sweep
+rerun with the fix gave the same results file by file.
+
+The Office validation scenarios (`tools/fidelity/office_check.py`): 225
+saved files, 0 new Open XML SDK errors, all converted to PDF by LibreOffice.
+Three scenarios were added for markup v0.15 writes:
+`sheets_shaped_pictures_copied.xlsx` (28_shaped_pictures.xlsx's sheet
+copied with Move or Copy, its pictures' shapes and outlines checked after
+reopening, the copy copied again and saved twice),
+`sheets_deleted_sheet_name.xlsx` (08_defined_names.xlsx with the sheet its
+names point at deleted in Kantor: `SUM(Prices)` shows #REF! before and after
+saving, saved twice) and `smartart_inline_resized.docx` (the inline
+SmartArt fixture resized to 3/4 and saved twice). Kantor saves a name whose
+sheet was deleted in Kantor as `#REF!`; Excel writes `#REF!$B$3:$B$6`
+(both valid, both give #REF!).
+
+Results: `~/.cache/realworld-out/pre0150-2026-11-18/` (the run on main;
+`fixed/` the rerun with the fix, `office-check/`, `ab1.txt`, `ab2.txt`,
+`widths.txt`, `xlsvals.txt`, `odsvals.txt`, `ab.py`).
+
 ## Left
 
 Refused (6):
@@ -542,10 +611,10 @@ Refused (6):
 - 1 `.xlsb` that calamine can't read (an error, not a crash).
 
 Import notes left (content Kantor doesn't bring in): formulas kept as their
-values in 3 `.xls`/`.ods` files (18 formulas: 8 in tdf170565_empty_functions.ods,
-9 in ex45046-21984.xls, and 30978-deleted.xls's name on a deleted sheet,
-which IronCalc can't hold as `#REF!`; tdf112780.ods's matrix formulas and
-49612.xls's come in as formulas since v0.14, the 11 3-D formulas of POI's
+values in 2 `.xls`/`.ods` files (17 formulas: 8 in tdf170565_empty_functions.ods
+and 9 in ex45046-21984.xls; 30978-deleted.xls's name on a deleted sheet comes
+in as a formula showing #REF! since v0.15, tdf112780.ods's matrix formulas and
+49612.xls's since v0.14, the 11 3-D formulas of POI's
 55906-MultiSheetRefs.xls since v0.13), 2 controls in SimpleWithAutofilter.xls, the
 formatting of one damaged `.xls` (cfb_dir_short_chunk_panic), and 13 `.ods`
 sheet names Excel doesn't allow (renamed). The `.ods` polygon of tdf137216
