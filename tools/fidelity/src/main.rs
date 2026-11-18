@@ -1111,7 +1111,14 @@ fn kantor_features_at(wb: &mut Workbook, sheet: u32, top: u32) -> Result<()> {
                 percent: true,
             },
         ),
-        (&rev, CfSpec::Average { below: true }),
+        (
+            &rev,
+            CfSpec::Average {
+                below: true,
+                equal: false,
+                std_dev: 0,
+            },
+        ),
         (&names, CfSpec::Blanks { not: false }),
         (
             &units,

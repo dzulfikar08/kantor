@@ -133,6 +133,16 @@ pub fn draw_items_at(
         let item_t = item.transform.then(place);
         let to_page = item_t.then(Affine::scale(TO_PT, TO_PT));
         match &item.prim {
+            // Office keeps a pattern upright when its shape is rotated or
+            // flipped: the tiles line up with the page, not the shape.
+            Prim::Fill {
+                path,
+                paint: paint @ Paint::Pattern { .. },
+                rule,
+            } => {
+                let page = path.transformed(&to_page);
+                fill_path(surface, &page, &paint.clone().mapped(&to_page), *rule);
+            }
             Prim::Fill { path, paint, rule } => {
                 surface.push_transform(&transform(&to_page));
                 fill_path(surface, path, paint, *rule);
