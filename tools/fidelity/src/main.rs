@@ -21,8 +21,8 @@ use docs_engine::{Document, HfKind, HfType, PageField, Position, Selection};
 use sheets_engine::{
     CellRange, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfSpec, CfTextOp, ChartType, ErrorStyle,
     FilterKind, FilterScope, HeaderFooter, Margins, Message, PageSetup, Paper, PivotDestination,
-    PrintOptions, RowHeight, SheetPrint, Validation, ValidationOperator, ValidationType, Workbook,
-    list_source, validation_operand,
+    PrintOptions, RowHeight, SheetPrint, StyleChange, Validation, ValidationOperator,
+    ValidationType, Workbook, list_source, validation_operand,
 };
 use slides_engine::{ChartData, Inner, Presentation, Rgb, ShapeRef, TableOp, Xfrm};
 
@@ -415,6 +415,66 @@ fn main() -> Result<()> {
         again.save_as(&path)?;
         Ok(Some(src))
     });
+    run.scenario("sheets_columns_resized.xlsx", |o| {
+        let src = corpus.join("xlsx/05_styles.xlsx");
+        let mut wb = Workbook::open(&src)?;
+        let widths = columns_resized(&mut wb)?;
+        let path = o.join("sheets_columns_resized.xlsx");
+        wb.save_as(&path)?;
+        // Widths are written as Excel writes them, so they come back as the
+        // same pixels; the saved file is the next save's original.
+        let mut again = Workbook::open(&path)?;
+        for &(col, px) in &widths {
+            let got = again.column_width(0, col);
+            anyhow::ensure!((got - px).abs() < 0.5, "column {col}: {got} px, set {px}");
+        }
+        for (row, h) in [(1, 33.0), (5, 9.0)] {
+            let got = again.row_height(0, row);
+            anyhow::ensure!((got - h).abs() < 0.5, "row {row}: {got}, set {h}");
+        }
+        again.set_input(0, 40, 0, "again")?;
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
+    run.scenario("sheets_styled_column.xlsx", |o| {
+        let path = o.join("sheets_styled_column.xlsx");
+        std::fs::write(&path, styled_column_xlsx(o)?)?;
+        let mut wb = Workbook::open(&path)?;
+        let before = wb.column_width(0, 5);
+        wb.set_input(0, 3, 5, "styled")?;
+        wb.set_range_style(
+            0,
+            CellRange::from_corners((3, 5), (3, 5)),
+            StyleChange::Bold(true),
+        )?;
+        wb.save()?;
+        // A styled column keeps the sheet's default width through two saves.
+        let mut again = Workbook::open(&path)?;
+        let after = again.column_width(0, 5);
+        anyhow::ensure!(
+            (after - before).abs() < 0.5,
+            "a styled column changed width: {before} -> {after} px"
+        );
+        again.set_input(0, 4, 5, "again")?;
+        again.save()?;
+        let after = Workbook::open(&path)?.column_width(0, 5);
+        anyhow::ensure!(
+            (after - before).abs() < 0.5,
+            "a styled column changed width on the second save: {before} -> {after} px"
+        );
+        Ok(None)
+    });
+    run.scenario("sheets_sparklines_saved.xlsx", |o| {
+        let src = corpus.join("xlsx/15_sparklines_cf_dv.xlsx");
+        let mut wb = Workbook::open(&src)?;
+        wb.set_input(0, 30, 0, "edited")?;
+        let path = o.join("sheets_sparklines_saved.xlsx");
+        wb.save_as(&path)?;
+        let mut again = Workbook::open(&path)?;
+        again.set_input(0, 31, 0, "again")?;
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
     for src in files(&corpus.join("docx"), "docx")? {
         let stem = stem(&src);
         run.scenario(&format!("rt_{stem}.docx"), |o| {
@@ -645,6 +705,17 @@ fn main() -> Result<()> {
         doc.save_as(&o.join("new_doc_columns.docx"))?;
         Ok(None)
     });
+    run.scenario("columns_ruler_drag.docx", |o| {
+        let src = corpus.join("docx/columns.docx");
+        let mut doc = Document::open(&src)?;
+        columns_ruler_drag(&mut doc)?;
+        let path = o.join("columns_ruler_drag.docx");
+        doc.save_as(&path)?;
+        let mut again = Document::open(&path)?;
+        again.insert_text(Selection::caret(Position::new(0, 0)), "Again. ", None);
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
     for src in files(&corpus.join("pptx"), "pptx")? {
         let stem = stem(&src);
         run.scenario(&format!("rt_{stem}.pptx"), |o| {
@@ -841,6 +912,17 @@ fn main() -> Result<()> {
         let mut p = Presentation::open(&src)?;
         org_chart_edits(&mut p)?;
         let path = o.join("org_chart_edits.pptx");
+        p.save_as(&path)?;
+        let mut again = Presentation::open(&path)?;
+        again.set_notes_text(0, "Saved twice.")?;
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
+    run.scenario("circular_picture_callout.pptx", |o| {
+        let src = corpus.join("pptx/smartart.pptx");
+        let mut p = Presentation::open(&src)?;
+        circular_picture_callout(&mut p)?;
+        let path = o.join("circular_picture_callout.pptx");
         p.save_as(&path)?;
         let mut again = Presentation::open(&path)?;
         again.set_notes_text(0, "Saved twice.")?;
@@ -1295,6 +1377,88 @@ fn sheets_v013_features(wb: &mut Workbook) -> Result<()> {
     Ok(())
 }
 
+/// Columns given widths as a drag on the header border does, and others
+/// as an autofit does (odd pixel widths), plus row heights. Returns the
+/// widths set, in pixels.
+fn columns_resized(wb: &mut Workbook) -> Result<Vec<(u32, f64)>> {
+    wb.set_column_width(0, 0, 0, 120.0)?;
+    wb.set_column_width(0, 1, 2, 37.0)?;
+    let fitted = [(3, 137.0), (4, 23.0), (6, 301.0)];
+    wb.set_column_widths(0, &fitted)?;
+    wb.set_row_height(0, 1, 1, 33.0)?;
+    wb.set_row_height(0, 4, 6, 9.0)?;
+    let mut all = vec![(0, 120.0), (1, 37.0), (2, 37.0)];
+    all.extend(fitted);
+    Ok(all)
+}
+
+/// The space between the first two columns dragged on the ruler: its end
+/// edge (equal columns stay equal), then its start edge of the columns made
+/// unequal.
+fn columns_ruler_drag(doc: &mut Document) -> Result<()> {
+    use docs_engine::{ColumnsApply, columns::ColumnEdge};
+    let para = (0..=doc.end().para)
+        .find(|&p| doc.section_columns(p).count() >= 2)
+        .context("a section with columns")?;
+    let text = doc.section_text_width(para);
+    let cols = doc.section_columns(para);
+    let at = Selection::caret(Position::new(para, 0));
+    let end = cols.edge_at(text, ColumnEdge::End(0)).context("edge")?;
+    let equal = cols
+        .dragged(text, ColumnEdge::End(0), end.saturating_sub(600))
+        .context("drag")?;
+    doc.set_columns(at, &equal, ColumnsApply::ThisSection);
+    let cols = doc.section_columns(para).to_unequal(text);
+    let start = cols.edge_at(text, ColumnEdge::Start(0)).context("edge")?;
+    let unequal = cols
+        .dragged(text, ColumnEdge::Start(0), start + 400)
+        .context("drag")?;
+    doc.set_columns(at, &unequal, ColumnsApply::ThisSection);
+    Ok(())
+}
+
+/// A SmartArt changed to Circular Picture Callout and given an item.
+fn circular_picture_callout(p: &mut Presentation) -> Result<()> {
+    use slides_engine::{AddPlace, SmartArtFamily, text_ops};
+    let mut done = None;
+    for slide in 0..p.len() {
+        let Some(i) = p
+            .slide(slide)
+            .shapes
+            .iter()
+            .position(|s| s.smartart().is_some())
+        else {
+            continue;
+        };
+        if p.smartart_change_layout((slide, i), SmartArtFamily::CircularPictureCallout)
+            .is_ok()
+        {
+            done = Some((slide, i));
+            break;
+        }
+    }
+    let f: ShapeRef = done
+        .context("no SmartArt took Circular Picture Callout")?
+        .into();
+    anyhow::ensure!(p.smartart_family(f) == Some(SmartArtFamily::CircularPictureCallout));
+    let g = &p
+        .shape(f)
+        .context("frame")?
+        .smartart()
+        .context("SmartArt")?
+        .group;
+    let i = g
+        .children
+        .iter()
+        .rposition(|c| c.text.as_ref().is_some_and(|t| !t.plain_text().is_empty()))
+        .context("an item with text")?;
+    let item = f.child(i).context("child")?;
+    let new = p.smartart_add_shape(item, AddPlace::After)?;
+    let end = text_ops::end(p.text_paras(new).context("text")?);
+    p.insert_text(new, Selection::caret(end), "Added item", None)?;
+    Ok(())
+}
+
 /// Two columns with a line between from the second paragraph on (a
 /// continuous section break), a column break, then three columns for the
 /// whole document's last section.
@@ -1538,9 +1702,10 @@ fn sheets_v012_features(wb: &mut Workbook) -> Result<()> {
 
 /// A synthetic `.xlsm`: a Kantor-saved workbook with a VBA project added
 /// the way Excel stores one.
-fn xlsm_with_macros(dir: &Path) -> Result<Vec<u8>> {
+/// The parts of `data_book()` saved by Kantor, to edit by hand.
+fn data_book_parts(dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     use std::io::Read as _;
-    let plain = dir.join("macros_plain.tmp.xlsx");
+    let plain = dir.join("data_book.tmp.xlsx");
     let mut wb = data_book()?;
     wb.save_as(&plain)?;
     let mut zin = zip::ZipArchive::new(std::fs::File::open(&plain)?)?;
@@ -1554,11 +1719,87 @@ fn xlsm_with_macros(dir: &Path) -> Result<Vec<u8>> {
     }
     drop(zin);
     std::fs::remove_file(&plain)?;
-    let edit = |parts: &mut Vec<(String, Vec<u8>)>, name: &str, f: &dyn Fn(String) -> String| {
-        if let Some(p) = parts.iter_mut().find(|p| p.0 == name) {
-            p.1 = f(String::from_utf8_lossy(&p.1).into_owned()).into_bytes();
+    Ok(parts)
+}
+
+fn edit_part(parts: &mut [(String, Vec<u8>)], name: &str, f: &dyn Fn(String) -> String) {
+    if let Some(p) = parts.iter_mut().find(|p| p.0 == name) {
+        p.1 = f(String::from_utf8_lossy(&p.1).into_owned()).into_bytes();
+    }
+}
+
+fn zip_owned_parts(mut parts: Vec<(String, Vec<u8>)>) -> Result<Vec<u8>> {
+    parts.sort_by_key(|p| p.0 != "[Content_Types].xml");
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for (name, data) in &parts {
+        zip.start_file(name.as_str(), options)?;
+        zip.write_all(data)?;
+    }
+    Ok(zip.finish()?.into_inner())
+}
+
+/// A workbook whose column F has a style of its own and no width (as
+/// Excel writes a formatted whole column), the sheet naming its default
+/// column width.
+fn styled_column_xlsx(dir: &Path) -> Result<Vec<u8>> {
+    let mut parts = data_book_parts(dir)?;
+    edit_part(&mut parts, "xl/styles.xml", &|s| {
+        // A bold, filled cell format at the end of cellXfs.
+        let fills = s.replace(
+            "</fills>",
+            "<fill><patternFill patternType=\"solid\"><fgColor rgb=\"FFFFF2CC\"/></patternFill></fill></fills>",
+        );
+        let nfills = fills.matches("<fill>").count() - 1;
+        let fills = fills.replacen(
+            &format!("<fills count=\"{nfills}\""),
+            &format!("<fills count=\"{}\"", nfills + 1),
+            1,
+        );
+        let xfs_at = fills.find("<cellXfs").expect("cellXfs");
+        let xfs_end = fills[xfs_at..].find("</cellXfs>").expect("cellXfs end") + xfs_at;
+        let n = fills[xfs_at..xfs_end].matches("<xf ").count();
+        let xf = format!(
+            "<xf numFmtId=\"0\" fontId=\"0\" fillId=\"{nfills}\" borderId=\"0\" applyFill=\"1\"/>"
+        );
+        let mut out = format!("{}{xf}{}", &fills[..xfs_end], &fills[xfs_end..]);
+        out = out.replacen(
+            &format!("<cellXfs count=\"{n}\""),
+            &format!("<cellXfs count=\"{}\"", n + 1),
+            1,
+        );
+        out
+    });
+    let styles = &parts
+        .iter()
+        .find(|p| p.0 == "xl/styles.xml")
+        .context("styles")?
+        .1;
+    let styles = String::from_utf8_lossy(styles);
+    let at = styles.find("<cellXfs").context("cellXfs")?;
+    let end = styles[at..].find("</cellXfs>").context("cellXfs end")? + at;
+    let index = styles[at..end].matches("<xf ").count() - 1;
+    edit_part(&mut parts, "xl/worksheets/sheet1.xml", &|s| {
+        let s = match s.find("<sheetFormatPr") {
+            Some(_) => s,
+            None => s.replacen(
+                "<sheetData",
+                "<sheetFormatPr baseColWidth=\"8\" defaultColWidth=\"11.5\" defaultRowHeight=\"15\"/><sheetData",
+                1,
+            ),
+        };
+        let col = format!("<col min=\"6\" max=\"6\" style=\"{index}\"/>");
+        match s.find("</cols>") {
+            Some(at) => format!("{}{col}{}", &s[..at], &s[at..]),
+            None => s.replacen("<sheetData", &format!("<cols>{col}</cols><sheetData"), 1),
         }
-    };
+    });
+    zip_owned_parts(parts)
+}
+
+fn xlsm_with_macros(dir: &Path) -> Result<Vec<u8>> {
+    let mut parts = data_book_parts(dir)?;
+    let edit = edit_part;
     edit(&mut parts, "[Content_Types].xml", &|s| {
         s.replace(
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
@@ -1592,14 +1833,7 @@ fn xlsm_with_macros(dir: &Path) -> Result<Vec<u8>> {
         "xl/vbaProject.bin".into(),
         b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1synthetic vba project".to_vec(),
     ));
-    parts.sort_by_key(|p| p.0 != "[Content_Types].xml");
-    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
-    let options = zip::write::SimpleFileOptions::default();
-    for (name, data) in &parts {
-        zip.start_file(name.as_str(), options)?;
-        zip.write_all(data)?;
-    }
-    Ok(zip.finish()?.into_inner())
+    zip_owned_parts(parts)
 }
 
 fn filters(wb: &mut Workbook) -> Result<()> {
