@@ -537,7 +537,11 @@ impl Workbook {
                     o.xml = Some(crate::move_chart::keep_links(&now, o.links.as_deref()).into());
                 }
                 DrawingKind::Picture {
-                    part, data, crop, ..
+                    part,
+                    data,
+                    crop,
+                    shape,
+                    outline,
                 } => {
                     let ext = part
                         .rsplit_once('.')
@@ -550,6 +554,8 @@ impl Workbook {
                         ext,
                         name: d.name.clone(),
                         descr: d.descr.clone(),
+                        shape: shape.clone(),
+                        outline: outline.clone(),
                     }));
                 }
                 DrawingKind::Shape { xml, .. } => {

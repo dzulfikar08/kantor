@@ -379,6 +379,10 @@ pub(crate) struct NewPicture {
     pub ext: String,
     pub name: String,
     pub descr: String,
+    /// The shape it's cut to and its outline (see
+    /// [`DrawingKind::Picture`]).
+    pub shape: Option<Arc<str>>,
+    pub outline: Option<Arc<str>>,
 }
 
 /// One series: name cell, category cells, value cells (0-based ranges).
@@ -868,10 +872,12 @@ impl Workbook {
                         descr: pic.descr.clone(),
                         anchor,
                         kind: Arc::new(DrawingKind::Picture {
-                            part: format!("{NEW_CHART_PART}picture/{}", c.id).into(),
+                            // With its extension: that says how to decode it.
+                            part: format!("{NEW_CHART_PART}picture/{}.{}", c.id, pic.ext).into(),
                             data: pic.data.clone(),
                             crop: pic.crop,
-                            shape: None,
+                            shape: pic.shape.clone(),
+                            outline: pic.outline.clone(),
                         }),
                         editable: true,
                         hidden: false,
@@ -1144,6 +1150,8 @@ impl Workbook {
                     ext: p.ext.clone(),
                     crop: p.crop,
                     descr: p.descr.clone(),
+                    shape: p.shape.clone(),
+                    outline: p.outline.clone(),
                 }),
             });
         }

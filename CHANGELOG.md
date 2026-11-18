@@ -9,6 +9,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Fixed
+
+- Sheets: a picture with an outline (Picture Border, or a picture style's frame) draws it, on
+  screen and in the PDF, along the picture's shape: round an oval picture, a rounded rectangle or
+  a star, as Excel does. The outline used to be left out.
+- Sheets: a sheet copied with Move or Copy keeps its pictures' shapes and outlines (an oval picture
+  stayed an oval only on the original; the copy was a plain rectangle), also after saving, and its
+  pictures show on screen right away (they showed as grey boxes until the workbook was reopened).
+- Pattern fills no longer show faint seams and uneven bands at zooms and display scales where a
+  pattern's cell isn't a whole number of screen pixels (125 %, 150 %…): each cell now covers whole
+  screen pixels, in Slides, in Sheets' shapes and charts and in Docs. The PDF is unchanged.
+
 ## [0.14.0] - 2026-11-18
 
 Sheets now uses Excel's cell sizes (64 px columns, 20 px rows), so shapes, pictures and charts keep their proportions and

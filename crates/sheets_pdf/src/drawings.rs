@@ -31,6 +31,7 @@ pub enum PrintKind {
         data: Arc<Vec<u8>>,
         crop: [f32; 4],
         shape: Option<Arc<str>>,
+        outline: Option<Arc<str>>,
     },
     /// A parsed chart, before its live data, and whether its references
     /// are in the current rows and columns (made in Kantor).
@@ -246,11 +247,13 @@ fn print_kind(
             data,
             crop,
             shape,
+            outline,
         } => PrintKind::Picture {
             part: part.clone(),
             data: data.clone(),
             crop: *crop,
             shape: shape.clone(),
+            outline: outline.clone(),
         },
         DrawingKind::Chart {
             xml, current_refs, ..
@@ -386,11 +389,14 @@ impl SheetDrawings {
                     data,
                     crop,
                     shape,
+                    outline,
                 } => OverlayKind::Picture {
                     part: part.clone(),
                     data: data.clone(),
                     crop: *crop,
                     shape: shape.clone(),
+                    outline: outline.clone(),
+                    theme: outline.as_ref().and(self.theme.clone()),
                 },
                 PrintKind::Chart(base, current) => {
                     let Some(defaults) = &self.defaults else {

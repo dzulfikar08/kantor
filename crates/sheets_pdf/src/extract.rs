@@ -992,6 +992,8 @@ fn image_overlay(
             data: p.data.clone(),
             crop: p.crop,
             shape: None,
+            outline: None,
+            theme: None,
         },
     })
 }
