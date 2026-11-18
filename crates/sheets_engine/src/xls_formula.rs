@@ -18,6 +18,9 @@ pub(crate) struct Context<'a> {
     /// `EXTERNSHEET` entries: the first and last sheet index of each, or
     /// `None` for another workbook's.
     pub xti: &'a [Option<(u16, u16)>],
+    /// Whether each `EXTERNSHEET` entry's `SUPBOOK` is this workbook: a
+    /// `PtgNameX` through it names one of this workbook's names.
+    pub own_book: &'a [bool],
     /// Defined names by `LBL` index (1-based in tokens).
     pub names: &'a [String],
     /// The workbook's number formats (`FORMAT`), for charts' `IFmt`s.
@@ -299,6 +302,21 @@ fn decompile_in(rgce: &[u8], ctx: &Context, b12: bool) -> Option<String> {
                 let args = stack.split_off(at);
                 stack.push(format!("{name}({})", args.join(",")));
             }
+            // PtgNameX into this workbook (some writers use it for local
+            // names): the name; other workbooks' and add-ins' are left out.
+            0x39 if !b12 => {
+                let ixti = r.u16()? as usize;
+                let ix = r.u16()? as usize;
+                r.take(2)?;
+                if !ctx.own_book.get(ixti).copied().unwrap_or(false) {
+                    return None;
+                }
+                let name = ctx.names.get(ix.checked_sub(1)?)?;
+                if name.is_empty() {
+                    return None;
+                }
+                stack.push(name.clone());
+            }
             0x23 => {
                 let ix = r.u32()? as usize;
                 let name = ctx.names.get(ix.checked_sub(1)?)?;
@@ -388,6 +406,7 @@ mod tests {
             base: (1, 0),
             sheets: &SHEETS,
             xti: &[],
+            own_book: &[],
             names: &[],
             formats: &[],
         }
@@ -434,6 +453,27 @@ mod tests {
         assert_eq!(decompile(&[0x20, 0, 0, 0, 0, 0, 0, 0], &c), None);
         assert_eq!(decompile(&[0x1E, 1, 0, 0x1E, 1, 0], &c), None);
         assert_eq!(decompile(&[0x03], &c), None);
+    }
+
+    #[test]
+    fn name_x_into_this_workbook() {
+        let names = ["BOB".to_owned(), "JIM".to_owned()];
+        let xti = [None, None];
+        let own = [true, false];
+        let c = Context {
+            xti: &xti,
+            own_book: &own,
+            names: &names,
+            ..ctx()
+        };
+        // SUM(BOB+JIM) with both names as PtgNameX through EXTERNSHEET 0.
+        let rgce = [
+            0x59, 0, 0, 1, 0, 0, 0, 0x59, 0, 0, 2, 0, 0, 0, 0x03, 0x19, 0x10, 0, 0,
+        ];
+        assert_eq!(decompile(&rgce, &c).as_deref(), Some("SUM(BOB+JIM)"));
+        // Through another workbook's entry: not decoded.
+        let other = [0x59, 1, 0, 1, 0, 0, 0];
+        assert_eq!(decompile(&other, &c), None);
     }
 
     #[test]

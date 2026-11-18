@@ -1188,6 +1188,72 @@ fn lines<'a, 'i>(table: Node<'a, 'i>, tag: &str) -> Vec<Node<'a, 'i>> {
         .collect()
 }
 
+/// Array (matrix) formulas in `content.xml`: the anchor cell
+/// `(sheet, row, column)`, 0-based with sheets as indexed in `names`, to the
+/// area's `(columns, rows)`. LibreOffice writes the formula on the anchor only
+/// (`table:number-matrix-columns-spanned` / `-rows-spanned`); the other cells
+/// carry its results.
+pub(crate) fn matrix_spans(
+    content: &str,
+    names: &[String],
+) -> HashMap<(u32, u32, u32), (u32, u32)> {
+    let mut spans = HashMap::new();
+    if !content.contains("number-matrix-columns-spanned") {
+        return spans;
+    }
+    let opts = roxmltree::ParsingOptions {
+        nodes_limit: u32::MAX,
+        ..roxmltree::ParsingOptions::default()
+    };
+    let Ok(doc) = Document::parse_with_options(content, opts) else {
+        return spans;
+    };
+    let tables = doc
+        .descendants()
+        .filter(|n| n.has_tag_name((NS_TABLE, "table")));
+    for table in tables {
+        let Some(sheet) =
+            attr(table, NS_TABLE, "name").and_then(|n| names.iter().position(|x| x == n))
+        else {
+            continue;
+        };
+        let mut r = 0u32;
+        for row in lines(table, "table-row") {
+            if r >= MAX_ROWS {
+                break;
+            }
+            let n = repeated(row, "number-rows-repeated");
+            let mut c = 0u32;
+            for cell in row.children().filter(|n| {
+                n.has_tag_name((NS_TABLE, "table-cell"))
+                    || n.has_tag_name((NS_TABLE, "covered-table-cell"))
+            }) {
+                if c >= MAX_COLS {
+                    break;
+                }
+                let m = repeated(cell, "number-columns-repeated");
+                let span = |what| {
+                    attr(cell, NS_TABLE, what)
+                        .and_then(|v| v.parse::<u32>().ok())
+                        .unwrap_or(1)
+                        .max(1)
+                };
+                let (w, h) = (
+                    span("number-matrix-columns-spanned"),
+                    span("number-matrix-rows-spanned"),
+                );
+                // A repeated anchor would be several arrays: left out.
+                if (w, h) != (1, 1) && n == 1 && m == 1 {
+                    spans.insert((sheet as u32, r, c), (w, h));
+                }
+                c = c.saturating_add(m);
+            }
+            r = r.saturating_add(n);
+        }
+    }
+    spans
+}
+
 fn repeated(n: Node, what: &str) -> u32 {
     attr(n, NS_TABLE, what)
         .and_then(|v| v.parse::<u32>().ok())

@@ -525,6 +525,7 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
             base,
             sheets: &book.sheets,
             xti: &book.xti,
+            own_book: &[],
             names: &label_names,
             formats: &[],
         };
@@ -688,6 +689,7 @@ pub(crate) fn defined_names(path: &Path, names: &[String]) -> Vec<Name> {
         base: (0, 0),
         sheets: &book.sheets,
         xti: &book.xti,
+        own_book: &[],
         names: &label_names,
         formats: &[],
     };

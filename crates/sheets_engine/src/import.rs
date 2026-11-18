@@ -398,7 +398,9 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
     let styled = xls.is_some() || format == SourceFormat::Xlsb;
     let mut model = empty_model("Untitled")?;
     // Formula cells and their cached values, for the check below.
-    let mut formulas: Vec<(u32, i32, i32, Data, bool)> = Vec::new();
+    let mut formulas: Vec<Checked> = Vec::new();
+    // `.ods` array formulas: anchor → (columns, rows).
+    let mut matrices = HashMap::new();
     let mut kept_values = 0;
 
     // Sheets keep their names, except names Excel doesn't allow (an
@@ -455,6 +457,7 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
                 .unwrap_or_else(|| n.to_owned())
         };
         if let Ok(Some(content)) = crate::ods::part(path, "content.xml") {
+            matrices = crate::ods::matrix_spans(&content, &names);
             for (name, sheet, formula) in crate::ods_print::defined_names(&content, &names, &rename)
             {
                 if let Err(e) = model.new_defined_name(&name, sheet, &formula) {
@@ -507,11 +510,35 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
                     _ => f,
                 })
             };
+            let area = matrices
+                .get(&(sheet, row as u32 - 1, col as u32 - 1))
+                .copied();
             let mut set = |f: String| {
                 let volatile = is_volatile(&f);
-                let ok = model.set_user_input(sheet, row, col, f).is_ok();
+                let ok = match area {
+                    Some((w, h)) => model
+                        .set_user_array_formula(sheet, row, col, w as i32, h as i32, &f)
+                        .is_ok(),
+                    None => model.set_user_input(sheet, row, col, f).is_ok(),
+                };
                 if ok {
-                    formulas.push((sheet, row, col, cached.clone(), volatile));
+                    let (w, h) = area.unwrap_or((1, 1));
+                    let cells = (0..h as i32)
+                        .flat_map(|dr| (0..w as i32).map(move |dc| (dr, dc)))
+                        .map(|(dr, dc)| {
+                            let at = (row + dr, col + dc);
+                            let v = values
+                                .get_value((at.0 as u32 - 1, at.1 as u32 - 1))
+                                .cloned()
+                                .unwrap_or_default();
+                            (at.0, at.1, v)
+                        })
+                        .collect();
+                    formulas.push(Checked {
+                        sheet,
+                        cells,
+                        volatile,
+                    });
                 }
                 ok
             };
@@ -531,15 +558,26 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
     // the file stored (unsupported function, syntax we mistranslated, ...).
     model.evaluate();
     let mut replaced = false;
-    for (sheet, row, col, cached, volatile) in formulas {
-        let errored = matches!(
-            model.get_cell_type(sheet, row, col),
-            Ok(CellType::ErrorValue)
-        );
-        let differs = errored && !matches!(cached, Data::Error(_))
-            || !volatile && same_result(&model, sheet, row, col, &cached, date1904) == Some(false);
+    for Checked {
+        sheet,
+        cells,
+        volatile,
+    } in formulas
+    {
+        // Every cell of an array formula's area has to agree.
+        let differs = cells.iter().any(|(row, col, cached)| {
+            let errored = matches!(
+                model.get_cell_type(sheet, *row, *col),
+                Ok(CellType::ErrorValue)
+            );
+            errored && !matches!(cached, Data::Error(_))
+                || !volatile
+                    && same_result(&model, sheet, *row, *col, cached, date1904) == Some(false)
+        });
         if differs {
-            keep_cached(&mut model, sheet, row, col, &cached, date1904)?;
+            for (row, col, cached) in &cells {
+                keep_cached(&mut model, sheet, *row, *col, cached, date1904)?;
+            }
             kept_values += 1;
             replaced = true;
         }
@@ -689,7 +727,9 @@ fn add_xls_names<R: std::io::Read + std::io::Seek>(
         };
         let formula = formula.trim_start_matches('=').to_owned();
         // LibreOffice also writes print areas as ordinary `_xlnm.` names.
-        if formula.contains("#REF!")
+        // A name whose cells were deleted is kept (Excel does: formulas
+        // using it show #REF!); other broken references are left out.
+        if formula.contains("#REF!") && formula != "#REF!"
             || label.name.is_empty()
             || label.name.to_ascii_lowercase().starts_with("_xlnm.")
         {
@@ -753,6 +793,15 @@ fn whole_rows_and_columns(formula: &str) -> String {
         })
         .collect();
     parts.join(",")
+}
+
+/// An imported formula and the file's results for its cells (the whole area
+/// of an array formula, else the one cell), checked once the workbook is
+/// evaluated.
+struct Checked {
+    sheet: u32,
+    cells: Vec<(i32, i32, Data)>,
+    volatile: bool,
 }
 
 /// A formula that can't be imported: store the file's cached value instead.

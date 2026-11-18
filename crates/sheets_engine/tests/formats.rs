@@ -168,6 +168,18 @@ fn opens_by_extension_only() {
 }
 
 #[test]
+fn ods_array_formulas_stay_formulas() {
+    let wb = Workbook::open(fixture("matrix.ods")).unwrap();
+    // TRANSPOSE over A3:A5, entered as an array: a formula, not values.
+    assert_eq!(wb.input(0, 2, 0), "=TRANSPOSE(A1:C1)");
+    let shown: Vec<String> = (2..5).map(|r| wb.display_value(0, r, 0)).collect();
+    assert_eq!(shown, ["1", "2", "3"]);
+    assert_eq!(wb.input(0, 2, 1), "=SUM(A3:A5)");
+    assert_eq!(wb.display_value(0, 2, 1), "6");
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+}
+
+#[test]
 fn unreproducible_formulas_keep_cached_values() {
     let wb = Workbook::open(fixture("fallback.ods")).unwrap();
     // Unknown function: the file's result, not #NAME?.
