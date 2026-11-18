@@ -227,6 +227,22 @@ pub fn layout_paragraph(
             label: String::new(),
         };
         let o = match obj {
+            // Inline SmartArt: a box of its size in the line (as wide as
+            // the text at most, as a picture), drawn as floats are.
+            Object::Float(f) if f.inline => {
+                let (mut w, mut h) = f.at.size_px();
+                if w > text_width && w > 0.0 {
+                    h *= text_width / w;
+                    w = text_width;
+                }
+                InlineObject {
+                    index,
+                    kind: ObjectKind::Drawing,
+                    width: w.max(8.0),
+                    height: h.max(8.0),
+                    label: String::new(),
+                }
+            }
             Object::Float(f) => {
                 if !marks.no_floats {
                     lp.floats.push(float_spec(index, f));

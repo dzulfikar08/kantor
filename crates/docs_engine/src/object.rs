@@ -36,15 +36,18 @@ impl Object {
     }
 
     /// Objects deleting text around them never removes: markers, and
-    /// floating objects (deleted on their own, when selected).
+    /// floating objects (deleted on their own, when selected; inline
+    /// SmartArt goes with the text, as an inline picture does).
     pub fn stays_on_delete(&self) -> bool {
-        self.is_marker() || matches!(self, Self::Float(_))
+        self.is_marker() || matches!(self, Self::Float(f) if !f.inline)
     }
 
     /// Zero-size objects: markers and field starts and ends. The caret
     /// steps over them; unlike markers, field marks go with deleted text.
     pub fn is_zero_width(&self) -> bool {
-        self.is_marker() || matches!(self, Self::Field(_) | Self::Float(_))
+        self.is_marker()
+            || matches!(self, Self::Field(_))
+            || matches!(self, Self::Float(f) if !f.inline)
     }
 
     /// The floating object, if this is one.
