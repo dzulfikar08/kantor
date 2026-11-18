@@ -9,6 +9,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Fixed
+
+- Sheets: formulas that use a name pointing at a deleted sheet (Excel shows its formula as `#REF!$A$1:$C$1`), or that
+  point at a deleted sheet themselves, now open as formulas showing #REF!, as in Excel, and are saved that way; before,
+  `.xls` files kept only their values and such names gave #NAME?. Deleting a sheet a name points at now gives #REF! too.
+- Linux (X11 and XWayland): the first mouse-wheel notch after the pointer enters the Kantor window now scrolls; it was
+  dropped.
+
 ## [0.14.0] - 2026-11-18
 
 Sheets now uses Excel's cell sizes (64 px columns, 20 px rows), so shapes, pictures and charts keep their proportions and

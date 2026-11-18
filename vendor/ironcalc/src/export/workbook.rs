@@ -97,8 +97,18 @@ pub(crate) fn get_workbook_xml(workbook: &Workbook, selected_sheet: u32) -> Stri
             .formula
             .strip_prefix('=')
             .unwrap_or(&defined_name.formula);
-        let node = parser.parse(formula_body, &parse_context);
-        let formula = to_excel_string(&node, &parse_context);
+        // KANTOR PATCH (§19): Excel's reference to a deleted sheet
+        // (`#REF!$A$1:$C$1`) is written as it is: the parser keeps only `#REF!`.
+        let formula = if formula_body
+            .trim_start()
+            .get(..5)
+            .is_some_and(|h| h.eq_ignore_ascii_case("#REF!"))
+        {
+            formula_body.trim().to_string()
+        } else {
+            let node = parser.parse(formula_body, &parse_context);
+            to_excel_string(&node, &parse_context)
+        };
         let formula = escape_xml(&formula);
         defined_names_str.push(format!(
             "<definedName name=\"{name}\"{local_sheet_id}>{formula}</definedName>"

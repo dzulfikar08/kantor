@@ -131,6 +131,9 @@ jobs:
       - name: .xls CF12 fixture matches its generator
         run: uv run --with openpyxl==3.1.5 --with xlwt==1.3.0 scripts/corpus/gen_xls.py --cf12 --check
 
+      - name: .xls deleted-sheet fixture matches its generator
+        run: uv run --with openpyxl==3.1.5 --with xlwt==1.3.0 scripts/corpus/gen_xls.py --deleted --check
+
       - name: Round-trip fidelity test
         run: cargo test -p sheets_engine --test corpus -- --nocapture
 

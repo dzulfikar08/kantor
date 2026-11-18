@@ -423,3 +423,41 @@ fn styled_columns_take_the_sheets_default_column_width() {
         "{xml}"
     );
 }
+
+/// §19: a name pointing at a deleted sheet is written as Excel writes it and
+/// still gives #REF! after a round trip.
+#[test]
+fn names_to_a_deleted_sheet_keep_their_text() {
+    use std::io::Read;
+    let mut model = Model::new_empty("t", "en", "UTC", "en").unwrap();
+    model
+        .new_defined_name("_On2", None, "#REF!$A$1:$C$1")
+        .unwrap();
+    model.new_defined_name("Gone", None, "#REF!").unwrap();
+    model
+        .set_user_input(0, 1, 1, "=SUM(_On2)".to_string())
+        .unwrap();
+    model.evaluate();
+    let bytes = save_xlsx_to_writer(&model, Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner();
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes.clone())).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/workbook.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(
+        xml.contains(r#"<definedName name="_On2">#REF!$A$1:$C$1</definedName>"#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<definedName name="Gone">#REF!</definedName>"#),
+        "{xml}"
+    );
+    let workbook = load_from_xlsx_bytes(&bytes, "t", "en", "UTC").unwrap();
+    let mut again = Model::from_workbook(workbook, "en").unwrap();
+    again.evaluate();
+    assert_eq!(again.get_formatted_cell_value(0, 1, 1).unwrap(), "#REF!");
+}

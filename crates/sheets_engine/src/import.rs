@@ -429,7 +429,7 @@ fn read_calamine_file(path: &Path, format: SourceFormat) -> Result<(Model<'stati
     }
     if format == SourceFormat::Xlsb {
         for n in crate::xlsb::defined_names(path, &names) {
-            if n.formula.contains("#REF!") {
+            if n.formula.contains("#REF!") && !deleted_reference(&n.formula) {
                 continue;
             }
             match (n.builtin, n.name.as_str(), n.sheet) {
@@ -730,9 +730,10 @@ fn add_xls_names<R: std::io::Read + std::io::Seek>(
         };
         let formula = formula.trim_start_matches('=').to_owned();
         // LibreOffice also writes print areas as ordinary `_xlnm.` names.
-        // A name whose cells were deleted is kept (Excel does: formulas
-        // using it show #REF!); other broken references are left out.
-        if formula.contains("#REF!") && formula != "#REF!"
+        // A name whose cells or sheet were deleted is kept, as Excel shows
+        // it (`#REF!` or `#REF!$A$1:$C$1`): formulas using it show #REF!.
+        // Other broken references are left out.
+        if formula.contains("#REF!") && !deleted_reference(&formula)
             || label.name.is_empty()
             || label.name.to_ascii_lowercase().starts_with("_xlnm.")
         {
@@ -760,6 +761,20 @@ fn add_xls_names<R: std::io::Read + std::io::Seek>(
             }
         }
     }
+}
+
+/// Excel's text for a name whose sheet or cells were deleted: `#REF!`, or
+/// `#REF!` and the cell or range it pointed at (`#REF!$A$1:$C$1`).
+fn deleted_reference(formula: &str) -> bool {
+    let Some(rest) = formula.strip_prefix("#REF!") else {
+        return false;
+    };
+    rest.is_empty()
+        || rest.split(':').count() <= 2
+            && rest.split(':').all(|part| {
+                !part.trim_start_matches('$').is_empty()
+                    && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '$')
+            })
 }
 
 /// BIFF8 has no whole-row or whole-column references: print titles are

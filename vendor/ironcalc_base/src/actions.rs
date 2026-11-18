@@ -462,6 +462,10 @@ impl<'a> Model<'a> {
         let mut changed = false;
         for i in 0..self.workbook.defined_names.len() {
             let formula = self.workbook.defined_names[i].formula.clone();
+            // KANTOR PATCH (§33): a reference to a deleted sheet doesn't move.
+            if crate::model::is_ref_error_name_formula(&formula) {
+                continue;
+            }
             let moved = displace_cf_formula_str(&mut self.parser, &formula, &context, displace_data);
             if moved != formula {
                 self.workbook.defined_names[i].formula = moved;

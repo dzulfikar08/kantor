@@ -309,6 +309,18 @@ Tests: `tests/test_kantor_fidelity.rs`
 (`styled_columns_keep_the_default_width`,
 `styled_columns_take_the_sheets_default_column_width`).
 
+## 19. Names pointing at a deleted sheet keep their text
+
+Why: Excel writes a name whose sheet was deleted as `#REF!$A$1:$C$1`. The
+writer re-parses every name formula (for `_xlfn.` prefixes), and the parser
+can't read that form: it kept only `#REF!`.
+
+What: `export/workbook.rs` writes a name formula starting with `#REF!` as it
+is (vendor/ironcalc_base §33 lets the model hold such names). The reader
+already keeps name text as written.
+
+Tests: `tests/test_kantor_fidelity.rs` (`names_to_a_deleted_sheet_keep_their_text`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

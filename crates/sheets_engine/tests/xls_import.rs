@@ -699,3 +699,38 @@ fn three_d_formulas() {
     wb.set_input(1, 1, 1, "25").unwrap();
     assert_eq!(wb.display_value(s, 0, 1), "65");
 }
+
+/// deleted.xls: references to a deleted sheet (EXTERNSHEET itab 0xFFFF), as
+/// in Apache POI's 30978-deleted.xls. They come in as live formulas showing
+/// #REF!, and the saved name keeps Excel's `#REF!$A$1:$C$1`.
+#[test]
+fn references_to_a_deleted_sheet() {
+    let mut wb = Workbook::open(corpus("deleted.xls")).unwrap();
+    assert!(wb.import_notes().is_empty(), "{:?}", wb.import_notes());
+    let expect = [
+        ("=SUM(_On2)", "#REF!"),
+        ("=SUM(#REF!)", "#REF!"),
+        ("=#REF!+1", "#REF!"),
+        ("=1+1", "2"),
+    ];
+    for (row, (formula, value)) in expect.iter().enumerate() {
+        assert_eq!(wb.input(0, row as u32, 0), *formula, "row {row}");
+        assert_eq!(wb.display_value(0, row as u32, 0), *value, "row {row}");
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("deleted.xlsx");
+    wb.save_as(&out).unwrap();
+    let book = part(&out, "xl/workbook.xml");
+    assert!(
+        book.contains(r#"<definedName name="_On2">#REF!$A$1:$C$1</definedName>"#),
+        "{book}"
+    );
+    let sheet = part(&out, "xl/worksheets/sheet1.xml");
+    assert!(sheet.contains("<f>SUM(_On2)</f>"), "{sheet}");
+    assert!(sheet.contains("<f>SUM(#REF!)</f>"), "{sheet}");
+    // Reopened, the formulas are still there and still show #REF!.
+    let again = Workbook::open(&out).unwrap();
+    assert_eq!(again.input(0, 0, 0), "=SUM(_On2)");
+    assert_eq!(again.display_value(0, 0, 0), "#REF!");
+    assert_eq!(again.display_value(0, 2, 0), "#REF!");
+}
