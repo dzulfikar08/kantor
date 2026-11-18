@@ -388,11 +388,18 @@ impl DocsView {
         if let Some(which) = target {
             let at = point(ev.position.x + SPACE_3, ev.position.y + SPACE_3);
             self.open_text_box(sel, which, at, window, cx);
-        } else {
+        } else if !self.sel_inline() {
+            // Inline SmartArt sits in its line: resized, not moved.
             self.start_float_drag(page, Grab::Move, rect, ev.position);
         }
         cx.notify();
         true
+    }
+
+    /// Whether the selected object is in line with the text (SmartArt).
+    fn sel_inline(&self) -> bool {
+        self.float_sel
+            .is_some_and(|s| self.doc.float_at(s.para, s.index).is_some_and(|f| f.inline))
     }
 
     /// Whether a window point is inside the object box `rect`, away from
@@ -812,6 +819,8 @@ impl DocsView {
                 }
                 menu
             });
+        // Inline SmartArt stays in line in Kantor: no wrap choices.
+        let button = (!self.sel_inline()).then_some(button);
         let smartart = self.smartart_layout_button(s, cx);
         Some(
             div()
@@ -821,7 +830,7 @@ impl DocsView {
                 .flex()
                 .flex_col()
                 .gap(SPACE_2)
-                .child(button)
+                .children(button)
                 .children(smartart)
                 .into_any_element(),
         )

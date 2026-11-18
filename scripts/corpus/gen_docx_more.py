@@ -28,7 +28,15 @@ as raw WordprocessingML (deterministic: same bytes every run):
   shapes are filled with a picture from the drawing part's own
   relationships (Horizontal Picture List, Bending Picture Accent List,
   Circular Picture Callout; their parts taken from
-  tests/corpus/pptx/smartart.pptx, drawn at 0.6 times its size).
+  tests/corpus/pptx/smartart.pptx, drawn at 0.6 times its size). The
+  second SmartArt (top-and-bottom wrapping) doesn't fit under the first
+  and moves to page 2 with its paragraph.
+
+* smartart_inline.docx: SmartArt in line with the text (`wp:inline`): a
+  Horizontal Picture List in a paragraph of its own and a small Bending
+  Picture Accent List inside a line of text; then a 2.5 in picture with
+  top-and-bottom wrapping that doesn't fit at the bottom of page 1 and
+  moves to page 2 with its paragraph (as Word and LibreOffice lay it out).
 
 Regenerate with `python3 scripts/corpus/gen_docx_more.py tests/corpus/docx`;
 `--check` compares with the files in that folder instead.
@@ -615,10 +623,10 @@ SMARTART_PICS = [(10, "Horizontal Picture List"), (13, "Bending Picture Accent L
 SA_SCALE = 0.6
 
 
-def scale_drawing(xml):
-    """smartart.pptx's 10 x 5 in drawing at SA_SCALE times its size."""
+def scale_drawing(xml, scale=SA_SCALE):
+    """smartart.pptx's 10 x 5 in drawing at `scale` times its size."""
     def num(m):
-        return f'{m.group(1)}="{round(int(m.group(2)) * SA_SCALE)}"'
+        return f'{m.group(1)}="{round(int(m.group(2)) * scale)}"'
 
     def xfrm(m):
         return re.sub(r'\b(x|y|cx|cy)="(-?\d+)"', num, m.group(0))
@@ -626,21 +634,49 @@ def scale_drawing(xml):
     return re.sub(r"<a:(off|ext) [^>]*/>", xfrm, xml)
 
 
-def smartart_parts():
-    """For each picture layout: (anchor run XML, rels, overrides, files)."""
+def smartart_frame(n, ids, w, h, inline):
+    """The run holding SmartArt `n`: a top-and-bottom anchor centred in the
+    column, or in line with the text (`wp:inline`, as Word inserts it)."""
+    graphic = (
+        f'<wp:docPr id="{40 + n}" name="Diagram {n}"/><wp:cNvGraphicFramePr/>'
+        '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">'
+        f'<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="{ids["Dm"]}" '
+        f'r:lo="{ids["Lo"]}" r:qs="{ids["Qs"]}" r:cs="{ids["Cs"]}"/></a:graphicData></a:graphic>'
+    )
+    if inline:
+        return (
+            '<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0">'
+            f'<wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>'
+            f"{graphic}</wp:inline></w:drawing></w:r>"
+        )
+    return (
+        f'<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="{251660000 + n}" '
+        'behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH>'
+        '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>'
+        f'<wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/>'
+        f"{graphic}</wp:anchor></w:drawing></w:r>"
+    )
+
+
+def smartart_parts(pics=SMARTART_PICS, scales=None, inline=()):
+    """For each picture layout of `pics` (drawn at `scales[k]` times
+    smartart.pptx's size, default SA_SCALE; in line when `k in inline`):
+    (title, run XML), rels, overrides, files."""
     src = zipfile.ZipFile(SMARTART_PPTX)
     rels, overrides, files, runs = [], "", {}, []
     ct = "application/vnd.openxmlformats-officedocument.drawingml."
-    w, h = round(10 * 914400 * SA_SCALE), round(5 * 914400 * SA_SCALE)
-    for k, (slide, title) in enumerate(SMARTART_PICS):
+    for k, (slide, title) in enumerate(pics):
         n = k + 1
+        scale = scales[k] if scales else SA_SCALE
+        w, h = round(10 * 914400 * scale), round(5 * 914400 * scale)
         ids = {kind: f"rIdSa{n}{kind}" for kind in ("Dm", "Lo", "Qs", "Cs", "Dr")}
         data = src.read(f"ppt/diagrams/data{slide}.xml").decode().replace('relId="rIdDr"', f'relId="{ids["Dr"]}"')
         files[f"word/diagrams/data{n}.xml"] = data
         files[f"word/diagrams/layout{n}.xml"] = src.read(f"ppt/diagrams/layout{slide}.xml")
         files[f"word/diagrams/quickStyle{n}.xml"] = src.read(f"ppt/diagrams/quickStyle{slide}.xml")
         files[f"word/diagrams/colors{n}.xml"] = src.read(f"ppt/diagrams/colors{slide}.xml")
-        files[f"word/diagrams/drawing{n}.xml"] = scale_drawing(src.read(f"ppt/diagrams/drawing{slide}.xml").decode())
+        files[f"word/diagrams/drawing{n}.xml"] = scale_drawing(src.read(f"ppt/diagrams/drawing{slide}.xml").decode(), scale)
         # The drawing's picture: its own relationship (rIdImg1).
         files[f"word/diagrams/_rels/drawing{n}.xml.rels"] = src.read(f"ppt/diagrams/_rels/drawing{slide}.xml.rels")
         for kind, ty, part in [
@@ -657,21 +693,7 @@ def smartart_parts():
         for part, kind in [("data", "diagramData"), ("layout", "diagramLayout"), ("quickStyle", "diagramStyle"), ("colors", "diagramColors")]:
             overrides += f'<Override PartName="/word/diagrams/{part}{n}.xml" ContentType="{ct}{kind}+xml"/>'
         overrides += f'<Override PartName="/word/diagrams/drawing{n}.xml" ContentType="application/vnd.ms-office.drawingml.diagramDrawing+xml"/>'
-        doc_id = 40 + n
-        runs.append(
-            (
-                title,
-                f'<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="{251660000 + n}" '
-                'behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
-                '<wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH>'
-                '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>'
-                f'<wp:extent cx="{w}" cy="{h}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/>'
-                f'<wp:docPr id="{doc_id}" name="Diagram {n}"/><wp:cNvGraphicFramePr/>'
-                '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram">'
-                f'<dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="{ids["Dm"]}" '
-                f'r:lo="{ids["Lo"]}" r:qs="{ids["Qs"]}" r:cs="{ids["Cs"]}"/></a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>',
-            )
-        )
+        runs.append((title, smartart_frame(n, ids, w, h, k in inline)))
     files["word/media/smartart_pic1.png"] = src.read("ppt/media/smartart_pic1.png")
     return runs, rels, overrides, files
 
@@ -698,9 +720,9 @@ def pictures():
         + f"<w:p>{line2}</w:p>"
         + f'<w:p>{floating_oval("rIdPic", 30)}<w:r><w:t xml:space="preserve">{LOREM * 3}</w:t></w:r></w:p>'
     )
-    for k, (title, run) in enumerate(runs):
-        if k == 1:
-            body += '<w:p><w:r><w:br w:type="page"/></w:r></w:p>'
+    # The second SmartArt doesn't fit under the first: it moves to the
+    # next page with its paragraph, as in Word.
+    for title, run in runs:
         body += para(title, "Heading1") + f"<w:p>{run}</w:p>" + para(f"After the {title}.")
     header = (
         '<w:p><w:pPr><w:spacing w:after="0"/></w:pPr>'
@@ -723,6 +745,52 @@ def pictures():
     )
 
 
+# ── smartart_inline.docx ───────────────────────────────────────────────────
+
+
+def top_bottom_picture(rid, doc_id, cx, cy):
+    """A floating picture with top-and-bottom wrapping, centred in the
+    column at the top of its paragraph."""
+    return (
+        f'<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="0" distR="0" simplePos="0" relativeHeight="{251661000 + doc_id}" '
+        'behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="column"><wp:align>center</wp:align></wp:positionH>'
+        '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>'
+        f'<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapTopAndBottom/>'
+        f'<wp:docPr id="{doc_id}" name="Top and bottom picture"/><wp:cNvGraphicFramePr/>'
+        '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        f'<pic:pic><pic:nvPicPr><pic:cNvPr id="{doc_id}" name="block.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/>'
+        f'<a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'
+        "</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"
+    )
+
+
+def smartart_inline():
+    pics = [(10, "Horizontal Picture List"), (13, "Bending Picture Accent List")]
+    runs, rels, overrides, files = smartart_parts(pics, scales=[0.6, 0.25], inline=(0, 1))
+    (_, big), (_, small) = runs
+    body = (
+        para("SmartArt in line with text", "Heading1")
+        + para("A Horizontal Picture List in line with the text, as Word inserts SmartArt:")
+        + f'<w:p><w:pPr><w:jc w:val="center"/></w:pPr>{big}</w:p>'
+        + para("After the inline SmartArt.")
+        + '<w:p><w:r><w:t xml:space="preserve">A small Bending Picture Accent List </w:t></w:r>'
+        + small
+        + '<w:r><w:t xml:space="preserve"> sits in this line of text like a picture.</w:t></w:r></w:p>'
+        + "".join(para(LOREM * 2) for _ in range(3))
+        + para("The next paragraph holds a picture with top-and-bottom wrapping, 2.5 inches tall:")
+        + f'<w:p>{top_bottom_picture("rIdBlock", 60, 300 * EMU, 240 * EMU)}'
+        + '<w:r><w:t xml:space="preserve">The picture above wraps top and bottom and doesn\'t fit at the bottom of '
+        + "the first page, so it moves to the next page with this paragraph, as in Word.</w:t></w:r></w:p>"
+        + para("After the moved picture.")
+    )
+    files["word/theme/theme1.xml"] = THEME
+    rels.append(f'<Relationship Id="rIdTheme" Type="{REL}theme" Target="theme/theme1.xml"/>')
+    overrides += '<Override PartName="/word/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>'
+    return package(body, media=[("rIdBlock", "block.png", checker(160, 128))], extra=(rels, overrides, files))
+
+
 FILES = {
     "textboxes.docx": textboxes,
     "formulas.docx": formulas,
@@ -730,6 +798,7 @@ FILES = {
     "columns.docx": columns,
     "columns_long.docx": columns_long,
     "pictures.docx": pictures,
+    "smartart_inline.docx": smartart_inline,
 }
 
 

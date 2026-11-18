@@ -118,6 +118,33 @@ fn smartart_picture_fills_come_from_the_drawing_part() {
     assert!(pdf.starts_with(b"%PDF"));
 }
 
+#[test]
+fn top_and_bottom_smartart_that_doesnt_fit_moves_to_the_next_page() {
+    let doc = open();
+    let mut engine = Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let page_of = |name: &str| {
+        laid.floats
+            .iter()
+            .position(|items| {
+                items
+                    .iter()
+                    .any(|it| it.float(&doc).is_some_and(|f| f.name == name))
+            })
+            .unwrap()
+    };
+    // No page break before it: the second doesn't fit under the first.
+    assert_eq!(page_of("Diagram 1"), 0);
+    assert_eq!(page_of("Diagram 2"), 1);
+    assert_eq!(page_of("Diagram 3"), 1);
+    let it = laid.floats[1]
+        .iter()
+        .find(|it| it.float(&doc).unwrap().name == "Diagram 2")
+        .unwrap();
+    let setup = &laid.paged.pages[1].setup;
+    assert!((it.rect[1] - setup.margin_top).abs() < 0.5, "{:?}", it.rect);
+}
+
 /// Every zip entry's bytes, by name.
 fn entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();

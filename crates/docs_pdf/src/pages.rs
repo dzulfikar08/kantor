@@ -31,8 +31,8 @@ use docs_engine::{
     Document, HfKind, HfType, NoteKind, NoteRef, NoteRestart, Section, SectionStart,
 };
 use docs_layout::{
-    Block, NOTE_SEPARATOR, PageSetup, PagedDocument, ParaLayout, Rgba, RuleRect, SectionBreak,
-    SectionFlow,
+    Block, NOTE_SEPARATOR, ObjectKind, PageSetup, PagedDocument, ParaLayout, Rgba, RuleRect,
+    SectionBreak, SectionFlow,
 };
 
 use crate::build::{self, Marks};
@@ -932,6 +932,15 @@ fn place_floats(
                 items.push(it);
             }
         }
+        // Inline SmartArt: drawn into its box in the line.
+        for o in paged.objects(pi) {
+            if o.kind == ObjectKind::Drawing
+                && let Some(it) =
+                    float_item(doc, (None, o.para, o.index), o.whole, &painter, layout)
+            {
+                items.push(it);
+            }
+        }
         for placed in furniture.get(pi).into_iter().flatten() {
             if placed.note.is_some() || placed.layout.note.is_some() {
                 continue;
@@ -940,11 +949,26 @@ fn place_floats(
             let Some(st) = doc.stories().get(story) else {
                 continue;
             };
+            for o in placed.layout.paged.objects(0) {
+                if o.kind != ObjectKind::Drawing {
+                    continue;
+                }
+                let [x, y, w, h] = o.whole;
+                let rect = [x + placed.x, y + placed.y, w, h];
+                if let Some(it) =
+                    float_item(doc, (Some(story), o.para, o.index), rect, &painter, layout)
+                {
+                    items.push(it);
+                }
+            }
             for (para, p) in st.doc.paragraphs().iter().enumerate() {
                 for (index, o) in p.objects() {
                     let docs_engine::Object::Float(f) = o else {
                         continue;
                     };
+                    if f.inline {
+                        continue;
+                    }
                     let line = placed.layout.paged.caret(para, index);
                     let top = placed
                         .layout

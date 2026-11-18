@@ -18,8 +18,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   their border along it, on screen and in the PDF, also in headers, footers and text boxes; a
   turned picture in the text is drawn turned. They used to show as plain rectangles without a
   border.
+- Docs draws SmartArt that sits in line with the text (as Word inserts it) in its line, on screen
+  and in the PDF, sized as the file says; click it to select it, edit its text and change its layout
+  as with floating SmartArt, and drag a handle to resize it. It used to show as an empty box.
 
 ### Fixed
+
+- Docs: a floating picture, shape or SmartArt with Top and Bottom wrapping that doesn't fit at the
+  bottom of a page moves to the next page with its paragraph, as in Word; it used to run off the
+  bottom of the page.
 
 - Docs PDF export: SmartArt text shapes with no fill and no outline (the captions of Circular
   Picture Callout) no longer print as black boxes.

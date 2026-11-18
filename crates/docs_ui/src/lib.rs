@@ -2360,6 +2360,10 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             }
             // Pictures and placeholders.
             for o in paged.objects(page) {
+                // Inline SmartArt is drawn with the floating objects.
+                if o.kind == ObjectKind::Drawing {
+                    continue;
+                }
                 let b = rect(page, o.rect);
                 let picture = (o.kind == ObjectKind::Image)
                     .then(|| f.images.get(&(o.para, o.index)))

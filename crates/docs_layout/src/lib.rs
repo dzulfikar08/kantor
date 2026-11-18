@@ -170,6 +170,9 @@ pub struct Marker {
 pub enum ObjectKind {
     /// A picture: the renderer draws it into the box.
     Image,
+    /// A drawing in line with the text (SmartArt): an empty box here, the
+    /// renderer draws the object into it as it draws floating objects.
+    Drawing,
     /// A box with a label, for content shown only as a placeholder.
     Placeholder,
     /// Zero size (bookmarks).
@@ -1839,6 +1842,21 @@ impl<'a> Flow<'a> {
         }
     }
 
+    /// Whether one of paragraph `pi`'s objects placed on `page` (from its
+    /// `from`th object on) wraps top and bottom, moves with the text and
+    /// reaches below the bottom of the text area.
+    fn float_overflows(&self, pi: usize, page: usize, from: usize) -> bool {
+        let bottom = self.bottom();
+        self.pages[page].floats[from..].iter().any(|pf| {
+            pf.para == pi
+                && pf.wrap == FloatWrap::TopAndBottom
+                && pf.rect[1] + pf.rect[3] > bottom + 0.5
+                && self.paras[pi].floats.iter().any(|f| {
+                    f.index == pf.index && matches!(f.v.0, FloatRefV::Paragraph | FloatRefV::Line)
+                })
+        })
+    }
+
     /// Whether paragraph `pi`, about to be placed, has lines to break
     /// around floating objects, or for columns of another width than the
     /// one it was laid out for.
@@ -1965,7 +1983,23 @@ impl<'a> Flow<'a> {
         if self.y + first_h > self.bottom() && !self.at_top() {
             self.next_column();
         }
+        let page = self.pages.len() - 1;
+        let before = (
+            self.pages[page].floats.len(),
+            self.pages[page].fixed.len(),
+            self.excl.len(),
+        );
         self.place_floats(pi, self.y, self.column().0);
+        // An object with top-and-bottom wrapping that moves with its
+        // paragraph and runs past the bottom of the page goes to the next
+        // page (or column) with the paragraph, as Word moves it.
+        if !self.at_column_top() && self.float_overflows(pi, page, before.0) {
+            self.pages[page].floats.truncate(before.0);
+            self.pages[page].fixed.truncate(before.1);
+            self.excl.truncate(before.2);
+            self.next_column();
+            self.place_floats(pi, self.y, self.column().0);
+        }
         // The text width from the indent in a column `w` wide.
         let avail_in = |w: f32| (base.avail + w - base.width).max(8.0);
         let widest = self

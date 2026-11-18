@@ -382,6 +382,9 @@ pub struct Float {
     /// Charts inside a group or canvas (`c:chart` in a graphic frame): the
     /// relationship id and the chart part's name.
     pub group_charts: Vec<(String, String)>,
+    /// In line with the text (`wp:inline`; SmartArt only): a box of its
+    /// size in the line, like an inline picture, not placed on its own.
+    pub inline: bool,
 }
 
 /// The text box of one shape in a group.
@@ -405,6 +408,7 @@ impl PartialEq for Float {
             && self.at == o.at
             && self.read == o.read
             && self.kind == o.kind
+            && self.inline == o.inline
             && self.text_edited == o.text_edited
             && (!self.text_edited
                 || self.text.as_ref().map(|t| t.doc.paragraphs())
@@ -462,6 +466,20 @@ impl Float {
     /// Whether Kantor changed it (its XML gets rewritten on save).
     pub fn is_modified(&self) -> bool {
         self.at != self.read || self.text_edited || self.boxes.iter().any(|b| b.edited)
+    }
+
+    /// `at` as it applies to this object: an inline one only takes the
+    /// size (it sits in the line).
+    pub fn inline_kept(&self, at: Placement) -> Placement {
+        if self.inline {
+            Placement {
+                cx: at.cx,
+                cy: at.cy,
+                ..self.at
+            }
+        } else {
+            at
+        }
     }
 
     /// A copy placed at `at`.
@@ -1022,7 +1040,7 @@ impl Document {
         let Some(f) = self.float_at(para, index) else {
             return false;
         };
-        let mut nf = f.placed(at);
+        let mut nf = f.placed(f.inline_kept(at));
         for (name, xml) in parts {
             match nf.parts.iter_mut().find(|p| p.0 == name) {
                 Some(p) => p.1 = xml,
@@ -1040,6 +1058,7 @@ impl Document {
         let Some(f) = self.float_at(para, index) else {
             return false;
         };
+        let at = f.inline_kept(at);
         if f.at == at {
             return false;
         }
@@ -1091,6 +1110,7 @@ impl Document {
     pub fn layout_option(&self, para: usize, index: usize) -> Option<LayoutOption> {
         match self.paragraphs.get(para)?.object_at(index)? {
             crate::Object::Image(_) => Some(LayoutOption::Inline),
+            crate::Object::Float(f) if f.inline => Some(LayoutOption::Inline),
             crate::Object::Float(f) => Some(f.at.layout_option()),
             _ => None,
         }
@@ -1116,6 +1136,8 @@ impl Document {
         };
         match (obj, o) {
             (crate::Object::Image(_), LayoutOption::Inline) => false,
+            // Inline SmartArt stays in line in Kantor.
+            (crate::Object::Float(f), _) if f.inline => false,
             (crate::Object::Image(img), o) => {
                 let img = img.clone();
                 let mut at = Placement {
@@ -1426,7 +1448,8 @@ fn find<'e>(el: &'e El, name: &str) -> Option<&'e El> {
 }
 
 /// A floating object from a run's `w:drawing` or `mc:AlternateContent`;
-/// `None` when it holds no `wp:anchor`. `rel_part` resolves a picture's
+/// `None` when it holds no `wp:anchor` (or `wp:inline` SmartArt, read as
+/// an inline [`Float`]). `rel_part` resolves a picture's
 /// relationship id to its part name. The text box is the caller's
 /// ([`Float::text`]).
 pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> Option<Float> {
@@ -1440,7 +1463,10 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
     } else {
         return None;
     };
-    let anchor = scope.children.iter().find(|c| c.name == "anchor")?;
+    let (anchor, inline) = match scope.children.iter().find(|c| c.name == "anchor") {
+        Some(a) => (a, false),
+        None => (scope.children.iter().find(|c| c.name == "inline")?, true),
+    };
     let at = placement(anchor);
     let doc_pr = anchor.child("docPr");
     let data = find(anchor, "graphicData");
@@ -1494,6 +1520,11 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
     } else {
         FloatKind::Other("Drawing".into())
     };
+    // In line with text, only SmartArt is drawn this way (pictures are
+    // `Image`s; other inline drawings stay placeholders).
+    if inline && !matches!(kind, FloatKind::SmartArt { .. }) {
+        return None;
+    }
     let group_charts = match kind {
         FloatKind::Group { .. } => {
             let mut v = Vec::new();
@@ -1524,6 +1555,7 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
         text_edited: false,
         boxes: Vec::new(),
         parts: Vec::new(),
+        inline,
     })
 }
 
@@ -1600,7 +1632,7 @@ fn anchor_parts(src: &str) -> Option<AnchorParts> {
                     depth += 1;
                 }
                 match &anchor {
-                    None if name == "anchor" && !empty => {
+                    None if (name == "anchor" || name == "inline") && !empty => {
                         let qname = String::from_utf8_lossy(e.name().as_ref()).into_owned();
                         anchor = Some((before..after, qname, depth));
                     }
@@ -1774,13 +1806,19 @@ fn patch(src: &str, read: &Placement, at: &Placement) -> Option<String> {
     let prefix = qname
         .rsplit_once(':')
         .map_or(String::new(), |(p, _)| format!("{p}:"));
-    let moved_h = at.h != read.h;
-    let moved_v = at.v != read.v;
+    // An inline object only changes size.
+    let inline = local(qname.as_bytes()) == "inline";
+    let moved_h = at.h != read.h && !inline;
+    let moved_v = at.v != read.v && !inline;
     let resized = (at.cx, at.cy) != (read.cx, read.cy);
-    let rewrapped = (at.wrap, at.side) != (read.wrap, read.side);
+    let rewrapped = (at.wrap, at.side) != (read.wrap, read.side) && !inline;
     let mut out = String::with_capacity(src.len() + 128);
     out.push_str(&src[..start.start]);
-    out.push_str(&start_tag(&src[start.clone()], at, moved_h || moved_v));
+    if inline {
+        out.push_str(&src[start.clone()]);
+    } else {
+        out.push_str(&start_tag(&src[start.clone()], at, moved_h || moved_v));
+    }
     let mut wrote_wrap = false;
     for c in &children {
         let orig = &src[c.range.clone()];
@@ -1811,7 +1849,7 @@ fn patch(src: &str, read: &Placement, at: &Placement) -> Option<String> {
                     out.push_str(orig);
                 }
             }
-            "docPr" if !wrote_wrap => {
+            "docPr" if !wrote_wrap && !inline => {
                 // The schema puts a wrap element before docPr.
                 wrote_wrap = true;
                 out.push_str(&wrap_xml(&prefix, at));
