@@ -288,6 +288,27 @@ on `aboveAverage` rules; `export/conditional_formatting.rs` writes them
 Tests: `export/test/test_cf.rs` (`BelowAverage` with `equalAverage` and
 `stdDev="2"` read back).
 
+## 18. Columns at the default width keep it
+
+Why: a column IronCalc gives only a style (Format Cells on a whole column)
+was written `width="10" customWidth="0"`, IronCalc's marker for "the default
+width". Excel takes `width` as written whatever `customWidth` says, so the
+column showed 75 px (83 px in a 12 pt workbook) instead of the default
+64 px. A `<col>` read without a width (given 8.43 when the sheet names no
+default) came back 59 px.
+
+What: `export/worksheets.rs` writes such columns (not custom, width 10 or
+the width the reader gave a `<col>` without one) the sheet's default width,
+as Excel does (`<col min max width=<default> customWidth="0" style=N/>`):
+`<sheetFormatPr defaultColWidth>` when the file had one (read into the new
+`Worksheet::kantor_default_col_width`, vendor/ironcalc_base §32), else
+Excel's default for `baseColWidth` 8 in the "Normal" font (9.140625 for
+Calibri 11; `default_column_width`). `export/mod.rs` passes the font size.
+
+Tests: `tests/test_kantor_fidelity.rs`
+(`styled_columns_keep_the_default_width`,
+`styled_columns_take_the_sheets_default_column_width`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

@@ -201,11 +201,47 @@ fn get_array_formula_attribute(
     escape_xml(formula).to_string()
 }
 
+// KANTOR PATCH (column widths): IronCalc's width (characters) of a column
+// at the default width (`DEFAULT_COLUMN_WIDTH` / `COLUMN_WIDTH_FACTOR`).
+const IRONCALC_DEFAULT_WIDTH: f64 = 10.0;
+// The width the reader gives a `<col>` without one when the sheet names no
+// default (`get_default_column_width`).
+const READ_DEFAULT_WIDTH: f64 = 8.43;
+
+/// KANTOR PATCH (column widths): whether a non-custom column `width` stands
+/// for the sheet's default width.
+fn is_default_width(worksheet: &Worksheet, width: f64) -> bool {
+    width == IRONCALC_DEFAULT_WIDTH
+        || width == worksheet.kantor_default_col_width.unwrap_or(READ_DEFAULT_WIDTH)
+}
+
+/// KANTOR PATCH (column widths): the sheet's default column width as Excel
+/// writes it in `<col width>`: `<sheetFormatPr defaultColWidth>` if the file
+/// had one, else Excel's default for `baseColWidth` 8 in the workbook's
+/// default font: 8 digits plus 5 px of padding rounded up to a multiple of
+/// 8 px (64 px for Calibri 11), stored with the padding (9.140625).
+fn default_column_width(worksheet: &Worksheet, default_font_size: i32) -> f64 {
+    if let Some(w) = worksheet.kantor_default_col_width {
+        return w;
+    }
+    // Maximum digit width, px: 7 for 10 and 11 pt (Calibri, Arial).
+    let size = f64::from(default_font_size.max(1));
+    let d = if (10.0..=11.0).contains(&size) {
+        7.0
+    } else {
+        (size * 7.0 / 11.0).round().max(1.0)
+    };
+    let px = ((8.0 * d + 5.0) / 8.0).ceil() * 8.0;
+    let chars = ((px - 5.0) / d * 100.0 + 0.5).trunc() / 100.0;
+    ((chars * d + 5.0) / d * 256.0).trunc() / 256.0
+}
+
 pub(crate) fn get_worksheet_xml(
     worksheet: &Worksheet,
     parsed_formulas: &[(std::sync::Arc<Node>, StaticResult)],
     dimension: &str,
     is_sheet_selected: bool,
+    default_font_size: i32,
 ) -> String {
     // KANTOR PATCH (memory): the rows go straight into one string.
     let mut sheet_data = String::new();
@@ -216,7 +252,15 @@ pub(crate) fn get_worksheet_xml(
         // <col min="4" max="4" width="12" customWidth="1"/>
         let min = col.min;
         let max = col.max;
-        let width = col.width;
+        // KANTOR PATCH (column widths): a column at the default width (one
+        // IronCalc gave a style, or a `<col>` read without a width) is
+        // written the sheet's default width: Excel takes `width` as it
+        // is, so IronCalc's marker 10 showed as 75 px instead of 64.
+        let width = if col.custom_width || !is_default_width(worksheet, col.width) {
+            col.width
+        } else {
+            default_column_width(worksheet, default_font_size)
+        };
         let custom_width = i32::from(col.custom_width);
         let column_style = match col.style {
             Some(s) => format!(" style=\"{s}\""),

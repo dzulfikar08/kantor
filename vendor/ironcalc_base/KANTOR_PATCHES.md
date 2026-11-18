@@ -875,6 +875,16 @@ standard deviations (Apache POI's reading, checked against Excel), with `>=`
 Tests: `test/conditional_formatting/average.rs`
 (`test_equal_or_above_includes_the_average`, `test_standard_deviation_rules`).
 
+## 32. The sheet's default column width
+
+Why: the xlsx writer (vendor/ironcalc §18) writes columns that keep the
+default width the sheet's `<sheetFormatPr defaultColWidth>`.
+
+What: `types.rs` `Worksheet::kantor_default_col_width` (characters, `None`
+in a new sheet; `new_empty.rs`), filled by the reader.
+
+Tests: vendor/ironcalc `tests/test_kantor_fidelity.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

@@ -157,6 +157,8 @@ pub fn save_xlsx_to_writer<W: Write + Seek>(model: &Model, writer: W) -> Result<
                 &model.parsed_formulas[sheet_index],
                 sheet_dimension_str,
                 is_sheet_selected,
+                // KANTOR PATCH (column widths): the "Normal" style's font.
+                default_font_size(&workbook.styles),
             )
             .as_bytes(),
         )?;
@@ -177,4 +179,15 @@ pub fn save_to_icalc(model: &Model, file_name: &str) -> Result<(), XlsxError> {
     file.write_all(&s)?;
 
     Ok(())
+}
+
+/// KANTOR PATCH (column widths): the size of the "Normal" cell style's font
+/// (`cellXfs[0]`'s, `fonts[0]` in practically every file), 11 if none.
+fn default_font_size(styles: &ironcalc_base::types::Styles) -> i32 {
+    styles
+        .cell_xfs
+        .first()
+        .and_then(|xf| styles.fonts.get(xf.font_id as usize))
+        .or_else(|| styles.fonts.first())
+        .map_or(11, |f| f.sz)
 }
