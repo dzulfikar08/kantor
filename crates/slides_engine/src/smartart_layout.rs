@@ -1956,7 +1956,7 @@ pub use convert::{change_layout, layout_def};
 mod tree;
 pub use tree::{
     ASSISTANT_ORG, LABEL_LEVELS, ORG_ONLY, OrgLayout, RADIAL_CENTRE, RADIAL_KEEP, RADIAL_LEVELS,
-    TOP_ALONE, TOP_KEEP, org_layout, set_org_layout,
+    TOP_ALONE, TOP_KEEP, org_layout, org_layout_shown, set_org_layout,
 };
 
 #[cfg(test)]

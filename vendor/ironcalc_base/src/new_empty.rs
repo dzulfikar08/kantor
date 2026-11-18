@@ -58,6 +58,7 @@ impl<'a> Model<'a> {
             links: HashMap::new(),
             // KANTOR PATCH (row heights)
             default_row_height: None,
+            kantor_default_col_width: None,
             kantor_auto_filter: None,
         }
     }

@@ -241,6 +241,10 @@ pub struct Worksheet {
     // points, when the file gave one. Read only: the writer doesn't emit
     // `sheetFormatPr` (Kantor carries the original element on save).
     pub default_row_height: Option<f64>,
+    // KANTOR PATCH (column widths): `<sheetFormatPr defaultColWidth>` in
+    // characters, when the file gave one. The writer gives columns that keep
+    // the default width (a column with only a style) this width.
+    pub kantor_default_col_width: Option<f64>,
     /// KANTOR PATCH (tables): the sheet's `<autoFilter>` element as the file
     /// had it (Kantor reads and writes its filter state).
     pub kantor_auto_filter: Option<String>,

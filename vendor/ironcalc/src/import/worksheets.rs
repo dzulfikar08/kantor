@@ -278,6 +278,17 @@ fn get_default_column_width(ws: &XmlNode) -> f64 {
         .unwrap_or(EXCEL_DEFAULT_COLUMN_WIDTH)
 }
 
+// KANTOR PATCH (column widths): `<sheetFormatPr defaultColWidth>` in
+// characters, if the file gave one.
+fn get_kantor_default_col_width(ws: &XmlNode) -> Option<f64> {
+    ws.children()
+        .find(|n| n.has_tag_name("sheetFormatPr"))?
+        .attribute("defaultColWidth")?
+        .parse::<f64>()
+        .ok()
+        .filter(|w| w.is_finite() && *w >= 0.0)
+}
+
 // KANTOR PATCH (row heights): the sheet's default row height in points, from
 // `<sheetFormatPr defaultRowHeight="..."/>` (ECMA-376 Part 1, 18.3.1.81), if
 // it is there and positive.
@@ -1066,6 +1077,8 @@ pub(super) fn load_sheet<R: Read + std::io::Seek>(
         links,
         // KANTOR PATCH (row heights)
         default_row_height: get_default_row_height(ws),
+        // KANTOR PATCH (column widths)
+        kantor_default_col_width: get_kantor_default_col_width(ws),
         // KANTOR PATCH (tables)
         kantor_auto_filter,
     })

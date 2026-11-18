@@ -1116,6 +1116,15 @@ pub fn org_layout(data: &str, selected: &str) -> Option<OrgLayout> {
     t.nodes[t.node_of(selected)?].branch
 }
 
+/// How the Organization Chart item drawn by `selected` hangs its children:
+/// the layout set on it, else PowerPoint's initial one ([`org_layout`]
+/// tells them apart). The one PowerPoint's and Word's Layout menu marks.
+/// `None` when it isn't an Organization Chart's item.
+pub fn org_layout_shown(data: &str, selected: &str) -> Option<OrgLayout> {
+    let t = tree(data).ok().filter(|t| t.family == Family::OrgChart)?;
+    Some(t.org_layout(t.node_of(selected)?))
+}
+
 /// PowerPoint's *Layout* (Standard, Both, Left Hanging, Right Hanging) on
 /// the Organization Chart item drawn by `selected`: how its children hang
 /// under it, kept in its `hierRoot` presentation item's `hierBranch` (one
@@ -1459,9 +1468,12 @@ mod tests {
         let models: Vec<String> = (0..4).map(|i| format!("N{i}")).collect();
         let dr = relayout(&drawing(&models), &d, 10_000, 6_000).unwrap();
         assert_eq!(org_layout(&d, "N0"), None);
+        // The top item's initial layout: its children side by side.
+        assert_eq!(org_layout_shown(&d, "N0"), Some(OrgLayout::Standard));
         let set = |l: OrgLayout| {
             let (dr2, d2) = set_org_layout(&dr, &d, "N0", l, 10_000, 6_000).unwrap();
             assert_eq!(org_layout(&d2, "N0"), Some(l));
+            assert_eq!(org_layout_shown(&d2, "N0"), Some(l));
             (read(&dr2).0, d2)
         };
         // Left Hanging: a column left of the line down from near its

@@ -327,3 +327,99 @@ fn comments_with_an_absolute_rel_target_open() {
         ]
     );
 }
+
+/// `xl/worksheets/sheet1.xml` of `bytes`.
+fn sheet_xml(bytes: &[u8]) -> String {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/worksheets/sheet1.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    xml
+}
+
+#[test]
+fn styled_columns_keep_the_default_width() {
+    // A column given only a style: IronCalc's marker width (10) is written
+    // as Excel's default width for the default font (12 pt in a new
+    // workbook: 72 px, stored 9.00390625), not 10 (83 px in Excel).
+    let mut model = Model::new_empty("t", "en", "UTC", "en").unwrap();
+    let mut s = model.get_style_for_cell(0, 1, 3).unwrap();
+    s.fill.color = Color::Rgb("#FFEE00".to_string());
+    model.set_column_style(0, 3, &s).unwrap();
+    model.set_column_width(0, 5, 150.0).unwrap();
+    let bytes = save_xlsx_to_writer(&model, Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner();
+    let xml = sheet_xml(&bytes);
+    assert!(
+        xml.contains(r#"<col min="3" max="3" width="9.00390625" customWidth="0" style="#),
+        "{xml}"
+    );
+    // A custom width is kept as it is.
+    assert!(
+        xml.contains(r#"<col min="5" max="5" width="16.666666666666668" customWidth="1""#),
+        "{xml}"
+    );
+    // Read back: still the default width, and saved the same way again.
+    let loaded = round_trip(&model);
+    assert_eq!(loaded.get_column_width(0, 3).unwrap(), 90.0);
+    let again = save_xlsx_to_writer(&loaded, Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner();
+    assert!(
+        sheet_xml(&again).contains(r#"<col min="3" max="3" width="9.00390625" customWidth="0""#)
+    );
+
+    // A Calibri 11 workbook: 64 px, stored 9.140625, as Excel writes it.
+    let mut model = Model::new_empty("t", "en", "UTC", "en").unwrap();
+    model.workbook.styles.fonts[0].sz = 11;
+    model.set_column_style(0, 3, &s).unwrap();
+    let bytes = save_xlsx_to_writer(&model, Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner();
+    assert!(sheet_xml(&bytes).contains(r#"<col min="3" max="3" width="9.140625" customWidth="0""#));
+}
+
+#[test]
+fn styled_columns_take_the_sheets_default_column_width() {
+    // The sheet names its default width: a styled column without a width
+    // (or one IronCalc gives a style) is written that width.
+    let mut model = Model::new_empty("t", "en", "UTC", "en").unwrap();
+    model.set_user_input(0, 1, 1, "x".to_string()).unwrap();
+    let bytes = save_xlsx_to_writer(&model, Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner();
+    let bytes = patch_sheet_xml(
+        &bytes,
+        "<sheetData>",
+        r#"<sheetFormatPr baseColWidth="10" defaultColWidth="12.5" defaultRowHeight="15"/><cols><col min="2" max="2" style="0"/></cols><sheetData>"#,
+    );
+    let mut loaded = Model::from_workbook(
+        load_from_xlsx_bytes(&bytes, "t", "en", "UTC").unwrap(),
+        "en",
+    )
+    .unwrap();
+    assert_eq!(
+        loaded.workbook.worksheets[0].kantor_default_col_width,
+        Some(12.5)
+    );
+    let s = loaded.get_style_for_cell(0, 1, 4).unwrap();
+    loaded.set_column_style(0, 4, &s).unwrap();
+    let xml = sheet_xml(
+        &save_xlsx_to_writer(&loaded, Cursor::new(Vec::new()))
+            .unwrap()
+            .into_inner(),
+    );
+    assert!(
+        xml.contains(r#"<col min="2" max="2" width="12.5" customWidth="0""#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<col min="4" max="4" width="12.5" customWidth="0""#),
+        "{xml}"
+    );
+}

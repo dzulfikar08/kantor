@@ -338,7 +338,8 @@ pub fn add_assistant(doc: &Document, f: &Float, k: usize) -> Result<Parts, &'sta
 }
 
 /// Whether SmartArt shape `k` of `f` shows an Organization Chart's item
-/// (Word's *Layout* and *Add Assistant* apply), and the layout set on it.
+/// (Word's *Layout* and *Add Assistant* apply), and how it hangs its
+/// children (the layout set on it, else the initial one: the one marked).
 pub fn org_item(doc: &Document, f: &Float, k: usize) -> Option<Option<slides_engine::OrgLayout>> {
     let (sa, id) = laid_out(doc, f, Some(k)).ok()?;
     if slides_engine::smartart_layout::family(&sa.drawing_xml, &sa.data_xml)
@@ -346,7 +347,7 @@ pub fn org_item(doc: &Document, f: &Float, k: usize) -> Option<Option<slides_eng
     {
         return None;
     }
-    Some(slides_engine::smartart_layout::org_layout(
+    Some(slides_engine::smartart_layout::org_layout_shown(
         &sa.data_xml,
         &id?,
     ))

@@ -411,6 +411,8 @@ fn layout_menu(
     view: &WeakEntity<SlidesView>,
     current: Option<SmartArtFamily>,
 ) -> PopupMenu {
+    // Some thirty layouts: taller than a small window.
+    menu = menu.scrollable(true);
     for (cat, heading) in LAYOUT_NAMES {
         let mine: Vec<_> = slides_engine::smartart_layout::LAYOUTS
             .iter()

@@ -720,7 +720,9 @@ impl DocsView {
                 .xsmall()
                 .icon(Lucide::Shapes)
                 .tooltip(t("Change Layout"))
-                .dropdown_menu(move |mut menu, _, _| {
+                .dropdown_menu(move |menu, _, _| {
+                    // Some thirty layouts: taller than a small window.
+                    let mut menu = menu.scrollable(true);
                     let cats = [
                         ("list", tk("List")),
                         ("process", tk("Process")),

@@ -3101,6 +3101,11 @@ impl Render for SheetsView {
                             }))
                             .on_key_down(cx.listener(Self::on_grid_key))
                             .relative()
+                            // Before the table: its body takes wheel events
+                            // in the capture phase (gpui-kit's scroll
+                            // bounce), so a layer painted after it never
+                            // sees them.
+                            .child(self.render_wheel_zoom(cx))
                             .child(
                                 DataTable::new(&self.table)
                                     .bordered(false)
@@ -3108,8 +3113,7 @@ impl Render for SheetsView {
                                     .header_row_height(look::row_height() * zoom),
                             )
                             .children(self.render_break_preview(cx))
-                            .child(self.render_drawings(cx))
-                            .child(self.render_wheel_zoom(cx)),
+                            .child(self.render_drawings(cx)),
                         )
                         .children(panel)
                         .children(table_panel)

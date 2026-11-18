@@ -1443,8 +1443,9 @@ impl Presentation {
         self.smartart_family(r) == Some(Family::OrgChart) && self.smartart_item_of(r).is_some()
     }
 
-    /// The hanging layout set on the Organization Chart item SmartArt shape
-    /// `r` shows (`None`: PowerPoint's initial layout).
+    /// How the Organization Chart item SmartArt shape `r` shows hangs its
+    /// children: the layout set on it, else PowerPoint's initial one (the
+    /// one the Layout menu marks). `None` when it isn't such an item.
     pub fn smartart_org_layout(&self, r: impl Into<ShapeRef>) -> Option<OrgLayout> {
         let (f, id) = self.smartart_item_of(r.into())?;
         let (d, dd) = diagram_of(self.shape(f)?)?;
@@ -1453,7 +1454,7 @@ impl Presentation {
             Some(x) => x,
             None => String::from_utf8(self.part_bytes(d.data.as_deref()?)?.to_vec()).ok()?,
         };
-        crate::smartart_layout::org_layout(&data, &id)
+        crate::smartart_layout::org_layout_shown(&data, &id)
     }
 
     /// PowerPoint's *Layout* on an Organization Chart shape `r`: how the
