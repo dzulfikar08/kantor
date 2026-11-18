@@ -1667,7 +1667,8 @@ mod tests {
         let p = Painter::new(&doc);
         let k = 1.0 / EMU_PER_PX;
         let prims = p.smartart_prims(&xml, [0.0, 0.0, 300.0, 50.0], (k, k));
-        let pics: Vec<(&str, Option<&Vec<Seg>>, [f32; 4])> = prims
+        type Pic<'a> = (&'a str, Option<&'a Vec<Seg>>, [f32; 4]);
+        let pics: Vec<Pic> = prims
             .iter()
             .filter_map(|p| match p {
                 FloatPrim::Picture {

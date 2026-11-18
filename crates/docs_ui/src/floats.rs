@@ -1658,6 +1658,10 @@ pub(crate) fn paint_floats(
                                 false,
                             );
                         }
+                        // A picture cut to a shape that isn't found (a
+                        // SmartArt's picture fill, kept in its own part)
+                        // shows nothing; other pictures show a box.
+                        None if shape.is_some() => {}
                         None => {
                             window.paint_quad(fill(rect(*clip), f.t.paper_selection.opacity(0.35)))
                         }

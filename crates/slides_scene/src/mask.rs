@@ -69,7 +69,7 @@ fn span(line: &mut [f32], x0: f32, x1: f32) {
 /// pixels): each pixel's alpha times the path's coverage.
 pub fn cut_to(pixels: &mut [u8], (w, h): (u32, u32), path: &Path) {
     let cover = coverage(path, (w, h));
-    for (px, c) in pixels.chunks_exact_mut(4).zip(cover) {
+    for (px, c) in pixels.as_chunks_mut::<4>().0.iter_mut().zip(cover) {
         if c < 255 {
             px[3] = ((px[3] as u16 * c as u16 + 127) / 255) as u8;
         }
