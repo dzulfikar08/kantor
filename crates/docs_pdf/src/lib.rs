@@ -256,10 +256,12 @@ fn add_page(
                 pdf_picture_data(bytes)
             });
         if let Some((format, bytes)) = found {
-            let [x, y, w, h] = o.rect;
+            let [x, y, w, h] = o.whole;
+            let [cx, cy, cw, ch] = o.rect;
             out.pictures.push(Picture {
                 rect: [x + dx, y + dy, w, h],
-                clip: None,
+                // Cut at an exact line's top.
+                clip: (o.whole != o.rect).then_some([cx + dx, cy + dy, cw, ch]),
                 shape: None,
                 turn: 0.0,
                 flip: (false, false),

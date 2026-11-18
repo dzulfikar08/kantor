@@ -218,8 +218,10 @@ impl Laid {
         let mut out = Vec::new();
         for p in pieces.iter().filter(|p| p.page == page) {
             for mut o in p.paged().objects(0) {
-                o.rect[0] += p.x;
-                o.rect[1] += p.y;
+                for r in [&mut o.rect, &mut o.whole] {
+                    r[0] += p.x;
+                    r[1] += p.y;
+                }
                 out.push(o);
             }
         }
