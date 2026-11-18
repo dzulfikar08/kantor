@@ -3,14 +3,22 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui::{
-    App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
-    SharedString, Stateful, Styled as _, Window, div,
+    AnyElement, App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _,
+    Pixels, SharedString, Stateful, Styled as _, Window, div,
 };
 
 use crate::row_heights::RowHeights;
 
 use super::{Column, ColumnGroup, ColumnSort, TableState, loading::Loading};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Size, h_flex, menu::PopupMenu};
+
+/// A body cell from [`TableDelegate::render_body_td`].
+// Not boxed, as `RowItem`: an allocation per cell and frame.
+#[allow(clippy::large_enum_variant)]
+pub enum BodyTd {
+    Plain(crate::plain_cell::PlainCell),
+    Element(AnyElement),
+}
 
 /// A delegate trait for providing data and rendering for a table.
 #[allow(unused)]
@@ -178,6 +186,27 @@ pub trait TableDelegate: Sized + 'static {
     }
 
     /// Render cell at the given row and column.
+    /// The grid's handling of presses and moves on plain cells
+    /// ([`BodyTd::Plain`], which have no element of their own to listen).
+    fn cell_mouse(&self) -> Option<crate::plain_cell::CellMouseHandler> {
+        None
+    }
+
+    /// A body cell as [`BodyTd::Plain`] when it is a plain one (drawn by
+    /// its row, see [`crate::plain_cell`]); by default `render_td`.
+    fn render_body_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> BodyTd {
+        BodyTd::Element(
+            self.render_td(row_ix, col_ix, window, cx)
+                .into_any_element(),
+        )
+    }
+
     fn render_td(
         &mut self,
         row_ix: usize,

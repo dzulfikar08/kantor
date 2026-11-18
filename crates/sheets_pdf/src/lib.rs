@@ -568,6 +568,7 @@ pub struct PageContent {
     /// Data bars and icons, under the text.
     pub bars: Vec<Bar>,
     pub icons: Vec<Icon>,
+    pub sparklines: Vec<Spark>,
     pub texts: Vec<CellText>,
     /// Gridlines and borders, over the text.
     pub lines: Vec<Line>,
@@ -614,6 +615,15 @@ pub struct Line {
 pub enum LineKind {
     Grid,
     Border(sheets_engine::LineStyle),
+}
+
+#[derive(Debug, Clone)]
+pub struct Spark {
+    /// The cell.
+    pub rect: [f32; 4],
+    pub spark: std::sync::Arc<sheets_engine::Sparkline>,
+    /// Printed in black (Page Setup's black and white).
+    pub black: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

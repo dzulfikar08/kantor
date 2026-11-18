@@ -22,6 +22,7 @@ use gpui_kit::component::{
 
 use super::row_list::{row_list, scroll_target};
 use super::*;
+use crate::plain_cell::{CellHandlers, RowCells, RowItem};
 use crate::row_heights::RowHeights;
 
 /// Grab room on each side of a resize handle's hairline, so the divider can be
@@ -281,6 +282,11 @@ pub struct TableState<D: TableDelegate> {
     selection_mode: SelectionMode,
     right_clicked_row: Option<usize>,
     right_clicked_cell: Option<(usize, usize)>,
+    /// The press of a click in progress on a body cell ([`crate::plain_cell`]).
+    pending_click: crate::plain_cell::PendingClick,
+    /// The scrolling columns' widths and origins, for [`RowCells`], with
+    /// the sizes they were made from.
+    col_layout: Option<(ColSizes, (Rc<Vec<Pixels>>, Rc<Vec<Pixels>>))>,
     /// KANTOR PATCH (cell menu): the cell whose menu opens (the menu is
     /// built after the right click's selection has cleared
     /// `right_clicked_cell`).
@@ -329,6 +335,8 @@ where
             selected_row: None,
             right_clicked_row: None,
             right_clicked_cell: None,
+            pending_click: Default::default(),
+            col_layout: None,
             menu_cell: None,
             selected_col: None,
             selected_cell: None,
@@ -1846,6 +1854,186 @@ where
             .when_some(label, |this, label| this.aria_label(label))
     }
 
+    /// The widths and origins of the columns in `col_sizes`, made once per
+    /// set of sizes.
+    fn col_layout(&mut self, col_sizes: &ColSizes) -> (Rc<Vec<Pixels>>, Rc<Vec<Pixels>>) {
+        if let Some((sizes, layout)) = &self.col_layout
+            && (Rc::ptr_eq(sizes, col_sizes) || sizes == col_sizes)
+        {
+            return layout.clone();
+        }
+        let widths: Vec<Pixels> = col_sizes.iter().map(|s| s.width).collect();
+        let mut x = px(0.);
+        let origins = widths
+            .iter()
+            .map(|w| {
+                let o = x;
+                x += *w;
+                o
+            })
+            .collect();
+        let layout = (Rc::new(widths), Rc::new(origins));
+        self.col_layout = Some((col_sizes.clone(), layout.clone()));
+        layout
+    }
+
+    /// What the table does with presses on its body cells; `stop_click`
+    /// stops a click from reaching the row.
+    fn cell_handlers(&self, stop_click: bool, cx: &mut Context<Self>) -> CellHandlers {
+        let view = cx.entity().downgrade();
+        let click_view = view.clone();
+        CellHandlers {
+            mouse: self.delegate.cell_mouse(),
+            pending: self.pending_click.clone(),
+            click: Rc::new(move |e, (row_ix, col_ix), window, cx| {
+                let _ = click_view.update(cx, |table, cx| {
+                    if stop_click {
+                        cx.stop_propagation();
+                    }
+                    table.on_cell_click(e, row_ix, col_ix, window, cx);
+                });
+            }),
+            right_down: Rc::new(move |e, (row_ix, col_ix), window, cx| {
+                let _ = view.update(cx, |table, cx| {
+                    table.on_cell_right_click(e, row_ix, col_ix, window, cx);
+                });
+            }),
+        }
+    }
+
+    /// One body cell of row `row_ix`: the delegate's plain cell as is when
+    /// it has one ([`TableDelegate::render_body_td`]), otherwise its
+    /// `render_td` in the table's cell box.
+    fn body_item(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        handlers: &CellHandlers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> RowItem {
+        let is_cell_selected = self.selected_cell() == Some((row_ix, col_ix));
+        let is_cell_right_clicked = self.right_clicked_cell == Some((row_ix, col_ix));
+        let measure = super::measure_enable();
+        let start = measure.then(std::time::Instant::now);
+        let td = self.delegate.render_body_td(row_ix, col_ix, window, cx);
+        if let Some(start) = start {
+            self._measure.push(start.elapsed());
+        }
+        let selectable = self.col_selectable
+            && self
+                .col_groups
+                .get(col_ix)
+                .is_some_and(|col_group| col_group.column.selectable);
+        let td = match td {
+            BodyTd::Plain(cell)
+                if self.cell_selectable
+                    && !is_cell_selected
+                    && !is_cell_right_clicked
+                    && !(selectable && self.selected_col() == Some(col_ix))
+                    && !window.is_a11y_active() =>
+            {
+                return RowItem::Plain(cell);
+            }
+            BodyTd::Plain(cell) => {
+                let width = self.col_groups.get(col_ix).map(|g| g.width);
+                cell.element(width, handlers.clone(), (row_ix, col_ix))
+                    .into_any_element()
+            }
+            BodyTd::Element(el) => el,
+        };
+        let id: gpui::ElementId = ("table-cell", cell_key(row_ix, col_ix)).into();
+        let cell = self
+            .a11y_cell(
+                self.render_cell(Some(row_ix), col_ix, window, cx)
+                    .id(id)
+                    .test_support(),
+                row_ix,
+                col_ix,
+                window,
+                cx,
+            )
+            .relative()
+            .child(td)
+            .when(is_cell_selected, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .bg(cx.theme().tokens.table_active),
+                )
+            })
+            .when(is_cell_right_clicked && !is_cell_selected, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .border_1()
+                        .border_color(cx.theme().table_active_border.opacity(0.5)),
+                )
+            })
+            .when(self.cell_selectable, |this| {
+                // A click as a div's `on_click` reports it, but with the
+                // press kept where plain cells keep theirs: a press that
+                // selects a plain cell makes it this box.
+                let (down, up) = (handlers.clone(), handlers.clone());
+                let key = (row_ix, col_ix);
+                this.on_mouse_down(MouseButton::Left, move |e, _, _| {
+                    *down.pending.borrow_mut() = Some((key, e.clone()));
+                })
+                .on_mouse_up(MouseButton::Left, move |e, window, cx| {
+                    up.release(key, e, window, cx);
+                })
+                .on_mouse_down(MouseButton::Right, {
+                    let handlers = handlers.clone();
+                    move |e, window, cx| (handlers.right_down)(e, key, window, cx)
+                })
+            });
+        RowItem::Element(Self::wrap_col(cell, self, col_ix, window, cx))
+    }
+
+    /// A body cell as an element (the frozen columns are not a [`RowCells`]).
+    fn body_cell(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        handlers: &CellHandlers,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        match self.body_item(row_ix, col_ix, handlers, window, cx) {
+            RowItem::Plain(cell) => {
+                let width = self.col_groups.get(col_ix).map(|g| g.width);
+                cell.element(width, handlers.clone(), (row_ix, col_ix))
+                    .into_any_element()
+            }
+            RowItem::Element(el) => el,
+        }
+    }
+
+    /// A body cell, in [`Self::render_col_wrap`]'s box only when that box
+    /// shows something (a selected column): one layout node less per cell.
+    fn wrap_col(
+        cell: impl IntoElement,
+        this: &Self,
+        col_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let selectable = this.col_selectable
+            && this
+                .col_groups
+                .get(col_ix)
+                .is_some_and(|col_group| col_group.column.selectable);
+        if selectable && this.selected_col() == Some(col_ix) {
+            this.render_col_wrap(None, col_ix, window, cx)
+                .child(cell)
+                .into_any_element()
+        } else {
+            cell.into_any_element()
+        }
+    }
+
     /// Show Column selection style, when the column is selected and the selection state is Column.
     /// Note: When a cell is selected, column selection style is not shown.
     fn render_col_wrap(
@@ -2558,77 +2746,10 @@ where
                             .children({
                                 let mut items = Vec::with_capacity(left_columns_count);
 
+                                let handlers = self.cell_handlers(false, cx);
                                 (0..left_columns_count).for_each(|col_ix| {
-                                    let is_cell_selected =
-                                        self.selected_cell() == Some((row_ix, col_ix));
-                                    let is_cell_right_clicked =
-                                        self.right_clicked_cell == Some((row_ix, col_ix));
-
                                     items.push(
-                                        self.render_col_wrap(Some(row_ix), col_ix, window, cx)
-                                            .child(
-                                                self.a11y_cell(
-                                                    self.render_cell(
-                                                        Some(row_ix),
-                                                        col_ix,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                    .id(format!("table-cell:{}:{}", row_ix, col_ix))
-                                                    .test_support(),
-                                                    row_ix,
-                                                    col_ix,
-                                                    window,
-                                                    cx,
-                                                )
-                                                .relative()
-                                                .child(
-                                                    self.measure_render_td(
-                                                        row_ix, col_ix, window, cx,
-                                                    ),
-                                                )
-                                                .when(is_cell_selected, |this| {
-                                                    this.child(
-                                                        div()
-                                                            .absolute()
-                                                            .inset_0()
-                                                            .bg(cx.theme().tokens.table_active),
-                                                    )
-                                                })
-                                                .when(
-                                                    is_cell_right_clicked && !is_cell_selected,
-                                                    |this| {
-                                                        this.child(
-                                                            div()
-                                                                .absolute()
-                                                                .inset_0()
-                                                                .border_1()
-                                                                .border_color(
-                                                                    cx.theme()
-                                                                        .table_active_border
-                                                                        .opacity(0.5),
-                                                                ),
-                                                        )
-                                                    },
-                                                )
-                                                .when(self.cell_selectable, |this| {
-                                                    this.on_click(cx.listener(
-                                                        move |table, e, window, cx| {
-                                                            table.on_cell_click(
-                                                                e, row_ix, col_ix, window, cx,
-                                                            );
-                                                        },
-                                                    ))
-                                                    .on_mouse_down(
-                                                        MouseButton::Right,
-                                                        cx.listener(move |table, e, window, cx| {
-                                                            table.on_cell_right_click(
-                                                                e, row_ix, col_ix, window, cx,
-                                                            );
-                                                        }),
-                                                    )
-                                                }),
-                                            ),
+                                        self.body_cell(row_ix, col_ix, &handlers, window, cx),
                                     );
                                 });
 
@@ -2643,108 +2764,40 @@ where
                         .h_full()
                         .overflow_hidden()
                         .relative()
-                        .child(
-                            gpui_kit::base::h_virtual_list(view, row_ix, col_sizes, {
-                                move |table, visible_range: Range<usize>, window, cx| {
-                                    table.update_visible_range_if_need(
-                                        visible_range.clone(),
-                                        columns_count.saturating_sub(left_columns_count),
-                                        Axis::Horizontal,
-                                        window,
-                                        cx,
-                                    );
-
-                                    let mut items =
-                                        Vec::with_capacity(visible_range.end - visible_range.start);
-
-                                    visible_range.for_each(|col_ix| {
-                                        let col_ix = col_ix + left_columns_count;
-                                        let is_cell_selected =
-                                            table.selected_cell() == Some((row_ix, col_ix));
-                                        let is_cell_right_clicked =
-                                            table.right_clicked_cell == Some((row_ix, col_ix));
-
-                                        let el = table
-                                            .render_col_wrap(Some(row_ix), col_ix, window, cx)
-                                            .child(
-                                                table
-                                                    .a11y_cell(
-                                                        table
-                                                            .render_cell(
-                                                                Some(row_ix),
-                                                                col_ix,
-                                                                window,
-                                                                cx,
-                                                            )
-                                                            .id(format!(
-                                                                "table-cell-{}:{}",
-                                                                row_ix, col_ix
-                                                            ))
-                                                            .test_support(),
-                                                        row_ix,
-                                                        col_ix,
-                                                        window,
-                                                        cx,
-                                                    )
-                                                    .relative()
-                                                    .child(table.measure_render_td(
-                                                        row_ix, col_ix, window, cx,
-                                                    ))
-                                                    .when(is_cell_selected, |this| {
-                                                        this.child(
-                                                            div()
-                                                                .absolute()
-                                                                .inset_0()
-                                                                .bg(cx.theme().tokens.table_active),
-                                                        )
-                                                    })
-                                                    .when(
-                                                        is_cell_right_clicked && !is_cell_selected,
-                                                        |this| {
-                                                            this.child(
-                                                                div()
-                                                                    .absolute()
-                                                                    .inset_0()
-                                                                    .border_1()
-                                                                    .border_color(
-                                                                        cx.theme()
-                                                                            .table_active_border
-                                                                            .opacity(0.5),
-                                                                    ),
-                                                            )
-                                                        },
-                                                    )
-                                                    .when(table.cell_selectable, |this| {
-                                                        this.on_click(cx.listener(
-                                                            move |table, e, window, cx| {
-                                                                cx.stop_propagation();
-                                                                table.on_cell_click(
-                                                                    e, row_ix, col_ix, window, cx,
-                                                                );
-                                                            },
-                                                        ))
-                                                        .on_mouse_down(
-                                                            MouseButton::Right,
-                                                            cx.listener(
-                                                                move |table, e, window, cx| {
-                                                                    table.on_cell_right_click(
-                                                                        e, row_ix, col_ix, window,
-                                                                        cx,
-                                                                    );
-                                                                },
-                                                            ),
-                                                        )
-                                                    }),
-                                            );
-
-                                        items.push(el);
-                                    });
-
-                                    items
-                                }
-                            })
-                            .with_scroll_handle(&self.horizontal_scroll_handle),
-                        )
+                        .child({
+                            let handlers = self.cell_handlers(true, cx);
+                            let scroll = self.horizontal_scroll_handle.base_handle().clone();
+                            let item_handlers = handlers.clone();
+                            RowCells::new(
+                                row_ix,
+                                self.col_layout(&col_sizes),
+                                left_columns_count,
+                                scroll,
+                                handlers,
+                                move |shown: Range<usize>, reported: Range<usize>, window, cx| {
+                                    view.update(cx, |table, cx| {
+                                        table.update_visible_range_if_need(
+                                            reported,
+                                            columns_count.saturating_sub(left_columns_count),
+                                            Axis::Horizontal,
+                                            window,
+                                            cx,
+                                        );
+                                        shown
+                                            .map(|col_ix| {
+                                                table.body_item(
+                                                    row_ix,
+                                                    col_ix + left_columns_count,
+                                                    &item_handlers,
+                                                    window,
+                                                    cx,
+                                                )
+                                            })
+                                            .collect()
+                                    })
+                                },
+                            )
+                        })
                         .child(self.delegate.render_last_empty_col(window, cx)),
                 )
                 // Row selected style
@@ -2830,27 +2883,6 @@ where
         }
 
         extra_rows_needed
-    }
-
-    #[inline]
-    fn measure_render_td(
-        &mut self,
-        row_ix: usize,
-        col_ix: usize,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        if !super::measure_enable() {
-            return self
-                .delegate
-                .render_td(row_ix, col_ix, window, cx)
-                .into_any_element();
-        }
-
-        let start = std::time::Instant::now();
-        let el = self.delegate.render_td(row_ix, col_ix, window, cx);
-        self._measure.push(start.elapsed());
-        el.into_any_element()
     }
 
     fn measure(&mut self, _window: &mut Window, _cx: &mut Context<Self>) {
@@ -3143,8 +3175,13 @@ where
                 }
             });
 
+        // A release that wasn't a cell's click ends the press there.
+        let pending = self.pending_click.clone();
         div()
             .size_full()
+            .on_mouse_up(MouseButton::Left, move |_, _, _| {
+                pending.borrow_mut().take();
+            })
             .children(loading_view)
             .when(!loading, |this| {
                 this.child(inner_table)
@@ -3211,3 +3248,10 @@ mod pinned_tests {
         assert_eq!(pinned_cap(0.0), 0.0);
     }
 }
+
+/// A body cell's element id: row and column in one number.
+fn cell_key(row_ix: usize, col_ix: usize) -> usize {
+    (row_ix << 16) | (col_ix & 0xFFFF)
+}
+
+type ColSizes = Rc<Vec<gpui::Size<Pixels>>>;

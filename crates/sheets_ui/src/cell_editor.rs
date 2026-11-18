@@ -122,12 +122,17 @@ impl CellEditor {
         refs: Vec<(Range<usize>, Hsla)>,
         frozen: (bool, bool),
         zoom: f32,
+        font: EditorFont,
         cx: &App,
     ) -> impl IntoElement + use<> {
         let t = tokens(cx);
         let view = self.view.clone();
         let editor = div()
             .key_context(EDITOR_CONTEXT)
+            // The cell's font, as Excel edits in the cell.
+            .when_some(font.family.clone(), |d, f| d.font_family(f))
+            .when(font.bold, |d| d.font_weight(FontWeight::BOLD))
+            .when(font.italic, |d| d.italic())
             .size_full()
             .flex()
             .items_center()
@@ -155,7 +160,12 @@ impl CellEditor {
                             // Text starts where the cell's own text does, at
                             // the size the sheet's zoom gives it.
                             .px((SPACE_3 * zoom - CELL_OUTLINE).max(px(0.)))
-                            .text_size(FONT_BODY * zoom)
+                            .text_size(font.size)
+                            // Lines as tall as the cell's own (a big font
+                            // isn't cut off by the small input's height).
+                            .line_height(relative(crate::look::LINE_HEIGHT))
+                            .h_full()
+                            .py_0()
                             .w_full()
                             .text_color(refs_text_color(&refs, t.fg)),
                     )
@@ -166,10 +176,22 @@ impl CellEditor {
             rows: self.rows.clone(),
             cols: self.cols.clone(),
             frozen,
-            font_size: FONT_BODY * zoom,
+            font_size: font.size,
+            family: font.family,
+            bold: font.bold,
+            italic: font.italic,
             child: Some(editor.into_any_element()),
         }
     }
+}
+
+/// The edited cell's font: its size at the sheet's zoom (as the cell draws
+/// it), family (`None`: the UI font), bold and italic.
+pub(crate) struct EditorFont {
+    pub size: Pixels,
+    pub family: Option<SharedString>,
+    pub bold: bool,
+    pub italic: bool,
 }
 
 /// Fills the cell for layout, then draws its child deferred at the cell's
@@ -180,8 +202,11 @@ struct Overlay {
     cols: VirtualListScrollHandle,
     /// Whether the cell is in the frozen rows / frozen columns.
     frozen: (bool, bool),
-    /// The input's text size (the cell's at the sheet's zoom).
+    /// The input's text size (the cell's at the sheet's zoom) and font.
     font_size: Pixels,
+    family: Option<SharedString>,
+    bold: bool,
+    italic: bool,
     child: Option<AnyElement>,
 }
 
@@ -254,7 +279,16 @@ impl Element for Overlay {
         let text_width = if text.is_empty() {
             px(0.)
         } else {
-            let style = window.text_style();
+            let mut style = window.text_style();
+            if let Some(f) = &self.family {
+                style.font_family = f.clone();
+            }
+            if self.bold {
+                style.font_weight = FontWeight::BOLD;
+            }
+            if self.italic {
+                style.font_style = FontStyle::Italic;
+            }
             let run = style.to_run(text.len());
             window
                 .text_system()

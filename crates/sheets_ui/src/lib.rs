@@ -105,10 +105,11 @@ use gpui_kit::*;
 use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::{CellRange, CellStyle, StyleChange, Tab, Workbook, cell_name, column_name};
-use table::{Column, DataTable, TableDelegate, TableEvent, TableState};
+use table::{BodyTd, Column, DataTable, TableDelegate, TableEvent, TableState};
 
 mod notes_ui;
 mod overflow;
+mod plain_cell;
 pub use notes_ui::NoteCommand;
 pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
@@ -801,6 +802,41 @@ impl TableDelegate for SheetGrid {
         window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        match self.render_body_td(row_ix, col_ix, window, cx) {
+            BodyTd::Plain(cell) => cell.into_any_element(),
+            BodyTd::Element(el) => el,
+        }
+    }
+
+    fn cell_mouse(&self) -> Option<plain_cell::CellMouseHandler> {
+        let view = self.view.clone();
+        Some(Rc::new(move |(row_ix, col_ix), e, window, cx| {
+            let Some(col) = (col_ix as u32).checked_sub(1) else {
+                return;
+            };
+            let row = row_ix as u32;
+            match e {
+                plain_cell::CellMouse::Down(e) => {
+                    let _ = view.update(cx, |view, cx| {
+                        view.cell_mouse_down(row, col, e.modifiers.shift, window, cx)
+                    });
+                }
+                plain_cell::CellMouse::Move(e) => {
+                    if e.pressed_button == Some(MouseButton::Left) {
+                        let _ = view.update(cx, |view, cx| view.cell_drag(row, col, window, cx));
+                    }
+                }
+            }
+        }))
+    }
+
+    fn render_body_td(
+        &mut self,
+        row_ix: usize,
+        col_ix: usize,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> BodyTd {
         let _timer = kantor_ui::perf::frame_timer("sheets cells", window);
         let t = tokens(cx);
         let Selection { range, active } = self.selection();
@@ -871,7 +907,9 @@ impl TableDelegate for SheetGrid {
                 .when(hidden_above, |d| d.child(hidden_marker(true, false, &t)))
                 // Drag the bottom edge to resize, double-click to fit.
                 .children(row_layout::resize_handles(row, &self.view));
-            return grid_ops::header_element(gutter, Header::Row(row), &self.view);
+            return BodyTd::Element(
+                grid_ops::header_element(gutter, Header::Row(row), &self.view).into_any_element(),
+            );
         }
         let (row, col) = (row_ix as u32, col_ix as u32 - 1);
         let sheet = self.sheet;
@@ -996,6 +1034,72 @@ impl TableDelegate for SheetGrid {
             .is_none_or(|c| c.style.is_none())
             .then(|| self.book.fill_pattern(sheet, vr, vc))
             .flatten();
+        let (break_above, break_left) = self.page_breaks(row, col);
+        // Data bars and icons (not drawn across merged cells).
+        let cond_layers = match cond.as_ref().filter(|_| look.merge.is_none()) {
+            Some(c) => cond_paint::layers(c, self.zoom()),
+            None => Vec::new(),
+        };
+        let validation = self.validation_layers(row, col, row_height, cx);
+        // A sparkline (a merged cell's fills the merged block).
+        let sparkline = self.book.sparkline(sheet, vr, vc);
+        let note_edited = self.note_editing == Some((sheet, row, col));
+        let has_note = self.book.note_at(sheet, row, col).is_some();
+        let editing_here = self
+            .editor
+            .as_ref()
+            .is_some_and(|e| e.cell == (row, col) && e.sheet == self.sheet);
+        // The in-cell editor writes in the cell's font, at the size the cell
+        // shows it (the sheet's zoom, capped to the row as the cell's text).
+        let editor_font = editing_here.then(|| {
+            let own = &look.style;
+            cell_editor::EditorFont {
+                size: look::text_size(
+                    own,
+                    self.book.default_font_size(),
+                    FONT_BODY * self.zoom(),
+                    geometry.map_or(row_height, |g| g.3),
+                ),
+                family: self.fonts.for_style(own, cx),
+                bold: own.bold,
+                italic: own.italic,
+            }
+        });
+        let frozen_rows = self.book.frozen(self.sheet).0;
+        // Most cells have nothing but a fill, gridlines and one line of
+        // text: one element draws those ([`plain_cell`]).
+        let plain = pattern.is_none()
+            && filter_button.is_none()
+            && geometry.is_none()
+            && spans.is_empty()
+            && picture.is_none()
+            && look.right.is_none()
+            && look.bottom.is_none()
+            && look.top.is_none()
+            && look.left.is_none()
+            && !break_above
+            && !break_left
+            && cond_layers.is_empty()
+            && sparkline.is_none()
+            && validation.is_empty()
+            && !has_note
+            && !note_edited
+            && !editing_here
+            && !range.contains(row, col)
+            && !active.contains(row, col)
+            && self.fill_preview.is_none_or(|p| !p.contains(row, col))
+            && !self.ref_marks.iter().any(|(r, _)| r.contains(row, col))
+            && !(frozen_rows > 0 && row + 1 == frozen_rows);
+        let fill = style.fill.map(look::hsla);
+        if plain && let Some(text) = content.plain() {
+            let r = BodyTd::Plain(plain_cell::PlainCell::new(
+                text,
+                fill,
+                (look.grid_right, look.grid_bottom),
+                t.grid_line,
+            ));
+            return r;
+        }
         let cell = div().size_full().relative();
         let cell = match &pattern {
             Some(p) => cell
@@ -1018,14 +1122,23 @@ impl TableDelegate for SheetGrid {
         };
         let cell = look::gridlines(cell, &look, &t);
         // Manual page breaks: a dashed line along the cell's top or left.
-        let (break_above, break_left) = self.page_breaks(row, col);
         let cell = cell
             .when(break_above, |d| d.child(page_break_line(false, t.fg_muted)))
             .when(break_left, |d| d.child(page_break_line(true, t.fg_muted)));
-        // Data bars and icons (not drawn across merged cells).
-        let cell = match cond.as_ref().filter(|_| look.merge.is_none()) {
-            Some(c) => cell.children(cond_paint::layers(c, self.zoom())),
-            None => cell,
+        let cell = cell.children(cond_layers);
+        // Under the text, as in Excel.
+        let cell = match (sparkline, geometry) {
+            (Some(spark), Some((x, y, w, h))) => cell.child(
+                div()
+                    .absolute()
+                    .left(-x)
+                    .top(-y)
+                    .w(w)
+                    .h(h)
+                    .child(cond_paint::sparkline_layer(spark, self.zoom())),
+            ),
+            (Some(spark), None) => cell.child(cond_paint::sparkline_layer(spark, self.zoom())),
+            (None, _) => cell,
         };
         let cell = match geometry {
             // The whole merged block, shifted so this cell shows its slice.
@@ -1073,10 +1186,8 @@ impl TableDelegate for SheetGrid {
             }
             None => cell,
         };
-        let validation = self.validation_layers(row, col, row_height, cx);
         // A note: its corner mark and hover target (the drawing layer draws
         // its box while the pointer is over the cell or when it is shown).
-        let note_edited = self.note_editing == Some((sheet, row, col));
         let mut note_layers = self
             .book
             .note_at(sheet, row, col)
@@ -1110,8 +1221,8 @@ impl TableDelegate for SheetGrid {
         // A selected merged cell counts as one cell.
         let single = range == active;
         let fill_view = self.view.clone();
-        let frozen_rows = self.book.frozen(self.sheet).0;
-        cell.children(look::borders(&look, &t))
+        let cell = cell
+            .children(look::borders(&look, &t))
             .when(!single && range.contains(row, col), |d| {
                 d.child(
                     div()
@@ -1208,15 +1319,22 @@ impl TableDelegate for SheetGrid {
                     .filter(|e| e.cell == (row, col) && e.sheet == self.sheet),
                 |d, editor| {
                     let (fr, fc) = self.book.frozen(self.sheet);
+                    let editor_font = editor_font.unwrap_or(cell_editor::EditorFont {
+                        size: FONT_BODY * self.zoom(),
+                        family: None,
+                        bold: false,
+                        italic: false,
+                    });
                     d.child(editor.render(
                         self.ref_span_colors(&t),
                         (row < fr, col < fc),
                         self.zoom(),
+                        editor_font,
                         cx,
                     ))
                 },
-            )
-            .into_any_element()
+            );
+        BodyTd::Element(cell.into_any_element())
     }
 
     fn cell_label(&self, row_ix: usize, col_ix: usize, _: &App) -> Option<SharedString> {
@@ -3159,6 +3277,7 @@ impl Render for SheetsView {
             .children(self.render_timeline_menu(cx))
             .children(self.render_insert_timeline(cx))
             .children(self.render_timeline_settings(cx))
+            .children(self.bench_probe())
             .into_any_element()
     }
 }

@@ -210,3 +210,63 @@ pub(crate) fn pattern_layer(pattern: sheets_engine::FillPattern, unit: f32) -> A
     .size_full()
     .into_any_element()
 }
+
+/// A cell's sparkline ([`sheets_engine::Sparkline::geometry`], shared with
+/// PDF export), over the whole box it is placed in. `zoom` scales its line
+/// width and markers with the sheet.
+pub(crate) fn sparkline_layer(
+    spark: std::sync::Arc<sheets_engine::Sparkline>,
+    zoom: f32,
+) -> AnyElement {
+    canvas(
+        |_, _, _| {},
+        move |b, _, window, _| {
+            // A point in px (Excel's 96 dpi grid), zoomed.
+            let pt = 4.0 / 3.0 * zoom;
+            let (w, h) = (f32::from(b.size.width), f32::from(b.size.height));
+            let g = spark.geometry(w, h, pt);
+            let at = |[x, y]: [f32; 2]| point(b.origin.x + px(x), b.origin.y + px(y));
+            window.with_content_mask(Some(ContentMask { bounds: b }), |window| {
+                if let Some((y, c)) = g.axis {
+                    let t = (pt * 0.75).max(1.0 / window.scale_factor());
+                    window.paint_quad(fill(
+                        Bounds::new(at([0.0, y - t / 2.0]), size(b.size.width, px(t))),
+                        hsla(c),
+                    ));
+                }
+                for ([x, y, bw, bh], c) in &g.bars {
+                    window.paint_quad(fill(
+                        Bounds::new(at([*x, *y]), size(px(*bw), px(*bh))),
+                        hsla(*c),
+                    ));
+                }
+                for run in &g.lines {
+                    if run.len() < 2 {
+                        continue;
+                    }
+                    let mut p = PathBuilder::stroke(px(g.line_width));
+                    p.move_to(at(run[0]));
+                    for &q in &run[1..] {
+                        p.line_to(at(q));
+                    }
+                    if let Ok(path) = p.build() {
+                        window.paint_path(path, hsla(spark.series));
+                    }
+                }
+                let d = g.marker_size;
+                for ([x, y], c) in &g.markers {
+                    window.paint_quad(
+                        fill(
+                            Bounds::new(at([x - d / 2.0, y - d / 2.0]), size(px(d), px(d))),
+                            hsla(*c),
+                        )
+                        .corner_radii(px(d / 2.0)),
+                    );
+                }
+            });
+        },
+    )
+    .absolute()
+    .inset_0()
+    .into_any_element()
+}

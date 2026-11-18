@@ -247,3 +247,29 @@ fn notes_as_displayed_keep_their_formatting() {
     let content = String::from_utf8_lossy(&doc.get_page_content(page_id)).into_owned();
     assert!(content.contains("1 0 0 rg"), "a red fill colour");
 }
+
+#[test]
+fn sparklines_print_in_their_cells() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/corpus/xlsx/15_sparklines_cf_dv.xlsx");
+    let mut book = Workbook::open(&path).unwrap();
+    let sheet = book
+        .sheet_names()
+        .iter()
+        .position(|n| n == "Metrics")
+        .unwrap() as u32;
+    let options = Options {
+        sheets: Some(vec![sheet]),
+        ..Options::default()
+    };
+    let plan = Plan::new(&book, &options, &mut Shaper::new());
+    let page = sheets_pdf::extract(&mut book, &plan, 0);
+    // F2:F5: a line, a column, a win/loss and a line with markers.
+    assert_eq!(page.sparklines.len(), 4, "{:?}", page.sparklines);
+    let line = &page.sparklines[0];
+    let g = line.spark.geometry(line.rect[2], line.rect[3], 1.0);
+    assert_eq!(g.lines.iter().map(Vec::len).sum::<usize>(), 4);
+    assert!(page.sparklines.iter().all(|s| !s.black));
+    let (pdf, _) = sheets_pdf::export(&mut book, &options).unwrap();
+    assert!(!pdf.is_empty());
+}

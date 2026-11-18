@@ -728,6 +728,18 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
             }
         }
 
+        // Sparklines (black in black-and-white printing), under the text.
+        for cell in cells.iter().filter(|c| c.merge.is_none()) {
+            let cp = cols[cell.col];
+            if let Some(spark) = book.sparkline(sheet, rp.index, cp.index) {
+                out.sparklines.push(crate::Spark {
+                    rect: [cp.start, rp.start, cp.size, rp.size],
+                    spark,
+                    black: bw,
+                });
+            }
+        }
+
         // Data bars and icons (not across merged cells, as on screen).
         if !bw {
             for cell in cells.iter().filter(|c| c.merge.is_none()) {
