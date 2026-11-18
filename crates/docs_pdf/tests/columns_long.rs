@@ -176,7 +176,8 @@ fn long_columns_put_footnotes_under_their_column() {
         .pages
         .iter()
         .find(|p| {
-            p.note_columns.len() > 1 && (p.note_columns[0].width - p.note_columns[1].width).abs() > 50.0
+            p.note_columns.len() > 1
+                && (p.note_columns[0].width - p.note_columns[1].width).abs() > 50.0
         })
         .expect("a page of unequal columns with notes in both");
     let placed = &laid.furniture[paged.pages.iter().position(|q| std::ptr::eq(q, p)).unwrap()];

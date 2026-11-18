@@ -2086,7 +2086,10 @@ mod tests {
             let p = get(&b, Role::Pic(i));
             assert_eq!(p, Xfrm::new(9_680, cy - 1_500, 3_000, 3_000));
             let l = get(&b, Role::Arrow(i));
-            assert_eq!((l.x, l.y, l.cx, l.cy), (4_000, cy, 9_680 + 1_500 - 4_000, 0));
+            assert_eq!(
+                (l.x, l.y, l.cx, l.cy),
+                (4_000, cy, 9_680 + 1_500 - 4_000, 0)
+            );
             let t = get(&b, Role::Node(i));
             assert_eq!(t, Xfrm::new(12_680, cy - 1_500, 20_000 - 12_680, 3_000));
         }
@@ -2097,21 +2100,32 @@ mod tests {
         // callouts move to the four-item places.
         let (d3, data3, id) = add_item(&d2, &data, "T2", AddPlace::After, 20_000, 8_000).unwrap();
         assert_eq!(family(&d3, &data3), Some(Family::CircularPictureCallout));
-        assert!(data3.contains(&format!("presAssocID=\"{id}\" presName=\"pictureRepeatNode\"")));
+        assert!(data3.contains(&format!(
+            "presAssocID=\"{id}\" presName=\"pictureRepeatNode\""
+        )));
         let b3 = boxes_of(&d3, &data3);
         assert_eq!(b3.iter().filter(|x| matches!(x.0, Role::Pic(_))).count(), 4);
-        assert_eq!(b3.iter().filter(|x| matches!(x.0, Role::Arrow(_))).count(), 3);
+        assert_eq!(
+            b3.iter().filter(|x| matches!(x.0, Role::Arrow(_))).count(),
+            3
+        );
         let p3 = get(&b3, Role::Pic(3));
         assert_eq!((p3.cx, p3.x), (2_400, 10_832));
         // The new line is drawn behind the pictures.
-        let line = d3.find(&format!("modelId=\"{}\"", view(&data3).unwrap().items[3].sib.clone().unwrap()));
+        let line = d3.find(&format!(
+            "modelId=\"{}\"",
+            view(&data3).unwrap().items[3].sib.clone().unwrap()
+        ));
         assert!(line.unwrap() < d3.find("modelId=\"R0\"").unwrap());
         // Removing a callout takes its picture and line with it.
         let (d4, data4) = remove_item(&d3, &data3, "T1", 20_000, 8_000).unwrap();
         assert_eq!(family(&d4, &data4), Some(Family::CircularPictureCallout));
         assert!(!d4.contains("\"R1\"") && !d4.contains("\"L1\""));
         let b4 = boxes_of(&d4, &data4);
-        assert_eq!(b4.iter().filter(|x| matches!(x.0, Role::Arrow(_))).count(), 2);
+        assert_eq!(
+            b4.iter().filter(|x| matches!(x.0, Role::Arrow(_))).count(),
+            2
+        );
         // Down to one item: no lines left.
         let (d5, data5) = remove_item(&d4, &data4, "T2", 20_000, 8_000).unwrap();
         let (d6, data6) = remove_item(&d5, &data5, &id, 20_000, 8_000).unwrap();

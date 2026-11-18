@@ -581,10 +581,7 @@ impl DocsView {
             at.h = (RelH::Page, Place::Offset(emu(rect[0])));
             at.v = (RelV::Page, Place::Offset(emu(rect[1])));
         } else {
-            at.h = (
-                RelH::Column,
-                Place::Offset(emu(rect[0] - column_left)),
-            );
+            at.h = (RelH::Column, Place::Offset(emu(rect[0] - column_left)));
             at.v = (RelV::Paragraph, Place::Offset(emu(rect[1] - para_top)));
         }
         at.cx = emu(rect[2]);

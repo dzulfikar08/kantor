@@ -395,7 +395,11 @@ fn body_with_notes(
             let l = cached_note(cache, doc, i, w, &r.label, layout);
             let notice =
                 notice_layout(doc, NoteKind::Footnote, w, cache, layout).map_or(0.0, |n| n.height);
-            let at = match lp.note_widths.iter().position(|n| (n.width - w).abs() < 0.5) {
+            let at = match lp
+                .note_widths
+                .iter()
+                .position(|n| (n.width - w).abs() < 0.5)
+            {
                 Some(at) => at,
                 None => {
                     lp.note_widths.push(docs_layout::NoteWidth {

@@ -1394,6 +1394,10 @@ struct Snap {
     notes_base: f32,
 }
 
+/// A re-broken line placed: page, line, top, its stretch (left, right)
+/// and the width of the column holding it.
+type WrappedLine = (usize, usize, f32, (f32, f32), f32);
+
 /// A cell's lines in its own coordinates: paragraph, line, top, height.
 struct CellLines {
     lines: Vec<(usize, usize, f32, f32)>,
@@ -1434,11 +1438,7 @@ impl<'a> Flow<'a> {
     /// section's first column's when there's no such layout).
     fn notes_at(&self, pi: usize, width: f32) -> (&'a [(usize, f32)], &'a [NoteSplit]) {
         let p: &'a Paragraph = &self.paras[pi];
-        match p
-            .note_widths
-            .iter()
-            .find(|n| (n.width - width).abs() < 0.5)
-        {
+        match p.note_widths.iter().find(|n| (n.width - width).abs() < 0.5) {
             Some(n) if self.cols.len() > 1 => (&n.notes, &n.splits),
             _ => (&p.notes, &p.note_splits),
         }
@@ -1927,8 +1927,7 @@ impl<'a> Flow<'a> {
             .map(|c| avail_in(c.1))
             .fold(avail_in(self.column().1), f32::max);
         let mut laid = (**base).clone();
-        // (page, line, top, segment, column width)
-        let mut placed: Vec<(usize, usize, f32, (f32, f32), f32)> = Vec::new();
+        let mut placed: Vec<WrappedLine> = Vec::new();
         let note_of = |k: usize| -> (f32, Vec<(usize, f32)>) {
             let here = known.and_then(|n| n.get(k)).cloned().unwrap_or_default();
             (here.iter().map(|n| n.1).sum(), here)
@@ -4837,7 +4836,11 @@ mod column_tests {
         assert!(wide.iter().all(|l| l.width > 300.0));
         // The text after the break starts the wide column, its lines
         // broken at its width.
-        let first = doc.layouts[0].layout.get(wide[0].line).unwrap().text_range();
+        let first = doc.layouts[0]
+            .layout
+            .get(wide[0].line)
+            .unwrap()
+            .text_range();
         assert_eq!(first.start, words.len() + COLUMN_BREAK.len_utf8());
         assert!((wide[0].top - s.margin_top).abs() < 0.5);
         assert!(wide.len() * 2 < page.lines.len() - wide.len());
@@ -4864,8 +4867,16 @@ mod column_tests {
         assert_eq!(page.note_columns.len(), 2);
         let (a, b) = (&page.note_columns[0], &page.note_columns[1]);
         assert!(a.width < 151.0 && b.width > 300.0);
-        assert!((a.height - (60.0 + NOTE_SEPARATOR)).abs() < 0.5, "{}", a.height);
-        assert!((b.height - (20.0 + NOTE_SEPARATOR)).abs() < 0.5, "{}", b.height);
+        assert!(
+            (a.height - (60.0 + NOTE_SEPARATOR)).abs() < 0.5,
+            "{}",
+            a.height
+        );
+        assert!(
+            (b.height - (20.0 + NOTE_SEPARATOR)).abs() < 0.5,
+            "{}",
+            b.height
+        );
     }
 
     #[test]

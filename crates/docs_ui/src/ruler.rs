@@ -649,13 +649,11 @@ impl DocsView {
                         .left(sx(x) - SPACE_2)
                         .w(SPACE_4)
                         .cursor(CursorStyle::ResizeLeftRight)
-                        .child(
-                            div()
-                                .mx_auto()
-                                .w(px(2.))
-                                .h_full()
-                                .bg(if dragging(hd) { t.accent } else { t.fg_dim }),
-                        )
+                        .child(div().mx_auto().w(px(2.)).h_full().bg(if dragging(hd) {
+                            t.accent
+                        } else {
+                            t.fg_dim
+                        }))
                         .on_mouse_down(MouseButton::Left, start_drag(hd, cx)),
                 );
             }
