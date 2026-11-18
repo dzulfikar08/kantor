@@ -1321,8 +1321,9 @@ impl SheetsView {
                     .min_h_0()
                     .w_full()
                     .bg(t.surface)
-                    .child(self.render_chart_sheet(k, cx))
-                    .child(self.render_wheel_zoom(cx)),
+                    // First: see `render_wheel_zoom`.
+                    .child(self.render_wheel_zoom(cx))
+                    .child(self.render_chart_sheet(k, cx)),
             )
     }
 

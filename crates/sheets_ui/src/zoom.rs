@@ -118,13 +118,16 @@ pub(crate) fn fit_zoom(size: (f32, f32), headers: (f32, f32), room: (f32, f32)) 
 
 /// Zoom steps of a wheel event (positive: in, wheel turned away), with
 /// pixel travel left over kept in `carry`; `None` when Ctrl (Cmd) isn't
-/// held, so the grid scrolls instead.
+/// held, so the grid scrolls instead. A wheel's event is one notch, one
+/// step, however many lines the platform makes of it (three on Linux and
+/// Windows).
 pub(crate) fn wheel_steps(e: &ScrollEvent, carry: &Cell<f32>) -> Option<i32> {
     if !(e.modifiers.control || e.modifiers.platform) {
         return None;
     }
     let dy = match e.delta {
-        ScrollDelta::Lines(l) => l.y * WHEEL_PX_PER_STEP,
+        ScrollDelta::Lines(l) if l.y == 0.0 => 0.0,
+        ScrollDelta::Lines(l) => l.y.signum() * WHEEL_PX_PER_STEP,
         ScrollDelta::Pixels(p) => f32::from(p.y),
     };
     let total = carry.get() + dy;
@@ -544,7 +547,10 @@ impl SheetsView {
             .into_any_element()
     }
 
-    /// Ctrl+mouse wheel over the grid zooms (the grid doesn't scroll).
+    /// Ctrl+mouse wheel over the grid zooms (the grid doesn't scroll). Its
+    /// listener takes wheel events in the capture phase, so it must be
+    /// painted before the grid: the table body (gpui-kit's scroll bounce)
+    /// takes them in that phase too and stops them there.
     pub(crate) fn render_wheel_zoom(&self, cx: &mut Context<Self>) -> AnyElement {
         let view = cx.entity().downgrade();
         let wheel = self.zoom.wheel.clone();
@@ -613,9 +619,10 @@ mod tests {
         let steps = wheel_steps(&wheel(up, true, false), &carry).unwrap();
         assert_eq!(steps, 1);
         assert_eq!(wheel_zoom(100, steps), 110);
+        // Linux and Windows make three lines of a notch: still one step.
         let down = ScrollDelta::Lines(point(0.0, -3.0));
         let steps = wheel_steps(&wheel(down, false, true), &carry).unwrap();
-        assert_eq!(wheel_zoom(110, steps), 80);
+        assert_eq!(wheel_zoom(110, steps), 100);
         // A touchpad: 25 px is not a notch yet, 25 more make one.
         let pixels = ScrollDelta::Pixels(point(px(0.), px(25.)));
         assert_eq!(wheel_steps(&wheel(pixels, true, false), &carry), Some(0));

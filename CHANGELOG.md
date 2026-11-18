@@ -74,6 +74,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   column keeps it relative to the column it's in.
 - A column formatted as a whole (a fill or a number format on column C) keeps the default width in
   Excel after saving: it used to open 75 px wide instead of 64 px.
+- Ctrl+mouse wheel zooms Sheets again (the grid took the wheel first and scrolled instead), and a
+  wheel notch is one 10 % step on Linux and Windows (it was three).
 - SmartArt Organization Charts: the Layout menu in Slides and the layout buttons in Docs mark the
   current layout also when a shape still has the initial one, and the Change Layout menus scroll
   instead of running off a small window.
