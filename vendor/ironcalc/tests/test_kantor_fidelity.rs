@@ -370,7 +370,9 @@ fn styled_columns_keep_the_default_width() {
     let again = save_xlsx_to_writer(&loaded, Cursor::new(Vec::new()))
         .unwrap()
         .into_inner();
-    assert!(sheet_xml(&again).contains(r#"<col min="3" max="3" width="9.00390625" customWidth="0""#));
+    assert!(
+        sheet_xml(&again).contains(r#"<col min="3" max="3" width="9.00390625" customWidth="0""#)
+    );
 
     // A Calibri 11 workbook: 64 px, stored 9.140625, as Excel writes it.
     let mut model = Model::new_empty("t", "en", "UTC", "en").unwrap();
@@ -412,6 +414,12 @@ fn styled_columns_take_the_sheets_default_column_width() {
             .unwrap()
             .into_inner(),
     );
-    assert!(xml.contains(r#"<col min="2" max="2" width="12.5" customWidth="0""#), "{xml}");
-    assert!(xml.contains(r#"<col min="4" max="4" width="12.5" customWidth="0""#), "{xml}");
+    assert!(
+        xml.contains(r#"<col min="2" max="2" width="12.5" customWidth="0""#),
+        "{xml}"
+    );
+    assert!(
+        xml.contains(r#"<col min="4" max="4" width="12.5" customWidth="0""#),
+        "{xml}"
+    );
 }

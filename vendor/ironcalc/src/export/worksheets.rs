@@ -212,7 +212,10 @@ const READ_DEFAULT_WIDTH: f64 = 8.43;
 /// for the sheet's default width.
 fn is_default_width(worksheet: &Worksheet, width: f64) -> bool {
     width == IRONCALC_DEFAULT_WIDTH
-        || width == worksheet.kantor_default_col_width.unwrap_or(READ_DEFAULT_WIDTH)
+        || width
+            == worksheet
+                .kantor_default_col_width
+                .unwrap_or(READ_DEFAULT_WIDTH)
 }
 
 /// KANTOR PATCH (column widths): the sheet's default column width as Excel
