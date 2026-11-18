@@ -400,7 +400,6 @@ impl Painter {
                             origin,
                             cell,
                         } => pattern_prims(
-                            path,
                             segs,
                             t,
                             even_odd,
@@ -572,10 +571,12 @@ fn band_params([x, y, w, h]: [f32; 4], u: P, s0: f32, s1: f32) -> (f32, f32, f32
 }
 
 /// A pattern fill as GPUI primitives: the background colour, then the
-/// foreground cells as one path (the mixed colour for huge shapes).
+/// foreground cells as one path (the mixed colour for huge shapes). The
+/// cells line up with the page, not the shape: Office keeps a pattern
+/// upright when the shape is rotated or flipped (as the PDF does,
+/// `slides_pdf`).
 #[allow(clippy::too_many_arguments)]
 fn pattern_prims(
-    path: &slides_scene::Path,
     segs: Vec<Seg>,
     t: &Affine,
     even_odd: bool,
@@ -584,8 +585,11 @@ fn pattern_prims(
     (origin, cell): (P, f32),
     out: &mut Vec<GPrim>,
 ) {
+    let k = (t.a * t.a + t.b * t.b).sqrt().max(1e-3);
+    let (origin, cell) = (t.apply(origin), cell * k);
+    let page = slides_scene::Path { segs: segs.clone() };
     let Some(cells) = slides_scene::paint::pattern_cells(
-        path,
+        &page,
         even_odd,
         bits,
         origin,
@@ -606,10 +610,10 @@ fn pattern_prims(
     });
     let mut fs = Vec::with_capacity(cells.len() * 5);
     for [x, y, w, h] in cells {
-        fs.push(Seg::Move(t.apply(pt(x, y))));
-        fs.push(Seg::Line(t.apply(pt(x + w, y))));
-        fs.push(Seg::Line(t.apply(pt(x + w, y + h))));
-        fs.push(Seg::Line(t.apply(pt(x, y + h))));
+        fs.push(Seg::Move(pt(x, y)));
+        fs.push(Seg::Line(pt(x + w, y)));
+        fs.push(Seg::Line(pt(x + w, y + h)));
+        fs.push(Seg::Line(pt(x, y + h)));
         fs.push(Seg::Close);
     }
     if !fs.is_empty() {
@@ -1113,6 +1117,50 @@ mod tests {
         );
         assert_eq!(&px_[0..4], &[0, 0, 255, 128]);
         assert_eq!(&px_[4..8], &[0, 0, 255, 128]);
+    }
+
+    /// A pattern in a turned shape stays upright, as in Office: its cells
+    /// are page-aligned rectangles, not turned ones.
+    #[std::prelude::v1::test]
+    fn patterns_stay_upright_in_turned_shapes() {
+        let bits = kantor_ooxml::pattern::bits("ltVert");
+        let t = Affine::rotate(30f32.to_radians()).then(Affine::translate(50.0, 50.0));
+        let segs = slides_scene::Path::rect(0.0, 0.0, 40.0, 20.0)
+            .transformed(&t)
+            .segs;
+        let mut out = Vec::new();
+        let colours = (SRgba([0, 0, 0, 255]), SRgba([255, 255, 255, 255]));
+        pattern_prims(
+            segs,
+            &t,
+            false,
+            colours,
+            &bits,
+            (pt(0.0, 0.0), 1.0),
+            &mut out,
+        );
+        let Some(GPrim::Fill { segs: cells, .. }) = out.get(1) else {
+            panic!("no pattern cells");
+        };
+        assert!(!cells.is_empty());
+        // Every cell edge is horizontal or vertical.
+        let mut last = None;
+        for s in cells {
+            let q = match *s {
+                Seg::Move(q) => {
+                    last = Some(q);
+                    continue;
+                }
+                Seg::Line(q) => q,
+                _ => continue,
+            };
+            let a = last.unwrap();
+            assert!(
+                (a.x - q.x).abs() < 1e-3 || (a.y - q.y).abs() < 1e-3,
+                "{a:?} -> {q:?}"
+            );
+            last = Some(q);
+        }
     }
 
     #[std::prelude::v1::test]

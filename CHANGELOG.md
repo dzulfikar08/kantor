@@ -29,6 +29,24 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   dialog show the chart at its own size times the zoom (scrolling when it is larger than the
   window), and Zoom to Selection makes it follow the window's size. The zoom is saved with the
   chart sheet (`zoomScale`, `zoomToFit`).
+- Conditional formatting's average rules cover all of Excel's choices: "equal to or above / below
+  average" and 1, 2 or 3 standard deviations above or below. Rules like these from `.xlsx`, `.xls`,
+  `.xlsb` and `.ods` files are kept and drawn as they are instead of as plain above/below average
+  rules (or being left out), and the rule editor offers them.
+- `.xlsb` imports read Excel 2010's conditional formatting: data bars keep their lengths, border,
+  negative bar colours, axis and direction, and icon sets with icons picked one by one (or "No Cell
+  Icon") come in. They are drawn and saved into the new `.xlsx`.
+
+### Fixed
+
+- Grid rows, cells and buttons no longer light up beside an open right-click menu or drop-down
+  menu; a click outside the menu just closes it, as for Kantor's other menus.
+- A pattern fill in a rotated or flipped shape stays upright, as in Office, on screen and in the
+  PDF in Sheets and Slides (it used to turn with the shape).
+- More formulas from `.ods` and `.xls` files come in as formulas instead of values: LibreOffice
+  array formulas (`TRANSPOSE` over several cells and what depends on them), names that `.xls` files
+  reach through their own external-name table, and old names that are cell references in today's
+  grid (`On2` becomes `_On2`, as Excel renames it; a name whose cells were deleted keeps `#REF!`).
 
 ## [0.13.0] - 2026-11-18
 

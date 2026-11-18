@@ -438,6 +438,25 @@ impl Xf {
     }
 }
 
+/// A name that was valid in a 256-column workbook but is a cell reference in
+/// today's grid (`On2`, `TAX2024`) gets an underscore in front, as Excel does
+/// when it opens such a file.
+fn clear_of_cells(name: String) -> String {
+    let letters = name.bytes().take_while(u8::is_ascii_alphabetic).count();
+    let (col, row) = name.split_at(letters);
+    let column = (1..=3).contains(&letters).then(|| {
+        col.bytes().fold(0u32, |n, b| {
+            n * 26 + u32::from(b.to_ascii_uppercase() - b'A') + 1
+        })
+    });
+    let is_cell = column.is_some_and(|c| c <= 16_384)
+        && !row.is_empty()
+        && !row.starts_with('0')
+        && row.bytes().all(|b| b.is_ascii_digit())
+        && row.parse::<u32>().is_ok_and(|r| r <= 1_048_576);
+    if is_cell { format!("_{name}") } else { name }
+}
+
 /// A defined name as the `LBL` record has it (calamine decodes the formula).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Label {
@@ -548,6 +567,8 @@ pub(crate) struct Globals {
     /// `EXTERNSHEET` entries resolved to this workbook's sheet indices
     /// (`None`: another workbook's), for 3-D references in formulas.
     pub(crate) xti: Vec<Option<(u16, u16)>>,
+    /// Per `EXTERNSHEET` entry: whether it points into this workbook.
+    pub(crate) own_book: Vec<bool>,
     /// The OfficeArt drawing group (`MSODRAWINGGROUP`): the pictures every
     /// sheet's drawing shares.
     drawing_group: Vec<u8>,
@@ -638,6 +659,7 @@ impl XlsFormat {
                         base: (u32::from(r), u32::from(c)),
                         sheets: &sheet_names,
                         xti: &g.xti,
+                        own_book: &g.own_book,
                         names: &label_names,
                         formats: &g.formats,
                     };
@@ -696,6 +718,7 @@ impl XlsFormat {
                 base,
                 sheets: &sheet_names,
                 xti: &g.xti,
+                own_book: &g.own_book,
                 names: &label_names,
                 formats: &g.formats,
             };
@@ -773,6 +796,7 @@ impl XlsFormat {
             base: (0, 0),
             sheets: &sheet_names,
             xti: &g.xti,
+            own_book: &g.own_book,
             names: &label_names,
             formats: &g.formats,
         };
@@ -1277,6 +1301,7 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
         xfs: Vec::new(),
         palette: Palette(DEFAULT_PALETTE.to_vec()),
         xti: Vec::new(),
+        own_book: Vec::new(),
         drawing_group: Vec::new(),
     };
     // Which SUPBOOK is this workbook (its marker is 0x0401).
@@ -1400,6 +1425,10 @@ fn read_globals(stream: &[u8]) -> Result<Globals> {
     }
     g.biff5 = BIFF5.with(|b| b.get());
     drop(guard);
+    g.own_book = raw_xti
+        .iter()
+        .map(|(sb, ..)| supbooks.get(*sb as usize).copied().unwrap_or(false))
+        .collect();
     g.xti = raw_xti
         .into_iter()
         .map(|(sb, first, last)| {
@@ -1441,7 +1470,7 @@ fn parse_label(d: &[u8]) -> Option<Label> {
             _ => "",
         }
         .to_owned(),
-        None => name,
+        None => clear_of_cells(name),
     };
     Some(Label {
         name,
@@ -2382,6 +2411,21 @@ fn parse_hlink(d: &[u8]) -> Option<(CellRange, Link)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_that_are_cells_today_get_an_underscore() {
+        let n = |s: &str| clear_of_cells(s.to_owned());
+        assert_eq!(n("On2"), "_On2");
+        assert_eq!(n("TAX2024"), "_TAX2024");
+        assert_eq!(n("XFD1048576"), "_XFD1048576");
+        // Past the last column or row, or not a cell at all: unchanged.
+        assert_eq!(n("XFE1"), "XFE1");
+        assert_eq!(n("A1048577"), "A1048577");
+        assert_eq!(n("ABCD1"), "ABCD1");
+        assert_eq!(n("A01"), "A01");
+        assert_eq!(n("Rate"), "Rate");
+        assert_eq!(n("Q1_Sales"), "Q1_Sales");
+    }
 
     #[test]
     fn truncated_and_garbage_records_dont_panic() {

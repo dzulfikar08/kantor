@@ -98,6 +98,25 @@ def write_fallback_ods(path):
     write_ods_file(path, ODS_HEAD + body + ODS_TAIL)
 
 
+def write_matrix_ods(path):
+    """An array formula as LibreOffice writes it: the formula and the area's
+    size on its first cell, its results in the others."""
+    num = lambda v: (f'<table:table-cell office:value-type="float" office:value="{v}">'
+                     f"<text:p>{v}</text:p></table:table-cell>")
+    body = f"""<table:table table:name="Sheet1">
+<table:table-row>{num(1)}{num(2)}{num(3)}</table:table-row>
+<table:table-row><table:table-cell table:number-columns-repeated="3"/></table:table-row>
+<table:table-row>
+  <table:table-cell table:formula="of:=TRANSPOSE([.A1:.C1])" table:number-matrix-columns-spanned="1" table:number-matrix-rows-spanned="3" office:value-type="float" office:value="1"><text:p>1</text:p></table:table-cell>
+  <table:table-cell table:formula="of:=SUM([.A3:.A5])" office:value-type="float" office:value="6"><text:p>6</text:p></table:table-cell>
+</table:table-row>
+<table:table-row>{num(2)}</table:table-row>
+<table:table-row>{num(3)}</table:table-row>
+</table:table>
+"""
+    write_ods_file(path, ODS_HEAD + body + ODS_TAIL)
+
+
 def write_xls(path):
     import xlwt
 
@@ -122,4 +141,5 @@ def write_xls(path):
 if __name__ == "__main__":
     write_ods(os.path.join(HERE, "simple.ods"))
     write_fallback_ods(os.path.join(HERE, "fallback.ods"))
+    write_matrix_ods(os.path.join(HERE, "matrix.ods"))
     write_xls(os.path.join(HERE, "simple.xls"))

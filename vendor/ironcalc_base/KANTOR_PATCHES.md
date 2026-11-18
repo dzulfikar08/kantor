@@ -859,6 +859,22 @@ format changes nothing. Kantor saves the formats it added after the file's own
 
 Tests: Kantor's `crates/sheets_engine/tests/filter_by.rs`.
 
+## 31. "Equal or above average" and standard deviation rules
+
+Why: Excel's above/below average rules also come as "equal or above/below"
+(`equalAverage`) and "N standard deviations above/below" (`stdDev`). The
+model had neither: such rules from `.xlsx`, `.xls` and `.xlsb` files lit the
+wrong cells and were saved as plain above/below average rules.
+
+What: `CfRule`/`CfRuleInput::{AboveAverage, BelowAverage}` gain
+`equal_average: bool` and `std_dev: u32` (serde default false/0).
+`apply_cf_average` compares against the average shifted by `std_dev` sample
+standard deviations (Apache POI's reading, checked against Excel), with `>=`
+/ `<=` when `equal_average`. Import/export in vendor/ironcalc §17.
+
+Tests: `test/conditional_formatting/average.rs`
+(`test_equal_or_above_includes_the_average`, `test_standard_deviation_rules`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

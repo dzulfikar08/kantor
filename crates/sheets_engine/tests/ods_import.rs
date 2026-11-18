@@ -433,12 +433,16 @@ fn ods_rules_rebased_and_unknown_kinds_skipped() {
     let mut wb = Workbook::open(&path).unwrap();
     assert_eq!(
         wb.import_notes(),
-        ["2 conditional formatting rules not imported (condition not supported)"]
+        ["1 conditional formatting rule not imported (condition not supported)"]
     );
-    // Written for B1 reading A1, so for B2 it reads A2.
+    // Written for B1 reading A1, so for B2 it reads A2. "Equal to or above
+    // average" is Excel's rule of that name.
     assert_eq!(
         summaries(&wb, 0),
-        [("B2:B3".to_owned(), "Formula: =A2>1".to_owned())]
+        [
+            ("B2:B3".to_owned(), "Formula: =A2>1".to_owned()),
+            ("B2:B3".to_owned(), "Equal to or above average".to_owned())
+        ]
     );
     assert!(wb.conditional(0, 1, 1).unwrap().style.is_some());
 }

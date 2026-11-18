@@ -246,6 +246,18 @@ fn stop_if_true_attr(stop: bool) -> &'static str {
     }
 }
 
+/// `equalAverage` and `stdDev` of an above/below average rule (Kantor §17).
+fn average_attrs(equal_average: bool, std_dev: u32) -> String {
+    let mut out = String::new();
+    if equal_average {
+        out.push_str(r#" equalAverage="1""#);
+    }
+    if std_dev > 0 {
+        out.push_str(&format!(r#" stdDev="{std_dev}""#));
+    }
+    out
+}
+
 fn build_cf_rule_xml(
     cf: &ConditionalFormatting,
     excel_priority: u32,
@@ -306,19 +318,25 @@ fn build_cf_rule_xml(
         CfRule::AboveAverage {
             dxf_id,
             stop_if_true,
+            equal_average,
+            std_dev,
         } => {
             let sif = stop_if_true_attr(*stop_if_true);
+            let avg = average_attrs(*equal_average, *std_dev);
             format!(
-                r#"<conditionalFormatting sqref="{range}"><cfRule type="aboveAverage" dxfId="{dxf_id}" priority="{excel_priority}"{sif}/></conditionalFormatting>"#
+                r#"<conditionalFormatting sqref="{range}"><cfRule type="aboveAverage" dxfId="{dxf_id}" priority="{excel_priority}"{sif}{avg}/></conditionalFormatting>"#
             )
         }
         CfRule::BelowAverage {
             dxf_id,
             stop_if_true,
+            equal_average,
+            std_dev,
         } => {
             let sif = stop_if_true_attr(*stop_if_true);
+            let avg = average_attrs(*equal_average, *std_dev);
             format!(
-                r#"<conditionalFormatting sqref="{range}"><cfRule type="aboveAverage" dxfId="{dxf_id}" priority="{excel_priority}" aboveAverage="0"{sif}/></conditionalFormatting>"#
+                r#"<conditionalFormatting sqref="{range}"><cfRule type="aboveAverage" dxfId="{dxf_id}" priority="{excel_priority}" aboveAverage="0"{sif}{avg}/></conditionalFormatting>"#
             )
         }
         CfRule::Top10 {

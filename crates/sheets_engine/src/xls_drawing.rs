@@ -2397,6 +2397,7 @@ mod tests {
             base: (0, 0),
             sheets: &sheets,
             xti: &xti,
+            own_book: &[],
             names: &[],
             formats: &[],
         };
@@ -2418,6 +2419,7 @@ mod tests {
             base: (0, 0),
             sheets: &sheets,
             xti: &xti,
+            own_book: &[],
             names: &[],
             formats: &[],
         };
@@ -2470,6 +2472,7 @@ mod tests {
             base: (0, 0),
             sheets: &sheets,
             xti: &xti,
+            own_book: &[],
             names: &[],
             formats: &[],
         };

@@ -128,7 +128,7 @@ fn xlsb_conditional_formatting() {
         ranges,
         [
             "B3:B4", "A3:A4", "C3", "H1:H5", "I1:I5", "J1:J5", "K1:K5", "L1:L5", "M1:M5", "N1:N5",
-            "O1:O5", "P1:P5", "Q1:Q5", "R1:R5"
+            "O1:O5", "P1:P5", "Q1:Q5", "R1:R5", "S1:S5", "T1:T5", "U1:U5", "V1:V5"
         ],
         "{got:#?}"
     );
@@ -137,6 +137,9 @@ fn xlsb_conditional_formatting() {
     assert_eq!(summary("A3:A4"), "Text containing \"orth\"");
     assert_eq!(summary("C3"), "Formula: =C3<1");
     assert_eq!(summary("Q1:Q5"), "Cell value between 3 and 6");
+    assert_eq!(summary("M1:M5"), "Above average");
+    assert_eq!(summary("U1:U5"), "Equal to or above average");
+    assert_eq!(summary("V1:V5"), "2 std dev below average");
     for (range, kind) in [
         ("H1:H5", "color scale"),
         ("I1:I5", "data bar"),
@@ -170,5 +173,64 @@ fn xlsb_conditional_formatting() {
     let out = dir.path().join("cf.xlsx");
     wb.save_as(&out).unwrap();
     let back = Workbook::open(&out).unwrap();
-    assert_eq!(back.cf_rules(0, None).len(), 14);
+    assert_eq!(back.cf_rules(0, None).len(), 18);
+}
+
+/// features.xlsb's Excel 2010 conditional formatting (gen_xlsb.py
+/// `conditional_formats14`): column S's data bar takes its extras from the
+/// rule its BrtCFRuleExt names, column T's custom icon set exists only
+/// there; both are drawn and saved as Excel 2010 markup.
+#[test]
+fn xlsb_excel_2010_conditional_formatting() {
+    let mut wb = Workbook::open(format!(
+        "{}/../../tests/corpus/xls/features.xlsb",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap();
+    for (r, v) in ["-5", "0", "10"].iter().enumerate() {
+        wb.set_input(0, r as u32, 18, v).unwrap();
+        wb.set_input(0, r as u32, 19, &(r * 50).to_string())
+            .unwrap();
+    }
+    let bar = |wb: &mut Workbook, r: u32| wb.conditional(0, r, 18).and_then(|c| c.bar);
+    // A negative value: its own colour and the axis in the middle, with
+    // a border.
+    let neg = bar(&mut wb, 0).expect("bar for -5");
+    assert_eq!(neg.color, 0xC00000);
+    assert!(!neg.gradient);
+    assert_eq!(neg.axis, Some(0.5));
+    assert_eq!(neg.border, Some(0x800000));
+    assert_eq!(neg.axis_color, Some(0x008000));
+    let pos = bar(&mut wb, 2).expect("bar for 10");
+    assert_eq!(pos.color, 0x638EC6);
+    assert_eq!(pos.border, Some(0x000080));
+    // The custom icon set: a red light, no icon, a tick.
+    let icon = |wb: &mut Workbook, r: u32| wb.conditional(0, r, 19).and_then(|c| c.icon);
+    assert!(icon(&mut wb, 0).is_some());
+    assert!(icon(&mut wb, 1).is_none());
+    assert!(icon(&mut wb, 2).is_some());
+    // Saved as .xlsx: the Excel 2010 markup goes with them.
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("cf14.xlsx");
+    wb.save_as(&out).unwrap();
+    let sheet = {
+        use std::io::Read as _;
+        let mut z = zip::ZipArchive::new(std::fs::File::open(&out).unwrap()).unwrap();
+        let mut s = String::new();
+        z.by_name("xl/worksheets/sheet1.xml")
+            .unwrap()
+            .read_to_string(&mut s)
+            .unwrap();
+        s
+    };
+    assert!(sheet.contains("axisPosition=\"middle\""), "{sheet}");
+    assert!(sheet.contains("custom=\"1\""), "{sheet}");
+    assert!(sheet.contains("iconSet=\"NoIcons\""), "{sheet}");
+    assert!(sheet.contains("equalAverage=\"1\""), "{sheet}");
+    assert!(sheet.contains("stdDev=\"2\""), "{sheet}");
+    let back = Workbook::open(&out).unwrap();
+    let rules = back.cf_rules(0, None);
+    assert_eq!(rules.len(), 18);
+    let t = rules.iter().find(|r| r.range == "T1:T5").unwrap();
+    assert!(t.summary.to_lowercase().contains("icon"), "{}", t.summary);
 }

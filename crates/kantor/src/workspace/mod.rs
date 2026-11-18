@@ -156,6 +156,9 @@ pub struct Workspace {
     recovery: recovery::Recovery,
     /// Cloud documents and panels (see `cloud`).
     cloud: cloud::Cloud,
+    /// The focus when the window last rendered: a change (a gpui-kit menu
+    /// opening or closing) redraws once more for `overlay::menu_shield`.
+    last_focus: Option<FocusHandle>,
 }
 
 impl Workspace {
@@ -188,6 +191,7 @@ impl Workspace {
             updates: update::Updates::default(),
             recovery: recovery::Recovery::default(),
             cloud: cloud::Cloud::default(),
+            last_focus: None,
         };
         let ws = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -806,6 +810,11 @@ impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _span = kantor_ui::perf::span("workspace");
         window.set_rem_size(REM);
+        let focused = window.focused(cx);
+        if focused != self.last_focus {
+            self.last_focus = focused;
+            window.request_animation_frame();
+        }
         let t = tokens(cx);
         let content = self.render_content(cx);
         let palette = self
@@ -876,6 +885,8 @@ impl Render for Workspace {
         if let Some(cursor) = drag_cursor {
             root = root.cursor(cursor);
         }
+        // Under gpui-kit's menus: nothing beside an open menu hovers.
+        root = root.children(kantor_ui::overlay::menu_shield(window));
 
         let Some((tabs, status, sidebar, inspector)) = chrome else {
             return root.child(content).children(cloud_panel);

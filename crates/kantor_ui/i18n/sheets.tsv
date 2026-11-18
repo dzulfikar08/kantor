@@ -217,6 +217,14 @@ Number	Angka
 Values	Nilai
 Above average	Di atas rata-rata
 Below average	Di bawah rata-rata
+Equal to or above average	Sama dengan atau di atas rata-rata
+Equal to or below average	Sama dengan atau di bawah rata-rata
+1 std dev above average	1 simpangan baku di atas rata-rata
+1 std dev below average	1 simpangan baku di bawah rata-rata
+2 std dev above average	2 simpangan baku di atas rata-rata
+2 std dev below average	2 simpangan baku di bawah rata-rata
+3 std dev above average	3 simpangan baku di atas rata-rata
+3 std dev below average	3 simpangan baku di bawah rata-rata
 Cells that are	Sel yang
 Blank	Kosong
 Not blank	Tidak kosong

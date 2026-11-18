@@ -275,6 +275,19 @@ colour, which Kantor draws as no icon (and writes back as `NoIcons`).
 Tests: Kantor's `crates/sheets_engine/tests/cf_x14.rs`
 (`no_cell_icon_per_threshold`).
 
+## 17. `equalAverage` and `stdDev` of average rules
+
+Why: vendor/ironcalc_base §31 models "equal or above/below average" and
+standard deviation rules; the xlsx reader dropped both attributes and the
+writer wrote plain above/below average rules.
+
+What: `import/conditional_formatting.rs` reads `equalAverage` and `stdDev`
+on `aboveAverage` rules; `export/conditional_formatting.rs` writes them
+(`average_attrs`).
+
+Tests: `export/test/test_cf.rs` (`BelowAverage` with `equalAverage` and
+`stdDev="2"` read back).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

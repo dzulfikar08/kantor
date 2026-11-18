@@ -525,6 +525,7 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
             base,
             sheets: &book.sheets,
             xti: &book.xti,
+            own_book: &[],
             names: &label_names,
             formats: &[],
         };
@@ -542,16 +543,66 @@ pub(crate) fn apply(path: &Path, model: &mut Model<'_>, names: &[String]) -> Res
         // Rules by priority (smallest first); each rule added goes to the
         // top, so the last one is added first.
         let mut rules: Vec<(i32, String, ironcalc_base::cf_types::CfRuleInput)> = Vec::new();
-        for block in cfs.blocks {
-            let Some(first) = block.ranges.first() else {
-                out.skipped_cf += block.rules.len();
+        // Excel 2010's rules: those an Excel 2007 rule names (by GUID) only
+        // add to it; the others are rules of their own.
+        let named: std::collections::HashSet<[u8; 16]> = cfs
+            .blocks
+            .iter()
+            .flat_map(|b| &b.rules)
+            .filter_map(|r| r.ext())
+            .collect();
+        let by_guid: HashMap<[u8; 16], &cf::Rule> = cfs
+            .blocks14
+            .iter()
+            .flat_map(|b| &b.rules)
+            .filter_map(|r| Some((r.guid()?, r)))
+            .collect();
+        let own14 = cfs.blocks14.iter().map(|b| {
+            let rules = b
+                .rules
+                .iter()
+                .filter(|r| !r.guid().is_some_and(|g| named.contains(&g)))
+                .collect::<Vec<_>>();
+            (&b.ranges, rules)
+        });
+        let main = cfs
+            .blocks
+            .iter()
+            .map(|b| (&b.ranges, b.rules.iter().collect::<Vec<_>>()));
+        for (ranges, list) in main.chain(own14) {
+            let Some(first) = ranges.first() else {
+                out.skipped_cf += list.len();
                 continue;
             };
-            let sqref = crate::cf_edit::sqref_of(&block.ranges);
+            let sqref = crate::cf_edit::sqref_of(ranges);
             let ctx = ctx((first.top, first.left));
-            for rule in block.rules {
-                match rule.convert(&ctx, &styles.dxfs, &theme) {
-                    Some(input) => rules.push((rule.priority(), sqref.clone(), input)),
+            for rule in list {
+                let is14 = rule.guid().is_some();
+                if is14 && !rule.standalone_x14() {
+                    out.skipped_cf += 1;
+                    continue;
+                }
+                let x14 = rule.ext().and_then(|g| by_guid.get(&g).copied());
+                match rule.convert(&ctx, &styles.dxfs, &theme, x14) {
+                    Some(input) => {
+                        let look = match rule.look(x14, &theme) {
+                            Some(cf::Look::Bar(look, gradient)) => {
+                                Some(crate::cf_x14::ImportedLook::Bar { look, gradient })
+                            }
+                            Some(cf::Look::CustomIcons(set, show_value, icons)) => {
+                                Some(crate::cf_x14::ImportedLook::CustomIcons {
+                                    set,
+                                    show_value,
+                                    icons,
+                                })
+                            }
+                            None => None,
+                        };
+                        if let Some(look) = look {
+                            out.cf_looks.push((sheet as u32, sqref.clone(), look));
+                        }
+                        rules.push((rule.priority(), sqref.clone(), input));
+                    }
                     None => out.skipped_cf += 1,
                 }
             }
@@ -583,6 +634,8 @@ pub(crate) struct Applied {
     pub skipped_validations: usize,
     /// Conditional formatting rules Kantor can't express.
     pub skipped_cf: usize,
+    /// Rules' Excel 2010 extras: sheet, range.
+    pub cf_looks: Vec<(u32, String, crate::cf_x14::ImportedLook)>,
 }
 
 /// What `workbook.bin` says about sheets, external references and names.
@@ -688,6 +741,7 @@ pub(crate) fn defined_names(path: &Path, names: &[String]) -> Vec<Name> {
         base: (0, 0),
         sheets: &book.sheets,
         xti: &book.xti,
+        own_book: &[],
         names: &label_names,
         formats: &[],
     };
@@ -819,7 +873,7 @@ fn apply_sheet(
             }
             // BrtDVal
             64 => dvs.extend(dval(d)),
-            461..=471 | 564 => {
+            461..=471 | 564 | 1046..=1052 | 1055 | 1112 | 1146 | 1155..=1157 => {
                 cfs.record(ty, d);
             }
             // BrtColInfo: first, last, width (1/256 char), ixfe, flags.

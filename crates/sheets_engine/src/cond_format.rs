@@ -196,7 +196,13 @@ enum Kind {
     Duplicate(bool),
     Blanks(bool),
     Errors(bool),
-    Average(bool),
+    /// Above (or below) the average, or that or equal to it, shifted by
+    /// `std_dev` standard deviations.
+    Average {
+        above: bool,
+        equal: bool,
+        std_dev: u32,
+    },
     Top {
         rank: u32,
         percent: bool,
@@ -233,6 +239,8 @@ struct Aggregate {
     /// The numbers in the range, sorted.
     sorted: Vec<f64>,
     sum: f64,
+    /// Sum of the numbers' squares (standard deviations).
+    sum_sq: f64,
     /// How often each value occurs (text lower-cased), for duplicates.
     counts: HashMap<Key, u32>,
     /// Lower-cased texts of the range, numbered.
@@ -761,11 +769,31 @@ impl Workbook {
                 CfRule::AboveAverage {
                     dxf_id,
                     stop_if_true,
-                } => (Kind::Average(true), dxf_of(dxf_id), stop_if_true),
+                    equal_average,
+                    std_dev,
+                } => (
+                    Kind::Average {
+                        above: true,
+                        equal: equal_average,
+                        std_dev,
+                    },
+                    dxf_of(dxf_id),
+                    stop_if_true,
+                ),
                 CfRule::BelowAverage {
                     dxf_id,
                     stop_if_true,
-                } => (Kind::Average(false), dxf_of(dxf_id), stop_if_true),
+                    equal_average,
+                    std_dev,
+                } => (
+                    Kind::Average {
+                        above: false,
+                        equal: equal_average,
+                        std_dev,
+                    },
+                    dxf_of(dxf_id),
+                    stop_if_true,
+                ),
                 CfRule::Top10 {
                     rank,
                     percent,
@@ -966,6 +994,7 @@ impl Workbook {
                     if let Some(n) = number {
                         agg.sorted.push(n);
                         agg.sum += n;
+                        agg.sum_sq += n * n;
                     }
                     if !needs_counts {
                         continue;
@@ -1288,14 +1317,32 @@ impl Workbook {
                         None => false,
                     }
                 }
-                Kind::Average(above) => match v {
+                Kind::Average {
+                    above,
+                    equal,
+                    std_dev,
+                } => match v {
                     Value::Number(n) => {
                         let agg = self.aggregate(sheet, index, rule);
+                        let count = agg.sorted.len() as f64;
                         if agg.sorted.is_empty() {
                             false
                         } else {
-                            let avg = agg.sum / agg.sorted.len() as f64;
-                            if *above { n > avg } else { n < avg }
+                            let mean = agg.sum / count;
+                            // The sample standard deviation, as IronCalc
+                            // (vendor §31) computes it.
+                            let sd = if *std_dev > 0 && count > 1.0 {
+                                ((agg.sum_sq - count * mean * mean).max(0.0) / (count - 1.0)).sqrt()
+                            } else {
+                                0.0
+                            };
+                            let shift = sd * f64::from(*std_dev);
+                            match (above, equal) {
+                                (true, false) => n > mean + shift,
+                                (true, true) => n >= mean + shift,
+                                (false, false) => n < mean - shift,
+                                (false, true) => n <= mean - shift,
+                            }
                         }
                     }
                     _ => false,
@@ -1678,7 +1725,11 @@ mod invalidation {
         wb.add_cf_rule(0, "C1:C20", &rule(top)).unwrap();
         let dups = CfSpec::Duplicates { unique: false };
         wb.add_cf_rule(0, "D:D", &rule(dups)).unwrap();
-        let avg = CfSpec::Average { below: false };
+        let avg = CfSpec::Average {
+            below: false,
+            equal: false,
+            std_dev: 0,
+        };
         wb.add_cf_rule(0, "E1:E20", &rule(avg)).unwrap();
         wb.set_calc_mode(mode);
         wb
