@@ -453,3 +453,25 @@ fn chart_sheet_objects_fill_the_pane() {
     assert_eq!(rects[0], [0.0, 0.0, 800.0, 600.0]);
     assert_eq!(rects[1], [400.0, 300.0, 80.0, 60.0]);
 }
+
+#[test]
+fn pictures_keep_the_shape_they_are_cut_to() {
+    let xml = |prst: &str| {
+        format!(
+            r#"<xdr:wsDr xmlns:xdr="{NS_XDR}" xmlns:a="{NS_A}"><xdr:pic><xdr:blipFill/><xdr:spPr><a:xfrm/><a:prstGeom prst="{prst}"><a:avLst><a:gd name="adj" fmla="val 30000"/></a:avLst></a:prstGeom></xdr:spPr></xdr:pic></xdr:wsDr>"#
+        )
+    };
+    let shape = |src: &str| {
+        let doc = roxmltree::Document::parse(src).unwrap();
+        let pic = doc.root_element().first_element_child().unwrap();
+        super::picture_shape(pic)
+    };
+    assert_eq!(shape(&xml("rect")), None);
+    let oval = shape(&xml("roundRect")).expect("a rounded picture");
+    // Parses on its own, adjustments and all.
+    let doc = roxmltree::Document::parse(&oval).unwrap();
+    let root = doc.root_element();
+    assert_eq!(root.tag_name().namespace(), Some(NS_A));
+    assert_eq!(root.attribute("prst"), Some("roundRect"));
+    assert!(oval.contains(r#"fmla="val 30000""#), "{oval}");
+}

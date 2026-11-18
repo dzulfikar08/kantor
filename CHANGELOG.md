@@ -42,9 +42,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   step.
 - SmartArt: Circular Picture Callout (a big round picture with smaller ones beside it, each joined
   by a line, up to seven items) is laid out again when resized, takes items added and removed, and
-  can be chosen with Change Layout, in Slides and Docs.
+  can be chosen with Change Layout, in Slides and Docs. A Circular Picture Callout set to Right to
+  Left (the big picture on the right, the callouts and their text to its left) is laid out mirrored,
+  as PowerPoint does.
 
 ### Fixed
+
+- Pictures cut to a shape (an oval or star picture, a shape filled with a picture, the round
+  pictures of SmartArt picture layouts) show only inside their shape on screen in Slides, Sheets and
+  Docs, with a smooth edge and their outline round the shape, as they already did in the PDF; they
+  used to fill their whole box. Docs draws pictures filling shapes, too.
+- Docs: a line with exact line spacing ("Exactly", `w:lineRule="exact"`) keeps its height when it
+  holds an inline picture taller than the line, as in Word: the picture sits on the baseline and its
+  top is cut off at the line's top (a 54 pt picture in a 54 pt line used to make the line 77 pt).
+  Text in exact lines sits as in Word and LibreOffice, its baseline four fifths of the way down.
+- Docs: the spaces between columns on the ruler are a stronger tone than the margins, so they stand
+  out from them as in Word, in light and dark themes.
 
 - Grid rows, cells and buttons no longer light up beside an open right-click menu or drop-down
   menu; a click outside the menu just closes it, as for Kantor's other menus.

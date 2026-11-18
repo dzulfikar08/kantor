@@ -436,6 +436,14 @@ pub struct ParaLayout {
     pub labels: Vec<(usize, Layout<Rgba>, String)>,
     /// Objects by inline-box id: byte index and kind.
     pub objects: Vec<(usize, ObjectKind)>,
+    /// Objects by inline-box id: their full height, px. An object taller
+    /// than an exact line's room above the baseline gets a box only that
+    /// tall (the line keeps its height, as in Word) and shows clipped.
+    pub heights: Vec<f32>,
+    /// How far its lines' content is moved down in their boxes: an exact
+    /// line puts its baseline four fifths of the way down, as Word and
+    /// LibreOffice do (parley centres the text instead).
+    pub shift: f32,
     /// Per tab character (text order): how its space is filled.
     pub tab_fills: Vec<TabFill>,
     /// Bar tabs: x of each line from the column's left edge, px.
@@ -463,6 +471,9 @@ impl ParaLayout {
 const LABEL_PAD: f32 = 4.0;
 /// Size of a note mark relative to its paragraph's text.
 const MARK_SCALE: f32 = 0.65;
+/// Where an exact line's baseline sits, as a share of its height from
+/// its top (LibreOffice's rule for Word's "exactly" spacing).
+const EXACT_ASCENT: f32 = 0.8;
 /// How far a note mark's baseline sits above the text's, in ems.
 const MARK_RAISE: f32 = 0.08;
 /// Gap between a list marker and the text, px.
@@ -543,6 +554,25 @@ impl Engine {
         layout
     }
 
+    /// How far an exact line `lh` px high reaches above the baseline of
+    /// `para`'s text.
+    fn exact_room(&mut self, para: &Paragraph, lh: f32) -> f32 {
+        let mut b = self
+            .layout_cx
+            .ranged_builder(&mut self.fonts, "x", 1.0, true);
+        b.push_default(StyleProperty::FontFamily(FontFamily::Source(
+            para.family.as_str().into(),
+        )));
+        b.push_default(StyleProperty::FontSize(para.size_pt * PT));
+        b.push_default(StyleProperty::LineHeight(LineHeight::Absolute(lh)));
+        let mut layout: Layout<Rgba> = b.build("x");
+        layout.break_all_lines(None);
+        layout.get(0).map_or(lh, |l| {
+            let m = l.metrics();
+            (m.baseline - m.block_min_coord).max(0.0)
+        })
+    }
+
     /// Shapes one paragraph and breaks it into lines in a column `width` px
     /// wide (indents are taken off that width). Tabs go to the next tab
     /// stop: laid out once with empty tabs to find where each one starts,
@@ -619,6 +649,17 @@ impl Engine {
         // Placeholder labels, which size their boxes.
         let mut labels = Vec::new();
         let mut boxes = Vec::new();
+        let mut heights = Vec::with_capacity(para.objects.len());
+        // An exact line height ("exactly", `w:lineRule="exact"`) is kept
+        // whatever the line holds: an object taller than the room above
+        // the baseline is cut at the line's top, as Word does.
+        let (room, shift) = match para.line_height {
+            Some(LineHeight::Absolute(lh)) => {
+                let room = self.exact_room(para, lh);
+                (Some(room), lh * EXACT_ASCENT - room)
+            }
+            _ => (None, 0.0),
+        };
         for (id, o) in para.objects.iter().enumerate() {
             let (mut w, mut h) = (o.width, o.height);
             if o.kind == ObjectKind::Placeholder {
@@ -684,13 +725,14 @@ impl Engine {
             // zero-width stand-in): parley then puts the caret at the
             // character's start before the box and after it at its end.
             let at = o.index;
+            heights.push(h);
             if at < para.text.len() {
                 boxes.push(InlineBox {
                     id: id as u64,
                     kind: InlineBoxKind::InFlow,
                     index: at,
                     width: w.min(width.max(1.0)),
-                    height: h,
+                    height: room.map_or(h, |r| h.min(r)),
                     baseline: None,
                     vertical_align: VerticalAlign::BASELINE,
                 });
@@ -816,6 +858,8 @@ impl Engine {
             marker,
             labels,
             objects: para.objects.iter().map(|o| (o.index, o.kind)).collect(),
+            heights,
+            shift,
             tab_fills: Vec::new(),
             bars: para
                 .tabs
@@ -1129,8 +1173,11 @@ pub struct PlacedObject {
     /// Byte offset of the object character.
     pub index: usize,
     pub kind: ObjectKind,
-    /// `[x, y, w, h]` in page coordinates.
+    /// `[x, y, w, h]` in page coordinates: what shows.
     pub rect: [f32; 4],
+    /// Where the whole object lands: taller than `rect` when an exact
+    /// line height cuts its top off (see [`ParaLayout::heights`]).
+    pub whole: [f32; 4],
 }
 
 /// A caret position resolved to a page.
@@ -2169,7 +2216,7 @@ impl<'a> Flow<'a> {
     ) -> f32 {
         let layout = &self.layouts[pi];
         let m = *layout.layout.get(k).expect("line exists").metrics();
-        let dy = top - m.block_min_coord;
+        let dy = top - m.block_min_coord + layout.shift;
         self.pages[page].lines.push(PlacedLine {
             para: pi,
             line: k,
@@ -2254,7 +2301,7 @@ impl<'a> Flow<'a> {
             height: m.line_height,
             x,
             width,
-            dy: top - m.block_min_coord,
+            dy: top - m.block_min_coord + layout.shift,
             dx: x + layout.dx,
             repeat: true,
         });
@@ -3077,11 +3124,19 @@ impl PagedDocument {
                         ObjectKind::Hidden | ObjectKind::Mark | ObjectKind::Text
                     )
                 {
+                    let whole = [dx + b.x, dy + b.y, b.width, b.height];
+                    let full = l.heights.get(b.id as usize).copied().unwrap_or(b.height);
+                    let bottom = whole[1] + whole[3];
+                    let whole = [whole[0], bottom - full, whole[2], full];
+                    // An exact line cuts off what's above its top.
+                    let shown = whole[1].max(pl.top).min(bottom);
+                    let rect = [whole[0], shown, whole[2], bottom - shown];
                     out.push(PlacedObject {
                         para: pl.para,
                         index,
                         kind,
-                        rect: [dx + b.x, dy + b.y, b.width, b.height],
+                        rect,
+                        whole,
                     });
                 }
             }
@@ -4073,6 +4128,59 @@ mod tests {
             end.x >= objs[1].rect[0] + objs[1].rect[2] - 0.5,
             "end caret after the last box"
         );
+    }
+
+    #[test]
+    fn exact_lines_keep_their_height_and_cut_tall_pictures() {
+        let mut engine = Engine::new();
+        let line = 54.0 * PT;
+        let para = |pic: f32| {
+            let mut p = Paragraph::new(format!("ab{OBJECT}cd"));
+            p.line_height = Some(LineHeight::Absolute(line));
+            p.space_before_pt = 0.0;
+            p.space_after_pt = 0.0;
+            p.objects = vec![InlineObject {
+                index: 2,
+                kind: ObjectKind::Image,
+                width: 50.0,
+                height: pic,
+                label: String::new(),
+            }];
+            p
+        };
+        // As tall as the line, taller, and short enough to fit.
+        let paras = [para(line), para(96.0 * PT), para(10.0)];
+        let doc = engine.layout_document(&paras, PageSetup::a4());
+        let lines = &doc.pages[0].lines;
+        for (k, l) in lines.iter().enumerate() {
+            assert!((l.height - line).abs() < 0.01, "line {k}: {}", l.height);
+        }
+        let top = PageSetup::a4().margin_top;
+        for (k, l) in lines.iter().enumerate() {
+            assert!((l.top - (top + k as f32 * line)).abs() < 0.01, "{l:?}");
+        }
+        let objs = doc.objects(0);
+        // Cut at the line's top, the bottom on the baseline.
+        for (o, full) in objs.iter().zip([line, 96.0 * PT]) {
+            let line_top = lines[o.para].top;
+            assert!((o.rect[1] - line_top).abs() < 0.01, "{o:?}");
+            assert!(o.rect[3] < full);
+            assert_eq!(o.whole[3], full);
+            let bottom = |r: [f32; 4]| r[1] + r[3];
+            assert!((bottom(o.rect) - bottom(o.whole)).abs() < 0.01);
+            // On the baseline, four fifths of the way down.
+            assert!((bottom(o.rect) - (line_top + 0.8 * line)).abs() < 0.01);
+        }
+        // The text's baseline too.
+        let run = doc.glyph_runs(0).into_iter().next().unwrap();
+        assert!(
+            (run.baseline - (top + 0.8 * line)).abs() < 0.01,
+            "{}",
+            run.baseline
+        );
+        // A short picture isn't cut.
+        assert_eq!(objs[2].rect, objs[2].whole);
+        assert_eq!(objs[2].rect[3], 10.0);
     }
 
     #[test]

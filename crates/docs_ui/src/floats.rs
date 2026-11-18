@@ -1174,6 +1174,7 @@ impl DocsView {
                     clip,
                     rot,
                     flip,
+                    shape,
                 } = prim
                 else {
                     continue;
@@ -1196,7 +1197,7 @@ impl DocsView {
                 let Some(data) = img.use_render_image(window, cx) else {
                     continue;
                 };
-                let key = picture_key(rel_id, *rot, *flip, *image, *clip);
+                let key = picture_key(rel_id, *rot, *flip, *image, *clip, shape.as_deref());
                 let story = fp.story.map_or(0, |s| s + 1);
                 if key == *rel_id {
                     out.insert((story, key), data);
@@ -1205,7 +1206,8 @@ impl DocsView {
                 let turned = match self.turned_images.get(&key) {
                     Some(t) => t.clone(),
                     None => {
-                        let Some(t) = turn_image(&data, *rot, *flip, *image, *clip) else {
+                        let cut = shape.as_deref();
+                        let Some(t) = turn_image(&data, *rot, *flip, *image, *clip, cut) else {
                             continue;
                         };
                         if self.turned_images.len() >= 24 {
@@ -1232,17 +1234,56 @@ pub(crate) fn picture_key(
     flip: (bool, bool),
     image: [f32; 4],
     clip: [f32; 4],
+    shape: Option<&[Seg]>,
 ) -> String {
     let deg = (rot.round() as i32).rem_euclid(360);
-    if deg == 0 && !flip.0 && !flip.1 {
+    if deg == 0 && !flip.0 && !flip.1 && shape.is_none() {
         return rel_id.to_owned();
     }
     let crop = crop_of(image, clip).map(|c| (c * 10_000.0) as i32);
     let aspect = (clip[2] / clip[3].max(1e-3) * 1000.0) as i64;
+    let cut = shape.map_or(0, |s| shape_hash(s, clip));
     format!(
-        "{rel_id}@{deg}:{}{}:{crop:?}:{aspect}",
+        "{rel_id}@{deg}:{}{}:{crop:?}:{aspect}:{cut:x}",
         flip.0 as u8, flip.1 as u8
     )
+}
+
+/// A cache key for `shape`: its points as fractions of `clip`.
+fn shape_hash(shape: &[Seg], clip: [f32; 4]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hs = std::collections::hash_map::DefaultHasher::new();
+    let q = |p: [f32; 2]| {
+        (
+            ((p[0] - clip[0]) / clip[2].max(1e-3) * 4096.0) as i32,
+            ((p[1] - clip[1]) / clip[3].max(1e-3) * 4096.0) as i32,
+        )
+    };
+    for s in shape {
+        match *s {
+            Seg::Move(a) => (0, q(a)).hash(&mut hs),
+            Seg::Line(a) => (1, q(a)).hash(&mut hs),
+            Seg::Quad(c, a) => (2, q(c), q(a)).hash(&mut hs),
+            Seg::Cubic(c1, c2, a) => (3, q(c1), q(c2), q(a)).hash(&mut hs),
+            Seg::Close => 4.hash(&mut hs),
+        }
+    }
+    hs.finish()
+}
+
+/// `segs` (page px) mapped by `f` into a scene path.
+fn scene_path(segs: &[Seg], f: impl Fn([f32; 2]) -> slides_scene::P) -> slides_scene::Path {
+    let mut p = slides_scene::Path::default();
+    for s in segs {
+        match *s {
+            Seg::Move(a) => p.move_to(f(a)),
+            Seg::Line(a) => p.line_to(f(a)),
+            Seg::Quad(c, a) => p.quad_to(f(c), f(a)),
+            Seg::Cubic(c1, c2, a) => p.cubic_to(f(c1), f(c2), f(a)),
+            Seg::Close => p.close(),
+        }
+    }
+    p
 }
 
 /// The crop (left, top, right, bottom fractions of the picture) that shows
@@ -1268,9 +1309,12 @@ pub(crate) fn turned_box(clip: [f32; 4], rot: f32) -> [f32; 4] {
 
 /// Most pixels on the longer side of a turned picture.
 const TURNED_MAX: f32 = 2048.0;
+/// Fewest pixels on the longer side of a picture cut to a shape.
+const CUT_MIN: f32 = 800.0;
 
-/// A picture's shown part (`clip` of it drawn into `image`) flipped, then
-/// turned `rot` degrees clockwise, into the box around the turned one
+/// A picture's shown part (`clip` of it drawn into `image`) cut to
+/// `shape` (page px, before flipping and turning; anti-aliased), flipped,
+/// then turned `rot` degrees clockwise, into the box around the turned one
 /// (nearest pixel; the corners stay transparent).
 fn turn_image(
     img: &RenderImage,
@@ -1278,6 +1322,7 @@ fn turn_image(
     (flip_h, flip_v): (bool, bool),
     image: [f32; 4],
     clip: [f32; 4],
+    shape: Option<&[Seg]>,
 ) -> Option<Arc<RenderImage>> {
     let size = img.size(0);
     let (sw, sh) = (size.width.0.max(1) as u32, size.height.0.max(1) as u32);
@@ -1287,9 +1332,24 @@ fn turn_image(
     let [cl, ct, cr, cb] = crop_of(image, clip);
     let (kw, kh) = (1.0 - cl - cr, 1.0 - ct - cb);
     let (w0, h0) = (clip[2].max(1e-3), clip[3].max(1e-3));
-    // As many pixels as the picture has, at most TURNED_MAX on a side.
-    let k = (TURNED_MAX.min((sw as f32 * kw).max(sh as f32 * kh)) / w0.max(h0)).max(1e-3);
+    // As many pixels as the picture has (a cut one enough for a smooth
+    // edge), at most TURNED_MAX on a side.
+    let own = (sw as f32 * kw).max(sh as f32 * kh);
+    let want = if shape.is_some() {
+        own.max(CUT_MIN)
+    } else {
+        own
+    };
+    let k = (TURNED_MAX.min(want) / w0.max(h0)).max(1e-3);
     let (w, h) = ((w0 * k).max(1.0), (h0 * k).max(1.0));
+    // How much of each pixel of the unturned box the shape covers.
+    let (mw, mh) = (w.ceil() as u32, h.ceil() as u32);
+    let mask = shape.map(|segs| {
+        let path = scene_path(segs, |p| {
+            slides_scene::p((p[0] - clip[0]) * k, (p[1] - clip[1]) * k)
+        });
+        slides_scene::mask::coverage(&path, (mw, mh))
+    });
     let (sin, cos) = rot.to_radians().sin_cos();
     let bw = (w * cos.abs() + h * sin.abs() - 1e-3).ceil().max(1.0) as u32;
     let bh = (w * sin.abs() + h * cos.abs() - 1e-3).ceil().max(1.0) as u32;
@@ -1319,6 +1379,11 @@ fn turn_image(
             let s = ((sy * sw + sx) * 4) as usize;
             let d = ((j * bw + i) * 4) as usize;
             out[d..d + 4].copy_from_slice(&src[s..s + 4]);
+            if let Some(m) = &mask {
+                let (mx, my) = ((lx as u32).min(mw - 1), (ly as u32).min(mh - 1));
+                let c = m[(my * mw + mx) as usize] as u16;
+                out[d + 3] = ((out[d + 3] as u16 * c + 127) / 255) as u8;
+            }
         }
     }
     let buf = image::RgbaImage::from_raw(bw, bh, out)?;
@@ -1564,8 +1629,9 @@ pub(crate) fn paint_floats(
                     clip,
                     rot,
                     flip,
+                    shape,
                 } => {
-                    let pk = picture_key(rel_id, *rot, *flip, *image, *clip);
+                    let pk = picture_key(rel_id, *rot, *flip, *image, *clip, shape.as_deref());
                     let turned = pk != *rel_id;
                     let key = (fp.story.map_or(0, |s| s + 1), pk);
                     let rect = |r: [f32; 4]| {
@@ -1592,6 +1658,10 @@ pub(crate) fn paint_floats(
                                 false,
                             );
                         }
+                        // A picture cut to a shape that isn't found (a
+                        // SmartArt's picture fill, kept in its own part)
+                        // shows nothing; other pictures show a box.
+                        None if shape.is_some() => {}
                         None => {
                             window.paint_quad(fill(rect(*clip), f.t.paper_selection.opacity(0.35)))
                         }
@@ -1622,12 +1692,15 @@ pub(crate) fn paint_floats(
         let pictures = |window: &mut Window, l: &docs_pdf::StoryLayout, (x, y): (f32, f32)| {
             for o in l.paged.objects(0) {
                 if let Some(data) = f.hf_images.get(&(l.key(), o.para, o.index)) {
-                    let [ox, oy, w, h] = o.rect;
-                    let b = Bounds::from_corners(
-                        g.page_to_screen(page, x + ox, y + oy),
-                        g.page_to_screen(page, x + ox + w, y + oy + h),
-                    );
-                    let _ = window.paint_image(b, b, Corners::default(), data.clone(), 0, false);
+                    let at = |[ox, oy, w, h]: [f32; 4]| {
+                        Bounds::from_corners(
+                            g.page_to_screen(page, x + ox, y + oy),
+                            g.page_to_screen(page, x + ox + w, y + oy + h),
+                        )
+                    };
+                    let (b, whole) = (at(o.rect), at(o.whole));
+                    let _ =
+                        window.paint_image(b, whole, Corners::default(), data.clone(), 0, false);
                 }
             }
         };

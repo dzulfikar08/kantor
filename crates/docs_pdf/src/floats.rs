@@ -125,6 +125,10 @@ pub enum FloatPrim {
         /// and flipped (horizontally, vertically) first.
         rot: f32,
         flip: (bool, bool),
+        /// The shape it's cut to (an oval picture, a shape's picture
+        /// fill), in page px before it's flipped and turned; `None`: the
+        /// whole box.
+        shape: Option<Vec<Seg>>,
     },
     /// Content Kantor doesn't draw (charts, groups, SmartArt): a box.
     Placeholder([f32; 4], String),
@@ -221,6 +225,7 @@ impl Painter {
 
     /// A picture in `rect`, cropped (`crop` l, t, r, b as fractions), with
     /// its shadow and outline.
+    #[allow(clippy::too_many_arguments)]
     fn picture(
         &self,
         sp: Option<Node>,
@@ -230,29 +235,43 @@ impl Painter {
         rect: [f32; 4],
         out: &mut Vec<FloatPrim>,
     ) {
-        // The crop insets are of the whole picture: draw it larger and
-        // clip it to the box.
-        let [l, t, r, b] = crop;
-        let (sw, sh) = ((1.0 - l - r).max(0.01), (1.0 - t - b).max(0.01));
-        let [x, y, w, h] = rect;
-        let (fw, fh) = (w / sw, h / sh);
         let xform = Xform::of(sp, rect, (1.0, 1.0));
-        let outline = xform.rect_segs();
-        out.extend(self.shadow(sp, std::slice::from_ref(&outline)));
-        out.push(FloatPrim::Picture {
-            rel_id: rel_id.to_owned(),
-            image: [x - l * fw, y - t * fh, fw, fh],
-            clip: rect,
-            rot: xform.rot,
-            flip: (xform.flip_h, xform.flip_v),
-        });
+        // Cut to its shape (`a:prstGeom` other than a rectangle, or
+        // `a:custGeom`), its line drawn round that shape.
+        let geometry = sp
+            .and_then(|s| child(s, "prstGeom").or_else(|| child(s, "custGeom")))
+            .and_then(Geometry::from_xml)
+            .filter(|g| g.preset_name() != Some("rect"));
+        let (shape, lines) = match &geometry {
+            Some(g) => {
+                let o = outline(g, rect[2] as f64, rect[3] as f64);
+                let shape: Vec<Seg> = o
+                    .paths
+                    .iter()
+                    .filter(|p| p.fill.is_filled())
+                    .flat_map(|p| p.cmds.iter().map(|c| xform.local_seg(c)))
+                    .collect();
+                let lines: Vec<Vec<Seg>> = o
+                    .paths
+                    .iter()
+                    .filter(|p| p.stroke)
+                    .map(|p| p.cmds.iter().map(|c| xform.seg(c)).collect())
+                    .collect();
+                (Some(shape), lines)
+            }
+            None => (None, vec![xform.rect_segs()]),
+        };
+        out.extend(self.shadow(sp, &lines));
+        out.push(picture_prim(rel_id, crop, rect, &xform, shape));
         if let Some((color, width, dash)) = self.line(sp, style) {
-            out.push(FloatPrim::Path(DrawPath {
-                segs: outline,
-                fill: None,
-                stroke: Some((color, width, dash)),
-                gradient: None,
-            }));
+            for segs in lines {
+                out.push(FloatPrim::Path(DrawPath {
+                    segs,
+                    fill: None,
+                    stroke: Some((color, width, dash.clone())),
+                    gradient: None,
+                }));
+            }
         }
     }
 
@@ -344,9 +363,29 @@ impl Painter {
                 cell,
             },
         };
+        // A picture fill: the picture cut to each filled part.
+        let blip = sp.and_then(|s| child(s, "blipFill"));
+        let blip_rel = blip
+            .and_then(|b| child(b, "blip"))
+            .and_then(|b| b.attributes().find(|a| a.name() == "embed"))
+            .map(|a| a.value().to_owned());
         for sub in &o.paths {
             let segs: Vec<Seg> = sub.cmds.iter().map(|c| xform.seg(c)).collect();
             let filled = sub.fill.is_filled();
+            if let Some(rel) = blip_rel.as_deref().filter(|_| filled) {
+                let shape = sub.cmds.iter().map(|c| xform.local_seg(c)).collect();
+                out.push(picture_prim(rel, src_rect(blip), rect, &xform, Some(shape)));
+                if !sub.stroke || soft || line.is_none() {
+                    continue;
+                }
+                out.push(FloatPrim::Path(DrawPath {
+                    segs,
+                    fill: None,
+                    stroke: line.clone(),
+                    gradient: None,
+                }));
+                continue;
+            }
             let mut fill = fill.filter(|_| filled);
             let mut gradient = gradient.clone().filter(|_| filled);
             if soft {
@@ -449,17 +488,7 @@ impl Painter {
                     else {
                         continue;
                     };
-                    let crop = fill
-                        .and_then(|b| child(b, "srcRect"))
-                        .map_or([0.0; 4], |s| {
-                            ["l", "t", "r", "b"].map(|k| {
-                                s.attribute(k)
-                                    .and_then(|v| v.parse::<f32>().ok())
-                                    .unwrap_or(0.0)
-                                    / 100_000.0
-                            })
-                        });
-                    self.picture(sp, None, &rel, crop, r, out);
+                    self.picture(sp, None, &rel, src_rect(fill), r, out);
                 }
                 "grpSp" => {
                     let gp = child(c, "grpSpPr");
@@ -999,14 +1028,65 @@ impl Xform {
     }
 
     fn seg(&self, c: &PathCmd) -> Seg {
-        match *c {
-            PathCmd::MoveTo(p) => Seg::Move(self.pt(p)),
-            PathCmd::LineTo(p) => Seg::Line(self.pt(p)),
-            PathCmd::QuadTo(c, p) => Seg::Quad(self.pt(c), self.pt(p)),
-            PathCmd::CubicTo(a, b, p) => Seg::Cubic(self.pt(a), self.pt(b), self.pt(p)),
-            PathCmd::Close => Seg::Close,
-        }
+        map_cmd(c, |p| self.pt(p))
     }
+
+    /// [`Xform::seg`] in the box before it's flipped and turned.
+    fn local_seg(&self, c: &PathCmd) -> Seg {
+        let [rx, ry, _, _] = self.rect;
+        map_cmd(c, |(x, y)| {
+            [rx + x as f32 * self.sx, ry + y as f32 * self.sy]
+        })
+    }
+}
+
+fn map_cmd(c: &PathCmd, pt: impl Fn((f64, f64)) -> [f32; 2]) -> Seg {
+    match *c {
+        PathCmd::MoveTo(p) => Seg::Move(pt(p)),
+        PathCmd::LineTo(p) => Seg::Line(pt(p)),
+        PathCmd::QuadTo(c, p) => Seg::Quad(pt(c), pt(p)),
+        PathCmd::CubicTo(a, b, p) => Seg::Cubic(pt(a), pt(b), pt(p)),
+        PathCmd::Close => Seg::Close,
+    }
+}
+
+/// A picture `rel_id` filling `rect` (page px) after cutting `crop` (l, t,
+/// r, b as fractions) off its edges, turned and flipped as `xform`, cut to
+/// `shape`.
+fn picture_prim(
+    rel_id: &str,
+    crop: [f32; 4],
+    rect: [f32; 4],
+    xform: &Xform,
+    shape: Option<Vec<Seg>>,
+) -> FloatPrim {
+    // The crop insets are of the whole picture: draw it larger and clip
+    // it to the box.
+    let [l, t, r, b] = crop;
+    let (sw, sh) = ((1.0 - l - r).max(0.01), (1.0 - t - b).max(0.01));
+    let [x, y, w, h] = rect;
+    let (fw, fh) = (w / sw, h / sh);
+    FloatPrim::Picture {
+        rel_id: rel_id.to_owned(),
+        image: [x - l * fw, y - t * fh, fw, fh],
+        clip: rect,
+        rot: xform.rot,
+        flip: (xform.flip_h, xform.flip_v),
+        shape,
+    }
+}
+
+/// `a:srcRect` of a `blipFill` as fractions (l, t, r, b).
+fn src_rect(fill: Option<Node>) -> [f32; 4] {
+    fill.and_then(|b| child(b, "srcRect"))
+        .map_or([0.0; 4], |s| {
+            ["l", "t", "r", "b"].map(|k| {
+                s.attribute(k)
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(0.0)
+                    / 100_000.0
+            })
+        })
 }
 
 /// A group's child coordinates (EMU) → page px.
@@ -1569,6 +1649,58 @@ mod tests {
         format!(
             "<w:drawing xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:wps=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><wp:anchor distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\" simplePos=\"0\" relativeHeight=\"1\" behindDoc=\"0\" locked=\"0\" layoutInCell=\"1\" allowOverlap=\"1\"><wp:simplePos x=\"0\" y=\"0\"/><wp:positionH relativeFrom=\"page\"><wp:posOffset>0</wp:posOffset></wp:positionH><wp:positionV relativeFrom=\"page\"><wp:posOffset>0</wp:posOffset></wp:positionV><wp:extent cx=\"952500\" cy=\"952500\"/><wp:wrapNone/><wp:docPr id=\"1\" name=\"Box\"/><a:graphic><a:graphicData uri=\"http://schemas.microsoft.com/office/word/2010/wordprocessingShape\"><wps:wsp><wps:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"952500\" cy=\"952500\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom>{sp_pr}</wps:spPr><wps:bodyPr/></wps:wsp></a:graphicData></a:graphic></wp:anchor></w:drawing>"
         )
+    }
+
+    #[test]
+    fn pictures_and_picture_fills_are_cut_to_their_shape() {
+        let a = "http://schemas.openxmlformats.org/drawingml/2006/main";
+        let xfrm = |x: i64| {
+            format!(r#"<a:xfrm><a:off x="{x}" y="0"/><a:ext cx="952500" cy="476250"/></a:xfrm>"#)
+        };
+        let xml = format!(
+            r#"<dsp:drawing xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" xmlns:a="{a}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><dsp:spTree><dsp:sp><dsp:spPr>{}<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:blipFill><a:blip r:embed="rId7"/><a:stretch><a:fillRect/></a:stretch></a:blipFill><a:ln w="12700"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln></dsp:spPr></dsp:sp><pic:pic><pic:blipFill><a:blip r:embed="rId8"/></pic:blipFill><pic:spPr>{}<a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom></pic:spPr></pic:pic><pic:pic><pic:blipFill><a:blip r:embed="rId9"/></pic:blipFill><pic:spPr>{}<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></dsp:spTree></dsp:drawing>"#,
+            xfrm(0),
+            xfrm(952500),
+            xfrm(1905000)
+        );
+        let doc = Document::new();
+        let p = Painter::new(&doc);
+        let k = 1.0 / EMU_PER_PX;
+        let prims = p.smartart_prims(&xml, [0.0, 0.0, 300.0, 50.0], (k, k));
+        type Pic<'a> = (&'a str, Option<&'a Vec<Seg>>, [f32; 4]);
+        let pics: Vec<Pic> = prims
+            .iter()
+            .filter_map(|p| match p {
+                FloatPrim::Picture {
+                    rel_id,
+                    shape,
+                    clip,
+                    ..
+                } => Some((rel_id.as_str(), shape.as_ref(), *clip)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(pics.len(), 3, "{prims:?}");
+        // The shape's picture fill and the oval picture: cut to ellipses
+        // filling their boxes; the plain picture isn't cut.
+        for (rel, x) in [("rId7", 0.0), ("rId8", 100.0)] {
+            let (_, shape, clip) = pics.iter().find(|p| p.0 == rel).unwrap();
+            assert_eq!(*clip, [x, 0.0, 100.0, 50.0]);
+            let shape = shape.expect("cut");
+            assert!(shape.iter().any(|s| matches!(s, Seg::Cubic(..))));
+            let xs = shape.iter().filter_map(|s| match s {
+                Seg::Move(p) | Seg::Line(p) | Seg::Cubic(_, _, p) => Some(p[0]),
+                _ => None,
+            });
+            let (lo, hi) = xs.fold((f32::MAX, f32::MIN), |(l, h), v| (l.min(v), h.max(v)));
+            assert!((lo - x).abs() < 0.01 && (hi - x - 100.0).abs() < 0.01);
+        }
+        assert!(pics.iter().find(|p| p.0 == "rId9").unwrap().1.is_none());
+        // The fill's line is still drawn round the shape, with no fill.
+        assert!(prims.iter().any(|p| matches!(
+            p,
+            FloatPrim::Path(d) if d.stroke.is_some() && d.fill.is_none()
+        )));
     }
 
     const GRAD: &str = "<a:gradFill><a:gsLst><a:gs pos=\"0\"><a:srgbClr val=\"FF0000\"/></a:gs><a:gs pos=\"50000\"><a:srgbClr val=\"00FF00\"/></a:gs><a:gs pos=\"100000\"><a:srgbClr val=\"0000FF\"/></a:gs></a:gsLst><a:lin ang=\"0\" scaled=\"0\"/></a:gradFill>";

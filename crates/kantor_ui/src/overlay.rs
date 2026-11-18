@@ -35,10 +35,31 @@ pub fn popover(layer: impl IntoElement) -> Deferred {
 /// it closes, so a menu that is gone (closed, or never drawn again) never
 /// counts.
 pub fn menu_open(window: &Window) -> bool {
-    window
-        .context_stack()
-        .iter()
-        .any(|c| c.contains(POPUP_MENU_CONTEXT))
+    // Before a window's first frame there is no frame to read (GPUI's
+    // `context_stack` panics on its empty key dispatch tree).
+    drawn(window)
+        && window
+            .context_stack()
+            .iter()
+            .any(|c| c.contains(POPUP_MENU_CONTEXT))
+}
+
+thread_local! {
+    /// Windows that have drawn a frame.
+    static DRAWN: std::cell::RefCell<std::collections::HashSet<WindowId>> =
+        Default::default();
+}
+
+/// Whether `window` has drawn a frame; until it has, notes when it does.
+fn drawn(window: &Window) -> bool {
+    let id = window.window_handle().window_id();
+    if DRAWN.with(|d| d.borrow().contains(&id)) {
+        return true;
+    }
+    window.on_next_frame(move |_, _| {
+        DRAWN.with(|d| d.borrow_mut().insert(id));
+    });
+    false
 }
 
 /// gpui-component's key context for `PopupMenu`.

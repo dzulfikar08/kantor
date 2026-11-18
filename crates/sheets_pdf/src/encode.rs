@@ -395,9 +395,19 @@ fn overlay_items(
     // Points to the scene's px.
     let (w, h) = (o.rect[2] / 0.75, o.rect[3] / 0.75);
     match &o.kind {
-        OverlayKind::Picture { part, data, crop } => {
-            Arc::new(sheets_scene::picture_items(part, data, *crop, w, h))
-        }
+        OverlayKind::Picture {
+            part,
+            data,
+            crop,
+            shape,
+        } => Arc::new(sheets_scene::picture_items(
+            part,
+            data,
+            *crop,
+            shape.as_deref(),
+            w,
+            h,
+        )),
         OverlayKind::Chart {
             key,
             hash,
@@ -869,6 +879,7 @@ impl Pen<'_> {
                         &pic.part,
                         &pic.data,
                         [0.0; 4],
+                        None,
                         w / 0.75,
                         h / 0.75,
                     );

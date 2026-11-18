@@ -30,6 +30,7 @@ pub enum PrintKind {
         part: Arc<str>,
         data: Arc<Vec<u8>>,
         crop: [f32; 4],
+        shape: Option<Arc<str>>,
     },
     /// A parsed chart, before its live data, and whether its references
     /// are in the current rows and columns (made in Kantor).
@@ -240,10 +241,16 @@ fn print_kind(
 ) -> Option<PrintKind> {
     let (w, h) = ((rect[2] / PT_PER_PX) as f32, (rect[3] / PT_PER_PX) as f32);
     Some(match &*d.kind {
-        DrawingKind::Picture { part, data, crop } => PrintKind::Picture {
+        DrawingKind::Picture {
+            part,
+            data,
+            crop,
+            shape,
+        } => PrintKind::Picture {
             part: part.clone(),
             data: data.clone(),
             crop: *crop,
+            shape: shape.clone(),
         },
         DrawingKind::Chart {
             xml, current_refs, ..
@@ -374,10 +381,16 @@ impl SheetDrawings {
                 continue;
             }
             let kind = match &d.kind {
-                PrintKind::Picture { part, data, crop } => OverlayKind::Picture {
+                PrintKind::Picture {
+                    part,
+                    data,
+                    crop,
+                    shape,
+                } => OverlayKind::Picture {
                     part: part.clone(),
                     data: data.clone(),
                     crop: *crop,
+                    shape: shape.clone(),
                 },
                 PrintKind::Chart(base, current) => {
                     let Some(defaults) = &self.defaults else {

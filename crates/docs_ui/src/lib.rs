@@ -2346,8 +2346,16 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     .flatten();
                 match picture {
                     Some(data) => {
-                        let _ =
-                            window.paint_image(b, b, Corners::default(), data.clone(), 0, false);
+                        // Cut at an exact line's top (`whole` is taller).
+                        let whole = rect(page, o.whole);
+                        let _ = window.paint_image(
+                            b,
+                            whole,
+                            Corners::default(),
+                            data.clone(),
+                            0,
+                            false,
+                        );
                     }
                     None => {
                         window.paint_quad(fill(b, f.t.paper_selection.opacity(0.35)));
@@ -2404,10 +2412,17 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 };
                 for o in l.paged.objects(0) {
                     if let Some(data) = f.hf_images.get(&(l.key(), o.para, o.index)) {
-                        let [x, y, w, h] = o.rect;
-                        let b = rect(page, [x + placed.x, y + placed.y, w, h]);
-                        let _ =
-                            window.paint_image(b, b, Corners::default(), data.clone(), 0, false);
+                        let at =
+                            |[x, y, w, h]: [f32; 4]| rect(page, [x + placed.x, y + placed.y, w, h]);
+                        let (b, whole) = (at(o.rect), at(o.whole));
+                        let _ = window.paint_image(
+                            b,
+                            whole,
+                            Corners::default(),
+                            data.clone(),
+                            0,
+                            false,
+                        );
                     }
                 }
                 let first = l.paged.pages.first().map_or(&[][..], |p| &p.rules[..]);

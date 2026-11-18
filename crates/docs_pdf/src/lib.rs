@@ -93,6 +93,8 @@ pub struct Picture {
     pub rect: [f32; 4],
     /// Drawn only inside this box (cropped pictures).
     pub clip: Option<[f32; 4]>,
+    /// Cut to this shape (in the clip box before it's turned and flipped).
+    pub shape: Option<Vec<floats::Seg>>,
     /// Turned clockwise (degrees) about the clip box's centre, flipped
     /// first (horizontally, vertically).
     pub turn: f32,
@@ -254,10 +256,13 @@ fn add_page(
                 pdf_picture_data(bytes)
             });
         if let Some((format, bytes)) = found {
-            let [x, y, w, h] = o.rect;
+            let [x, y, w, h] = o.whole;
+            let [cx, cy, cw, ch] = o.rect;
             out.pictures.push(Picture {
                 rect: [x + dx, y + dy, w, h],
-                clip: None,
+                // Cut at an exact line's top.
+                clip: (o.whole != o.rect).then_some([cx + dx, cy + dy, cw, ch]),
+                shape: None,
                 turn: 0.0,
                 flip: (false, false),
                 format: *format,
@@ -339,6 +344,7 @@ fn float_scene(
                 clip,
                 rot,
                 flip,
+                shape,
             } => {
                 let key = (it.story.map_or(0, |s| s + 1), rel_id.clone());
                 let found = pictures.entry(key).or_insert_with(|| {
@@ -350,6 +356,7 @@ fn float_scene(
                     out.pictures.push(Picture {
                         rect: image,
                         clip: Some(clip),
+                        shape,
                         turn: rot,
                         flip,
                         format: *format,
@@ -362,6 +369,7 @@ fn float_scene(
                 out.pictures.push(Picture {
                     rect: b.rect,
                     clip: None,
+                    shape: None,
                     turn: 0.0,
                     flip: (false, false),
                     format: ImageFormat::Png,
@@ -955,12 +963,15 @@ fn draw_picture(surface: &mut Surface, pic: &Picture, images: &mut Images) {
     let (Some(image), Some(size)) = (image, Size::from_wh(w * TO_PT, h * TO_PT)) else {
         return;
     };
-    let clip = pic.clip.and_then(|[cx, cy, cw, ch]| {
-        let rect = Rect::from_xywh(cx * TO_PT, cy * TO_PT, cw * TO_PT, ch * TO_PT)?;
-        let mut pb = PathBuilder::new();
-        pb.push_rect(rect);
-        pb.finish()
-    });
+    let clip = match &pic.shape {
+        Some(shape) => krilla_path(shape),
+        None => pic.clip.and_then(|[cx, cy, cw, ch]| {
+            let rect = Rect::from_xywh(cx * TO_PT, cy * TO_PT, cw * TO_PT, ch * TO_PT)?;
+            let mut pb = PathBuilder::new();
+            pb.push_rect(rect);
+            pb.finish()
+        }),
+    };
     // Turned and flipped about the box's centre.
     let turned = pic.turn != 0.0 || pic.flip.0 || pic.flip.1;
     if turned {

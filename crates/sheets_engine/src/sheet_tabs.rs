@@ -536,7 +536,9 @@ impl Workbook {
                     o.links = self.chart_links_of(d.key).map(Arc::new);
                     o.xml = Some(crate::move_chart::keep_links(&now, o.links.as_deref()).into());
                 }
-                DrawingKind::Picture { part, data, crop } => {
+                DrawingKind::Picture {
+                    part, data, crop, ..
+                } => {
                     let ext = part
                         .rsplit_once('.')
                         .map(|(_, e)| e.to_owned())

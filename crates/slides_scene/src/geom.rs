@@ -3,6 +3,7 @@
 //! of a shape ([`shape_outline`]).
 
 use slides_engine::geom as engine_geom;
+use slides_engine::geom::Geometry;
 use slides_engine::{Geom, Shape, ShapeKind};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -559,7 +560,8 @@ fn ellipse_arc(pa: &mut Path, c: P, rx: f32, ry: f32, t1: f32, t2: f32) {
 /// This is the one place that knows shape geometry. Rectangles, plain
 /// rounded rectangles, ellipses and straight lines are drawn directly; every
 /// other preset (all 187 DrawingML presets, with their adjustments) and
-/// `a:custGeom` comes from [`slides_engine::geom::outline`].
+/// `a:custGeom` comes from [`slides_engine::geom::outline`]. A picture's
+/// outline is the shape it's cut to.
 pub fn shape_outline(shape: &Shape, w: f32, h: f32) -> Vec<SubPath> {
     let filled = |path| {
         vec![SubPath {
@@ -568,8 +570,17 @@ pub fn shape_outline(shape: &Shape, w: f32, h: f32) -> Vec<SubPath> {
             stroke: true,
         }]
     };
-    let geometry = match shape.kind.geometry() {
+    let geometry = match &shape.kind {
+        ShapeKind::Picture {
+            geometry: Some(g), ..
+        } => Some(g.clone()),
+        k => k.geometry(),
+    };
+    let geometry = match geometry {
         Some(g) if !g.is_basic() => g,
+        Some(g) if g.preset_name() == Some("ellipse") => {
+            return filled(Path::ellipse(w / 2.0, h / 2.0, w / 2.0, h / 2.0));
+        }
         _ => {
             let geom = match &shape.kind {
                 ShapeKind::Shape { geom, .. } => geom,
@@ -593,8 +604,14 @@ pub fn shape_outline(shape: &Shape, w: f32, h: f32) -> Vec<SubPath> {
             };
         }
     };
+    geometry_outline(&geometry, w, h)
+}
+
+/// The outline of `geometry` in a `w` × `h` box, from
+/// [`slides_engine::geom::outline`].
+pub fn geometry_outline(geometry: &Geometry, w: f32, h: f32) -> Vec<SubPath> {
     let pt = |(x, y): engine_geom::Pt| p(x as f32, y as f32);
-    engine_geom::outline(&geometry, f64::from(w), f64::from(h))
+    engine_geom::outline(geometry, f64::from(w), f64::from(h))
         .paths
         .into_iter()
         .map(|sub| {
@@ -624,6 +641,42 @@ pub fn shape_outline(shape: &Shape, w: f32, h: f32) -> Vec<SubPath> {
             }
         })
         .collect()
+}
+
+/// What a picture shape shows of its picture: the filled parts of its
+/// outline as one path (`None`: the whole box).
+pub fn picture_clip(shape: &Shape, w: f32, h: f32) -> Option<Path> {
+    match &shape.kind {
+        ShapeKind::Picture {
+            geometry: Some(g), ..
+        } => Some(geometry_clip(g, w, h)),
+        _ => None,
+    }
+}
+
+/// [`geometry_clip`] of an `a:prstGeom` or `a:custGeom` element's XML
+/// (with its namespace declared).
+pub fn geometry_xml_clip(xml: &str, w: f32, h: f32) -> Option<Path> {
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let g = Geometry::from_xml(doc.root_element())?;
+    Some(geometry_clip(&g, w, h))
+}
+
+/// The filled parts of `geometry`'s outline in a `w` × `h` box, as one
+/// path: what a picture cut to that shape shows.
+pub fn geometry_clip(geometry: &Geometry, w: f32, h: f32) -> Path {
+    match geometry.preset_name() {
+        Some("ellipse") => return Path::ellipse(w / 2.0, h / 2.0, w / 2.0, h / 2.0),
+        Some("rect") => return Path::rect(0.0, 0.0, w, h),
+        _ => {}
+    }
+    let mut clip = Path::default();
+    for sp in geometry_outline(geometry, w, h) {
+        if sp.fill != PathFill::None {
+            clip.segs.extend(sp.path.segs);
+        }
+    }
+    clip
 }
 
 #[cfg(test)]

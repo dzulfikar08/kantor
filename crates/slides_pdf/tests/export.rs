@@ -44,7 +44,8 @@ fn shapes() -> String {
         r#"<p:sp><p:nvSpPr><p:cNvPr id="20" name="Grad"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="914400" y="914400"/><a:ext cx="3657600" cy="1828800"/></a:xfrm><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="FFFFFF"/></a:gs><a:gs pos="50000"><a:srgbClr val="FFC000"><a:alpha val="60000"/></a:srgbClr></a:gs><a:gs pos="100000"><a:srgbClr val="C00000"/></a:gs></a:gsLst><a:path path="circle"><a:fillToRect l="50000" t="50000" r="50000" b="50000"/></a:path></a:gradFill></p:spPr></p:sp>
 <p:cxnSp><p:nvCxnSpPr><p:cNvPr id="21" name="Arrow"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm><a:off x="5486400" y="914400"/><a:ext cx="2743200" cy="914400"/></a:xfrm><a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom><a:ln w="38100" cap="rnd"><a:solidFill><a:srgbClr val="00B050"/></a:solidFill><a:prstDash val="dash"/><a:headEnd type="oval"/><a:tailEnd type="triangle" w="lg" len="lg"/></a:ln></p:spPr></p:cxnSp>
 <p:sp><p:nvSpPr><p:cNvPr id="22" name="Turned"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm rot="2700000"><a:off x="914400" y="3657600"/><a:ext cx="3657600" cy="914400"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/></p:spPr><p:txBody><a:bodyPr wrap="square"/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US" sz="2800"><a:solidFill><a:srgbClr val="FFFFFF"/></a:solidFill></a:rPr><a:t>Turned words</a:t></a:r></a:p></p:txBody></p:sp>
-<p:pic><p:nvPicPr><p:cNvPr id="23" name="Pic"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rIdPic"><a:alphaModFix amt="50000"/></a:blip><a:srcRect l="50000"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm flipH="1"><a:off x="7315200" y="3657600"/><a:ext cx="1828800" cy="1828800"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>"#,
+<p:pic><p:nvPicPr><p:cNvPr id="23" name="Pic"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rIdPic"><a:alphaModFix amt="50000"/></a:blip><a:srcRect l="50000"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm flipH="1"><a:off x="7315200" y="3657600"/><a:ext cx="1828800" cy="1828800"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>
+<p:pic><p:nvPicPr><p:cNvPr id="24" name="Oval"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rIdPic"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="5486400" y="3657600"/><a:ext cx="1828800" cy="914400"/></a:xfrm><a:prstGeom prst="ellipse"><a:avLst/></a:prstGeom><a:ln w="25400"><a:solidFill><a:srgbClr val="0070C0"/></a:solidFill></a:ln></p:spPr></p:pic>"#,
     )
 }
 
@@ -310,6 +311,38 @@ fn scene_has_backgrounds_gradients_arrowheads_and_turned_text() {
     assert!((pic.0.alpha - 0.5).abs() < 0.01);
     assert_eq!(pic.0.image_rect(), [-192.0, 0.0, 384.0, 192.0]);
     assert!(pic.1.angle_flip().1);
+    // The oval picture is cut to its ellipse, its line drawn round it.
+    let oval = scene
+        .items
+        .iter()
+        .filter_map(|i| match &i.prim {
+            Prim::Picture(p) => Some(p),
+            _ => None,
+        })
+        .nth(1)
+        .unwrap();
+    assert_eq!(oval.rect, [0.0, 0.0, 192.0, 96.0]);
+    let clip = oval.clip.as_ref().expect("cut to its shape");
+    let b = clip.bounds().unwrap();
+    for (a, e) in b.iter().zip([0.0, 0.0, 192.0, 96.0]) {
+        assert!((a - e).abs() < 0.01, "{b:?}");
+    }
+    assert!(
+        clip.segs
+            .iter()
+            .any(|s| matches!(s, slides_scene::geom::Seg::Cubic(..))),
+        "an ellipse, not the box"
+    );
+    let line = scene
+        .items
+        .iter()
+        .rev()
+        .find_map(|i| match &i.prim {
+            Prim::Stroke { path, .. } => Some(path),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(line, clip);
 }
 
 #[test]
