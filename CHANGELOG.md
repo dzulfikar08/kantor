@@ -9,6 +9,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-11-18
+
+Sheets now uses Excel's cell sizes (64 px columns, 20 px rows), so shapes, pictures and charts keep their proportions and
+cover the same cells as in Excel; scrolling stays as fast as before, sparklines are drawn, Ctrl+mouse wheel zooms, chart
+sheets zoom, and dialog cards close with Escape. Docs columns get ruler markers you can drag, footnotes at their column's
+width and Word's spacing at column tops; exact line spacing holds pictures as Word does. Pictures are cut to their shapes
+in every app, SmartArt gets Circular Picture Callout, menus no longer leave a highlight beside them, `.xlsb` files bring
+Excel 2010 conditional formatting and average rules, more `.xls` and `.ods` formulas import as formulas, and pattern
+fills stay upright on turned shapes.
+
 ### Changed
 
 - Sheets draws columns and rows in Excel's proportions: a column's width in pixels follows
@@ -1987,7 +1997,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/dzulfikar08/kantor/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/dzulfikar08/kantor/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/dzulfikar08/kantor/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/dzulfikar08/kantor/compare/v0.10.0...v0.11.0
