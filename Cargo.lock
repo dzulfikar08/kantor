@@ -5624,7 +5624,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_engine"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "hayro",
  "lopdf",
@@ -5632,7 +5632,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_ui"
-version = "0.15.0"
+version = "0.16.0"
 dependencies = [
  "async-channel",
  "gpui-kit",
