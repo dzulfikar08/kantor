@@ -328,6 +328,13 @@ impl Workspace {
                     pdf_ui::PdfEvent::Open(path) => {
                         ws.open_paths(None, vec![path.clone()], window, cx)
                     }
+                    // A signature's signed revision: opened read-only.
+                    pdf_ui::PdfEvent::OpenSignedVersion(path) => {
+                        ws.open_paths(None, vec![path.clone()], window, cx);
+                        if let Some((_, pane)) = ws.find_path(path, cx) {
+                            ws.set_read_only(pane, Some(read_only::ReadOnly::SignedVersion), cx);
+                        }
+                    }
                 }),
             ],
         };

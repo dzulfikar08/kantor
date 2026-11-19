@@ -1979,6 +1979,31 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Signatures"),
+        detail: tk("PDF · show the digital signatures and whether they are valid"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.toggle_panel(pdf_ui::Panel::Signatures, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Let Signature Checks Use the Internet"),
+        detail: tk(
+            "PDF · fetch missing certificates and revocation status when you ask (turn on or off)",
+        ),
+        keys: "",
+        run: |ws, _, cx| {
+            let text = if pdf_ui::toggle_online_signature_checks(cx) {
+                i18n::t("Signature checks may use the internet when you click Check Online")
+            } else {
+                i18n::t("Signature checks use only what the file contains")
+            };
+            ws.notice(text.into(), cx);
+        },
+    },
+    Command {
         title: tk("Go to Page…"),
         detail: tk("PDF · type a page number"),
         keys: "",

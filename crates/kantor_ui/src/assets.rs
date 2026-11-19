@@ -101,7 +101,12 @@ icon_assets!(
         MoveHorizontal,
         // PDF page tools
         LayoutGrid,
-        Wrench
+        Wrench,
+        // PDF signatures
+        Signature,
+        ShieldCheck,
+        ShieldX,
+        ShieldQuestionMark
     ]
 );
 

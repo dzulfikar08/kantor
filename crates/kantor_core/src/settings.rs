@@ -35,6 +35,8 @@ pub struct Settings {
     pub cloud: CloudSettings,
     /// Sheets (`[sheets]`).
     pub sheets: SheetsSettings,
+    /// `[pdf]`.
+    pub pdf: PdfSettings,
     /// Interface language: `en` or `id`; unset follows the system language
     /// (Indonesian → `id`, anything else `en`). `KANTOR_LANG` overrides it.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -246,6 +248,7 @@ impl Default for Settings {
             spelling: SpellingSettings::default(),
             cloud: CloudSettings::default(),
             sheets: SheetsSettings::default(),
+            pdf: PdfSettings::default(),
             language: None,
             number_format: None,
         }
@@ -274,6 +277,26 @@ impl Default for SheetsSettings {
         Self {
             web_formulas: true,
             custom_lists: Vec::new(),
+        }
+    }
+}
+
+/// `[pdf]`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PdfSettings {
+    /// "Let signature checks use the internet": the Signatures panel may
+    /// offer to fetch missing issuer certificates and ask the CAs' OCSP
+    /// responders and CRLs whether certificates were revoked. Even when
+    /// on, nothing is fetched until the user clicks Check Online for a
+    /// document. Off, signatures are checked only with what the file holds.
+    pub online_signature_checks: bool,
+}
+
+impl Default for PdfSettings {
+    fn default() -> Self {
+        Self {
+            online_signature_checks: true,
         }
     }
 }
@@ -435,6 +458,9 @@ mod tests {
             sheets: SheetsSettings {
                 web_formulas: false,
                 custom_lists: vec!["Low, Medium, High".into()],
+            },
+            pdf: PdfSettings {
+                online_signature_checks: false,
             },
             language: Some("id".into()),
             number_format: Some("en".into()),

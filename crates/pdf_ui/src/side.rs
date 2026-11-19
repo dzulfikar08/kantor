@@ -49,6 +49,14 @@ pub(crate) fn render(
             i18n::t("Bookmarks"),
             Panel::Bookmarks,
         ))
+        .when(view.sigs.signed() || panel == Panel::Signatures, |d| {
+            d.child(tab(
+                "pdf-signatures",
+                Lucide::Signature,
+                i18n::t("Signatures"),
+                Panel::Signatures,
+            ))
+        })
         .child(
             div()
                 .flex_1()
@@ -58,6 +66,7 @@ pub(crate) fn render(
                 .child(match panel {
                     Panel::Thumbnails => i18n::t("Pages"),
                     Panel::Bookmarks => i18n::t("Bookmarks"),
+                    Panel::Signatures => i18n::t("Signatures"),
                 }),
         );
     let body = match panel {
@@ -67,10 +76,16 @@ pub(crate) fn render(
             el
         }
         Panel::Bookmarks => bookmarks(view, cx),
+        Panel::Signatures => crate::sign::panel(view, cx),
     };
     v_flex()
         .flex_none()
-        .w(px(SIDEBAR_W))
+        // Signatures need room for names, times and certificate details.
+        .w(px(if panel == Panel::Signatures {
+            SIDEBAR_W * 1.6
+        } else {
+            SIDEBAR_W
+        }))
         .h_full()
         .bg(t.chrome)
         .border_r_1()

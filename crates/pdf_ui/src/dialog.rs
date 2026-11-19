@@ -1104,6 +1104,9 @@ impl PdfView {
 pub enum PdfEvent {
     /// Open this file in a new tab (a combined PDF).
     Open(PathBuf),
+    /// Open the signed version of the document (a signature's revision,
+    /// written to a temporary file) read-only in a new tab.
+    OpenSignedVersion(PathBuf),
 }
 
 impl EventEmitter<PdfEvent> for PdfView {}

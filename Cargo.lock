@@ -4075,6 +4075,7 @@ dependencies = [
  "kantor_ui",
  "kantor_update",
  "log",
+ "pdf_engine",
  "pdf_ui",
  "ring",
  "serde_json",
@@ -5629,6 +5630,9 @@ version = "0.16.0"
 dependencies = [
  "hayro",
  "lopdf",
+ "ring",
+ "rustls-native-certs",
+ "ureq",
 ]
 
 [[package]]

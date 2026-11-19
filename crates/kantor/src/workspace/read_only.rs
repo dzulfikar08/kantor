@@ -31,6 +31,9 @@ pub(super) enum ReadOnly {
     Manual,
     /// A cloud file locked by `owner`; `free` once the lock is gone.
     Locked { owner: String, free: bool },
+    /// A PDF signature's signed revision (Signatures panel: View Signed
+    /// Version): never editable.
+    SignedVersion,
 }
 
 impl ReadOnly {
@@ -49,6 +52,11 @@ impl ReadOnly {
                     "Anda dapat membaca, menyalin, mencetak dan mengekspornya.",
                 )
             ),
+            Self::SignedVersion => tr(
+                "The signed version of this document, exactly as it was signed. Read-only.",
+                "Versi bertanda tangan dari dokumen ini, persis seperti saat ditandatangani. Hanya baca.",
+            )
+            .into(),
             Self::Locked { owner, free: true } => format!(
                 "{owner} {}",
                 tr(
@@ -179,7 +187,7 @@ impl Workspace {
         match self.read_only(pane) {
             Some(ReadOnly::Manual) => self.set_read_only(pane, None, cx),
             Some(ReadOnly::Locked { .. }) => self.edit_now(pane, window, cx),
-            None => {}
+            Some(ReadOnly::SignedVersion) | None => {}
         }
     }
 
@@ -196,7 +204,9 @@ impl Workspace {
             ReadOnly::Locked { free: true, .. } => (tr("Edit now", "Edit sekarang"), t.success),
             ReadOnly::Locked { .. } => (tr("Check again", "Periksa lagi"), t.warning),
             ReadOnly::Manual => (tr("Allow Editing", "Izinkan Pengeditan"), t.warning),
+            ReadOnly::SignedVersion => ("", t.info),
         };
+        let has_action = ro != ReadOnly::SignedVersion;
         Some(
             h_flex()
                 .flex_none()
@@ -215,33 +225,35 @@ impl Workspace {
                         .text_color(color),
                 )
                 .child(div().flex_1().min_w_0().child(ro.text()))
-                .child(
-                    Button::new(("read-only-action", pane as usize))
-                        .small()
-                        .when_else(
-                            matches!(ro, ReadOnly::Locked { free: true, .. }),
-                            |b| b.primary(),
-                            |b| b.outline(),
-                        )
-                        .label(label)
-                        .on_click(move |_, window, cx| {
-                            let _ = ws.update(cx, |ws, cx| {
-                                if let Some(i) = ws
-                                    .tabs
-                                    .iter()
-                                    .position(|t| t.layout.panes().contains(&pane))
-                                {
-                                    ws.tabs[i].focused = pane;
-                                }
-                                match ws.read_only(pane) {
-                                    Some(ReadOnly::Locked { free: false, .. }) => {
-                                        ws.check_lock(pane, window, cx)
+                .when(has_action, |d| {
+                    d.child(
+                        Button::new(("read-only-action", pane as usize))
+                            .small()
+                            .when_else(
+                                matches!(ro, ReadOnly::Locked { free: true, .. }),
+                                |b| b.primary(),
+                                |b| b.outline(),
+                            )
+                            .label(label)
+                            .on_click(move |_, window, cx| {
+                                let _ = ws.update(cx, |ws, cx| {
+                                    if let Some(i) = ws
+                                        .tabs
+                                        .iter()
+                                        .position(|t| t.layout.panes().contains(&pane))
+                                    {
+                                        ws.tabs[i].focused = pane;
                                     }
-                                    _ => ws.allow_editing(window, cx),
-                                }
-                            });
-                        }),
-                ),
+                                    match ws.read_only(pane) {
+                                        Some(ReadOnly::Locked { free: false, .. }) => {
+                                            ws.check_lock(pane, window, cx)
+                                        }
+                                        _ => ws.allow_editing(window, cx),
+                                    }
+                                });
+                            }),
+                    )
+                }),
         )
     }
 }

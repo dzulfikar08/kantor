@@ -175,3 +175,141 @@ Couldn't print: {}	Tidak dapat mencetak: {}
 No changes to save	Tidak ada perubahan untuk disimpan
 Tools	Alat
 Page tools	Alat halaman
+PKCS #7, detached (adbe.pkcs7.detached)	PKCS #7, terpisah (adbe.pkcs7.detached)
+PKCS #7 with SHA-1 (adbe.pkcs7.sha1)	PKCS #7 dengan SHA-1 (adbe.pkcs7.sha1)
+CAdES / PAdES (ETSI.CAdES.detached)	CAdES / PAdES (ETSI.CAdES.detached)
+Document time stamp (RFC 3161)	Cap waktu dokumen (RFC 3161)
+Other ({})	Lainnya ({})
+The signature's byte range doesn't cover the signed revision correctly.	Rentang byte tanda tangan tidak mencakup revisi yang ditandatangani dengan benar.
+The document was altered or damaged after signing: the signed bytes don't match the signature.	Dokumen diubah atau rusak setelah ditandatangani: byte yang ditandatangani tidak cocok dengan tanda tangan.
+The signature doesn't match the signer's certificate.	Tanda tangan tidak cocok dengan sertifikat penanda tangan.
+The signature names a different signing certificate than the one it carries.	Tanda tangan menyebut sertifikat penandatanganan yang berbeda dari yang dibawanya.
+The signer's certificate isn't in the signature.	Sertifikat penanda tangan tidak ada di dalam tanda tangan.
+Kantor can't check this kind of signature ({}).	Kantor tidak dapat memeriksa jenis tanda tangan ini ({}).
+The signature data can't be read.	Data tanda tangan tidak dapat dibaca.
+A certificate in the chain was revoked on {}.	Sebuah sertifikat dalam rantai dicabut pada {}.
+The document was modified after it was signed.	Dokumen diubah setelah ditandatangani.
+The document was changed after signing in ways the certifying signer didn't allow.	Dokumen diubah setelah ditandatangani dengan cara yang tidak diizinkan oleh penanda tangan sertifikasi.
+The signer's identity can't be confirmed: the certificate chain ends at a root that isn't trusted.	Identitas penanda tangan tidak dapat dipastikan: rantai sertifikat berakhir di root yang tidak dipercaya.
+The signer's identity can't be confirmed: an issuer's certificate is missing.	Identitas penanda tangan tidak dapat dipastikan: sertifikat penerbit tidak ada.
+A certificate in the chain had expired at the time it was checked.	Sebuah sertifikat dalam rantai sudah kedaluwarsa pada waktu pemeriksaan.
+A certificate in the chain wasn't valid yet at the time it was checked.	Sebuah sertifikat dalam rantai belum berlaku pada waktu pemeriksaan.
+A certificate in the chain isn't allowed to issue certificates.	Sebuah sertifikat dalam rantai tidak diizinkan menerbitkan sertifikat.
+A certificate's key usage doesn't allow it to be used this way.	Penggunaan kunci sebuah sertifikat tidak mengizinkan pemakaian seperti ini.
+A certificate has a critical extension Kantor doesn't understand.	Sebuah sertifikat memiliki ekstensi kritis yang tidak dipahami Kantor.
+Revocation not checked: Kantor couldn't confirm that the certificates weren't revoked.	Pencabutan tidak diperiksa: Kantor tidak dapat memastikan bahwa sertifikat tidak dicabut.
+The signature's time stamp couldn't be verified.	Cap waktu tanda tangan tidak dapat diverifikasi.
+The time stamp authority isn't trusted; the signature was checked as of now.	Otoritas cap waktu tidak dipercaya; tanda tangan diperiksa per saat ini.
+The document was changed after signing, in ways the signer allowed.	Dokumen diubah setelah ditandatangani, dengan cara yang diizinkan penanda tangan.
+The document hasn't been changed since it was signed.	Dokumen tidak diubah sejak ditandatangani.
+The signed revision is unchanged; only signatures or validation data were added after it.	Revisi yang ditandatangani tidak berubah; setelahnya hanya ditambahkan tanda tangan atau data validasi.
+Long-term validation data added	Data validasi jangka panjang ditambahkan
+Signature added ({})	Tanda tangan ditambahkan ({})
+Document time stamp added	Cap waktu dokumen ditambahkan
+Form field filled in	Kolom formulir diisi
+Form field filled in: {}	Kolom formulir diisi: {}
+{} added on page {}	{} ditambahkan di halaman {}
+{} added	{} ditambahkan
+{} changed on page {}	{} diubah di halaman {}
+{} changed	{} diubah
+Annotation removed on page {}	Anotasi dihapus di halaman {}
+Page content changed on page {}	Isi halaman diubah di halaman {}
+Page content changed	Isi halaman diubah
+Pages added, removed or reordered	Halaman ditambah, dihapus, atau diurutkan ulang
+Document properties changed	Properti dokumen diubah
+Other change ({})	Perubahan lain ({})
+Trusted root (not checked)	Root tepercaya (tidak diperiksa)
+Not revoked (OCSP response in the file)	Tidak dicabut (respons OCSP di dalam berkas)
+Not revoked (CRL in the file)	Tidak dicabut (CRL di dalam berkas)
+Not revoked (checked online, OCSP)	Tidak dicabut (diperiksa daring, OCSP)
+Not revoked (checked online, CRL)	Tidak dicabut (diperiksa daring, CRL)
+Revoked on {}	Dicabut pada {}
+The issuer publishes no revocation information	Penerbit tidak menerbitkan informasi pencabutan
+Not checked (OCSP responder certificate)	Tidak diperiksa (sertifikat responder OCSP)
+Not checked	Tidak diperiksa
+Stamp	Stempel
+Highlight	Sorotan
+Squiggly underline	Garis bawah bergelombang
+Drawing	Gambar tangan
+Polygon	Poligon
+Polyline	Polilinea
+Attachment	Lampiran
+Link	Tautan
+Insertion mark	Tanda sisip
+Redaction	Redaksi
+Sound	Suara
+Annotation	Anotasi
+Digital Signature	Tanda Tangan Digital
+Non-Repudiation	Nirsangkal
+Key Encipherment	Enkripsi Kunci
+Data Encipherment	Enkripsi Data
+Key Agreement	Kesepakatan Kunci
+Certificate Sign	Penandatanganan Sertifikat
+CRL Sign	Penandatanganan CRL
+Encipher Only	Hanya Enkripsi
+Decipher Only	Hanya Dekripsi
+Valid	Valid
+Valid, with allowed changes	Valid, dengan perubahan yang diizinkan
+Validity unknown	Keabsahan tidak diketahui
+Invalid	Tidak valid
+Signed and the signature is valid.	Ditandatangani dan tanda tangannya valid.
+Signed and all signatures are valid.	Ditandatangani dan semua tanda tangan valid.
+At least one signature has problems.	Setidaknya satu tanda tangan bermasalah.
+Signature Panel	Panel Tanda Tangan
+Checking signatures…	Memeriksa tanda tangan…
+This document isn't signed.	Dokumen ini tidak ditandatangani.
+Kantor can't read this document's signatures.	Kantor tidak dapat membaca tanda tangan dokumen ini.
+page {}	halaman {}
+Empty signature field {} {}	Kolom tanda tangan kosong {} {}
+Some certificates can be checked online: Kantor asks the certificate authorities for missing certificates and whether they were revoked.	Beberapa sertifikat dapat diperiksa secara daring: Kantor menanyakan sertifikat yang hilang dan status pencabutannya kepada otoritas sertifikat.
+Check Online	Periksa Daring
+Turn on Let Signature Checks Use the Internet (command palette) to check certificates online.	Aktifkan Izinkan Pemeriksaan Tanda Tangan Memakai Internet (palet perintah) untuk memeriksa sertifikat secara daring.
+Check Again	Periksa Lagi
+Document time stamp	Cap waktu dokumen
+Signed by {}	Ditandatangani oleh {}
+Org.	Org.
+Reason	Alasan
+Location	Lokasi
+trusted time stamp	cap waktu tepercaya
+time stamp	cap waktu
+signer's computer clock	jam komputer penanda tangan
+Certified: no changes allowed	Disertifikasi: tidak ada perubahan yang diizinkan
+Certified: form filling, signing and comments allowed	Disertifikasi: pengisian formulir, penandatanganan, dan komentar diizinkan
+Certified: form filling and signing allowed	Disertifikasi: pengisian formulir dan penandatanganan diizinkan
+Certifies	Sertifikasi
+valid	valid
+authority not trusted	otoritas tidak dipercaya
+invalid	tidak valid
+Time stamp	Cap waktu
+Trusted root (system)	Root tepercaya (sistem)
+Trusted root (bundled with Kantor)	Root tepercaya (bawaan Kantor)
+Trusted root (added)	Root tepercaya (ditambahkan)
+Root not trusted	Root tidak dipercaya
+Chain incomplete	Rantai tidak lengkap
+Issued by	Diterbitkan oleh
+Revision	Revisi
+Changes after signing	Perubahan setelah ditandatangani
+Certificate…	Sertifikat…
+View Signed Version	Lihat Versi Bertanda Tangan
+Go to page {}	Buka halaman {}
+Time stamp authority	Otoritas cap waktu
+Not limited	Tidak dibatasi
+Expired at the time checked	Kedaluwarsa pada waktu pemeriksaan
+Not yet valid at the time checked	Belum berlaku pada waktu pemeriksaan
+Not allowed to issue certificates	Tidak diizinkan menerbitkan sertifikat
+Key usage doesn't allow this use	Penggunaan kunci tidak mengizinkan pemakaian ini
+Has a critical extension Kantor doesn't understand	Memiliki ekstensi kritis yang tidak dipahami Kantor
+Issued to	Diterbitkan untuk
+Valid from	Berlaku dari
+Valid to	Berlaku sampai
+Serial number	Nomor seri
+Public key	Kunci publik
+Key usage	Penggunaan kunci
+Extended key usage	Penggunaan kunci lanjutan
+Revocation	Pencabutan
+SHA-256 fingerprint	Sidik jari SHA-256
+SHA-1 fingerprint	Sidik jari SHA-1
+Certificate Details	Detail Sertifikat
+Signatures	Tanda Tangan
+{} (signed version, revision {})	{} (versi bertanda tangan, revisi {})
+Kantor couldn't open the signed version	Kantor tidak dapat membuka versi bertanda tangan

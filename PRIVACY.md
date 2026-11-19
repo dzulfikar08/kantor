@@ -27,7 +27,16 @@ your documents anywhere. It talks to the network in only these cases:
    quits, never on disk. Turn this off everywhere with *Let Formulas Download from the
    Internet* in the command palette (`Ctrl K`) or `[sheets] web_formulas = false` in
    `settings.toml`: the formulas then show `#BLOCKED!`. `kantor convert` never downloads.
-4. **Cloud drives, only the ones you add.** Files you open from a WebDAV account go to and from
+4. **Checking PDF signatures online, only when you click it.** A signed PDF is checked with what
+   the file holds. When a certificate's issuer or revocation status is missing, the Signatures
+   panel offers *Check Online*; only then does Kantor download the missing issuer certificates
+   and ask the certificate authorities named in the certificates (their OCSP responders and
+   certificate revocation lists) whether the certificates were revoked. Those servers see your
+   IP address, the time, the User-Agent and which certificate is asked about (its serial number
+   and issuer), not the document. Turn the offer off with *Let Signature Checks Use the
+   Internet* in the command palette or `[pdf] online_signature_checks = false` in
+   `settings.toml`. `kantor pdf verify` goes online only with `--online`.
+5. **Cloud drives, only the ones you add.** Files you open from a WebDAV account go to and from
    that server.
 
 The update server (Cloudflare Pages and GitHub) may keep standard request logs (IP address,

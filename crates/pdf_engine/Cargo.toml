@@ -11,10 +11,14 @@ repository.workspace = true
 # docs/decisions/0003-pdf-renderer.md. The embedded standard-14 fonts and CJK
 # CMaps are needed for PDFs that don't embed their fonts.
 hayro = { version = "0.9", default-features = true }
-
-[dev-dependencies]
-# Fixtures: pages, outlines, links and encryption written as test PDFs.
+# Signatures: the object structure of signed revisions (also used by kantor_pdf).
 lopdf = { version = "0.47", default-features = false }
+# Signatures: digests, RSA and ECDSA checks (already in the tree through rustls).
+ring.workspace = true
+# Signatures: the operating system's trusted roots (already in the tree).
+rustls-native-certs = "0.8"
+# Signatures: optional online issuer/revocation checks, only when allowed.
+ureq.workspace = true
 
 [lints]
 workspace = true

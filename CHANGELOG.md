@@ -27,6 +27,21 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   writes the PDF in place safely and Save As to a new file; a password-protected PDF stays protected; bookmarks
   and links to deleted pages are dropped; closing asks about unsaved changes, which also get recovery copies.
 - `kantor pdf delete` and the other page tools drop bookmarks and links that pointed at removed pages.
+- PDF digital signatures are checked when a signed PDF opens, like Acrobat's signature panel: a bar above the pages
+  says "Signed and all signatures are valid" or "At least one signature has problems", and the new Signatures panel
+  (sidebar, or *Signatures* in the command palette) lists each signature with its signer, organisation, time
+  (trusted time stamp or the signer's clock), reason, location, type (PKCS #7, CAdES/PAdES, RFC 3161 document time
+  stamp), certification level and what changed after signing ("Stamp added on page 1", form filling, long-term
+  validation data, page content changed). Each signature is Valid, Valid with allowed changes, Validity unknown
+  (untrusted root, revocation not checked) or Invalid (altered bytes, wrong key, revoked certificate, changes the
+  signer didn't allow). *Certificate…* shows the chain with validity dates, key usage, fingerprints and revocation;
+  *View Signed Version* opens exactly what was signed, read-only. Certificates are trusted through the system's
+  roots and a small list bundled with Kantor, starting with Root CA Indonesia DS G1 (Indonesian e-meterai and
+  certified e-signatures); revocation comes from what the file holds (DSS, OCSP, CRL). *Check Online* fetches
+  missing certificates and revocation status only when you click it (turn it off for good with *Let Signature
+  Checks Use the Internet*).
+- `kantor pdf verify file.pdf` prints the same signature report for scripts (exit status 0 when all signatures are
+  valid); `--online` checks online, `--trust` adds roots.
 
 ## [0.16.0] - 2026-11-19
 

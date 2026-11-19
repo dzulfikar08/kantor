@@ -32,6 +32,7 @@ mod model;
 mod organize;
 mod save;
 mod side;
+mod sign;
 mod toolbar;
 mod worker;
 
@@ -61,6 +62,7 @@ use model::{Model, PageKey, PageRef};
 pub use dialog::PdfEvent;
 pub use layout::Zoom;
 use layout::{Column, ImageCache, PX_PER_PT};
+pub use sign::{online_signature_checks_enabled, toggle_online_signature_checks};
 use worker::{Msg, PageJob, Worker};
 
 /// Key context of the page area.
@@ -251,6 +253,7 @@ enum Hover {
 pub enum Panel {
     Thumbnails,
     Bookmarks,
+    Signatures,
 }
 
 pub struct PdfView {
@@ -318,6 +321,8 @@ pub struct PdfView {
     opened_dirty: Option<u64>,
     entity_id: EntityId,
     dialog_subs: Vec<Subscription>,
+    /// The digital signature check ([`sign`]).
+    sigs: sign::Sigs,
     _subs: Vec<Subscription>,
 }
 
@@ -427,6 +432,7 @@ impl PdfView {
             opened_dirty: None,
             entity_id: cx.entity_id(),
             dialog_subs: Vec::new(),
+            sigs: sign::Sigs::default(),
             _subs: subs,
         };
         this.start(String::new(), cx);
@@ -491,6 +497,7 @@ impl PdfView {
                     self.panel = Some(Panel::Bookmarks);
                 }
                 self.title = source.title.clone();
+                self.check_signatures(source.bytes.clone(), false, cx);
                 let model = Model::new(source);
                 self.state = State::Ready(Box::new(Doc {
                     sizes: model.sizes(),
@@ -1728,7 +1735,9 @@ impl Render for PdfView {
                 }
             },
             Escape => |v, _, cx| {
-                v.sel = None;
+                if v.sigs.cert.take().is_none() {
+                    v.sel = None;
+                }
                 cx.notify();
             },
             OpenFind => |v, w, cx| v.open_find(false, w, cx),
@@ -1737,10 +1746,14 @@ impl Render for PdfView {
             FindPrev => |v, w, cx| v.find_next_doc(false, w, cx),
         );
         let dialog = self.render_dialog(cx);
+        let cert_dialog = sign::cert_dialog(self, cx);
+        let banner = if ready { sign::banner(self, cx) } else { None };
         root.relative()
             .when(ready, |d| d.child(toolbar::render(self, cx)))
+            .children(banner)
             .child(body)
             .children(dialog)
+            .children(cert_dialog)
     }
 }
 
