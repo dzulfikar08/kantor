@@ -91,7 +91,7 @@ fn input(
 }
 
 /// The card of a dialog: title, body, buttons.
-fn card(title: &str, width: f32, cx: &App) -> Stateful<Div> {
+pub(crate) fn card(title: &str, width: f32, cx: &App) -> Stateful<Div> {
     let t = tokens(cx);
     v_flex()
         .id("pdf-dialog")
@@ -203,7 +203,7 @@ fn buttons(ok_label: &str, ok_enabled: bool, view: &WeakEntity<PdfView>, ok: Run
 }
 
 /// A page range typed in a dialog; empty means every page.
-fn parse_pages(text: &str) -> Result<PageRanges, String> {
+pub(crate) fn parse_pages(text: &str) -> Result<PageRanges, String> {
     let text = text.trim();
     if text.is_empty() {
         return Ok(PageRanges::all());
@@ -495,7 +495,7 @@ impl PdfView {
         let Some(doc) = self.doc() else {
             return;
         };
-        let (sources, picks) = doc.model.picks();
+        let plan = doc.model.plan();
         let stem = self.stem();
         let folder = cx.prompt_for_paths(PathPromptOptions {
             files: false,
@@ -514,8 +514,7 @@ impl PdfView {
                 this.busy = Some(i18n::t("Splitting…").into());
                 cx.notify();
             });
-            let work =
-                cx.background_spawn(async move { split(&sources, &picks, &groups, &stem, &dir) });
+            let work = cx.background_spawn(async move { split(&plan, &groups, &stem, &dir) });
             let result = work.await;
             let _ = this.update(cx, |this, cx| {
                 this.busy = None;
@@ -700,17 +699,13 @@ impl PdfView {
         let Some(doc) = self.doc() else {
             return;
         };
-        let (sources, picks) = doc.model.picks();
+        let plan = doc.model.plan();
+        let sources = plan.sources.clone();
         let name = self.name.clone();
         self.busy = Some(busy.to_owned().into());
         cx.notify();
         let work = cx.background_spawn(async move {
-            let pdfs = sources
-                .iter()
-                .map(|s| s.lopdf())
-                .collect::<kantor_pdf::Result<Vec<_>>>()
-                .map_err(|e| e.to_string())?;
-            let mut pdf = kantor_pdf::assemble(pdfs, &picks).map_err(|e| e.to_string())?;
+            let mut pdf = plan.assemble().map_err(|e| e.to_string())?;
             let msg = op(&mut pdf).map_err(|e| e.to_string())?;
             let password = sources[0].password.clone();
             let (bytes, password) = match pdf.to_bytes_encrypted(true) {
@@ -759,7 +754,7 @@ impl PdfView {
         let Some(doc) = self.doc() else {
             return;
         };
-        let (sources, picks) = doc.model.picks();
+        let plan = doc.model.plan();
         let name = format!("{} ({}).pdf", self.stem(), i18n::t("smaller"));
         let target = cx.prompt_for_new_path(&self.dir(), Some(&name));
         cx.spawn_in(window, async move |this, cx| {
@@ -775,12 +770,8 @@ impl PdfView {
             });
             let out = path.clone();
             let work = cx.background_spawn(async move {
-                let pdfs = sources
-                    .iter()
-                    .map(|s| s.lopdf())
-                    .collect::<kantor_pdf::Result<Vec<_>>>()?;
-                let mut pdf = kantor_pdf::assemble(pdfs, &picks)?;
-                let before = sources[0].bytes.len();
+                let mut pdf = plan.assemble()?;
+                let before = plan.sources[0].bytes.len();
                 let plain = pdf.to_bytes_compact()?;
                 let (bytes, _) = kantor_pdf::compress(pdf, &plain)?;
                 kantor_pdf::write_atomic(&out, &bytes)?;
@@ -1138,18 +1129,12 @@ fn combine(files: &[PathBuf], out: &Path) -> Result<usize, String> {
 /// Write each group of the document built from `sources` / `picks` as
 /// its own PDF in `dir`. Returns how many files and the folder.
 fn split(
-    sources: &[Arc<Source>],
-    picks: &[kantor_pdf::Pick],
+    plan: &crate::model::Plan,
     groups: &[(Vec<u32>, Option<String>)],
     stem: &str,
     dir: &Path,
 ) -> Result<(usize, PathBuf), String> {
-    let pdfs = sources
-        .iter()
-        .map(|s| s.lopdf())
-        .collect::<kantor_pdf::Result<Vec<_>>>()
-        .map_err(|e| e.to_string())?;
-    let pdf = kantor_pdf::assemble(pdfs, picks).map_err(|e| e.to_string())?;
+    let pdf = plan.assemble().map_err(|e| e.to_string())?;
     let mut taken = BTreeSet::new();
     let names: Vec<PathBuf> = groups
         .iter()

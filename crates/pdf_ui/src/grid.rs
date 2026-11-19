@@ -18,7 +18,7 @@ use pdf_engine::Turn;
 use crate::layout::ImageCache;
 use crate::model::PageKey;
 use crate::organize::{DragLabel, PageDrag, drop_line, page_box, page_menu};
-use crate::worker::{PageJob, Worker};
+use crate::worker::{Layer, PageJob, Worker};
 use crate::{PdfView, THUMB_H, THUMB_W};
 
 /// Key context of the thumbnails and the grid.
@@ -40,7 +40,7 @@ pub(crate) enum ListKind {
     Grid,
 }
 
-type CellPage = (PageKey, Turn, (f32, f32));
+type CellPage = (PageKey, Option<Layer>, Turn, (f32, f32));
 
 /// What the cells of one frame need (they're built inside the lists'
 /// closures, away from the view).
@@ -68,7 +68,7 @@ impl Cells {
                         let p = d.model.page(i)?;
                         let (w, h) = d.model.unturned_size(p);
                         let turn = view.page_turn(i);
-                        Some((p.key(), turn, turn.size(w, h)))
+                        Some((p.key(), view.layer_of(p.key()), turn, turn.size(w, h)))
                     })
                     .collect()
             })
@@ -102,22 +102,29 @@ impl Cells {
         let (bw, bh) = self.box_size();
         let mut jobs = Vec::new();
         for i in pages {
-            let Some(&(key, turn, (w, h))) = self.keys.get(i) else {
+            let Some((key, layer, turn, (w, h))) = self.keys.get(i).cloned() else {
                 continue;
             };
+            let job = PageJob {
+                key,
+                layer,
+                scale: 0.0,
+                turn,
+            };
+            let ik = job.img_key();
             let k = (bw / w).min(bh / h);
             let scale = k * self.sf;
             let have = match self.kind {
                 // Any size will do in the sidebar.
-                ListKind::Sidebar => self.thumbs.borrow().has(key, turn),
+                ListKind::Sidebar => self.thumbs.borrow().has(ik, turn),
                 ListKind::Grid => self
                     .thumbs
                     .borrow_mut()
-                    .get(key, turn, scale)
+                    .get(ik, turn, scale)
                     .is_some_and(|(_, exact)| exact),
             };
             if !have {
-                jobs.push(PageJob { key, scale, turn });
+                jobs.push(PageJob { scale, ..job });
             }
         }
         if let Some(w) = &self.worker {
@@ -131,12 +138,13 @@ impl Cells {
     /// The cell of page `i`.
     pub fn cell(&self, i: usize, cx: &App) -> AnyElement {
         let (bw, bh) = self.box_size();
-        let (key, turn, (w, h)) = self.keys[i];
+        let (key, ref layer, turn, (w, h)) = self.keys[i].clone();
+        let ik = (key.0, key.1, layer.as_ref().map_or(0, |l| l.id));
         let k = (bw / w).min(bh / h);
         let image = self
             .thumbs
             .borrow_mut()
-            .get(key, turn, k * self.sf)
+            .get(ik, turn, k * self.sf)
             .map(|(i, _)| i);
         let selected = self.selected.contains(&i);
         let current = self.current == Some(i) && self.selected.is_empty();

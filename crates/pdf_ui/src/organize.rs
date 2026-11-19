@@ -227,6 +227,7 @@ impl PdfView {
         if self.find.is_searching() {
             self.find_search(cx);
         }
+        self.warn_signed_pages();
         cx.notify();
     }
 
@@ -450,7 +451,8 @@ impl PdfView {
     /// pointer is over the thumbnails or the grid.
     pub fn drop_files(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) -> bool {
         let Some(at) = self.drop_at.take() else {
-            return false;
+            // Pictures dropped on a page become stamps there.
+            return self.drop_stamps(paths, cx);
         };
         self.insert_paths(paths.to_vec(), at, cx);
         true
@@ -566,9 +568,8 @@ impl PdfView {
         let Some(doc) = self.doc() else {
             return;
         };
-        let (sources, picks) = doc.model.picks();
-        let picks: Vec<kantor_pdf::Pick> =
-            sel.iter().filter_map(|&i| picks.get(i).copied()).collect();
+        let sel_v: Vec<usize> = sel.iter().copied().collect();
+        let plan = doc.model.plan().only(&sel_v);
         let first = sel.first().map_or(1, |f| f + 1);
         let last = sel.last().map_or(1, |l| l + 1);
         let stem = self.stem();
@@ -578,7 +579,7 @@ impl PdfView {
             format!("{stem} (pages {first}-{last}).pdf")
         };
         let dir = self.dir();
-        let count = picks.len();
+        let count = plan.picks.len();
         let target = cx.prompt_for_new_path(&dir, Some(&name));
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(mut path))) = target.await else {
@@ -590,7 +591,7 @@ impl PdfView {
             let write = cx.background_spawn({
                 let path = path.clone();
                 async move {
-                    let bytes = crate::model::build(&sources, &picks, true)?;
+                    let bytes = crate::model::build(&plan, true)?;
                     kantor_pdf::write_atomic(&path, &bytes)
                 }
             });
@@ -672,6 +673,7 @@ fn change_name(c: Change) -> &'static str {
         Change::Paste => i18n::t("Paste Pages"),
         Change::Watermark => i18n::t("Watermark"),
         Change::PageNumbers => i18n::t("Page Numbers"),
+        Change::Markup(what) => i18n::t(what),
     }
 }
 

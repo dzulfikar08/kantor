@@ -49,6 +49,12 @@ pub(crate) fn render(
             i18n::t("Bookmarks"),
             Panel::Bookmarks,
         ))
+        .child(tab(
+            "pdf-comments-tab",
+            Lucide::MessageSquareText,
+            i18n::t("Comments"),
+            Panel::Comments,
+        ))
         .child(
             div()
                 .flex_1()
@@ -58,6 +64,7 @@ pub(crate) fn render(
                 .child(match panel {
                     Panel::Thumbnails => i18n::t("Pages"),
                     Panel::Bookmarks => i18n::t("Bookmarks"),
+                    Panel::Comments => i18n::t("Comments"),
                 }),
         );
     let body = match panel {
@@ -67,10 +74,15 @@ pub(crate) fn render(
             el
         }
         Panel::Bookmarks => bookmarks(view, cx),
+        Panel::Comments => view.render_comments(cx),
     };
     v_flex()
         .flex_none()
-        .w(px(SIDEBAR_W))
+        .w(px(if panel == Panel::Comments {
+            280.0
+        } else {
+            SIDEBAR_W
+        }))
         .h_full()
         .bg(t.chrome)
         .border_r_1()

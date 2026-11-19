@@ -26,6 +26,29 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   page ranges), Add Page Numbers…, Watermark… and Reduce File Size…. Undo/Redo for every change, Save (Ctrl+S)
   writes the PDF in place safely and Save As to a new file; a password-protected PDF stays protected; bookmarks
   and links to deleted pages are dropped; closing asks about unsaved changes, which also get recovery copies.
+- PDF annotations, forms and Fill & Sign. *Comment* on the toolbar: highlight, underline or strike out selected
+  text, sticky notes, text boxes (Helvetica or Courier, size, colour, border, background), the pen, rectangles,
+  ellipses, lines, arrows and polygons; select an annotation to move, resize, recolour, change its width or
+  opacity, edit its text (double-click) or delete it; all undoable. The Comments panel lists every comment with its
+  author (Settings, else your account name), date, text and replies; reply, mark completed (Acrobat's review
+  state) and jump to it. Comments from Acrobat and other programs show in the list and can be moved and edited;
+  other annotations are kept as they are. Everything is saved as standard PDF annotations with their own
+  appearance, so Acrobat, Preview, browsers and poppler show them the same; printing keeps them.
+- PDF forms: fill text fields, check boxes, radio buttons, drop-downs and list boxes (Tab goes to the next field),
+  Reset Form; the values are saved with their appearance, so every viewer shows them. XFA-only forms say Kantor
+  can't fill them.
+- *Fill & Sign*: add text, today's date, check and cross marks, and a signature drawn with the mouse or trackpad,
+  typed in a script font, or from a picture. Signatures are pictures on the page, not certificate-based digital
+  signatures (the dialog says so). *Add Image / Stamp…* (toolbar, palette, right-click on a page, or drop a PNG or
+  JPEG on a page) places a picture such as a company stamp, keeping PNG transparency; resize it (aspect kept,
+  Shift for free), rotate it in quarter turns, set its opacity, and *Place on Pages…* copies it to every page or
+  the pages you type. Signatures and stamps you add are remembered in *My Signatures & Stamps*
+  (`~/.config/kantor/stamps`, never uploaded). Save As offers to flatten stamps and signatures into the pages.
+- Digitally signed PDFs (such as one with an e-meterai) stay valid: comments, stamps and form entries are saved as
+  an incremental update after the signed bytes, which are kept exactly; a certification's DocMDP permissions are
+  respected (no changes, form filling only, or annotations too). Flattening, and page changes (rotate, delete,
+  reorder, insert, watermark, page numbers, smaller file), would invalidate the signature: Kantor warns and saves
+  those as a copy instead.
 - `kantor pdf delete` and the other page tools drop bookmarks and links that pointed at removed pages.
 
 ## [0.16.0] - 2026-11-19

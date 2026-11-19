@@ -116,7 +116,10 @@ pub fn incremental(
     password: Option<&str>,
     edit: impl FnOnce(&mut Pdf) -> Result<()>,
 ) -> Result<Vec<u8>> {
-    let before = Pdf::from_bytes(bytes, password)?;
+    let before = match Pdf::from_bytes(bytes, None) {
+        Err(Error::Encrypted) => Pdf::from_bytes(bytes, Some(password.unwrap_or(""))),
+        r => r,
+    }?;
     let mut after = before.clone();
     edit(&mut after)?;
     let mut inc = IncrementalDocument::create_from(bytes.to_vec(), before.doc.clone());

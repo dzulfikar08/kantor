@@ -5637,14 +5637,17 @@ version = "0.16.0"
 dependencies = [
  "anyhow",
  "async-channel",
+ "fontdb",
  "gpui-kit",
  "image",
+ "imagesize 0.14.0",
  "kantor_core",
  "kantor_pdf",
  "kantor_ui",
  "log",
  "pdf_engine",
  "tempfile",
+ "ttf-parser",
 ]
 
 [[package]]

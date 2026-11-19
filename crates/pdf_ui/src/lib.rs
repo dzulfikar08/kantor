@@ -24,14 +24,17 @@
 
 extern crate gpui_kit as gpui;
 
+mod comments;
 mod dialog;
 mod find;
 mod grid;
 mod layout;
+mod markup;
 mod model;
 mod organize;
 mod save;
 mod side;
+mod sign;
 mod toolbar;
 mod worker;
 
@@ -46,6 +49,7 @@ use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::dialog::{DialogDescription, DialogFooter};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::{Sizable as _, WindowExt as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
@@ -61,6 +65,7 @@ use model::{Model, PageKey, PageRef};
 pub use dialog::PdfEvent;
 pub use layout::Zoom;
 use layout::{Column, ImageCache, PX_PER_PT};
+pub use markup::Mode;
 use worker::{Msg, PageJob, Worker};
 
 /// Key context of the page area.
@@ -107,6 +112,11 @@ actions!(
         Undo,
         Redo,
         DeletePages,
+        DeleteMark,
+        CommentMode,
+        FillSignMode,
+        AddStamp,
+        ResetForm,
         SelectAllPages,
         PrevPageSel,
         NextPageSel,
@@ -138,6 +148,8 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("end", LastPage, c),
         KeyBinding::new("f4", ToggleSidebar, c),
         KeyBinding::new("escape", Escape, c),
+        KeyBinding::new("delete", DeleteMark, c),
+        KeyBinding::new("backspace", DeleteMark, c),
     ];
     keys.push(KeyBinding::new(
         kantor_ui::keys::primary("ctrl-home"),
@@ -251,6 +263,7 @@ enum Hover {
 pub enum Panel {
     Thumbnails,
     Bookmarks,
+    Comments,
 }
 
 pub struct PdfView {
@@ -312,6 +325,16 @@ pub struct PdfView {
     /// Put the caret in the password field on the next frame.
     focus_password: bool,
     saving: bool,
+    /// Comments, markup, forms, Fill & Sign.
+    pub(crate) markup: markup::Markup,
+    /// The signature / stamp dialog.
+    pub(crate) sign: Option<sign::SignDialog>,
+    /// Told once that page changes invalidate the signature.
+    signed_warned: bool,
+    /// Where the page's right-click menu was opened (page, user point).
+    pub(crate) context_at: Option<(usize, [f32; 2])>,
+    /// The next save draws stamps and signatures into the pages.
+    flatten_next: bool,
     /// Opened from a recovery copy: these bytes, unsaved changes.
     recovered: Option<Arc<Vec<u8>>>,
     /// Mark the document as changed once it opens (a recovery copy).
@@ -423,6 +446,11 @@ impl PdfView {
             thumb_followed: None,
             focus_password: false,
             saving: false,
+            flatten_next: false,
+            context_at: None,
+            markup: markup::Markup::new(),
+            sign: None,
+            signed_warned: false,
             recovered: None,
             opened_dirty: None,
             entity_id: cx.entity_id(),
@@ -491,11 +519,14 @@ impl PdfView {
                     self.panel = Some(Panel::Bookmarks);
                 }
                 self.title = source.title.clone();
+                let id = source.id;
                 let model = Model::new(source);
                 self.state = State::Ready(Box::new(Doc {
                     sizes: model.sizes(),
                     model,
                 }));
+                // Signatures, forms and comments are read in the background.
+                self.ensure_marks(id, cx);
                 if let Some(rev) = self.opened_dirty.take()
                     && let State::Ready(d) = &mut self.state
                 {
@@ -525,7 +556,7 @@ impl PdfView {
             } => {
                 if thumb {
                     self.thumbs.borrow_mut().insert(
-                        job.key,
+                        job.img_key(),
                         job.turn,
                         job.scale,
                         image,
@@ -538,7 +569,7 @@ impl PdfView {
                         .filter_map(|i| self.page_ref(i).map(PageRef::key))
                         .collect();
                     self.pages
-                        .insert(job.key, job.turn, job.scale, image, bytes, &keep);
+                        .insert(job.img_key(), job.turn, job.scale, image, bytes, &keep);
                 }
             }
             Msg::Text { key, text, links } => {
@@ -1143,7 +1174,14 @@ impl PdfView {
         window.focus(&self.focus, cx);
         // Page commands act on the current page again.
         self.page_sel.clear();
-        if let Some(link) = self.link_at(ev.position) {
+        if self.markup_mouse_down(ev, window, cx) {
+            self.press = None;
+            cx.notify();
+            return;
+        }
+        if self.markup.mode == Mode::View
+            && let Some(link) = self.link_at(ev.position)
+        {
             self.press = Some(Press::Link(link.target.clone(), ev.position));
             return;
         }
@@ -1193,6 +1231,9 @@ impl PdfView {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.markup_mouse_move(ev, cx) {
+            return;
+        }
         match &self.press {
             Some(Press::Select) if ev.pressed_button == Some(MouseButton::Left) => {
                 // Past the top or bottom edge: scroll along.
@@ -1236,6 +1277,10 @@ impl PdfView {
     }
 
     fn on_mouse_up(&mut self, _: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.markup_mouse_up(window, cx) {
+            self.press = None;
+            return;
+        }
         if let Some(Press::Link(target, _)) = self.press.take() {
             self.follow(target, window, cx);
         }
@@ -1287,10 +1332,11 @@ impl PdfView {
             let turn = self.page_turn(page);
             let wanted = PageJob {
                 key: p.key(),
+                layer: self.layer_of(p.key()),
                 scale: device,
                 turn,
             };
-            match self.pages.get(p.key(), turn, device) {
+            match self.pages.get(wanted.img_key(), turn, device) {
                 Some((_, true)) => {}
                 _ => {
                     if !jobs.contains(&wanted) {
@@ -1328,9 +1374,9 @@ impl PdfView {
         for page in self.visible_pages() {
             let rect = self.page_rect(page);
             let turn = self.page_turn(page);
-            let image = self
-                .page_ref(page)
-                .and_then(|p| self.pages.get(p.key(), turn, device))
+            let key = self.page_ref(page).map(|p| self.img_key(p.key()));
+            let image = key
+                .and_then(|k| self.pages.get(k, turn, device))
                 .map(|(i, _)| i);
             let mut marks = Vec::new();
             for (hit, current) in self.find.hits_on(page, current_hit) {
@@ -1352,6 +1398,9 @@ impl PdfView {
             }
             items.push((rect, image, marks));
         }
+        self.sync_layers();
+        let overlays = self.markup_overlays(self.visible_pages(), cx);
+        let elements = self.markup_elements(cx);
         let viewport = self.viewport.clone();
         let entity = cx.entity().downgrade();
         let shadow = t.shadow(Elevation::Raised);
@@ -1384,11 +1433,16 @@ impl PdfView {
                             window.paint_quad(fill(m, *color));
                         }
                     }
+                    paint_overlays(window, bounds.origin, &overlays);
                 });
             },
         )
         .size_full();
         let cursor = match (&self.press, self.hover) {
+            _ if self.markup.tool != markup::Tool::Select => {
+                self.markup_cursor().unwrap_or(CursorStyle::Arrow)
+            }
+            _ if self.markup.drag.is_some() => CursorStyle::ClosedHand,
             (Some(Press::Select), _) => CursorStyle::IBeam,
             (_, Hover::Link) => CursorStyle::PointingHand,
             (_, Hover::Text) => CursorStyle::IBeam,
@@ -1410,7 +1464,23 @@ impl PdfView {
                 cx.listener(|this, _: &MouseUpEvent, _, _| this.press = None),
             )
             .on_scroll(cx.listener(Self::on_scroll))
+            .on_drag_move::<ExternalPaths>(cx.listener(
+                |this, ev: &DragMoveEvent<ExternalPaths>, _, cx| {
+                    this.stamp_drag_over(ev, cx);
+                },
+            ))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(|this, ev: &MouseDownEvent, _, _| {
+                    this.context_at = this.user_at(ev.position, false).map(|(p, _, pt)| (p, pt));
+                }),
+            )
+            .context_menu({
+                let weak = cx.entity().downgrade();
+                move |menu, window, cx| sign::page_menu(menu, &weak, window, cx)
+            })
             .child(pages)
+            .children(elements)
             .children(self.render_scrollbar(cx))
             .children(self.find.bar(cx))
             .into_any_element()
@@ -1547,6 +1617,45 @@ impl PdfView {
     }
 }
 
+/// Paint markup's overlay shapes (viewport px, offset by `origin`).
+fn paint_overlays(window: &mut Window, origin: Point<Pixels>, ovs: &[markup::Ov]) {
+    for ov in ovs {
+        match ov {
+            markup::Ov::Quad { b, fill: f, border } => {
+                let b = Bounds::new(b.origin + origin, b.size);
+                if let Some(f) = f {
+                    window.paint_quad(fill(b, *f));
+                }
+                if let Some(c) = border {
+                    window.paint_quad(outline(b, *c, BorderStyle::Solid));
+                }
+            }
+            markup::Ov::Poly {
+                pts,
+                closed,
+                color,
+                width,
+            } => {
+                let Some(first) = pts.first() else { continue };
+                let mut pb = PathBuilder::stroke(px(*width));
+                pb.move_to(*first + origin);
+                if pts.len() == 1 {
+                    pb.line_to(*first + origin + point(px(0.5), px(0.)));
+                }
+                for p in &pts[1..] {
+                    pb.line_to(*p + origin);
+                }
+                if *closed {
+                    pb.close();
+                }
+                if let Ok(path) = pb.build() {
+                    window.paint_path(path, *color);
+                }
+            }
+        }
+    }
+}
+
 /// The inspector's facts about the open PDF.
 pub struct PdfInfo {
     pub name: String,
@@ -1631,6 +1740,9 @@ impl Render for PdfView {
         let ready = matches!(self.state, State::Ready(_));
         if !cx.has_active_drag() && self.drop_at.is_some() {
             self.drop_at = None;
+        }
+        if !cx.has_active_drag() && self.markup.stamp_drop.is_some() {
+            self.markup.stamp_drop = None;
         }
         let body = if ready {
             let pages = if self.organize {
@@ -1727,20 +1839,44 @@ impl Render for PdfView {
                     v.focus(w, cx);
                 }
             },
-            Escape => |v, _, cx| {
+            Escape => |v, w, cx| {
                 v.sel = None;
+                v.markup.drag = None;
+                v.markup.poly = None;
+                v.markup.choice = None;
+                if v.markup.editor.is_some() {
+                    v.commit_text_edit(cx);
+                    v.focus(w, cx);
+                } else if v.markup.sel.is_some() {
+                    v.markup.sel = None;
+                } else if v.markup.tool != markup::Tool::Select {
+                    v.markup.tool = markup::Tool::Select;
+                }
                 cx.notify();
             },
+            DeleteMark => |v, _, cx| {
+                v.delete_mark(cx);
+            },
+            CommentMode => |v, _, cx| v.set_mode(Mode::Comment, cx),
+            FillSignMode => |v, _, cx| v.set_mode(Mode::FillSign, cx),
+            AddStamp => |v, w, cx| v.add_image_stamp(None, w, cx),
+            ResetForm => |v, _, cx| v.reset_form(cx),
             OpenFind => |v, w, cx| v.open_find(false, w, cx),
             OpenReplace => |v, w, cx| v.open_find(false, w, cx),
             FindNext => |v, w, cx| v.find_next_doc(true, w, cx),
             FindPrev => |v, w, cx| v.find_next_doc(false, w, cx),
         );
         let dialog = self.render_dialog(cx);
+        let sign = self.render_sign(cx);
         root.relative()
             .when(ready, |d| d.child(toolbar::render(self, cx)))
+            .when(ready && self.markup.mode != Mode::View, |d| {
+                d.child(toolbar::render_markup(self, cx))
+            })
+            .children(ready.then(|| self.render_form_bar(cx)).flatten())
             .child(body)
             .children(dialog)
+            .children(sign)
     }
 }
 
