@@ -595,11 +595,27 @@ impl PdfView {
         let z = self.zoom_value();
         let key = (z.to_bits(), self.turn, self.page_count());
         if key != self.column_key {
+            // The view's width changed the fit (sidebar, window size): keep
+            // the same place of the same page at the top.
+            let keep = (self.column.len() == key.2 && self.column_key.1 == key.1)
+                .then(|| {
+                    let page = self.column.page_at(self.scroll.y);
+                    let (_, h) = self.column.sizes.get(page)?;
+                    let top = self.column.tops.get(page)?;
+                    Some((page, (self.scroll.y - top) / h.max(1.0)))
+                })
+                .flatten();
             self.column_key = key;
             self.column = match self.doc() {
                 Some(d) => Column::new(&d.sizes, z, self.turn),
                 None => Column::default(),
             };
+            if let Some((page, rel)) = keep
+                && let (Some(top), Some((_, h))) =
+                    (self.column.tops.get(page), self.column.sizes.get(page))
+            {
+                self.scroll.y = top + rel * h;
+            }
         }
     }
 
