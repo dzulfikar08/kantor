@@ -656,6 +656,45 @@ glyphs drawn twice for bold (doubled letters), space glyphs at line ends
 leaving boxes that pointed into the next line, and XFA kept after pages
 changed.
 
+## PDF comments, forms and signatures (2026-11-19, before v0.18.0)
+
+The same 63 PDFs, annotated and filled through Kantor's save path:
+
+    python3 -I tools/realworld/pdf_markup_sweep.py --probe ~/.cache/rw-target/release/pdf_markup_probe \
+        --stamp stamp.png --out ~/.cache/realworld-out/markup ~/.cache/realworld/pdf/*.pdf
+
+`pdf_markup_probe` (tools/fidelity) adds a highlight over a real word, a
+sticky note, a text box, an ink drawing and an image stamp, fills every form
+field, and saves as the viewer does (an incremental update on signed files and
+files with Reader usage rights, otherwise rewritten and encrypted like the
+original) and once more with stamps flattened. The sweep checks each result
+with `qpdf --check`, poppler's page count and text (no words of the original
+may go missing unless a form field's old value was replaced), poppler's and
+Kantor's renders of the page (every annotation must show where it was placed)
+and the encryption, and Kantor reads every annotation and value back.
+
+Result: 58 ok, the 3 files neither reader opens, and 2 signed files whose
+certification (DocMDP) allows no comments, refused as designed. Fixed then:
+a content stream without `/Length` (pdf.js issue1293r) lost the page's text on
+every save, and an XFA form whose only field is a signature didn't say Kantor
+can't fill it.
+
+29 public signed PDFs (the DSS project's PAdES test files, ETSI plugtest
+signatures from five EU countries, the US GPO's certified Federal Register,
+two Indonesian Ministry of Finance regulations signed through BSrE, IRS forms)
+were checked with `kantor pdf verify`, offline and `--online`, against pyHanko
+with the same roots, and annotated through Kantor's save. Every signature
+stayed intact in both checkers after the save. Fixed then: developer
+extensions declared by an LTV update, a producer's private key on the page
+tree, strings rewritten as hex and the `/AP` name tree of stamp appearances
+counted as changes that invalidate the signature; an algorithm Kantor can't
+check (plain ECDSA on a brainpool curve) was Invalid instead of Validity
+unknown; and Adobe Reader usage rights (`/Perms /UR3`, the IRS forms) counted
+as a digital signature. The remaining differences from pyHanko are pyHanko's
+(it re-encodes signed attributes it can't parse, skips `adbe.pkcs7.sha1`, and
+has no rule for comments and stamps). The Indonesian TTE signatures chain to
+BSrE's own "OSD LU Kelas 2" root, which neither checker trusts.
+
 ## Left
 
 Refused (6):
