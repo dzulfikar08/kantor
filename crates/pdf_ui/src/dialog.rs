@@ -1072,10 +1072,15 @@ impl PdfView {
         };
         let close = view.clone();
         let focus = self.dialog_focus.clone();
+        let own = focus.clone();
         let card = card.track_focus(&focus).on_key_down(move |e, window, cx| {
             if e.keystroke.key == "escape" {
                 cx.stop_propagation();
                 let _ = close.update(cx, |this, cx| this.close_dialog(window, cx));
+            } else if e.keystroke.key == "enter" && own.is_focused(window) {
+                // Enter on the card itself (fields answer their own Enter).
+                cx.stop_propagation();
+                let _ = close.update(cx, |this, cx| this.dialog_ok(window, cx));
             }
         });
         Some(

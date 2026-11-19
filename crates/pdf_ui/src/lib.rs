@@ -195,16 +195,13 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("escape", LeavePages, p),
     ]);
     keys.extend(kantor_ui::keys::primary_pair("ctrl-a", SelectAllPages, p));
-    keys.extend(kantor_ui::keys::primary_pair(
-        "ctrl-shift-[",
-        RotatePagesLeft,
-        p,
-    ));
-    keys.extend(kantor_ui::keys::primary_pair(
-        "ctrl-shift-]",
-        RotatePagesRight,
-        p,
-    ));
+    // Shift+[ types `{` on most layouts: every spelling.
+    for k in ["ctrl-shift-[", "ctrl-{", "ctrl-shift-{"] {
+        keys.extend(kantor_ui::keys::primary_pair(k, RotatePagesLeft, p));
+    }
+    for k in ["ctrl-shift-]", "ctrl-}", "ctrl-shift-}"] {
+        keys.extend(kantor_ui::keys::primary_pair(k, RotatePagesRight, p));
+    }
     cx.bind_keys(keys);
 }
 
