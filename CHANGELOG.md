@@ -17,6 +17,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   used to hang into the bottom margin. Objects placed relative to the page or margins stay where
   they are, and documents in an older Word compatibility mode keep the old layout.
 
+### Added
+
+- Docs: SmartArt in line with the text gets Layout Options as in Word: choose Square, Tight, Through, Top and Bottom,
+  Behind Text or In Front of Text to make it floating where it stands, or In Line with Text to put floating SmartArt
+  back in its line; the file is saved as Word saves it, and Undo puts it back.
+- Docs: drag SmartArt or a picture that sits in line with the text to move it to another spot in the text, as in
+  Word (a dashed caret shows where it will go; one undo step; with Track Changes on the move is recorded).
+
 ## [0.15.0] - 2026-11-19
 
 Docs now draws pictures inside SmartArt picture layouts, cuts pictures in the text to their shape with their border, and

@@ -1117,44 +1117,66 @@ impl Document {
         }
     }
 
-    /// Whether the object can be put in line with text (pictures can;
-    /// shapes and text boxes stay floating in Kantor).
+    /// Whether the object can be put in line with text (pictures and
+    /// SmartArt can; shapes and text boxes stay floating in Kantor).
     pub fn can_be_inline(&self, para: usize, index: usize) -> bool {
         match self.paragraphs.get(para).and_then(|p| p.object_at(index)) {
             Some(crate::Object::Image(_)) => true,
-            Some(crate::Object::Float(f)) => matches!(f.kind, FloatKind::Picture { .. }),
+            Some(crate::Object::Float(f)) => matches!(
+                f.kind,
+                FloatKind::Picture { .. } | FloatKind::SmartArt { .. }
+            ),
             _ => false,
         }
     }
 
     /// Word's Layout Options for a picture or floating object: in line
-    /// with text, or floating with a wrap. An inline picture made floating
-    /// starts where it stood (column and paragraph offsets, as Word does);
-    /// a floating picture put in line loses its crop.
+    /// with text, or floating with a wrap. An object in line made floating
+    /// starts at the column's left and the paragraph's top; see
+    /// [`Self::set_layout_option_from`] to keep it where it stands.
     pub fn set_layout_option(&mut self, para: usize, index: usize, o: LayoutOption) -> bool {
+        self.set_layout_option_from(para, index, o, (0, 0))
+    }
+
+    /// [`Self::set_layout_option`]; an object in line made floating gets
+    /// `from` (EMU from the column's left and the paragraph's top: where it
+    /// stood in its line, as Word places it). A floating picture put in
+    /// line loses its crop.
+    pub fn set_layout_option_from(
+        &mut self,
+        para: usize,
+        index: usize,
+        o: LayoutOption,
+        from: (i64, i64),
+    ) -> bool {
         let Some(obj) = self.paragraphs.get(para).and_then(|p| p.object_at(index)) else {
             return false;
         };
+        // Word's start for an object made floating: beside the text on
+        // both sides (1/8 inch), in its cell, overlap allowed, on top.
+        let floating = |cx: i64, cy: i64, z: u32| {
+            let mut at = Placement {
+                h: (RelH::Column, Place::Offset(from.0)),
+                v: (RelV::Paragraph, Place::Offset(from.1)),
+                cx,
+                cy,
+                dist: [0, 0, 114300, 114300],
+                wrap: Wrap::Square,
+                side: WrapSide::Both,
+                behind: false,
+                allow_overlap: true,
+                z,
+                in_cell: true,
+            };
+            at.set_layout_option(o);
+            at
+        };
         match (obj, o) {
             (crate::Object::Image(_), LayoutOption::Inline) => false,
-            // Inline SmartArt stays in line in Kantor.
-            (crate::Object::Float(f), _) if f.inline => false,
-            (crate::Object::Image(img), o) => {
+            (crate::Object::Float(f), LayoutOption::Inline) if f.inline => false,
+            (crate::Object::Image(img), _) => {
                 let img = img.clone();
-                let mut at = Placement {
-                    h: (RelH::Column, Place::Offset(0)),
-                    v: (RelV::Paragraph, Place::Offset(0)),
-                    cx: img.cx,
-                    cy: img.cy,
-                    dist: [0, 0, 114300, 114300],
-                    wrap: Wrap::Square,
-                    side: WrapSide::Both,
-                    behind: false,
-                    allow_overlap: true,
-                    z: self.top_z() + 1,
-                    in_cell: true,
-                };
-                at.set_layout_option(o);
+                let at = floating(img.cx, img.cy, self.top_z() + 1);
                 let xml = anchor_picture_xml(&img, &at);
                 let Some(mut f) = read(&xml, &|_| Some(img.part.clone())) else {
                     return false;
@@ -1162,6 +1184,43 @@ impl Document {
                 // Read from the XML just made: it's what gets written.
                 f.read = f.at;
                 self.swap_object(para, index, Some(crate::Object::Float(Arc::new(f))))
+            }
+            // SmartArt in line made floating: its frame becomes an anchor.
+            (crate::Object::Float(f), _) if f.inline => {
+                let at = floating(f.at.cx, f.at.cy, self.top_z() + 1);
+                let Some(xml) = inline_to_anchor(&f.xml, &at) else {
+                    return false;
+                };
+                let Some(read_at) = frame_placement(&xml) else {
+                    return false;
+                };
+                let nf = Float {
+                    xml: xml.into(),
+                    read: read_at,
+                    at: read_at,
+                    inline: false,
+                    ..(**f).clone()
+                };
+                self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))))
+            }
+            (crate::Object::Float(f), LayoutOption::Inline)
+                if matches!(f.kind, FloatKind::SmartArt { .. }) =>
+            {
+                // The frame as written now (moved or resized in Kantor).
+                let Some(xml) = anchor_to_inline(&f.write_xml(), f.at.cx, f.at.cy) else {
+                    return false;
+                };
+                let Some(read_at) = frame_placement(&xml) else {
+                    return false;
+                };
+                let nf = Float {
+                    xml: xml.into(),
+                    read: read_at,
+                    at: read_at,
+                    inline: true,
+                    ..(**f).clone()
+                };
+                self.swap_object(para, index, Some(crate::Object::Float(Arc::new(nf))))
             }
             (crate::Object::Float(f), LayoutOption::Inline) => {
                 let FloatKind::Picture { rel_id, part, .. } = &f.kind else {
@@ -1185,6 +1244,83 @@ impl Document {
             }
             _ => false,
         }
+    }
+
+    /// Move the object at `para`/`index` (a picture or SmartArt in line
+    /// with the text) to `to`, as Word moves a dragged object: cut there,
+    /// inserted at the drop point, one undo step. With Track Changes on
+    /// the old one stays as a deletion (unless the user inserted it with
+    /// tracking on) and the new one is an insertion. The object selected
+    /// at its new place, or `None` when it doesn't move.
+    pub fn move_object(
+        &mut self,
+        para: usize,
+        index: usize,
+        to: crate::Position,
+    ) -> Option<crate::Selection> {
+        use crate::{OBJECT, Position, Selection};
+        let len = OBJECT.len_utf8();
+        let to = self.clamp(to);
+        let src = self.paragraphs.get(para)?;
+        src.object_at(index)?;
+        if to.para == para && to.offset >= index && to.offset <= index + len {
+            return None;
+        }
+        let mut p = src.clone();
+        let i = p.split_run_at(index);
+        let run = p.runs[i].clone();
+        let object = run.object.clone()?;
+        let rev = run.rev.as_ref();
+        if rev.is_some_and(|r| r.kind == crate::RevKind::Delete) {
+            return None;
+        }
+        let own = rev.is_some_and(|r| r.kind == crate::RevKind::Insert && r.author == self.author);
+        let keep_deleted = self.track && !own;
+        if keep_deleted {
+            // After the insertion's id (taken below).
+            p.runs[i].rev = Some(self.new_rev(crate::RevKind::Delete, self.max_rev_id() + 2));
+        } else {
+            p.text.replace_range(index..index + len, "");
+            p.runs.remove(i);
+            if p.runs.is_empty() {
+                p.runs.push(crate::Run::text(0, Default::default()));
+            }
+        }
+        p.normalize();
+        let (lo, hi) = (para.min(to.para), para.max(to.para));
+        let mut paras: Vec<crate::Paragraph> = self.paragraphs[lo..=hi].to_vec();
+        paras[para - lo] = p;
+        let mut offset = to.offset;
+        if to.para == para && to.offset > index && !keep_deleted {
+            offset -= len;
+        }
+        let q = &mut paras[to.para - lo];
+        q.insert_object(offset, object, run.props.clone());
+        if self.track {
+            self.track_object(q, offset);
+        } else {
+            // An untracked move keeps its old insertion mark, if any.
+            let k = q.split_run_at(offset);
+            q.runs[k].rev = run.rev.clone();
+            q.normalize();
+        }
+        let before = Selection {
+            anchor: Position::new(para, index),
+            head: Position::new(para, index + len),
+        };
+        let after = Selection {
+            anchor: Position::new(to.para, offset),
+            head: Position::new(to.para, offset + len),
+        };
+        self.replace(
+            lo,
+            hi - lo + 1,
+            paras,
+            (before, after),
+            crate::document::Kind::Other,
+            true,
+        );
+        Some(after)
     }
 
     /// Highest z-order of the document's floating objects.
@@ -1220,46 +1356,128 @@ fn doc_pr_id(xml_src: &str) -> Option<u32> {
 /// A floating picture's `w:drawing` for an inline picture.
 fn anchor_picture_xml(img: &crate::Image, at: &Placement) -> String {
     let inline = crate::docx::image_xml(img);
-    // Same graphic; an anchor instead of the inline frame.
-    let (Some(g0), Some(g1)) = (inline.find("<a:graphic "), inline.rfind("</a:graphic>")) else {
-        return inline;
+    inline_to_anchor(&inline, at).unwrap_or(inline)
+}
+
+/// A drawing's start tag's name and its namespace declarations.
+fn frame_tag(el: &str) -> Option<(String, String)> {
+    let open = &el[..el.find('>')? + 1];
+    let inner = open
+        .trim_start_matches('<')
+        .trim_end_matches('>')
+        .trim_end_matches('/');
+    let e = BytesStart::from_content(
+        inner,
+        inner.find(char::is_whitespace).unwrap_or(inner.len()),
+    );
+    let qname = String::from_utf8_lossy(e.name().as_ref()).into_owned();
+    let mut ns = String::new();
+    for a in e.attributes().flatten() {
+        let k = String::from_utf8_lossy(a.key.as_ref()).into_owned();
+        if k == "xmlns" || k.starts_with("xmlns:") {
+            ns.push_str(&format!(" {k}=\"{}\"", String::from_utf8_lossy(&a.value)));
+        }
+    }
+    Some((qname, ns))
+}
+
+/// The drawing (`w:drawing`, or the one an `mc:AlternateContent` chooses)
+/// with its `wp:inline` frame swapped for a `wp:anchor` placed at `at`,
+/// as Word writes an object made floating. The graphic, its name and alt
+/// text are kept.
+fn inline_to_anchor(src: &str, at: &Placement) -> Option<String> {
+    let r = element_range(src, "inline")?;
+    let el = &src[r.clone()];
+    let (qname, ns) = frame_tag(el)?;
+    let p = qname
+        .rsplit_once(':')
+        .map_or(String::new(), |(p, _)| format!("{p}:"));
+    let part = |name: &str| element_range(el, name).map_or("", |r| &el[r]);
+    let graphic = part("graphic");
+    if graphic.is_empty() {
+        return None;
+    }
+    let effect = match part("effectExtent") {
+        "" => format!("<{p}effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>"),
+        e => e.to_owned(),
     };
-    let graphic = &inline[g0..g1 + "</a:graphic>".len()];
-    let doc_pr = element_range(&inline, "docPr").map_or("", |r| &inline[r]);
-    let frame = element_range(&inline, "cNvGraphicFramePr").map_or("", |r| &inline[r]);
-    let wp = "xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\"";
-    let [t, b, l, r] = at.dist;
+    let [t, b, l, rr] = at.dist;
     let mut s = format!(
-        "<w:drawing><wp:anchor distT=\"{t}\" distB=\"{b}\" distL=\"{l}\" distR=\"{r}\" \
+        "<{p}anchor distT=\"{t}\" distB=\"{b}\" distL=\"{l}\" distR=\"{rr}\" \
          simplePos=\"0\" relativeHeight=\"{z}\" behindDoc=\"{behind}\" locked=\"0\" \
-         layoutInCell=\"1\" allowOverlap=\"1\" {wp}><wp:simplePos x=\"0\" y=\"0\"/>",
+         layoutInCell=\"{cell}\" allowOverlap=\"{overlap}\"{ns}><{p}simplePos x=\"0\" y=\"0\"/>",
         z = at.z,
         behind = at.behind as u8,
+        cell = at.in_cell as u8,
+        overlap = at.allow_overlap as u8,
     );
     s.push_str(&position_xml(
-        "wp:",
+        &p,
         "positionH",
         at.h.0.as_str(),
         at.h.1,
         true,
     ));
     s.push_str(&position_xml(
-        "wp:",
+        &p,
         "positionV",
         at.v.0.as_str(),
         at.v.1,
         false,
     ));
     s.push_str(&format!(
-        "<wp:extent cx=\"{}\" cy=\"{}\"/><wp:effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>",
+        "<{p}extent cx=\"{}\" cy=\"{}\"/>{effect}",
         at.cx, at.cy
     ));
-    s.push_str(&wrap_xml("wp:", at));
-    s.push_str(doc_pr);
-    s.push_str(frame);
+    s.push_str(&wrap_xml(&p, at));
+    s.push_str(part("docPr"));
+    s.push_str(part("cNvGraphicFramePr"));
     s.push_str(graphic);
-    s.push_str("</wp:anchor></w:drawing>");
-    s
+    s.push_str(&format!("</{p}anchor>"));
+    Some(format!("{}{}{}", &src[..r.start], s, &src[r.end..]))
+}
+
+/// The drawing with its `wp:anchor` frame swapped for a `wp:inline` of
+/// size `cx`×`cy`, as Word writes an object put in line with the text (no
+/// distances; Word drops the position and wrap). A drawing in an
+/// `mc:AlternateContent` becomes the plain drawing its choice holds.
+fn anchor_to_inline(src: &str, cx: i64, cy: i64) -> Option<String> {
+    let src = match element_range(src, "AlternateContent") {
+        Some(_) => {
+            let choice = choice_part(src);
+            &choice[element_range(choice, "drawing")?]
+        }
+        None => src,
+    };
+    let r = element_range(src, "anchor")?;
+    let el = &src[r.clone()];
+    let (qname, ns) = frame_tag(el)?;
+    let p = qname
+        .rsplit_once(':')
+        .map_or(String::new(), |(p, _)| format!("{p}:"));
+    let part = |name: &str| element_range(el, name).map_or("", |r| &el[r]);
+    let graphic = part("graphic");
+    if graphic.is_empty() {
+        return None;
+    }
+    let effect = match part("effectExtent") {
+        "" => format!("<{p}effectExtent l=\"0\" t=\"0\" r=\"0\" b=\"0\"/>"),
+        e => e.to_owned(),
+    };
+    let s = format!(
+        "<{p}inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\"{ns}>\
+         <{p}extent cx=\"{cx}\" cy=\"{cy}\"/>{effect}{}{}{graphic}</{p}inline>",
+        part("docPr"),
+        part("cNvGraphicFramePr"),
+    );
+    Some(format!("{}{}{}", &src[..r.start], s, &src[r.end..]))
+}
+
+/// The placement a drawing's frame (`wp:anchor` or `wp:inline`) says.
+fn frame_placement(xml_src: &str) -> Option<Placement> {
+    let root = xml::parse(xml_src)?;
+    let frame = find(&root, "anchor").or_else(|| find(&root, "inline"))?;
+    Some(placement(frame))
 }
 
 /// The part of an `mc:AlternateContent` Word reads (its first choice),

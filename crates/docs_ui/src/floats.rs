@@ -66,6 +66,12 @@ pub(crate) struct FloatDrag {
     pub moved: bool,
     /// A picture: corners keep its proportions.
     pub keep_ratio: bool,
+    /// An object in line with the text (SmartArt, a picture): a Move drag
+    /// moves it in the text, to [`FloatDrag::drop`].
+    pub inline_from: Option<FloatSel>,
+    /// Where an object in line would go: the text position under the
+    /// pointer (shown as a caret while dragging).
+    pub drop: Option<Position>,
 }
 
 /// The text box being edited.
@@ -388,9 +394,13 @@ impl DocsView {
         if let Some(which) = target {
             let at = point(ev.position.x + SPACE_3, ev.position.y + SPACE_3);
             self.open_text_box(sel, which, at, window, cx);
-        } else if !self.sel_inline() {
-            // Inline SmartArt sits in its line: resized, not moved.
-            self.start_float_drag(page, Grab::Move, rect, ev.position);
+        } else {
+            // Inline SmartArt moves in the text, as Word moves it.
+            if self.sel_inline() {
+                self.start_inline_drag(page, sel, rect, ev.position);
+            } else {
+                self.start_float_drag(page, Grab::Move, rect, ev.position);
+            }
         }
         cx.notify();
         true
@@ -510,7 +520,24 @@ impl DocsView {
             cur: rect,
             moved: false,
             keep_ratio,
+            inline_from: None,
+            drop: None,
         });
+    }
+
+    /// Start dragging a picture in line with the text (selected as a
+    /// character, `rect` on `page`): it moves in the text when dropped.
+    pub(crate) fn start_inline_drag(
+        &mut self,
+        page: usize,
+        from: FloatSel,
+        rect: [f32; 4],
+        p: Point<Pixels>,
+    ) {
+        self.start_float_drag(page, Grab::Move, rect, p);
+        if let Some(d) = &mut self.float_drag {
+            d.inline_from = Some(from);
+        }
     }
 
     /// Pointer moves during a float drag. `true` when one is going on.
@@ -529,6 +556,9 @@ impl DocsView {
         // Page coordinates of the drag's own page, even off its edges.
         let (x, y) = (doc_x - g.page_x(d.page), doc_y - g.page_top(d.page));
         d.update((x, y), g.page_size(d.page));
+        if d.inline_from.is_some() && d.moved {
+            d.drop = self.hit(ev.position);
+        }
         self.float_drag = Some(d);
         cx.notify();
         true
@@ -546,6 +576,15 @@ impl DocsView {
         let Some(d) = self.float_drag.take() else {
             return false;
         };
+        if let Some(from) = d.inline_from {
+            if d.moved
+                && let Some(to) = d.drop
+            {
+                self.drop_inline(from, to, window, cx);
+            }
+            cx.notify();
+            return true;
+        }
         let Some(s) = self.float_sel else {
             return true;
         };
@@ -554,6 +593,63 @@ impl DocsView {
         }
         cx.notify();
         true
+    }
+
+    /// Move an object in line with the text to the text position `to` (a
+    /// drag dropped there), as Word does: cut and inserted there, one undo
+    /// step, still selected.
+    fn drop_inline(
+        &mut self,
+        from: FloatSel,
+        to: Position,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let was_float = self.float_sel == Some(from);
+        let Some(sel) = self.doc.move_object(from.para, from.index, to) else {
+            return;
+        };
+        let at = FloatSel {
+            para: sel.anchor.para,
+            index: sel.anchor.offset,
+        };
+        if was_float {
+            self.float_sel = Some(at);
+            self.sel = Selection::caret(sel.anchor);
+            self.float_edited(window, cx);
+        } else {
+            self.edited(sel, window, cx);
+        }
+    }
+
+    /// Where an object in line with the text (or the anchor of a floating
+    /// one) stands, in EMU from its column's left and its paragraph's top:
+    /// where Word puts it when it's made floating.
+    fn inline_offset(&self, s: FloatSel) -> (i64, i64) {
+        let paged = &self.laid.paged;
+        let rect = match self.float_sel_rect() {
+            Some((page, r)) if self.float_sel == Some(s) => Some((page, r)),
+            _ => paged.caret(s.para, s.index).and_then(|c| {
+                paged
+                    .objects(c.page)
+                    .into_iter()
+                    .find(|o| o.para == s.para && o.index == s.index)
+                    .map(|o| (c.page, o.rect))
+            }),
+        };
+        let Some((page, r)) = rect else {
+            return (0, 0);
+        };
+        let setup = paged.page_setup(page);
+        let first = paged
+            .placed_line(s.para, 0)
+            .map(|(p, i)| (p, paged.pages[p].lines[i]));
+        let para_top = first.map_or(setup.margin_top, |(_, l)| l.top);
+        let column_left = first
+            .and_then(|(p, l)| paged.pages[p].column_at(l.x, l.top))
+            .map_or(setup.margin_left, |c| c.0);
+        let emu = |v: f32| (v * EMU_PER_PX).round() as i64;
+        (emu(r[0] - column_left), emu(r[1] - para_top))
     }
 
     /// Put the object at `rect` on `page`: positions from the column and
@@ -665,10 +761,16 @@ impl DocsView {
         let Some(s) = self.layout_target() else {
             return;
         };
-        if self.doc.set_layout_option(s.para, s.index, o) {
+        let from = self.inline_offset(s);
+        if self.doc.set_layout_option_from(s.para, s.index, o, from) {
             // An inline picture made floating stays selected as an object,
-            // a floating one put in line as a character.
-            if o == LayoutOption::Inline {
+            // a floating one put in line as a character (SmartArt stays
+            // selected as an object).
+            let picture_in_line = matches!(
+                self.doc.paragraph(s.para).object_at(s.index),
+                Some(Object::Image(_))
+            );
+            if picture_in_line {
                 self.float_sel = None;
                 self.sel = Selection {
                     anchor: Position::new(s.para, s.index),
@@ -819,8 +921,6 @@ impl DocsView {
                 }
                 menu
             });
-        // Inline SmartArt stays in line in Kantor: no wrap choices.
-        let button = (!self.sel_inline()).then_some(button);
         let smartart = self.smartart_layout_button(s, cx);
         Some(
             div()
@@ -830,7 +930,7 @@ impl DocsView {
                 .flex()
                 .flex_col()
                 .gap(SPACE_2)
-                .children(button)
+                .child(button)
                 .children(smartart)
                 .into_any_element(),
         )
@@ -1885,7 +1985,10 @@ pub(crate) fn paint_float_selection(f: &Frame, g: &Geometry, page: usize, window
             g.page_to_screen(page, r[0] + r[2], r[1] + r[3]),
         )
     };
-    if let Some(d) = f.float_drag.filter(|d| d.moved && d.page == page) {
+    if let Some(d) = f
+        .float_drag
+        .filter(|d| d.moved && d.page == page && d.inline_from.is_none())
+    {
         window.paint_quad(outline(screen(d.cur), f.t.accent, BorderStyle::Dashed));
     }
     window.paint_quad(outline(screen(rect), f.t.accent, BorderStyle::Solid));
@@ -1966,6 +2069,8 @@ mod tests {
             cur: [50.0, 60.0, 200.0, 100.0],
             moved: false,
             keep_ratio,
+            inline_from: None,
+            drop: None,
         }
     }
 
