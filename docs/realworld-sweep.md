@@ -602,6 +602,28 @@ Results: `~/.cache/realworld-out/pre0150-2026-11-18/` (the run on main;
 `fixed/` the rerun with the fix, `office-check/`, `ab1.txt`, `ab2.txt`,
 `widths.txt`, `xlsvals.txt`, `odsvals.txt`, `ab.py`).
 
+## Workbook themes kept on save (2026-11-19)
+
+The `.xlsx`/`.xlsm` subset (159 files) was run with a probe from main
+(f1b7185) and one with the fix, both kept, and each saved file's theme part
+(the one `xl/_rels/workbook.xml.rels` points at) compared with the
+original's. 133 of the 159 originals have a theme (1 with relationships of
+its own); the other 26 have none and get Kantor's.
+
+- Before: the theme changed in all 133 (IronCalc's theme with only the
+  file's colours: Aptos fonts, its own line, fill and effect styles).
+- After: byte-identical in 132; the remaining one is SimpleStrict.xlsx, a
+  Strict Open XML file whose theme is saved as its Transitional conversion
+  (same theme, percentages written as numbers).
+
+Kinds, counts, pages and validator results are identical between the two
+runs (159 ok); the time flags were load from other builds (an interleaved
+A/B of the four slowest, min of 5, shows no difference). The `.xls`, `.ods`
+and `.xlsb` imports (61 files) save the same theme as before (Kantor's: the
+import has no theme part to keep). Fixture `29_custom_theme.xlsx` and the
+office scenario `sheets_custom_theme_kept.xlsx` cover it. Results in
+`~/.cache/realworld-out/theme-2026-11-19/`.
+
 ## Left
 
 Refused (6):
