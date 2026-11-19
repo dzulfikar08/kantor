@@ -83,6 +83,29 @@ fn cut_sheet_refs(node: &mut Node, index: u32, names: &[String]) -> bool {
     }
 }
 
+/// KANTOR PATCH (§34): the formula of a defined name that is only a cell
+/// or range on sheet `index` once that sheet is deleted: `#REF!` followed by
+/// the reference without its sheet (`Data!$B$3:$B$6` -> `#REF!$B$3:$B$6`),
+/// as Excel writes it (§33 reads it back). `None` for anything else.
+fn ref_error_name(node: &Node, index: u32, context: &CellReferenceRC) -> Option<String> {
+    let mut cell = node.clone();
+    match &mut cell {
+        Node::ReferenceKind {
+            sheet_name,
+            sheet_index,
+            ..
+        }
+        | Node::RangeKind {
+            sheet_name,
+            sheet_index,
+            ..
+        } if sheet_name.is_some() && *sheet_index == index => *sheet_name = None,
+        _ => return None,
+    }
+    let text = format!("#REF!{}", to_english_string(&cell, context));
+    crate::model::is_ref_error_name_formula(&text).then_some(text)
+}
+
 impl Model<'_> {
     /// Delete sheet `index` as Excel does (see the module). Fails for the
     /// only sheet.
@@ -162,7 +185,15 @@ impl Model<'_> {
             let had_equals = dn.formula.trim_start().starts_with('=');
             let body = dn.formula.strip_prefix('=').unwrap_or(&dn.formula);
             let mut node = self.parse_internal_formula(body, &context);
-            let formula = if cut_sheet_refs(&mut node, index, sheet_names) {
+            // KANTOR PATCH (§34): a name that is only a reference to the
+            // sheet keeps its cell part, as Excel writes it.
+            let formula = if let Some(text) = ref_error_name(&node, index, &context) {
+                if had_equals {
+                    format!("={text}")
+                } else {
+                    text
+                }
+            } else if cut_sheet_refs(&mut node, index, sheet_names) {
                 let text = to_english_string(&node, &context);
                 if had_equals {
                     format!("={text}")

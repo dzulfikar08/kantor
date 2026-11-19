@@ -461,3 +461,30 @@ fn notes_stay_with_their_sheet_through_tab_commands() {
     assert_eq!(back.notes_now(0).len(), 1);
     assert_eq!(back.note_at(0, 0, 0).unwrap().text, "On Sheet1");
 }
+
+/// Names that pointed only at a deleted sheet's cells are saved as Excel
+/// writes them, with the cell part (`#REF!$B$3:$B$6`), and read back.
+#[test]
+fn deleted_sheet_names_are_saved_with_their_cell_part() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut wb = Workbook::open(corpus("08_defined_names.xlsx")).unwrap();
+    let inputs = wb.sheet_names().iter().position(|n| n == "Inputs").unwrap() as u32;
+    wb.delete_sheet(inputs).unwrap();
+    let p = save(&mut wb, dir.path(), "names.xlsx");
+    let xml = text(&p, "xl/workbook.xml");
+    for want in [
+        r#"name="Prices">#REF!$B$3:$B$6</definedName>"#,
+        r#"name="TaxRate">#REF!$B$1</definedName>"#,
+        r#"name="Ten">10</definedName>"#,
+    ] {
+        assert!(xml.contains(want), "{want} not in {xml}");
+    }
+    let mut back = Workbook::open(dir.path().join("names.xlsx")).unwrap();
+    assert_eq!(back.display_value(0, 0, 1), "#REF!");
+    let p = save(&mut back, dir.path(), "again.xlsx");
+    let xml = text(&p, "xl/workbook.xml");
+    assert!(
+        xml.contains(r#"name="Prices">#REF!$B$3:$B$6</definedName>"#),
+        "{xml}"
+    );
+}

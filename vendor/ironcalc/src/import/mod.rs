@@ -71,6 +71,15 @@ fn resolve_theme_path(rels: &HashMap<String, Relationship>) -> Option<String> {
 // FIXME: This is a bit of a HACK. We basically re-parse all the defined names assuming the context is `A1`
 // and there is no tables or defined names.
 fn reparse_formula_hack(formula: &str, worksheets: &[String]) -> Result<String, XlsxError> {
+    // KANTOR PATCH (§20): Excel's reference to a deleted sheet
+    // (`#REF!$B$3:$B$6`) stays as written: the parser keeps only `#REF!`.
+    if formula
+        .trim_start()
+        .get(..5)
+        .is_some_and(|h| h.eq_ignore_ascii_case("#REF!"))
+    {
+        return Ok(formula.trim().to_string());
+    }
     let defined_names = Vec::new();
     let tables = HashMap::new();
     let mut parser = new_parser_english(worksheets.to_owned(), defined_names, tables);

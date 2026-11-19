@@ -460,4 +460,19 @@ fn names_to_a_deleted_sheet_keep_their_text() {
     let mut again = Model::from_workbook(workbook, "en").unwrap();
     again.evaluate();
     assert_eq!(again.get_formatted_cell_value(0, 1, 1).unwrap(), "#REF!");
+    // KANTOR PATCH (§20): read and saved again, the text stays.
+    let bytes = save_xlsx_to_writer(&again, Cursor::new(Vec::new()))
+        .unwrap()
+        .into_inner();
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+    let mut xml = String::new();
+    archive
+        .by_name("xl/workbook.xml")
+        .unwrap()
+        .read_to_string(&mut xml)
+        .unwrap();
+    assert!(
+        xml.contains(r#"<definedName name="_On2">#REF!$A$1:$C$1</definedName>"#),
+        "{xml}"
+    );
 }

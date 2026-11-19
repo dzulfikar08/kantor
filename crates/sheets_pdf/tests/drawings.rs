@@ -441,11 +441,14 @@ fn shaped_pictures_print_their_outline() {
             content.push_str(&String::from_utf8_lossy(&bytes));
         }
     }
-    // #C00000, #4472C4, #404040 as stroke colours, once each.
+    // #C00000, #4472C4, #404040 as stroke colours, once each, and the
+    // picture-style outlines: #70AD47 (accent 6) and accent 2 shaded.
     for rg in [
         "0.7529412 0 0 RG",
         "0.26666668 0.44705883 0.76862746 RG",
         "0.2509804 0.2509804 0.2509804 RG",
+        "0.4392157 0.6784314 0.2784314 RG",
+        "0.4627451 0.24313726 0.09411765 RG",
     ] {
         assert_eq!(content.matches(rg).count(), 1, "{rg} in {content}");
     }

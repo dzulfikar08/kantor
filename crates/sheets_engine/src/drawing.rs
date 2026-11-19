@@ -659,14 +659,151 @@ fn picture_shape(pic: Node) -> Option<Arc<str>> {
 }
 
 /// A picture's outline: its `xdr:spPr`'s `a:ln` as XML that parses on its
-/// own; `None` without one, or when it draws nothing (`a:noFill`).
-fn picture_outline(pic: Node) -> Option<Arc<str>> {
-    let ln = child(child(pic, NS_XDR, "spPr")?, NS_A, "ln")?;
-    if child(ln, NS_A, "noFill").is_some() {
+/// own, merged over the theme line style its `xdr:style`'s `a:lnRef`
+/// names (as Excel draws it; `line_styles` = [`theme_line_styles`]);
+/// `None` without either, or when it draws nothing (`a:noFill`).
+fn picture_outline(pic: Node, line_styles: &[String]) -> Option<Arc<str>> {
+    let ln = child(pic, NS_XDR, "spPr").and_then(|s| child(s, NS_A, "ln"));
+    if ln.is_some_and(|l| child(l, NS_A, "noFill").is_some()) {
         return None;
     }
-    let src = &pic.document().input_text()[ln.range()];
-    Some(standalone(src, &in_scope(ln)).into())
+    let line_ref = child(pic, NS_XDR, "style")
+        .and_then(|s| child(s, NS_A, "lnRef"))
+        .filter(|r| {
+            r.attribute("idx")
+                .and_then(|i| i.parse::<usize>().ok())
+                .unwrap_or(0)
+                > 0
+        });
+    let Some(line_ref) = line_ref else {
+        let ln = ln?;
+        let src = &pic.document().input_text()[ln.range()];
+        return Some(standalone(src, &in_scope(ln)).into());
+    };
+    let idx: usize = line_ref.attribute("idx")?.parse().ok()?;
+    // Past the theme's list, the last style (as Office clamps it).
+    let themed = line_styles.get(idx - 1).or(line_styles.last())?;
+    merged_line(themed, line_ref, ln).map(Into::into)
+}
+
+/// The theme's line styles (`a:fmtScheme/a:lnStyleLst`), each an `a:ln`
+/// that parses on its own; Office's three when the theme has none.
+pub(crate) fn theme_line_styles(theme: Option<&str>) -> Vec<String> {
+    let doc = theme.and_then(|t| Document::parse(t).ok());
+    let list = doc
+        .as_ref()
+        .and_then(|d| d.descendants().find(|n| is(*n, NS_A, "lnStyleLst")));
+    let found: Vec<String> = list
+        .map(|l| {
+            l.children()
+                .filter(|c| is(*c, NS_A, "ln"))
+                .map(|c| standalone(&l.document().input_text()[c.range()], &in_scope(c)))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !found.is_empty() {
+        return found;
+    }
+    [6350, 12700, 19050]
+        .iter()
+        .map(|w| {
+            format!(
+                r#"<a:ln xmlns:a="{NS_A}" w="{w}" cap="flat" cmpd="sng" algn="ctr"><a:solidFill><a:schemeClr val="phClr"/></a:solidFill><a:prstDash val="solid"/><a:miter lim="800000"/></a:ln>"#
+            )
+        })
+        .collect()
+}
+
+/// A theme line style (`themed`, an `a:ln` that parses on its own) with
+/// its `phClr` set to the `a:lnRef`'s colour, and the shape's own `a:ln`
+/// (if any) over it: its attributes and its fill, dash, join and arrow
+/// ends win.
+fn merged_line(themed: &str, line_ref: Node, own: Option<Node>) -> Option<String> {
+    let doc = Document::parse(themed).ok()?;
+    let theme_ln = doc.root_element();
+    let group = |n: Node| -> Option<usize> {
+        if !n.is_element() || n.tag_name().namespace() != Some(NS_A) {
+            return None;
+        }
+        Some(match n.tag_name().name() {
+            "noFill" | "solidFill" | "gradFill" | "pattFill" => 0,
+            "prstDash" | "custDash" => 1,
+            "round" | "bevel" | "miter" => 2,
+            "headEnd" => 3,
+            "tailEnd" => 4,
+            _ => return None,
+        })
+    };
+    let mut attrs: Vec<(String, String)> = theme_ln
+        .attributes()
+        .filter(|a| a.namespace().is_none())
+        .map(|a| (a.name().to_owned(), a.value().to_owned()))
+        .collect();
+    for a in own
+        .iter()
+        .flat_map(|o| o.attributes())
+        .filter(|a| a.namespace().is_none())
+    {
+        match attrs.iter_mut().find(|(k, _)| k == a.name()) {
+            Some(slot) => slot.1 = a.value().to_owned(),
+            None => attrs.push((a.name().to_owned(), a.value().to_owned())),
+        }
+    }
+    let mut out = format!("<a:ln xmlns:a=\"{NS_A}\"");
+    for (k, v) in &attrs {
+        out.push_str(&format!(" {k}=\"{}\"", esc(v)));
+    }
+    out.push('>');
+    for g in 0..5 {
+        if let Some(c) = own.and_then(|o| o.children().find(|c| group(*c) == Some(g))) {
+            out.push_str(&standalone(
+                &c.document().input_text()[c.range()],
+                &in_scope(c),
+            ));
+        } else if let Some(c) = theme_ln.children().find(|c| group(*c) == Some(g)) {
+            let text = with_placeholder_color(themed, c, line_ref);
+            out.push_str(&standalone(&text, &in_scope(c)));
+        }
+    }
+    out.push_str("</a:ln>");
+    Some(out)
+}
+
+/// The source of `el` (in `src`) with its `a:schemeClr val="phClr"` set
+/// to the `a:lnRef`'s colour, keeping the placeholder's own changes
+/// (`a:shade`...) after the colour's.
+fn with_placeholder_color(src: &str, el: Node, line_ref: Node) -> String {
+    let base = el.range().start;
+    let text = &src[el.range()];
+    let ph = el
+        .descendants()
+        .find(|d| is(*d, NS_A, "schemeClr") && d.attribute("val") == Some("phClr"));
+    let color = line_ref.children().find(|c| c.is_element());
+    let (Some(ph), Some(color)) = (ph, color) else {
+        return text.to_owned();
+    };
+    let mut c = standalone(
+        &color.document().input_text()[color.range()],
+        &in_scope(color),
+    );
+    let mods = match (ph.first_element_child(), ph.last_element_child()) {
+        (Some(a), Some(b)) => &src[a.range().start..b.range().end],
+        _ => "",
+    };
+    if !mods.is_empty() {
+        if c.ends_with("/>") {
+            let qname: String = c[1..]
+                .chars()
+                .take_while(|ch| !ch.is_whitespace() && *ch != '/' && *ch != '>')
+                .collect();
+            c.truncate(c.len() - 2);
+            c.push_str(&format!(">{mods}</{qname}>"));
+        } else if let Some(at) = c.rfind("</") {
+            c.insert_str(at, mods);
+        }
+    }
+    let r = ph.range();
+    format!("{}{c}{}", &text[..r.start - base], &text[r.end - base..])
 }
 
 /// `a:srcRect` as fractions (it's in 1/1000 of a percent).
@@ -686,6 +823,7 @@ fn kind(
     obj: Node,
     targets: &HashMap<String, (String, String)>,
     parts: &mut HashMap<String, Arc<[u8]>>,
+    line_styles: &[String],
 ) -> DrawingKind {
     let target = |rid: Option<&str>, want: &str| {
         let (kind, part) = targets.get(rid?)?;
@@ -732,7 +870,7 @@ fn kind(
                     crop: crop(fill),
                     part: part.into(),
                     shape: picture_shape(obj),
-                    outline: picture_outline(obj),
+                    outline: picture_outline(obj, line_styles),
                 },
                 None => other(),
             }
@@ -835,6 +973,7 @@ fn read_objects(
     xml: &str,
     targets: &HashMap<String, (String, String)>,
     parts: HashMap<String, Vec<u8>>,
+    line_styles: &[String],
 ) -> Vec<Object> {
     let doc = match Document::parse(xml) {
         Ok(d) => d,
@@ -894,7 +1033,7 @@ fn read_objects(
                     media: media.clone().unwrap_or_default().into(),
                 }
             }
-            Some(obj) => kind(obj, targets, &mut parts),
+            Some(obj) => kind(obj, targets, &mut parts, line_styles),
             None => DrawingKind::Other("anchor".into()),
         };
         // Shapes of form controls (shown, not edited) and charts of the
@@ -993,9 +1132,10 @@ impl Drawings {
                 return Self::default();
             }
         };
+        let line_styles = theme_line_styles(src.theme.as_deref());
         let mut sheets = HashMap::new();
         for d in src.drawings {
-            let objects = read_objects(&d.xml, &d.targets, d.parts);
+            let objects = read_objects(&d.xml, &d.targets, d.parts, &line_styles);
             if !objects.is_empty() {
                 sheets.insert(d.sheet_id, objects);
             }
@@ -1012,7 +1152,7 @@ impl Drawings {
                 bundle: Arc::new(c.bundle),
                 objects: c
                     .drawing
-                    .map(|d| read_objects(&d.xml, &d.targets, d.parts))
+                    .map(|d| read_objects(&d.xml, &d.targets, d.parts, &line_styles))
                     .unwrap_or_default(),
                 print: crate::print::chart_sheet_print(c.xml.as_deref().unwrap_or_default()),
                 tab: c.xml.as_deref().and_then(chart_sheet_tab),
@@ -1051,7 +1191,7 @@ impl Drawings {
         );
         let mut parts = HashMap::new();
         parts.insert(new.chart_part.clone(), new.chart_xml.clone().into_bytes());
-        let objects = read_objects(&new.drawing_xml, &targets, parts);
+        let objects = read_objects(&new.drawing_xml, &targets, parts, &[]);
         self.chart_sheets.push(ChartSheet {
             name: new.name,
             state: None,

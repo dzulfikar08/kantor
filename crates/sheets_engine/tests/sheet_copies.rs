@@ -401,6 +401,11 @@ fn copied_pictures_keep_their_shape_and_outline() {
         ("Star photo", "star5 / none"),
         ("Framed photo", "rect / 50800 404040 false"),
         ("No line", "ellipse / none"),
+        // Outlines from the picture style's `a:lnRef` (the theme's line
+        // styles), merged under the picture's own `a:ln`.
+        ("Styled photo", "ellipse / 19050 accent2 true"),
+        ("Styled wide", "rect / 38100 accent6 true"),
+        ("Styled none", "ellipse / none"),
     ]
     .into_iter()
     .map(|(a, b)| (a.to_owned(), b.to_owned()))
@@ -441,8 +446,17 @@ fn copied_pictures_keep_their_shape_and_outline() {
     let back = Workbook::open(&path).unwrap();
     let bc = sheet(&back, "Pictures (2)");
     assert_eq!(summary(&picture_looks(&back, bc)), want);
+    // The original keeps its `xdr:style`, read against the saved theme:
+    // Kantor saves IronCalc's theme, whose third line style is 2 pt, not
+    // the opened theme's 1.5 pt (copies carry the resolved line).
+    let saved_theme = |mut looks: BTreeMap<String, String>| {
+        if let Some(l) = looks.get_mut("Styled photo") {
+            *l = l.replace(" 25400 ", " 19050 ");
+        }
+        looks
+    };
     assert_eq!(
-        summary(&picture_looks(&back, sheet(&back, "Pictures"))),
+        saved_theme(summary(&picture_looks(&back, sheet(&back, "Pictures")))),
         want
     );
 
@@ -460,7 +474,7 @@ fn copied_pictures_keep_their_shape_and_outline() {
         .filter(|(_, n)| n.starts_with("Pictures"))
     {
         assert_eq!(
-            summary(&picture_looks(&back, i as u32)),
+            saved_theme(summary(&picture_looks(&back, i as u32))),
             want,
             "{}",
             names[i]

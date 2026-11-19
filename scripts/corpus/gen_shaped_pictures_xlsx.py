@@ -13,6 +13,13 @@ drawn here (a diagonal colour ramp). Sheet "Pictures" holds, by name:
 * "Framed photo": a rectangle with a 4 pt dark grey frame, cropped 10 %
   on the left.
 * "No line": an ellipse whose outline is `a:noFill`.
+* "Styled photo": an ellipse with no `a:ln`, outlined only by its
+  `xdr:style` (`a:lnRef idx="3"`, accent 2 at 50 % shade: the theme's
+  1.5 pt line).
+* "Styled wide": a rectangle whose `a:ln` sets only the width (3 pt), its
+  colour from `a:lnRef idx="1"` (accent 6).
+* "Styled none": an ellipse with `a:lnRef idx="2"` but `a:ln` `a:noFill`:
+  no outline.
 
 Sheet "Other" has no drawing. CC0-1.0 like the rest of the corpus.
 Deterministic (fixed zip timestamps): `--check` compares parts.
@@ -55,11 +62,19 @@ def png(w: int = 64, h: int = 48) -> bytes:
     return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(rows, 9)) + chunk(b"IEND", b"")
 
 
-def pic(id_: int, name: str, geom: str, line: str = "", crop: str = "") -> str:
+def pic(id_: int, name: str, geom: str, line: str = "", crop: str = "", style: str = "") -> str:
     return (
         f'<xdr:pic><xdr:nvPicPr><xdr:cNvPr id="{id_}" name="{name}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr>'
         f'<xdr:blipFill><a:blip xmlns:r="{NS_R}" r:embed="rId1"/>{crop}<a:stretch><a:fillRect/></a:stretch></xdr:blipFill>'
-        f"<xdr:spPr>{base.xfrm()}{geom}{line}</xdr:spPr></xdr:pic>"
+        f"<xdr:spPr>{base.xfrm()}{geom}{line}</xdr:spPr>{style}</xdr:pic>"
+    )
+
+
+def style(idx: int, color: str) -> str:
+    """A picture's `xdr:style`: its outline from theme line style `idx`."""
+    return (
+        f'<xdr:style><a:lnRef idx="{idx}">{color}</a:lnRef><a:fillRef idx="1"><a:srgbClr val="FFFFFF"/></a:fillRef>'
+        '<a:effectRef idx="0"><a:srgbClr val="000000"/></a:effectRef><a:fontRef idx="minor"><a:schemeClr val="tx1"/></a:fontRef></xdr:style>'
     )
 
 
@@ -84,6 +99,18 @@ def drawing() -> str:
             '<a:srcRect l="10000"/>',
         )),
         base.anchor(5, 11, 8, 19, pic(6, "No line", prst("ellipse"), "<a:ln><a:noFill/></a:ln>")),
+        base.anchor(1, 21, 4, 29, pic(
+            7, "Styled photo", prst("ellipse"),
+            style=style(3, '<a:schemeClr val="accent2"><a:shade val="50000"/></a:schemeClr>'),
+        )),
+        base.anchor(5, 21, 8, 29, pic(
+            8, "Styled wide", prst("rect"), '<a:ln w="38100"/>',
+            style=style(1, '<a:schemeClr val="accent6"/>'),
+        )),
+        base.anchor(9, 21, 12, 29, pic(
+            9, "Styled none", prst("ellipse"), "<a:ln><a:noFill/></a:ln>",
+            style=style(2, '<a:schemeClr val="accent1"/>'),
+        )),
     ]
     return HEAD + f'<xdr:wsDr xmlns:xdr="{base.NS_XDR}" xmlns:a="{base.NS_A}">' + "".join(objs) + "</xdr:wsDr>"
 

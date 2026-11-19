@@ -481,8 +481,8 @@ fn main() -> Result<()> {
                 .filter_map(|d| match &*d.kind {
                     sheets_engine::drawing::DrawingKind::Picture { shape, outline, .. } => Some((
                         d.name.clone(),
-                        shape.as_deref().map(str::to_owned),
-                        outline.as_deref().map(str::to_owned),
+                        shape.as_deref().map(without_xmlns),
+                        outline.as_deref().map(without_xmlns),
                     )),
                     _ => None,
                 })
@@ -536,6 +536,20 @@ fn main() -> Result<()> {
         wb.set_input(report, 10, 0, "=SUM(Prices)+1")?;
         let path = o.join("sheets_deleted_sheet_name.xlsx");
         wb.save_as(&path)?;
+        // The names keep their cell part, as Excel saves them.
+        let names_saved = |path: &Path| -> Result<()> {
+            let mut z = zip::ZipArchive::new(std::fs::File::open(path)?)?;
+            let mut xml = String::new();
+            std::io::Read::read_to_string(&mut z.by_name("xl/workbook.xml")?, &mut xml)?;
+            for want in [
+                r#"name="Prices">#REF!$B$3:$B$6</definedName>"#,
+                r#"name="TaxRate">#REF!$B$1</definedName>"#,
+            ] {
+                anyhow::ensure!(xml.contains(want), "{want} not in {xml}");
+            }
+            Ok(())
+        };
+        names_saved(&path)?;
         let mut again = Workbook::open(&path)?;
         for (r, c) in [(0, 1), (10, 0)] {
             let v = again.display_value(0, r, c);
@@ -543,6 +557,7 @@ fn main() -> Result<()> {
         }
         again.set_input(0, 11, 0, "again")?;
         again.save_as(&path)?;
+        names_saved(&path)?;
         Ok(Some(src))
     });
     run.scenario("sheets_sparklines_saved.xlsx", |o| {
@@ -2550,5 +2565,29 @@ fn png_2x1() -> Vec<u8> {
     chunk(&mut out, b"IHDR", &ihdr);
     chunk(&mut out, b"IDAT", &z);
     chunk(&mut out, b"IEND", &[]);
+    out
+}
+
+/// XML without its namespace declarations (` xmlns:p="..."`): which
+/// elements declare them depends on where the XML was read from.
+fn without_xmlns(xml: &str) -> String {
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(at) = rest.find(" xmlns") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        // ` xmlns[:p]="..."`: skip to the closing quote.
+        match after
+            .find('"')
+            .and_then(|q| after[q + 1..].find('"').map(|e| q + 1 + e + 1))
+        {
+            Some(end) => rest = &after[end..],
+            None => {
+                rest = after;
+                out.push(' ');
+            }
+        }
+    }
+    out.push_str(rest);
     out
 }
