@@ -11,6 +11,8 @@ repository.workspace = true
 # docs/decisions/0003-pdf-renderer.md. The embedded standard-14 fonts and CJK
 # CMaps are needed for PDFs that don't embed their fonts.
 hayro = { version = "0.9", default-features = true }
+# Arabic presentation forms to plain letters in extracted text.
+unicode-normalization = "0.1"
 
 [dev-dependencies]
 # Fixtures: pages, outlines, links and encryption written as test PDFs.

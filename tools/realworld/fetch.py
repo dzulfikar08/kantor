@@ -2,11 +2,14 @@
 """Download the real-world sweep's files (see docs/realworld-sweep.md).
 
     python3 -I tools/realworld/fetch.py PLAN.tsv [--dest ~/.cache/realworld]
+        [--manifest NAME.tsv] [--max-mb 20]
 
 PLAN.tsv has one file per line: `format \t url \t source site \t licence`.
 Each file goes to DEST/<format>/<sha256[:10]>-<name> and gets a line in
 DEST/manifest.tsv (format, path, url, site, licence, sha256, bytes). Files
 already in the manifest are skipped, so a rerun only fetches what's new.
+The PDF set (tools/realworld/pdf_sweep.py) keeps its own manifest
+(`--manifest pdf-manifest.tsv`) so the Office sweep doesn't pick it up.
 
 The downloads are untrusted data: they are only ever read by Kantor's
 engines (tools/realworld/sweep.py), never opened, run or committed. Licences
@@ -29,6 +32,8 @@ MAGIC = {
     "xlsx": ZIP, "xlsm": ZIP, "xlsb": ZIP, "docx": ZIP, "pptx": ZIP, "ods": ZIP,
     "xls": CFB, "doc": CFB, "ppt": CFB,
 }
+# PDF readers accept junk before the header (Acrobat: within 1024 bytes).
+PDF_HEADER_WITHIN = 1024
 FIELDS = ["format", "path", "url", "site", "licence", "sha256", "bytes"]
 
 
@@ -49,6 +54,12 @@ def save_manifest(path, rows):
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def is_format(data, fmt):
+    if fmt == "pdf":
+        return b"%PDF-" in data[:PDF_HEADER_WITHIN + 5]
+    return data.startswith(MAGIC.get(fmt, b""))
+
+
 def fetch(url):
     parts = urllib.parse.urlsplit(url)
     url = parts._replace(path=urllib.parse.quote(parts.path, safe="/%")).geturl()
@@ -56,7 +67,7 @@ def fetch(url):
     with urllib.request.urlopen(req, timeout=60) as r:
         data = r.read(MAX_BYTES + 1)
     if len(data) > MAX_BYTES:
-        raise ValueError("over 20 MB")
+        raise ValueError(f"over {MAX_BYTES // 1_000_000} MB")
     return data
 
 
@@ -64,10 +75,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("plan")
     ap.add_argument("--dest", default=os.path.expanduser("~/.cache/realworld"))
+    ap.add_argument("--manifest", default="manifest.tsv", help="file name in DEST")
+    ap.add_argument("--max-mb", type=int, default=20)
     args = ap.parse_args()
+    global MAX_BYTES
+    MAX_BYTES = args.max_mb * 1_000_000
     dest = Path(args.dest)
     dest.mkdir(parents=True, exist_ok=True)
-    manifest = dest / "manifest.tsv"
+    manifest = dest / args.manifest
     rows = load_manifest(manifest)
     hashes = {r["sha256"] for r in rows.values()}
     plan = [l.split("\t") for l in Path(args.plan).read_text().splitlines() if l.strip()]
@@ -82,7 +97,7 @@ def main():
         except Exception as e:  # noqa: BLE001 - report and go on
             print(f"[{n}/{len(plan)}] skip {url}: {e}", file=sys.stderr)
             continue
-        if not data.startswith(MAGIC.get(fmt, b"")):
+        if not is_format(data, fmt):
             print(f"[{n}/{len(plan)}] skip {url}: not a .{fmt} file", file=sys.stderr)
             continue
         sha = hashlib.sha256(data).hexdigest()

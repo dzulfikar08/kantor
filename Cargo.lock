@@ -5389,6 +5389,8 @@ dependencies = [
  "chrono",
  "docs_engine",
  "docs_pdf",
+ "kantor_pdf",
+ "pdf_engine",
  "serde_json",
  "sheets_engine",
  "sheets_pdf",
@@ -5629,6 +5631,7 @@ version = "0.16.0"
 dependencies = [
  "hayro",
  "lopdf",
+ "unicode-normalization",
 ]
 
 [[package]]

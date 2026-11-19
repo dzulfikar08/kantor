@@ -27,6 +27,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   writes the PDF in place safely and Save As to a new file; a password-protected PDF stays protected; bookmarks
   and links to deleted pages are dropped; closing asks about unsaved changes, which also get recovery copies.
 - `kantor pdf delete` and the other page tools drop bookmarks and links that pointed at removed pages.
+- PDF: Arabic and Hebrew text that the file stores left to right (as Word and most other programs write it) is
+  searched and copied in reading order, with the letters' joined shapes as plain letters, and a search ignores the
+  kashida (ـ) that stretches a word. Text drawn twice for a bold effect is found and copied once, not as "第第二二".
+- PDF: when pages are deleted, moved or added, an XFA form (Adobe LiveCycle Designer forms, such as IRS forms) is
+  saved without its XFA part, as Acrobat does, so readers use the form fields on the pages; `kantor pdf delete`,
+  `extract`, `reorder` and `merge` do the same.
 
 ## [0.16.0] - 2026-11-19
 
