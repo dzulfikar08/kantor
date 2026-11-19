@@ -853,6 +853,113 @@ fn main() -> Result<()> {
         again.save_as(&path)?;
         Ok(Some(src))
     });
+    // Inline SmartArt made Square (Layout Options), saved as an anchor; then
+    // put back in line and saved again.
+    run.scenario("smartart_inline_square.docx", |o| {
+        let src = corpus.join("docx/smartart_inline.docx");
+        let (mut doc, pi, index) = first_inline_float(&src)?;
+        anyhow::ensure!(
+            doc.set_layout_option_from(pi, index, docs_engine::LayoutOption::Square, (457200, 0)),
+            "not made Square"
+        );
+        let path = o.join("smartart_inline_square.docx");
+        doc.save_as(&path)?;
+        let xml = zip_part(&path, "word/document.xml")?;
+        anyhow::ensure!(xml.contains("<wp:wrapSquare"), "no wrapSquare written");
+        let mut again = Document::open(&path)?;
+        let f = again.float_at(pi, index).context("float after reopen")?;
+        anyhow::ensure!(!f.inline, "Square SmartArt reopened in line");
+        again.insert_text(Selection::caret(Position::new(0, 0)), "Again. ", None);
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
+    run.scenario("smartart_square_back_inline.docx", |o| {
+        let src = corpus.join("docx/smartart_inline.docx");
+        let (mut doc, pi, index) = first_inline_float(&src)?;
+        let size = doc.float_at(pi, index).context("float")?.at;
+        anyhow::ensure!(
+            doc.set_layout_option(pi, index, docs_engine::LayoutOption::Square),
+            "not made Square"
+        );
+        let path = o.join("smartart_square_back_inline.docx");
+        doc.save_as(&path)?;
+        let mut doc = Document::open(&path)?;
+        anyhow::ensure!(
+            doc.set_layout_option(pi, index, docs_engine::LayoutOption::Inline),
+            "not put back in line"
+        );
+        doc.save_as(&path)?;
+        let again = Document::open(&path)?;
+        let f = again.float_at(pi, index).context("float after reopen")?;
+        anyhow::ensure!(f.inline, "not in line after reopen");
+        anyhow::ensure!(
+            (f.at.cx, f.at.cy) == (size.cx, size.cy),
+            "size changed: {:?} -> {:?}",
+            (size.cx, size.cy),
+            (f.at.cx, f.at.cy)
+        );
+        // The file's own floating SmartArt stays; ours is in line again.
+        let count = |xml: &str| {
+            (
+                xml.matches("<wp:anchor").count(),
+                xml.matches("<wp:inline").count(),
+            )
+        };
+        let was = count(&zip_part(&src, "word/document.xml")?);
+        let now = count(&zip_part(&path, "word/document.xml")?);
+        anyhow::ensure!(was == now, "anchors/inlines {was:?} -> {now:?}");
+        Ok(Some(src))
+    });
+    // An inline picture dragged into another paragraph, saved twice.
+    run.scenario("inline_picture_dragged.docx", |o| {
+        let src = corpus.join("docx/pictures.docx");
+        let mut doc = Document::open(&src)?;
+        let (pi, index) = doc
+            .paragraphs()
+            .iter()
+            .enumerate()
+            .find_map(|(pi, p)| {
+                p.objects().find_map(|(index, ob)| match ob {
+                    docs_engine::Object::Image(_) => Some((pi, index)),
+                    _ => None,
+                })
+            })
+            .context("no inline picture")?;
+        let images = |d: &Document| {
+            d.paragraphs()
+                .iter()
+                .map(|p| {
+                    p.objects()
+                        .filter(|(_, o)| matches!(o, docs_engine::Object::Image(_)))
+                        .count()
+                })
+                .sum::<usize>()
+        };
+        let before = images(&doc);
+        // Into the middle of the first text paragraph other than its own.
+        let (to_para, text) = doc
+            .paragraphs()
+            .iter()
+            .enumerate()
+            .find(|(i, p)| *i != pi && p.text.chars().filter(|c| c.is_alphabetic()).count() > 8)
+            .map(|(i, p)| (i, p.text.clone()))
+            .context("no text paragraph")?;
+        let mid = text
+            .char_indices()
+            .nth(text.chars().count() / 2)
+            .map_or(0, |(i, _)| i);
+        let sel = doc
+            .move_object(pi, index, Position::new(to_para, mid))
+            .context("picture didn't move")?;
+        anyhow::ensure!(sel.anchor.para == to_para, "landed in {:?}", sel.anchor);
+        let path = o.join("inline_picture_dragged.docx");
+        doc.save_as(&path)?;
+        let mut again = Document::open(&path)?;
+        anyhow::ensure!(images(&again) == before, "picture count changed");
+        again.insert_text(Selection::caret(Position::new(0, 0)), "Again. ", None);
+        again.save_as(&path)?;
+        Ok(Some(src))
+    });
     run.scenario("columns_ruler_drag.docx", |o| {
         let src = corpus.join("docx/columns.docx");
         let mut doc = Document::open(&src)?;
@@ -1851,6 +1958,32 @@ fn sheets_v012_features(wb: &mut Workbook) -> Result<()> {
 /// A synthetic `.xlsm`: a Kantor-saved workbook with a VBA project added
 /// the way Excel stores one.
 /// The parts of `data_book()` saved by Kantor, to edit by hand.
+/// The document and its first SmartArt (or other float) in line with text.
+fn first_inline_float(src: &Path) -> Result<(Document, usize, usize)> {
+    let doc = Document::open(src)?;
+    let (pi, index) = doc
+        .paragraphs()
+        .iter()
+        .enumerate()
+        .find_map(|(pi, p)| {
+            p.objects().find_map(|(index, ob)| match ob {
+                docs_engine::Object::Float(f) if f.inline => Some((pi, index)),
+                _ => None,
+            })
+        })
+        .context("no inline float")?;
+    Ok((doc, pi, index))
+}
+
+/// One part of a saved package as text.
+fn zip_part(path: &Path, name: &str) -> Result<String> {
+    use std::io::Read as _;
+    let mut z = zip::ZipArchive::new(std::fs::File::open(path)?)?;
+    let mut s = String::new();
+    z.by_name(name)?.read_to_string(&mut s)?;
+    Ok(s)
+}
+
 fn data_book_parts(dir: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     use std::io::Read as _;
     let plain = dir.join("data_book.tmp.xlsx");
