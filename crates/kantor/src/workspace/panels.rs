@@ -460,6 +460,36 @@ impl Workspace {
                             )),
                     )
             }
+            Some(DocView::Pdf(view)) => {
+                let d = view.read(cx).info();
+                let folder = d
+                    .path
+                    .parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                v_flex().gap(SPACE_7).child(
+                    v_flex()
+                        .gap(SPACE_5)
+                        .child(section_label(i18n::t("Document"), cx))
+                        .child(field(i18n::t("File"), d.name, false))
+                        .child(field(i18n::t("Title"), d.title.unwrap_or_default(), false))
+                        .child(field(i18n::t("Folder"), folder, false))
+                        .child(field(
+                            i18n::t("Pages"),
+                            match d.pages {
+                                0 => String::new(),
+                                n => i18n::tf("Page {} of {}", &[&(d.current + 1), &n]),
+                            },
+                            false,
+                        ))
+                        .child(field(i18n::t("Size"), d.size, false))
+                        .child(field(
+                            i18n::t("State"),
+                            i18n::t("Read-only (Save As writes a copy)").to_owned(),
+                            false,
+                        )),
+                )
+            }
             None => v_flex().child(
                 div()
                     .text_size(FONT_SMALL)

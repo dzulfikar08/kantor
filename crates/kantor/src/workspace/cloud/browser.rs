@@ -190,6 +190,7 @@ fn icon_for(entry: &Entry) -> IconName {
         Some(AppKind::Sheets) => IconName::FileSpreadsheet,
         Some(AppKind::Docs) => IconName::FileText,
         Some(AppKind::Slides) => IconName::Presentation,
+        Some(AppKind::Pdf) => IconName::BookOpen,
         None => IconName::File,
     }
 }

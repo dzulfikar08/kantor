@@ -123,6 +123,8 @@ fn app_of(kind: AppKind) -> recovery::App {
         AppKind::Sheets => recovery::App::Sheets,
         AppKind::Docs => recovery::App::Docs,
         AppKind::Slides => recovery::App::Slides,
+        // PDFs are never edited, so never get recovery copies.
+        AppKind::Pdf => unreachable!("no recovery copies of PDFs"),
     }
 }
 

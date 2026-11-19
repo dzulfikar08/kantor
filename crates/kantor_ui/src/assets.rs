@@ -95,7 +95,10 @@ icon_assets!(
         CloudOff,
         CloudUpload,
         FileSpreadsheet,
-        Lock
+        Lock,
+        RotateCcw,
+        Bookmark,
+        MoveHorizontal
     ]
 );
 

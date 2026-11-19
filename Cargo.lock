@@ -4075,6 +4075,7 @@ dependencies = [
  "kantor_ui",
  "kantor_update",
  "log",
+ "pdf_ui",
  "ring",
  "serde_json",
  "sheets_engine",
@@ -5627,6 +5628,19 @@ version = "0.15.0"
 dependencies = [
  "hayro",
  "lopdf",
+]
+
+[[package]]
+name = "pdf_ui"
+version = "0.15.0"
+dependencies = [
+ "async-channel",
+ "gpui-kit",
+ "image",
+ "kantor_core",
+ "kantor_ui",
+ "log",
+ "pdf_engine",
 ]
 
 [[package]]

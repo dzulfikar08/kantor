@@ -516,14 +516,14 @@ Docs · 2.54 cm top/bottom, 1.91 cm sides	Docs · 2,54 cm atas/bawah, 1,91 cm ki
 Docs · 2.54 cm top/bottom, 5.08 cm sides	Docs · 2,54 cm atas/bawah, 5,08 cm kiri/kanan
 Docs, Slides · underline misspelled words in red	Docs, Slides · garis bawahi kata yang salah eja dengan warna merah
 Docs · show or hide the ruler	Docs · tampilkan atau sembunyikan penggaris
-Docs, Sheets · zoom in	Docs, Sheets · perbesar
-Docs, Sheets · zoom out	Docs, Sheets · perkecil
+Docs, Sheets, PDF · zoom in	Docs, Sheets, PDF · perbesar
+Docs, Sheets, PDF · zoom out	Docs, Sheets, PDF · perkecil
 Zoom to 100%	Zoom ke 100%
 Sheets · show the sheet at its actual size	Sheets · tampilkan lembar dalam ukuran sebenarnya
 Zoom to Selection	Zoom ke Pilihan
 Sheets · zoom so the selected cells fill the window	Sheets · zoom agar sel yang dipilih memenuhi jendela
 Sheets · View ▸ Zoom: 200%, 100%, 75%, 50%, 25%, fit selection or custom	Sheets · Tampilan ▸ Zoom: 200%, 100%, 75%, 50%, 25%, paskan pilihan, atau kustom
-Docs · page zoom 100%	Docs · zoom halaman 100%
+Docs · page zoom 100% · PDF: Ctrl+1	Docs · zoom halaman 100% · PDF: Ctrl+1
 Slides · the selected shape	Slides · bentuk terpilih
 Slides · the selected shapes	Slides · bentuk-bentuk terpilih
 Slides · the selected group	Slides · kelompok terpilih

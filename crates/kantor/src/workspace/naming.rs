@@ -13,6 +13,7 @@ impl AppKind {
             Self::Docs => "docx",
             Self::Sheets => "xlsx",
             Self::Slides => "pptx",
+            Self::Pdf => "pdf",
         }
     }
 }

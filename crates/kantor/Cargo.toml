@@ -26,6 +26,7 @@ kantor_theme.workspace = true
 kantor_ui.workspace = true
 kantor_update.workspace = true
 log.workspace = true
+pdf_ui.workspace = true
 serde_json.workspace = true
 sheets_engine.workspace = true
 sheets_pdf.workspace = true
