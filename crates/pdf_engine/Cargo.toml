@@ -1,0 +1,20 @@
+[package]
+name = "pdf_engine"
+description = "Kantor PDF viewer engine: opening, rendering, text, outline and links of PDF files with hayro (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Pure-Rust PDF reader and rasterizer (MIT/Apache, by krilla's author); see
+# docs/decisions/0003-pdf-renderer.md. The embedded standard-14 fonts and CJK
+# CMaps are needed for PDFs that don't embed their fonts.
+hayro = { version = "0.9", default-features = true }
+
+[dev-dependencies]
+# Fixtures: pages, outlines, links and encryption written as test PDFs.
+lopdf = { version = "0.47", default-features = false }
+
+[lints]
+workspace = true
