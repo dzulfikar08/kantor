@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-19
+
+Kantor gets a fourth app, a PDF viewer with page tools. PDFs open from the system, File ▸ Open or the command line;
+pages can be searched, copied, zoomed and printed, and reordered, rotated, deleted, inserted, combined, split,
+numbered and watermarked, with Undo and safe saves. Arabic and Hebrew text is found and copied in reading order.
+
 ### Added
 
 - PDF viewer, Kantor's fourth app: `.pdf` files open from File ▸ Open, the start screen, recent files, the command
@@ -2110,7 +2116,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/dzulfikar08/kantor/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/dzulfikar08/kantor/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/dzulfikar08/kantor/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/dzulfikar08/kantor/compare/v0.13.0...v0.14.0
