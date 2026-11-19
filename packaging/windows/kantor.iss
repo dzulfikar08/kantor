@@ -5,7 +5,7 @@
 ; Installs to %LOCALAPPDATA%\Programs\Kantor: kantor.exe (the app), kantor.com
 ; (the command line, see crates/kantor_console), licences. Adds a Start menu
 ; shortcut, an optional desktop icon, an uninstall entry under Settings > Apps,
-; and "Open with" entries for .xlsx/.xlsm/.xls/.xlt/.ods/.csv, .docx/.rtf/.doc/.dot and .pptx/.ppt/.pps/.pot that
+; and "Open with" entries for .xlsx/.xlsm/.xls/.xlt/.xlsb/.ods/.csv/.tsv, .docx/.rtf/.doc/.dot and .pptx/.ppt/.pps/.pot that
 ; don't take over the user's default apps.
 ;
 ; The in-app updater (crates/kantor_update) downloads a newer installer and runs
@@ -125,8 +125,10 @@ Root: HKA; Subkey: "Software\Classes\.xlsx\OpenWithProgids"; ValueType: string; 
 Root: HKA; Subkey: "Software\Classes\.xlsm\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Sheet"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.xls\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Sheet"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.xlt\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Sheet"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.xlsb\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Sheet"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.ods\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Sheet"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.csv\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Sheet"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.tsv\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Sheet"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.docx\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.rtf\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.doc\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
@@ -144,8 +146,10 @@ Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; Va
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".xlsm"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".xls"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".xlt"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".xlsb"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".ods"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".csv"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".tsv"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".docx"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".rtf"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".doc"; ValueData: ""
@@ -163,8 +167,10 @@ Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: s
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".xlsm"; ValueData: "Kantor.Sheet"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".xls"; ValueData: "Kantor.Sheet"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".xlt"; ValueData: "Kantor.Sheet"
+Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".xlsb"; ValueData: "Kantor.Sheet"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ods"; ValueData: "Kantor.Sheet"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".csv"; ValueData: "Kantor.Sheet"
+Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tsv"; ValueData: "Kantor.Sheet"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".docx"; ValueData: "Kantor.Document"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".rtf"; ValueData: "Kantor.Document"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".doc"; ValueData: "Kantor.Document"

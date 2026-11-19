@@ -20,7 +20,7 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 ### Added
 
 - PDF viewer, Kantor's fourth app: `.pdf` files open from File ▸ Open, the start screen, recent files, the command
-  line (`kantor file.pdf`) and the system's Open With. Pages scroll in one column; zoom with Ctrl+mouse wheel,
+  line (`kantor file.pdf`), the system's Open With (also on macOS) and dragging onto the window. Pages scroll in one column; zoom with Ctrl+mouse wheel,
   Ctrl+= / Ctrl+-, Fit Width (Ctrl+2), Fit Page (Ctrl+0) or Actual Size (Ctrl+1); type a page number to go there;
   F4 shows page thumbnails or the document's bookmarks; Ctrl+F finds text in the whole document and highlights
   every hit; drag to select text (double-click a word, triple-click a line) and Ctrl+C copies it; links jump to
@@ -28,6 +28,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Ctrl+P prints through your PDF viewer. Password-protected PDFs ask for the password, and a damaged file says
   so. Long documents stay light: page images are kept in a cache of fixed size. Kantor doesn't change the file
   (Save As writes a copy).
+- Kantor opens files from the system: Finder's **Open With**, double-clicks and dropping files on
+  the Dock icon on macOS (the app now declares its file types the way current macOS expects, so it
+  is offered for Excel, Word, PowerPoint, OpenDocument, CSV and RTF files without becoming the
+  default app), whether Kantor was running or not. On Linux the app menu entries open several
+  selected files at once and are offered for every type Kantor reads (.xlsb, .ods, .tsv, .doc and
+  .dot too); the Windows installer adds .xlsb and .tsv to Open With.
+- Drag files onto a Kantor window to open them: the window is highlighted while you drag, each
+  file opens in a tab, a PNG or JPEG dropped on a Docs document or a presentation is inserted as a
+  picture, and a file Kantor can't open gets Excel's "file format or file extension is not valid"
+  message (also for such a file given on the command line, which was ignored before).
 - Docs: SmartArt in line with the text gets Layout Options as in Word: choose Square, Tight, Through, Top and Bottom,
   Behind Text or In Front of Text to make it floating where it stands, or In Line with Text to put floating SmartArt
   back in its line; the file is saved as Word saves it, and Undo puts it back.
@@ -40,6 +50,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   screen and in PDF, as Excel draws it; a border that sets only its width takes its colour from the style.
 - Sheets: deleting a sheet keeps the cell part of names that pointed at it, as Excel saves them (`#REF!$B$3:$B$6`
   rather than `#REF!`), so they are easier to repair.
+- Sheets: saving a workbook keeps its own theme. Kantor used to write a theme of its own with only the file's colours,
+  so after a save Excel showed cells in the body and heading fonts as Aptos instead of the theme's fonts (Calibri,
+  for one), and borders, fills and effects of pictures, shapes and charts that come from the theme's styles changed
+  (a picture style's border could get wider, for one). New workbooks still get Kantor's theme.
 
 ## [0.15.0] - 2026-11-19
 

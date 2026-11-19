@@ -61,7 +61,8 @@ Used range	Rentang terpakai
 {} rows × {} columns	{} baris × {} kolom
 Open a document to see its details here.	Buka dokumen untuk melihat detailnya di sini.
 {} is not built yet — it's on the roadmap.	{} belum tersedia — sudah masuk rencana pengembangan.
-Kantor can't open {}	Kantor tidak dapat membuka {}
+Kantor can't open the file “{}” because the file format or file extension is not valid. Verify that the file has not been corrupted and that the file extension matches the format of the file.	Kantor tidak dapat membuka berkas “{}” karena format atau ekstensi berkasnya tidak valid. Pastikan berkas tidak rusak dan ekstensinya sesuai dengan format berkas.
+Kantor can't open these files because their file format or file extension is not valid: {}. Verify that the files have not been corrupted and that their file extensions match their formats.	Kantor tidak dapat membuka berkas-berkas ini karena format atau ekstensinya tidak valid: {}. Pastikan berkas tidak rusak dan ekstensinya sesuai dengan formatnya.
 Open document	Buka dokumen
 Formulas: open a spreadsheet first	Rumus: buka spreadsheet terlebih dahulu
 Rewrite: open a document and select some text first	Tulis ulang: buka dokumen dan pilih teks terlebih dahulu
