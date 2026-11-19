@@ -576,7 +576,10 @@ fn push_span(
             r.clone(),
         );
     } else if let Some(s) = styled {
-        b.push(StyleProperty::FontWeight(FontWeight::new(s.weight)), r.clone());
+        b.push(
+            StyleProperty::FontWeight(FontWeight::new(s.weight)),
+            r.clone(),
+        );
     }
     if span.italic || styled.is_some_and(|s| s.italic) {
         b.push(StyleProperty::FontStyle(FontStyle::Italic), r.clone());

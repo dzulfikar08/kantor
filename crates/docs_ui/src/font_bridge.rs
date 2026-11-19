@@ -34,7 +34,7 @@ use skrifa::{MetadataProvider as _, string::StringId};
 pub struct FontBridge {
     faces: HashMap<(u64, u32), Option<FontId>>,
     /// Variable-font instances, by face and axis values.
-    instances: HashMap<(u64, u32, Vec<([u8; 4], u32)>), Option<FontId>>,
+    instances: HashMap<docs_layout::instance::Key, Option<FontId>>,
 }
 
 /// What GPUI needs to know about a parley face.
@@ -99,11 +99,7 @@ impl FontBridge {
         ts: &WindowTextSystem,
     ) -> Option<FontId> {
         if !variations.is_empty() {
-            let key = (
-                font.data.id(),
-                font.index,
-                variations.iter().map(|(t, v)| (*t, v.to_bits())).collect(),
-            );
+            let key = docs_layout::instance::key(font, variations);
             if let Some(id) = self.instances.get(&key) {
                 return *id;
             }
@@ -284,10 +280,7 @@ mod tests {
         let platform = Arc::new(gpui_wgpu::CosmicTextSystem::new("Liberation Sans"));
         let ts = WindowTextSystem::new(Arc::new(TextSystem::new(platform)));
         let bytes = include_bytes!("../../../tests/fonts/KantorVarTest.ttf").to_vec();
-        let font = FontData::new(
-            docs_layout::parley::fontique::Blob::new(Arc::new(bytes)),
-            0,
-        );
+        let font = FontData::new(docs_layout::parley::fontique::Blob::new(Arc::new(bytes)), 0);
         let mut bridge = FontBridge::default();
         let bold = bridge
             .font_id(&font, &[(*b"wght", 700.0)], "mmm", &ts)
@@ -310,7 +303,12 @@ mod tests {
         f.weight = FontWeight::BOLD;
         let gpui_bold = ts.resolve_font(&f);
         assert_ne!(gpui_bold, plain);
-        assert!((m(gpui_bold) - m(bold)).abs() < 1.0, "{} vs {}", m(gpui_bold), m(bold));
+        assert!(
+            (m(gpui_bold) - m(bold)).abs() < 1.0,
+            "{} vs {}",
+            m(gpui_bold),
+            m(bold)
+        );
         let line = |id: FontId| {
             let font = ts.get_font_for_id(id).unwrap_or_else(|| f.clone());
             let run = TextRun {

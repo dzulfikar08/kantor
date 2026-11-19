@@ -706,9 +706,7 @@ pub fn encode_retrying(
 
 /// Fonts embedded so far, by font data, index and variable-font instance.
 #[derive(Default)]
-pub struct Fonts(HashMap<FontKey, Option<Font>>);
-
-type FontKey = (u64, u32, Vec<([u8; 4], u32)>);
+pub struct Fonts(HashMap<docs_layout::instance::Key, Option<Font>>);
 
 impl Fonts {
     /// The krilla font for `font` at `variations` (a run's variable-font
@@ -717,11 +715,7 @@ impl Fonts {
     /// shows the real bold. `None` (with a warning, once) when krilla
     /// can't read it.
     pub fn get(&mut self, font: &FontData, variations: &[([u8; 4], f32)]) -> Option<Font> {
-        let key = (
-            font.data.id(),
-            font.index,
-            variations.iter().map(|(t, v)| (*t, v.to_bits())).collect(),
-        );
+        let key = docs_layout::instance::key(font, variations);
         self.0
             .entry(key)
             .or_insert_with(|| {

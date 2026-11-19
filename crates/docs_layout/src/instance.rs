@@ -38,7 +38,18 @@ pub struct Instance {
     pub italic: bool,
 }
 
-type Key = (u64, u32, Vec<([u8; 4], u32)>);
+/// A font face at a location: font data id, face index and axis values
+/// (as bits, so it can be hashed).
+pub type Key = (u64, u32, Vec<([u8; 4], u32)>);
+
+/// The cache key of `font` at `variations`.
+pub fn key(font: &FontData, variations: &[([u8; 4], f32)]) -> Key {
+    (
+        font.data.id(),
+        font.index,
+        variations.iter().map(|(t, v)| (*t, v.to_bits())).collect(),
+    )
+}
 
 fn cache() -> &'static Mutex<HashMap<Key, Option<Arc<Instance>>>> {
     static CACHE: OnceLock<Mutex<HashMap<Key, Option<Arc<Instance>>>>> = OnceLock::new();
@@ -53,9 +64,8 @@ pub fn instance(font: &FontData, variations: &[([u8; 4], f32)]) -> Option<Arc<In
     if variations.is_empty() {
         return None;
     }
-    let mut vars: Vec<([u8; 4], u32)> = variations.iter().map(|(t, v)| (*t, v.to_bits())).collect();
-    vars.sort_unstable();
-    let key = (font.data.id(), font.index, vars);
+    let mut key = key(font, variations);
+    key.2.sort_unstable();
     if let Some(hit) = cache().lock().ok()?.get(&key) {
         return hit.clone();
     }
@@ -87,7 +97,11 @@ fn location(f: &FontRef, variations: &[([u8; 4], f32)]) -> Option<Vec<(Tag, f32)
                 // angle), but `slnt` counts counter-clockwise: text that
                 // leans right, as italic does, is negative (Inter's axis
                 // runs -10..0).
-                let v = if tag == Tag::new(b"slnt") { -v.abs() } else { *v };
+                let v = if tag == Tag::new(b"slnt") {
+                    -v.abs()
+                } else {
+                    *v
+                };
                 v.clamp(axis.min_value(), axis.max_value())
             });
         moved |= (v - axis.default_value()).abs() > f32::EPSILON;
@@ -133,8 +147,8 @@ fn make(data: &[u8], index: u32, variations: &[([u8; 4], f32)]) -> Option<Instan
         || at(b"slnt").is_some_and(|v| v != 0.0);
 
     // Names: the named instance at this location if there is one.
-    let family = name(&f, StringId::TYPOGRAPHIC_FAMILY_NAME)
-        .or_else(|| name(&f, StringId::FAMILY_NAME))?;
+    let family =
+        name(&f, StringId::TYPOGRAPHIC_FAMILY_NAME).or_else(|| name(&f, StringId::FAMILY_NAME))?;
     let named = f.named_instances().iter().find(|ni| {
         ni.user_coords()
             .zip(loc.iter())
@@ -298,7 +312,14 @@ fn sfnt(mut tables: Vec<([u8; 4], Vec<u8>)>) -> Vec<u8> {
     let sel = 15 - n.max(1).leading_zeros() as u16;
     let range = (1u16 << sel) * 16;
     let mut out = Vec::new();
-    out.extend(if glyf { 0x0001_0000u32 } else { u32::from_be_bytes(*b"OTTO") }.to_be_bytes());
+    out.extend(
+        if glyf {
+            0x0001_0000u32
+        } else {
+            u32::from_be_bytes(*b"OTTO")
+        }
+        .to_be_bytes(),
+    );
     for v in [n, range, sel, n * 16 - range] {
         out.extend(v.to_be_bytes());
     }
@@ -360,7 +381,10 @@ mod tests {
         );
         // Same glyph ids and character map; wider (bold) advances.
         let orig = FontRef::new(font.data.data()).unwrap();
-        assert_eq!(f.maxp().unwrap().num_glyphs(), orig.maxp().unwrap().num_glyphs());
+        assert_eq!(
+            f.maxp().unwrap().num_glyphs(),
+            orig.maxp().unwrap().num_glyphs()
+        );
         assert_eq!(f.charmap().map('m'), orig.charmap().map('m'));
         assert!(advance(&inst.data, 'm') > advance(font.data.data(), 'm'));
         // krilla reads it.
@@ -434,7 +458,9 @@ mod tests {
             })
         );
         assert_eq!(
-            engine.style_family("Kantor Var Test Semi Bold Italic").map(|s| (s.weight, s.italic)),
+            engine
+                .style_family("Kantor Var Test Semi Bold Italic")
+                .map(|s| (s.weight, s.italic)),
             Some((600.0, true))
         );
         let mut para = Paragraph::new("mmmm");
@@ -442,9 +468,9 @@ mod tests {
         let doc = engine.layout_document(&[para], PageSetup::a4());
         let runs = doc.glyph_runs(0);
         assert_eq!(runs[0].variations, vec![(*b"wght", 800.0)]);
-        let ps = skrifa::FontRef::new(runs[0].font.data.data()).ok().and_then(|f| {
-            name(&f, StringId::FAMILY_NAME)
-        });
+        let ps = skrifa::FontRef::new(runs[0].font.data.data())
+            .ok()
+            .and_then(|f| name(&f, StringId::FAMILY_NAME));
         assert_eq!(ps.as_deref(), Some("Kantor Var Test"));
     }
 
