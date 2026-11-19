@@ -660,6 +660,7 @@ pub(crate) fn share_parts(paras: &mut [crate::Paragraph], doc: &Document) {
                 inner.media = doc.media.clone();
                 inner.default_tab = doc.default_tab;
                 inner.decimal = doc.decimal;
+                inner.compat_mode = doc.compat_mode;
                 Arc::new(TextBox {
                     doc: inner,
                     ..(**tb).clone()

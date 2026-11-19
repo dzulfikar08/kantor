@@ -16,6 +16,13 @@ use crate::review::{RevKind, Revision, now_utc};
 use crate::xml;
 
 impl Document {
+    /// Word's compatibility mode (settings.xml `compatibilityMode`): 15 for
+    /// Word 2013 and later and for new documents, 12 when a file doesn't
+    /// say (Word 2007), 14 for Word 2010, 11 for converted Word 97 files.
+    pub fn compat_mode(&self) -> u32 {
+        self.compat_mode
+    }
+
     /// Whether edits are tracked (Review > Track Changes).
     pub fn track_changes(&self) -> bool {
         self.track

@@ -475,7 +475,25 @@ const LABEL_PAD: f32 = 4.0;
 /// Size of a note mark relative to its paragraph's text.
 const MARK_SCALE: f32 = 0.65;
 /// Where an exact line's baseline sits, as a share of its height from
-/// its top (LibreOffice's rule for Word's "exactly" spacing).
+/// its top, whatever the font (Word's "exactly" spacing).
+///
+/// Word's rule, checked 2026-11-19 against public sources (no Word here):
+/// - LibreOffice: `nAsc = (4 * nLineHeight) / 5` for
+///   `SvxLineSpaceRule::Fix` in `SwTextFormatter::CalcRealHeight`
+///   (sw/source/core/text/itrform2.cxx), with no Word-compat branch.
+/// - GraphCompose PR #789 (github.com/DemchaAV/GraphCompose/pull/789):
+///   measured through Word COM, 0.80 ± 0.1 pt for Spectral, Lato and Arial
+///   at 10-46 pt in lines 12-100 pt tall.
+/// - office2pdf PR #2272 (github.com/developer0hye/office2pdf/pull/2272):
+///   Word-exported PDFs, e.g. Times New Roman 13 pt in 16 / 24 pt lines
+///   has its baseline 12.80 / 19.30 pt down (0.8 × = 12.80 / 19.20).
+/// - Heliograph PR #63 (github.com/jonnymuir/Heliograph/pull/63): its
+///   Word probe puts the baseline at 80% of an exact line.
+///
+/// ONLYOFFICE (sdkjs word/Editor/Paragraph_Recalculate.js,
+/// `CParaLineMetrics.Recalculate_LineGap`, `linerule_Exact`) puts all the
+/// extra height above the text instead (baseline = line − descent); the
+/// Word measurements above don't bear that out.
 const EXACT_ASCENT: f32 = 0.8;
 /// How far a note mark's baseline sits above the text's, in ems.
 const MARK_RAISE: f32 = 0.08;
@@ -1843,16 +1861,18 @@ impl<'a> Flow<'a> {
     }
 
     /// Whether one of paragraph `pi`'s objects placed on `page` (from its
-    /// `from`th object on) wraps top and bottom, moves with the text and
-    /// reaches below the bottom of the text area.
+    /// `from`th object on) is kept on its page ([`FloatSpec::keep_on_page`]),
+    /// moves with the text and reaches below the bottom of the text area.
     fn float_overflows(&self, pi: usize, page: usize, from: usize) -> bool {
         let bottom = self.bottom();
         self.pages[page].floats[from..].iter().any(|pf| {
             pf.para == pi
-                && pf.wrap == FloatWrap::TopAndBottom
+                && pf.wrap != FloatWrap::None
                 && pf.rect[1] + pf.rect[3] > bottom + 0.5
                 && self.paras[pi].floats.iter().any(|f| {
-                    f.index == pf.index && matches!(f.v.0, FloatRefV::Paragraph | FloatRefV::Line)
+                    f.index == pf.index
+                        && f.keep_on_page
+                        && matches!(f.v.0, FloatRefV::Paragraph | FloatRefV::Line)
                 })
         })
     }
@@ -1990,9 +2010,9 @@ impl<'a> Flow<'a> {
             self.excl.len(),
         );
         self.place_floats(pi, self.y, self.column().0);
-        // An object with top-and-bottom wrapping that moves with its
-        // paragraph and runs past the bottom of the page goes to the next
-        // page (or column) with the paragraph, as Word moves it.
+        // A wrapping object that moves with its paragraph and runs past the
+        // bottom of the page goes to the next page (or column) with the
+        // paragraph, as Word moves it (FloatSpec::keep_on_page says which).
         if !self.at_column_top() && self.float_overflows(pi, page, before.0) {
             self.pages[page].floats.truncate(before.0);
             self.pages[page].fixed.truncate(before.1);

@@ -104,6 +104,10 @@ pub struct FloatSpec {
     /// and bottom (px; negative inside it): a turned object's turned
     /// bounds, which text wraps around as in Word.
     pub extent: [f32; 4],
+    /// Goes to the next page (or column) with its paragraph when it would
+    /// reach past the bottom of the text area there (only objects that
+    /// move with the text: positioned from the paragraph or line).
+    pub keep_on_page: bool,
 }
 
 /// A floating object placed on a page.
@@ -427,6 +431,7 @@ mod tests {
             polygon: None,
             through: false,
             extent: [0.0; 4],
+            keep_on_page: false,
         }
     }
 
@@ -622,6 +627,7 @@ mod through_tests {
             polygon: Some(polygon),
             through: true,
             extent: [0.0; 4],
+            keep_on_page: false,
         };
         let e = WrapArea::of(&sp, [200.0, 100.0, 200.0, 100.0], (0, 0)).unwrap();
         let col = (100.0, 500.0);
@@ -678,6 +684,7 @@ mod flow_tests {
             polygon: None,
             through: false,
             extent: [0.0; 4],
+            keep_on_page: false,
         }
     }
 

@@ -38,6 +38,13 @@ as raw WordprocessingML (deterministic: same bytes every run):
   top-and-bottom wrapping that doesn't fit at the bottom of page 1 and
   moves to page 2 with its paragraph (as Word and LibreOffice lay it out).
 
+* floats_page_end.docx: four pages of exact 14 pt lines (Word 2013+
+  mode, compatibilityMode 15); each ends with a paragraph anchoring a
+  2.5 in picture that doesn't fit below it: square (from the paragraph),
+  tight (from the line) and through (from the paragraph) ones move to the
+  next page with their paragraph, as Word does; a margin-relative one
+  stays, reaching into the bottom margin.
+
 Regenerate with `python3 scripts/corpus/gen_docx_more.py tests/corpus/docx`;
 `--check` compares with the files in that folder instead.
 """
@@ -791,6 +798,61 @@ def smartart_inline():
     return package(body, media=[("rIdBlock", "block.png", checker(160, 128))], extra=(rels, overrides, files))
 
 
+# ── floats_page_end.docx ───────────────────────────────────────────────────
+
+
+def wrapped_picture(rid, doc_id, name, wrap, v_from, v_off, cx, cy):
+    """A floating picture `cx` x `cy` EMU at the right of the column,
+    `v_off` EMU below the top of `v_from` (paragraph, line, margin…),
+    wrapped `wrap` (square, tight, through)."""
+    poly = (
+        '<wp:wrapPolygon edited="0"><wp:start x="0" y="0"/><wp:lineTo x="0" y="21600"/>'
+        '<wp:lineTo x="21600" y="21600"/><wp:lineTo x="21600" y="0"/><wp:lineTo x="0" y="0"/></wp:wrapPolygon>'
+    )
+    wrap_xml = {
+        "square": '<wp:wrapSquare wrapText="bothSides"/>',
+        "tight": f'<wp:wrapTight wrapText="bothSides">{poly}</wp:wrapTight>',
+        "through": f'<wp:wrapThrough wrapText="bothSides">{poly}</wp:wrapThrough>',
+    }[wrap]
+    return (
+        f'<w:r><w:drawing><wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="{251662000 + doc_id}" '
+        'behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="column"><wp:align>right</wp:align></wp:positionH>'
+        f'<wp:positionV relativeFrom="{v_from}"><wp:posOffset>{v_off}</wp:posOffset></wp:positionV>'
+        f'<wp:extent cx="{cx}" cy="{cy}"/><wp:effectExtent l="0" t="0" r="0" b="0"/>{wrap_xml}'
+        f'<wp:docPr id="{doc_id}" name="{name}"/><wp:cNvGraphicFramePr/>'
+        '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'
+        f'<pic:pic><pic:nvPicPr><pic:cNvPr id="{doc_id}" name="block.png"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="{rid}"/>'
+        f'<a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{cx}" cy="{cy}"/></a:xfrm>'
+        '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'
+        "</a:graphicData></a:graphic></wp:anchor></w:drawing></w:r>"
+    )
+
+
+def floats_page_end():
+    """Four pages of exact 14 pt lines; each page's last paragraph anchors
+    a 2.5 in picture that doesn't fit below it."""
+    pt = 12700
+    cx, cy = int(2.5 * 72 * pt), int(2.5 * 72 * pt)
+    cases = [
+        ("Square picture", "square", "paragraph", 0),
+        ("Tight picture", "tight", "line", 0),
+        ("Through picture", "through", "paragraph", 0),
+        # Margin-relative: stays where it is (over the bottom margin).
+        ("Margin picture", "square", "margin", 560 * pt),
+    ]
+    body = ""
+    for n, (name, wrap, v_from, v_off) in enumerate(cases):
+        brk = '<w:r><w:br w:type="page"/></w:r>' if n else ""
+        for i in range(40):
+            body += line(f"{name} page, line {i + 1}.", before=brk if i == 0 else "")
+        pic = wrapped_picture("rIdBlock", 70 + n, name, wrap, v_from, v_off, cx, cy)
+        body += line(f"{name} anchor: {wrap} wrapping, from the {v_from}.", before=pic)
+        body += line(f"After the {name.lower()}.")
+    settings = '<w:compat><w:compatSetting w:name="compatibilityMode" w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>'
+    return package(body, media=[("rIdBlock", "block.png", checker(160, 160))], settings=settings)
+
+
 FILES = {
     "textboxes.docx": textboxes,
     "formulas.docx": formulas,
@@ -799,6 +861,7 @@ FILES = {
     "columns_long.docx": columns_long,
     "pictures.docx": pictures,
     "smartart_inline.docx": smartart_inline,
+    "floats_page_end.docx": floats_page_end,
 }
 
 

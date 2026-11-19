@@ -222,6 +222,9 @@ pub struct Read {
     pub default_tab: u32,
     /// `w:decimalSymbol` (what decimal tab stops line up on).
     pub decimal: char,
+    /// Word's compatibility mode (`compatibilityMode`; 15 = Word 2013 and
+    /// later, 12 when the file doesn't say, as Word 2007 wrote it).
+    pub compat_mode: u32,
     /// Track Changes is on (`w:trackRevisions`).
     pub track: bool,
     /// Footnotes and endnotes (separators included), in file order.
@@ -2364,6 +2367,16 @@ fn parse_theme_fonts(src: &str) -> (Option<String>, Option<String>) {
     (major, minor)
 }
 
+/// `w:compatSetting w:name="compatibilityMode"` from settings.xml.
+pub(crate) fn settings_compat_mode(settings: &str) -> Option<u32> {
+    crate::xml::parse(settings)?
+        .child("compat")?
+        .children
+        .iter()
+        .find(|c| c.name == "compatSetting" && c.attr("name") == Some("compatibilityMode"))?
+        .num::<u32>("val")
+}
+
 pub(crate) fn track_changes_on(settings: &str) -> bool {
     let mut r = quick_xml::Reader::from_str(settings);
     loop {
@@ -2424,6 +2437,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
     let mut even_odd = false;
     let mut default_tab = 720;
     let mut decimal = '.';
+    let mut compat_mode = 12;
     let mut track = false;
     let mut note_settings = NoteKind::ALL.map(NoteProps::default_for);
     if let Some(name) = part("/settings")
@@ -2434,6 +2448,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         even_odd = settings_even_odd(&src);
         default_tab = crate::tabs::settings_default_tab(&src).unwrap_or(720);
         decimal = crate::tabs::settings_decimal(&src).unwrap_or('.');
+        compat_mode = settings_compat_mode(&src).unwrap_or(12);
         settings = Some((name, src));
     }
     let mut comments = Vec::new();
@@ -2546,6 +2561,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         comments,
         default_tab,
         decimal,
+        compat_mode,
         track,
         notes,
         note_settings,

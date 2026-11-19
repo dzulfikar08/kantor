@@ -9,6 +9,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Changed
+
+- Docs: a picture or shape with Square, Tight or Through wrapping that moves with the text and
+  doesn't fit at the bottom of a page now goes to the next page (or column) with its paragraph, as
+  Word 2013 and later lay it out (in documents saved in that mode, which includes new ones). It
+  used to hang into the bottom margin. Objects placed relative to the page or margins stay where
+  they are, and documents in an older Word compatibility mode keep the old layout.
+
 ## [0.15.0] - 2026-11-19
 
 Docs now draws pictures inside SmartArt picture layouts, cuts pictures in the text to their shape with their border, and
