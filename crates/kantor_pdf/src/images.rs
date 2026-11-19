@@ -88,13 +88,13 @@ impl Default for ImageOptions {
 }
 
 /// An image ready to place: its XObject and pixel size as stored.
-struct Embedded {
-    xobject: Stream,
-    smask: Option<Stream>,
+pub(crate) struct Embedded {
+    pub(crate) xobject: Stream,
+    pub(crate) smask: Option<Stream>,
     width: u32,
     height: u32,
     /// EXIF orientation, 1 to 8.
-    exif: u8,
+    pub(crate) exif: u8,
 }
 
 /// Width, height and component count from a JPEG's SOF marker, and whether
@@ -128,7 +128,7 @@ fn jpeg_header(data: &[u8]) -> Option<(u32, u32, u8, bool)> {
     None
 }
 
-fn embed(data: &[u8], name: &str) -> Result<Embedded> {
+pub(crate) fn embed(data: &[u8], name: &str) -> Result<Embedded> {
     let bad = |e: String| Error::Invalid(format!("{name}: {e}"));
     let format = image::guess_format(data).map_err(|_| bad("not a JPEG or PNG image".into()))?;
     match format {
@@ -242,7 +242,7 @@ fn embed(data: &[u8], name: &str) -> Result<Embedded> {
 
 /// The matrix that draws the unit-square image upright into a `w` x `h` box
 /// at (x, y), for an EXIF orientation.
-fn placement(exif: u8, x: f32, y: f32, w: f32, h: f32) -> [f32; 6] {
+pub(crate) fn placement(exif: u8, x: f32, y: f32, w: f32, h: f32) -> [f32; 6] {
     let [a, b, c, d, e, f] = match exif {
         2 => [-w, 0.0, 0.0, h, w, 0.0],
         3 => [-w, 0.0, 0.0, -h, w, h],

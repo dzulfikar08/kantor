@@ -101,7 +101,16 @@ icon_assets!(
         MoveHorizontal,
         // PDF page tools
         LayoutGrid,
-        Wrench
+        Wrench,
+        // PDF Comment and Fill & Sign
+        StickyNote,
+        PenLine,
+        Signature,
+        Stamp,
+        MoveUpRight,
+        Pentagon,
+        MousePointer2,
+        MessageSquareText,
     ]
 );
 

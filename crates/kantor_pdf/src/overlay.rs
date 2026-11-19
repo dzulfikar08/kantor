@@ -472,3 +472,15 @@ pub fn add_page_numbers(
 pub(crate) fn text_width(text: &str, size: f32) -> f32 {
     encode(text).unwrap().1 * size / 1000.0
 }
+
+/// Helvetica width of `text` in 1/1000 em (characters it lacks count as `?`).
+pub(crate) fn helvetica_width(text: &str) -> f32 {
+    text.chars()
+        .map(|c| f32::from(winansi(c).map_or(556, |w| w.1)))
+        .sum()
+}
+
+/// The WinAnsi code of `c`, if it has one.
+pub(crate) fn winansi_code(c: char) -> Option<u8> {
+    winansi(c).map(|w| w.0)
+}

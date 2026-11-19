@@ -1985,6 +1985,58 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.focus_page_box(w, cx)),
     },
     Command {
+        title: tk("Comment"),
+        detail: tk("PDF · highlight, notes, text boxes, drawing and stamps"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| v.set_mode(pdf_ui::Mode::Comment, cx))
+        },
+    },
+    Command {
+        title: tk("Fill & Sign"),
+        detail: tk("PDF · fill in forms, add text, dates, marks, signatures and stamps"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.set_mode(pdf_ui::Mode::FillSign, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Add Image / Stamp…"),
+        detail: tk("PDF · place a PNG or JPEG picture, such as a company stamp, on a page"),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.add_image_stamp(None, w, cx)),
+    },
+    Command {
+        title: tk("Add Signature…"),
+        detail: tk("PDF · draw, type or pick a picture of your signature"),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.add_signature(w, cx)),
+    },
+    Command {
+        title: tk("Place on Pages…"),
+        detail: tk("PDF · copy the selected stamp to every page or the pages you type"),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.place_on_pages(w, cx)),
+    },
+    Command {
+        title: tk("Comments"),
+        detail: tk("PDF · show or hide the list of comments"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.toggle_panel(pdf_ui::Panel::Comments, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Reset Form"),
+        detail: tk("PDF · put every form field back to its default"),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, _, cx| v.reset_form(cx)),
+    },
+    Command {
         title: tk("Organize Pages"),
         detail: tk("PDF · all pages as a grid: drag to reorder, rotate, delete, insert"),
         keys: "Ctrl Shift O",

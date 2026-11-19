@@ -49,8 +49,135 @@ impl PdfView {
         self.save_task(window, cx).detach();
     }
 
+    /// Save As: when the document has stamps or signatures, first ask
+    /// whether to flatten them into the pages (refused by default on a
+    /// digitally signed document, as it would invalidate the signature).
     pub fn save_doc_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_as_task(window, cx).detach();
+        if !self.has_stamps() || window.has_active_dialog(cx) {
+            self.save_as_task(window, cx).detach();
+            return;
+        }
+        let signed = self.signatures().is_some();
+        let view = cx.entity().downgrade();
+        let title: SharedString = i18n::t("Flatten stamps into the pages?").into();
+        let detail: SharedString = if signed {
+            i18n::t(
+                "This would invalidate the digital signature by changing the page content. Keep the stamps and signatures as annotations to keep the signature valid.",
+            )
+        } else {
+            i18n::t(
+                "Flattened stamps and signatures are drawn into the page content of the copy, so they can't be moved or deleted. Kept as annotations, they stay movable.",
+            )
+        }
+        .into();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let (keep, flat) = (view.clone(), view.clone());
+            dialog
+                .w(px(480.))
+                .title(title.clone())
+                .child(v_flex().child(DialogDescription::new().child(detail.clone())))
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("pdf-flatten")
+                                .label(if signed {
+                                    i18n::t("Flatten Anyway")
+                                } else {
+                                    i18n::t("Flatten")
+                                })
+                                .ghost()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = flat.update(cx, |this, cx| {
+                                        this.flatten_next = true;
+                                        this.save_as_task(window, cx).detach();
+                                    });
+                                }),
+                        )
+                        .child(
+                            Button::new("pdf-keep-annots")
+                                .label(i18n::t("Keep as Annotations"))
+                                .primary()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = keep.update(cx, |this, cx| {
+                                        this.flatten_next = false;
+                                        this.save_as_task(window, cx).detach();
+                                    });
+                                }),
+                        ),
+                )
+        });
+    }
+
+    /// Stamps or signatures were added or are in the file.
+    fn has_stamps(&self) -> bool {
+        let Some(doc) = self.doc() else {
+            return false;
+        };
+        (0..doc.model.len()).any(|i| {
+            self.place_marks(i).is_some_and(|l| {
+                l.iter().any(|a| {
+                    matches!(a.kind, kantor_pdf::annot::Kind::Stamp { .. })
+                        || a.subject == "Signature"
+                })
+            })
+        })
+    }
+
+    /// A signed document whose pages changed: offer Save a Copy instead of
+    /// breaking the signature in place. True when Save may go on.
+    fn signed_save_ok(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(s) = self.signatures() else {
+            return true;
+        };
+        let pages_ok = self.doc().is_some_and(|d| d.model.pages_as_base());
+        let markup_ok = s.allowed() != kantor_pdf::sig::Allowed::Nothing;
+        if pages_ok && markup_ok {
+            return true;
+        }
+        if window.has_active_dialog(cx) {
+            return false;
+        }
+        let detail: SharedString = if markup_ok {
+            i18n::t(
+                "This document is digitally signed. Saving these page changes (rotating, deleting, moving or inserting pages, a watermark, page numbers or a smaller file) would invalidate its signature. Save them as a copy and keep the signed original.",
+            )
+        } else {
+            i18n::t(
+                "This document is certified with a digital signature that allows no changes. Saving would invalidate it. Save your changes as a copy and keep the signed original.",
+            )
+        }
+        .into();
+        let view = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let v = view.clone();
+            dialog
+                .w(px(480.))
+                .title(i18n::t("Keep the signature valid"))
+                .child(v_flex().child(DialogDescription::new().child(detail.clone())))
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("pdf-signed-cancel")
+                                .label(i18n::t("Cancel"))
+                                .ghost()
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(
+                            Button::new("pdf-signed-copy")
+                                .label(i18n::t("Save a Copy…"))
+                                .primary()
+                                .on_click(move |_, window, cx| {
+                                    window.close_dialog(cx);
+                                    let _ = v.update(cx, |this, cx| {
+                                        this.save_as_task(window, cx).detach()
+                                    });
+                                }),
+                        ),
+                )
+        });
+        false
     }
 
     /// Save before the document closes; resolves to whether it is saved.
@@ -106,6 +233,9 @@ impl PdfView {
             );
             return Task::ready(false);
         }
+        if !self.signed_save_ok(window, cx) {
+            return Task::ready(false);
+        }
         self.write_to(target, true, window, cx)
     }
 
@@ -144,16 +274,16 @@ impl PdfView {
             cx.notify();
             return Task::ready(false);
         }
+        let flatten = std::mem::take(&mut self.flatten_next);
         let Some(doc) = self.doc() else {
             return Task::ready(false);
         };
         let rev = doc.model.revision();
-        let (sources, picks) = doc.model.picks();
+        let mut plan = doc.model.plan();
+        plan.flatten = flatten;
         // Unchanged pages of the file as it is: its own bytes, untouched.
-        let as_is = doc
-            .model
-            .is_base_as_is()
-            .then(|| doc.model.base().bytes.clone());
+        let as_is =
+            (!plan.flatten && doc.model.is_base_as_is()).then(|| doc.model.base().bytes.clone());
         self.saving = true;
         self.busy = Some(i18n::t("Saving…").into());
         cx.notify();
@@ -162,7 +292,7 @@ impl PdfView {
         let work = cx.background_spawn(async move {
             let bytes = match as_is {
                 Some(b) => Arc::unwrap_or_clone(b),
-                None => build(&sources, &picks, keep_encryption)?,
+                None => build(&plan, keep_encryption)?,
             };
             kantor_pdf::write_atomic(&out, &bytes)?;
             Ok::<usize, kantor_pdf::Error>(bytes.len())
@@ -268,9 +398,9 @@ impl PdfView {
         _: &App,
     ) -> Option<Box<dyn FnOnce() -> anyhow::Result<Vec<u8>> + Send>> {
         let doc = self.doc()?;
-        let (sources, picks) = doc.model.picks();
+        let plan = doc.model.plan();
         Some(Box::new(move || {
-            build(&sources, &picks, true).map_err(|e| anyhow::anyhow!("{e}"))
+            build(&plan, true).map_err(|e| anyhow::anyhow!("{e}"))
         }))
     }
 
@@ -289,10 +419,10 @@ impl PdfView {
             cx.notify();
             return;
         }
-        let (sources, picks) = doc.model.picks();
+        let plan = doc.model.plan();
         let name = self.name.clone();
         let work = cx.background_spawn(async move {
-            let bytes = build(&sources, &picks, true)?;
+            let bytes = build(&plan, true)?;
             let dir = std::env::temp_dir().join("kantor-print");
             std::fs::create_dir_all(&dir).map_err(|source| kantor_pdf::Error::Io {
                 path: dir.clone(),
