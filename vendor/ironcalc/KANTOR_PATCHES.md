@@ -321,6 +321,21 @@ already keeps name text as written.
 
 Tests: `tests/test_kantor_fidelity.rs` (`names_to_a_deleted_sheet_keep_their_text`).
 
+## 20. The reader keeps names pointing at a deleted sheet
+
+Why: §19 kept `#REF!$B$3:$B$6` when writing, but the reader re-parses every
+name formula once the sheets are known, and the parser keeps only `#REF!`:
+a file saved by Kantor (or Excel) lost the name's cell part when opened and
+saved again.
+
+What: `import/mod.rs` `reparse_formula_hack` returns a formula starting with
+`#REF!` as it is (vendor/ironcalc_base §33 reads it, §34 writes it on Delete
+Sheet).
+
+Tests: `tests/test_kantor_fidelity.rs` (`names_to_a_deleted_sheet_keep_their_text`,
+now saved again after reading); Kantor's `crates/sheets_engine/tests/sheet_tabs.rs`
+(`deleted_sheet_names_are_saved_with_their_cell_part`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

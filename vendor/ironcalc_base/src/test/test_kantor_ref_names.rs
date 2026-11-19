@@ -75,5 +75,51 @@ fn deleting_the_sheet_a_name_points_at_gives_ref() {
     m.kantor_delete_sheet(1).unwrap();
     assert_eq!(value(&m, 0, 1, 1), "#REF!");
     let names = m.get_defined_name_list();
-    assert_eq!(names[0].2, "#REF!");
+    // As Excel writes it: the cell part stays.
+    assert_eq!(names[0].2, "#REF!$A$1");
 }
+
+/// KANTOR PATCH (§34): names that are only a reference to the deleted
+/// sheet keep the cell part (sheet-local ones too); names on other sheets
+/// stay; cell formulas get `#REF!` in place of the reference.
+#[test]
+fn deleted_sheet_names_keep_the_cell_part() {
+    let mut m = UserModel::new_empty("t", "en", "UTC", "en").unwrap();
+    m.kantor_insert_sheet("Data", 1).unwrap();
+    m.kantor_insert_sheet("Kept", 2).unwrap();
+    for r in 3..=6 {
+        m.set_user_input(1, r, 2, &r.to_string()).unwrap();
+    }
+    m.new_defined_name("Prices", None, "Data!$B$3:$B$6").unwrap();
+    m.new_defined_name("Rows", None, "Data!$2:$3").unwrap();
+    m.new_defined_name("Cols", None, "Data!$B:$C").unwrap();
+    m.new_defined_name("Other", None, "Kept!$A$1:$A$2").unwrap();
+    m.new_defined_name("Local", Some(2), "Data!$B$3").unwrap();
+    m.set_user_input(0, 1, 1, "=SUM(Prices)").unwrap();
+    m.set_user_input(0, 2, 1, "=SUM(Data!B3:B6)").unwrap();
+    assert_eq!(value(&m, 0, 1, 1), "18");
+    m.kantor_delete_sheet(1).unwrap();
+    let names = m.get_defined_name_list();
+    let formula = |n: &str| {
+        names
+            .iter()
+            .find(|(name, _, _)| name == n)
+            .map(|(_, _, f)| f.clone())
+            .unwrap()
+    };
+    assert_eq!(formula("Prices"), "#REF!$B$3:$B$6");
+    assert_eq!(formula("Rows"), "#REF!$2:$3");
+    assert_eq!(formula("Cols"), "#REF!$B:$C");
+    assert_eq!(formula("Other"), "Kept!$A$1:$A$2");
+    assert_eq!(formula("Local"), "#REF!$B$3");
+    assert_eq!(value(&m, 0, 1, 1), "#REF!");
+    // Cell formulas get `#REF!` in place of the reference.
+    assert_eq!(m.get_cell_content(0, 2, 1).unwrap(), "=SUM(#REF!)");
+    assert_eq!(value(&m, 0, 2, 1), "#REF!");
+    // Undo puts the names back.
+    m.undo().unwrap();
+    let names = m.get_defined_name_list();
+    assert!(names.contains(&("Prices".to_owned(), None, "Data!$B$3:$B$6".to_owned())));
+    assert_eq!(value(&m, 0, 1, 1), "18");
+}
+

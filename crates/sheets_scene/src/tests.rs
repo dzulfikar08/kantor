@@ -821,4 +821,22 @@ fn shaped_pictures_draw_their_outline() {
     // No outline: nothing stroked.
     assert!(strokes(&mut scenes, &mut engine, "Star photo").is_empty());
     assert!(strokes(&mut scenes, &mut engine, "No line").is_empty());
+    // Outlined by the picture style only: the theme's third line style
+    // (1.5 pt) in accent 2 shaded to half.
+    let styled = strokes(&mut scenes, &mut engine, "Styled photo");
+    assert_eq!(styled.len(), 1);
+    assert_eq!(styled[0].1.color.0, [0x76, 0x3E, 0x18, 255]);
+    assert!(
+        (styled[0].1.width - 19050.0 / 9525.0).abs() < 0.01,
+        "{}",
+        styled[0].1.width
+    );
+    assert!(styled[0].1.dash.is_none());
+    // Its own `a:ln` sets the width, the style's `lnRef` the colour.
+    let wide = strokes(&mut scenes, &mut engine, "Styled wide");
+    assert_eq!(wide.len(), 1);
+    assert_eq!(wide[0].1.color.0, [0x70, 0xAD, 0x47, 255]);
+    assert!((wide[0].1.width - 38100.0 / 9525.0).abs() < 0.01);
+    // `a:noFill` wins over the style.
+    assert!(strokes(&mut scenes, &mut engine, "Styled none").is_empty());
 }

@@ -36,8 +36,9 @@ fn deleting_a_sheet_turns_its_references_into_ref_errors() {
     assert_eq!(model.get_cell_content(0, 1, 1).unwrap(), "=#REF!*2");
     assert_eq!(model.get_cell_content(0, 2, 1).unwrap(), "=SUM(#REF!)+1");
     assert_eq!(model.get_formatted_cell_value(0, 1, 1).unwrap(), "#REF!");
-    // The sheet's own name is gone, the global one points nowhere.
-    assert_eq!(names(&model), ["Rate@None=#REF!"]);
+    // The sheet's own name is gone, the global one points nowhere but
+    // keeps its cell part, as Excel writes it (§34).
+    assert_eq!(names(&model), ["Rate@None=#REF!$A$1"]);
     // A new sheet with the old name doesn't pick the references up.
     model.kantor_insert_sheet("Sheet2", 1).unwrap();
     model.set_user_input(1, 1, 1, "7").unwrap();

@@ -906,6 +906,22 @@ it is. The xlsx writer keeps it too (vendor/ironcalc §19).
 Tests: `test/test_kantor_ref_names.rs`; Kantor's
 `crates/sheets_engine/tests/xls_import.rs` (`references_to_a_deleted_sheet`).
 
+## 34. Deleting a sheet keeps names' cell part
+
+Why: Excel saves a defined name that pointed only at a deleted sheet's cells
+as `#REF!$B$3:$B$6` (the cell part stays, so the name can be repaired by
+hand); Kantor's Delete Sheet (§23) wrote a bare `#REF!`.
+
+What: `kantor_sheets.rs` `ref_error_name`: in `Model::kantor_delete_sheet`,
+a name whose formula is a single cell or range on the deleted sheet becomes
+`#REF!` followed by the reference without its sheet (`#REF!$B$3:$B$6`,
+`#REF!$2:$3`), the form §33 reads. Names that compute something with such a
+reference, and cell formulas, still get `#REF!` in place of the reference,
+as Excel writes them.
+
+Tests: `test/test_kantor_ref_names.rs` (`deleted_sheet_names_keep_the_cell_part`);
+Kantor's office scenario `sheets_deleted_sheet_name.xlsx` (tools/fidelity).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

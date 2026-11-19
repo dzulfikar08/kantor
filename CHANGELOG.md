@@ -9,6 +9,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Fixed
+
+- Sheets: a picture whose border comes from its picture style (the theme's line styles) now shows that border, on
+  screen and in PDF, as Excel draws it; a border that sets only its width takes its colour from the style.
+- Sheets: deleting a sheet keeps the cell part of names that pointed at it, as Excel saves them (`#REF!$B$3:$B$6`
+  rather than `#REF!`), so they are easier to repair.
+
 ## [0.15.0] - 2026-11-19
 
 Docs now draws pictures inside SmartArt picture layouts, cuts pictures in the text to their shape with their border, and
