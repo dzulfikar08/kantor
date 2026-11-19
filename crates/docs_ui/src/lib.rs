@@ -1688,6 +1688,17 @@ impl DocsView {
             self.typing_props = None;
             self.marked = None;
             self.dragging = false;
+            // A picture dragged from here moves in the text (Word's drag
+            // and drop of an object in line).
+            if ev.click_count == 1 && matches!(o.kind, ObjectKind::Image | ObjectKind::Drawing) {
+                let g = self.geometry();
+                let (page, _, _) = g.screen_to_page(ev.position, self.laid.paged.pages.len());
+                let from = floats::FloatSel {
+                    para: o.para,
+                    index: o.index,
+                };
+                self.start_inline_drag(page, from, o.rect, ev.position);
+            }
             cx.notify();
             return;
         }
@@ -2475,6 +2486,21 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             drop(bridge);
             floats::paint_floats(f, &g, page, false, window, &mut text_box);
             floats::paint_float_selection(f, &g, page, window);
+            // Where an object in line being dragged would drop: a dashed
+            // caret.
+            if let Some(pos) = f.float_drag.filter(|d| d.moved).and_then(|d| d.drop)
+                && let Some(c) = laid.caret(pos.para, pos.offset)
+                && c.page == page
+            {
+                let dash = 3.0 / z;
+                let w = 2.0 / z;
+                let mut d = 0.0;
+                while d < c.height {
+                    let h = dash.min(c.height - d);
+                    window.paint_quad(fill(rect(page, [c.x - w / 2.0, c.top + d, w, h]), f.t.paper_ink));
+                    d += dash * 2.0;
+                }
+            }
             // The edge of the text box being edited.
             if let Some((pg, [bx, by, bw, bh])) = f.editing_box
                 && pg == page
