@@ -430,3 +430,107 @@ fn layers_show_filled_values() {
         assert!(dark);
     }
 }
+
+fn fixture(name: &str) -> Vec<u8> {
+    std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/signed")
+            .join(name),
+    )
+    .unwrap()
+}
+
+/// pyHanko's verdict on every signature of `bytes` (made by
+/// scripts/pdf/signed_fixtures.py); `None` when uv or the network isn't
+/// there. Runs only with KANTOR_PYHANKO=1 (it downloads pyHanko once).
+fn pyhanko_ok(bytes: &[u8], strict: bool) -> Option<bool> {
+    std::env::var_os("KANTOR_PYHANKO")?;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("signed.pdf");
+    std::fs::write(&path, bytes).unwrap();
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let out = std::process::Command::new("uv")
+        .args(["run", "--no-project", "--with", "pyhanko", "python"])
+        .arg(root.join("scripts/pdf/signed_fixtures.py"))
+        .arg("check")
+        .arg(&path)
+        .arg(root.join("crates/kantor_pdf/tests/fixtures/signed/test-cert.pem"))
+        .args(strict.then_some("strict"))
+        .output()
+        .ok()?;
+    eprintln!(
+        "pyhanko: {}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    Some(out.status.success())
+}
+
+#[test]
+fn signed_files_get_incremental_updates() {
+    let original = fixture("signed-approval.pdf");
+    let pdf = Pdf::from_bytes(&original, None).unwrap();
+    let sigs = crate::sig::signatures(&pdf).unwrap();
+    assert_eq!(sigs.count, 1);
+    assert!(sigs.allows_annotations());
+    let mut marks = annot::read_page(&pdf, 0);
+    let n = marks.len();
+    let mut note = Annot::new(Kind::Note, [400.0, 700.0, 420.0, 720.0], [1.0, 0.85, 0.2]);
+    note.contents = "Checked".into();
+    marks.push(note);
+    marks.push(Annot::new(
+        Kind::Stamp {
+            art: Art::Image(Arc::new(sample_round_stamp(48))),
+            rotate: 0.0,
+            signature: false,
+        },
+        [300.0, 500.0, 400.0, 600.0],
+        [0.0; 3],
+    ));
+    let out =
+        crate::sig::incremental(&original, None, |p| annot::apply_page(p, 0, &marks)).unwrap();
+    assert!(
+        out.starts_with(&original),
+        "the signed bytes are an exact prefix"
+    );
+    assert!(qpdf_ok(&out));
+    let back = annot::read_page(&Pdf::from_bytes(&out, None).unwrap(), 0);
+    assert_eq!(back.len(), n + 2);
+    // The appended part holds only a few objects (no rewrite).
+    let tail = &out[original.len()..];
+    let objs = tail.windows(4).filter(|w| w == b" obj").count();
+    assert!(objs < 12, "{objs} objects appended");
+    if let Some(ok) = pyhanko_ok(&out, false) {
+        assert!(ok, "pyhanko: the signature is intact");
+    }
+    // Form fill under a certification that allows it, likewise.
+    let original = fixture("signed-certify-p2.pdf");
+    let pdf = Pdf::from_bytes(&original, None).unwrap();
+    let sigs = crate::sig::signatures(&pdf).unwrap();
+    assert_eq!(sigs.docmdp, Some(2));
+    assert!(sigs.allows_form_fill() && !sigs.allows_annotations());
+    let mut values = HashMap::new();
+    values.insert("name".to_owned(), FieldValue::Text("Budi".into()));
+    let out = crate::sig::incremental(&original, None, |p| form::set_values(p, &values)).unwrap();
+    assert!(out.starts_with(&original));
+    assert!(qpdf_ok(&out));
+    assert_eq!(
+        form::read_form(&Pdf::from_bytes(&out, None).unwrap())
+            .unwrap()
+            .field("name")
+            .unwrap()
+            .value,
+        FieldValue::Text("Budi".into())
+    );
+    if let Some(ok) = pyhanko_ok(&out, true) {
+        assert!(ok, "pyhanko: form fill allowed by DocMDP 2");
+    }
+    for (name, p) in [("signed-certify-p1.pdf", 1), ("signed-certify-p3.pdf", 3)] {
+        let pdf = Pdf::from_bytes(&fixture(name), None).unwrap();
+        assert_eq!(crate::sig::signatures(&pdf).unwrap().docmdp, Some(p));
+    }
+    assert_eq!(
+        crate::sig::signatures(&Pdf::from_bytes(&sample_pdf(1), None).unwrap()),
+        None
+    );
+}
