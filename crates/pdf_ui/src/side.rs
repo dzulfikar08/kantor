@@ -17,7 +17,7 @@ use crate::{Panel, PdfView, SIDEBAR_W, THUMB_H, THUMB_W};
 const THUMB_ROW: f32 = THUMB_H + 34.0;
 
 pub(crate) fn render(
-    view: &PdfView,
+    view: &mut PdfView,
     panel: Panel,
     window: &mut Window,
     cx: &mut Context<PdfView>,
@@ -65,7 +65,11 @@ pub(crate) fn render(
                 }),
         );
     let body = match panel {
-        Panel::Thumbnails => thumbnails(view, window, cx),
+        Panel::Thumbnails => {
+            let el = thumbnails(view, window, cx);
+            view.thumb_followed = Some(view.current_page());
+            el
+        }
         Panel::Bookmarks => bookmarks(view, cx),
     };
     v_flex()
@@ -90,6 +94,10 @@ fn thumbnails(view: &PdfView, window: &mut Window, cx: &mut Context<PdfView>) ->
     let thumbs = view.thumbs.clone();
     let worker = view.worker.clone();
     let sf = window.scale_factor();
+    let scroll = view.thumb_scroll.clone();
+    if view.thumb_followed != Some(current) {
+        scroll.scroll_to_item(current, ScrollStrategy::Center);
+    }
     uniform_list("pdf-thumb-list", n, move |range, _, _| {
         // Draw the thumbnails in view (replacing those asked before).
         let mut jobs = Vec::new();
@@ -163,6 +171,7 @@ fn thumbnails(view: &PdfView, window: &mut Window, cx: &mut Context<PdfView>) ->
             })
             .collect()
     })
+    .track_scroll(&scroll)
     .size_full()
     .into_any_element()
 }

@@ -52,7 +52,7 @@ use worker::{Msg, PageJob, Worker};
 pub const KEY_CONTEXT: &str = "PdfViewer";
 
 /// Bytes of page images kept (pages on screen are kept even past it).
-const PAGE_BUDGET: usize = 192 << 20;
+const PAGE_BUDGET: usize = 96 << 20;
 /// Bytes of thumbnails kept.
 const THUMB_BUDGET: usize = 24 << 20;
 /// A thumbnail's box, px.
@@ -209,6 +209,11 @@ pub struct PdfView {
     hover: Hover,
     /// Expanded bookmarks, by their path of child indexes.
     expanded: HashSet<Vec<usize>>,
+    /// The thumbnail list, kept on the current page.
+    thumb_scroll: UniformListScrollHandle,
+    thumb_followed: Option<usize>,
+    /// Put the caret in the password field on the next frame.
+    focus_password: bool,
     _subs: Vec<Subscription>,
 }
 
@@ -292,6 +297,9 @@ impl PdfView {
             press: None,
             hover: Hover::None,
             expanded: HashSet::new(),
+            thumb_scroll: UniformListScrollHandle::new(),
+            thumb_followed: None,
+            focus_password: false,
             _subs: subs,
         };
         this.start(String::new(), cx);
@@ -346,6 +354,7 @@ impl PdfView {
             }
             Msg::Failed(OpenError::Password { wrong }) => {
                 self.state = State::Password { wrong };
+                self.focus_password = true;
                 self.status = i18n::t("This document is password-protected").into();
             }
             Msg::Failed(e) => {
@@ -1115,8 +1124,12 @@ impl PdfView {
         let pages = canvas(
             move |bounds, _, cx| {
                 let old = viewport.replace(bounds);
+                // A new size (first paint, sidebar, window): lay out again
+                // next frame, so the fit zooms use the real size.
                 if old.size != bounds.size {
-                    let _ = entity.update(cx, |_, cx| cx.notify());
+                    cx.defer(move |cx| {
+                        let _ = entity.update(cx, |_, cx| cx.notify());
+                    });
                 }
             },
             move |bounds, _, window, _| {
@@ -1385,7 +1398,10 @@ impl Render for PdfView {
                 .flex_1()
                 .min_h_0()
                 .w_full()
-                .children(self.panel.map(|p| side::render(self, p, window, cx)))
+                .children({
+                    let panel = self.panel;
+                    panel.map(|p| side::render(self, p, window, cx))
+                })
                 .child(pages)
                 .into_any_element()
         } else {
@@ -1393,6 +1409,11 @@ impl Render for PdfView {
         };
         if ready {
             self.sync_page_box(window, cx);
+        }
+        if std::mem::take(&mut self.focus_password)
+            && self.focus.contains_focused(window, cx)
+        {
+            self.password.update(cx, |i, cx| i.focus(window, cx));
         }
         macro_rules! on {
             ($root:expr, $($action:ident => $run:expr),* $(,)?) => {

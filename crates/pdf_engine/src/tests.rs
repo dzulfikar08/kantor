@@ -305,3 +305,26 @@ fn turns_map_and_unmap() {
     assert_eq!(Turn(3).cw(), Turn(0));
     assert_eq!(Turn(0).ccw(), Turn(3));
 }
+
+#[test]
+fn long_files_open_and_search_quickly() {
+    let lines: Vec<String> = (1..=520)
+        .map(|i| {
+            if i % 100 == 0 {
+                format!("Page {i} has the needle")
+            } else {
+                format!("Page {i}")
+            }
+        })
+        .collect();
+    let pages: Vec<Vec<&str>> = lines.iter().map(|l| vec![l.as_str()]).collect();
+    let pages: Vec<&[&str]> = pages.iter().map(Vec::as_slice).collect();
+    let doc = PdfDoc::open(bytes(document(&pages)), "").unwrap();
+    assert_eq!(doc.page_count(), 520);
+    let hits: Vec<usize> = (0..doc.page_count())
+        .flat_map(|p| find_in(p, &doc.text(p), "needle", false, true))
+        .map(|m| m.page)
+        .collect();
+    assert_eq!(hits, vec![99, 199, 299, 399, 499]);
+    assert_eq!(doc.text(519).text, "Page 520");
+}

@@ -157,9 +157,12 @@ impl PdfView {
             let i = self.find.hits.partition_point(|m| m.page < cur);
             // Only once the pages before the hit (from the current one)
             // are known, so it really is the next one.
+            // None after the current page: wrap to the first one, once the
+            // rest of the document is known to have no other.
+            let n = self.page_count();
             let target = if i < self.find.hits.len() {
                 Some(i)
-            } else if self.all_text_read() {
+            } else if (cur..n).all(|p| self.texts.contains_key(&p)) {
                 Some(0)
             } else {
                 None
@@ -176,10 +179,6 @@ impl PdfView {
         self.find
             .bar
             .update(cx, |bar, cx| bar.set_result(current, total, cx));
-    }
-
-    fn all_text_read(&self) -> bool {
-        self.texts.len() >= self.page_count()
     }
 
     fn find_step(&mut self, forward: bool, cx: &mut Context<Self>) {

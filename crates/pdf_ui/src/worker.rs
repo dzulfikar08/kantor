@@ -16,6 +16,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use gpui_kit::RenderImage;
 use pdf_engine::{Link, OpenError, OutlineItem, PageText, PdfDoc, Renderer, Turn};
 
+/// Pages drawn with one hayro cache before it is replaced.
+const RENEW_CACHE: u32 = 48;
+
 /// A page raster to make.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct PageJob {
@@ -184,7 +187,10 @@ fn render_thread(
             log::error!("starting the PDF text thread: {e}");
         }
     }
-    let renderer = Renderer::new(&doc);
+    // hayro's cache keeps fonts and decoded images for as long as it
+    // lives: a fresh one now and then bounds it in long files.
+    let mut renderer = Renderer::new(&doc);
+    let mut rendered = 0_u32;
     loop {
         let (job, thumb) = {
             let Ok(mut q) = shared.q.lock() else {
@@ -206,6 +212,10 @@ fn render_thread(
                 };
             }
         };
+        rendered += 1;
+        if rendered.is_multiple_of(RENEW_CACHE) {
+            renderer = Renderer::new(&doc);
+        }
         let Some(raster) = renderer.render(job.page, job.scale, job.turn) else {
             continue;
         };
