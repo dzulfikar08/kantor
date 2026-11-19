@@ -567,6 +567,7 @@ impl Pdf {
     /// method when it was encrypted (`keep_encryption`). Fails with
     /// [`Error::Encryption`] when that isn't possible.
     pub fn to_bytes_encrypted(&mut self, keep_encryption: bool) -> Result<Vec<u8>> {
+        crate::sig::drop_usage_rights(&mut self.doc);
         let state = self.doc.encryption_state.take();
         if keep_encryption && let Some(state) = state {
             // Encrypting changes every string and stream: work on a copy so
@@ -597,6 +598,7 @@ impl Pdf {
     /// PDF writers do: lopdf's plain writer would store every small object
     /// uncompressed and make the file grow.
     pub fn to_bytes_compact(&mut self) -> Result<Vec<u8>> {
+        crate::sig::drop_usage_rights(&mut self.doc);
         if let Some(&(max, _)) = self.doc.objects.keys().next_back() {
             self.doc.max_id = max;
         }

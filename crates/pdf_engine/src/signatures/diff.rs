@@ -118,6 +118,12 @@ enum Role {
         timestamp: bool,
     },
     FormRoot,
+    /// The catalog's `/Extensions` (developer extensions such as ESIC or
+    /// ADBE, declared by LTV updates), and the appearances in the name
+    /// dictionary's `/AP` tree: not a change to the document.
+    Extensions,
+    /// The name dictionary (compared without its `/AP` tree).
+    NamesRoot,
     Other(String),
 }
 
@@ -194,6 +200,26 @@ fn label_document(doc: &Document) -> HashMap<ObjectId, Role> {
     }
     if let Ok(m) = catalog.get(b"Metadata") {
         l.mark(m, &Role::Metadata);
+    }
+    if let Ok(e) = catalog.get(b"Extensions") {
+        l.mark(e, &Role::Extensions);
+    }
+    // The name dictionary: its /AP tree holds annotation appearances (the
+    // annotations themselves are reported); every other tree is a change.
+    if let Ok(n) = catalog.get(b"Names")
+        && let Some(names) = as_dict(doc, n).cloned()
+    {
+        if let Ok(ap) = names.get(b"AP") {
+            l.mark(ap, &Role::Extensions);
+        }
+        if let Object::Reference(id) = n {
+            l.labels.entry(*id).or_insert(Role::NamesRoot);
+        }
+        for (k, v) in names.iter() {
+            if k != b"AP" {
+                l.mark(v, &Role::Other("Names".into()));
+            }
+        }
     }
     // The page tree.
     let pages = page_index(doc);
@@ -378,11 +404,40 @@ fn label_field(l: &mut Labeler<'_>, f: &Object, parent: Option<&str>, parent_sig
     }
 }
 
-fn same(a: &Object, b: &Object) -> bool {
+/// The same object, however its strings are written (a literal and a hex
+/// string with the same bytes are equal: writers re-encode them).
+pub(crate) fn same(a: &Object, b: &Object) -> bool {
     match (a, b) {
-        (Object::Stream(x), Object::Stream(y)) => x.dict == y.dict && x.content == y.content,
+        (Object::String(x, _), Object::String(y, _)) => x == y,
+        (Object::Array(x), Object::Array(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(a, b)| same(a, b))
+        }
+        (Object::Dictionary(x), Object::Dictionary(y)) => same_dict(x, y),
+        (Object::Stream(x), Object::Stream(y)) => {
+            same_dict(&x.dict, &y.dict) && x.content == y.content
+        }
         _ => a == b,
     }
+}
+
+fn same_dict(x: &lopdf::Dictionary, y: &lopdf::Dictionary) -> bool {
+    x.len() == y.len() && x.iter().all(|(k, v)| y.get(k).is_ok_and(|w| same(v, w)))
+}
+
+fn same_opt(a: Option<&Object>, b: Option<&Object>) -> bool {
+    match (a, b) {
+        (Some(a), Some(b)) => same(a, b),
+        (None, None) => true,
+        _ => false,
+    }
+}
+
+/// The catalog's name dictionary without its `/AP` tree (the appearances
+/// Acrobat names when stamps are added: part of the annotations).
+fn names_without_ap(doc: &Document, o: Option<&Object>) -> Option<lopdf::Dictionary> {
+    let mut d = as_dict(doc, o?)?.clone();
+    d.remove(b"AP");
+    Some(d)
 }
 
 fn annot_refs(doc: &Document, page: ObjectId) -> HashSet<ObjectId> {
@@ -444,11 +499,29 @@ pub fn changes(signed: &Document, full: &Document) -> Vec<Change> {
                     .chain(old.iter().map(|(k, _)| k))
                     .collect();
                 for k in keys {
-                    if new.get(k).ok() == old.get(k).ok() {
+                    if same_opt(new.get(k).ok(), old.get(k).ok()) {
                         continue;
                     }
                     match k.as_slice() {
                         b"DSS" => push(Change::LtvAdded),
+                        b"Names" => {
+                            let (n, o) = (
+                                names_without_ap(full, new.get(k).ok()),
+                                names_without_ap(signed, old.get(k).ok()),
+                            );
+                            let empty = |d: &Option<lopdf::Dictionary>| {
+                                d.as_ref().is_none_or(|d| d.is_empty())
+                            };
+                            let differ = match (&n, &o) {
+                                (Some(n), Some(o)) => !same_dict(n, o),
+                                _ => !(empty(&n) && empty(&o)),
+                            };
+                            if differ {
+                                push(Change::Other {
+                                    what: "Names".into(),
+                                });
+                            }
+                        }
                         b"AcroForm" | b"Extensions" | b"Version" => {}
                         b"Metadata" => push(Change::MetadataChanged),
                         b"Pages" => push(Change::PagesChanged),
@@ -465,9 +538,17 @@ pub fn changes(signed: &Document, full: &Document) -> Vec<Change> {
                     o.and_then(|o| as_dict(full, o))
                         .and_then(|d| d.get(b"Kids").ok().cloned())
                 };
+                // Only attributes the pages inherit change what they show;
+                // a producer's private key (iText's /ITXT) doesn't.
+                let shown = |o: Option<&Object>| {
+                    o.and_then(|o| as_dict(full, o)).map(|d| {
+                        [&b"Resources"[..], b"MediaBox", b"CropBox", b"Rotate"]
+                            .map(|k| d.get(k).ok().cloned())
+                    })
+                };
                 if kids(Some(obj)) != kids(before) {
                     push(Change::PagesChanged);
-                } else {
+                } else if shown(Some(obj)) != shown(before) {
                     push(Change::PageContentChanged { page: None });
                 }
             }
@@ -506,7 +587,22 @@ pub fn changes(signed: &Document, full: &Document) -> Vec<Change> {
             Role::SigValue { field, .. } => push(Change::SignatureAdded {
                 field: field.clone(),
             }),
-            Role::FormRoot => {}
+            Role::FormRoot | Role::Extensions => {}
+            Role::NamesRoot => {
+                let differ = match (
+                    names_without_ap(full, Some(obj)),
+                    before.and_then(|b| names_without_ap(signed, Some(b))),
+                ) {
+                    (Some(n), Some(o)) => !same_dict(&n, &o),
+                    (Some(n), None) => !n.is_empty(),
+                    _ => true,
+                };
+                if differ {
+                    push(Change::Other {
+                        what: "Names".into(),
+                    });
+                }
+            }
             Role::Other(what) => push(Change::Other { what: what.clone() }),
         }
     }

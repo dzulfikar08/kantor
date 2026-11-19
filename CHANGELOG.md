@@ -35,6 +35,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   reorder, insert, watermark, page numbers, smaller file), would invalidate the signature: Kantor warns and saves
   those as a copy instead.
 
+### Fixed
+
+- PDF: saving a PDF whose page content has no stream length (as some generators write it) kept the page but lost
+  everything drawn on it; the content is now read up to its end as other PDF readers do.
+
 ## [0.17.0] - 2026-11-19
 
 Kantor gets a fourth app, a PDF viewer with page tools. PDFs open from the system, File ▸ Open or the command line;

@@ -348,6 +348,10 @@ fn main() -> Result<()> {
     let allow_annots = sigs.is_none_or(|s| s.allows_annotations());
     let allow_forms = sigs.is_none_or(|s| s.allows_form_fill());
     r.insert("encrypted".into(), json!(pdf.was_encrypted()));
+    r.insert(
+        "usage_rights".into(),
+        json!(kantor_pdf::sig::usage_rights(&pdf)),
+    );
 
     // The page: the first of five with a word to highlight.
     let n = doc.page_count();
@@ -508,7 +512,8 @@ fn main() -> Result<()> {
         println!("{report}");
         return Ok(());
     }
-    let signed = sigs.is_some();
+    // `pdf_ui` `Plan::incremental`: signed, or Reader usage rights.
+    let signed = sigs.is_some() || kantor_pdf::sig::usage_rights(&pdf);
     for (name, flatten) in [("saved", false), ("flat", true)] {
         let path = out.join(format!("{name}.pdf"));
         let _ = std::fs::remove_file(&path);

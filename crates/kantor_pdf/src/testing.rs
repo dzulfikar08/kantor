@@ -383,3 +383,28 @@ pub fn sample_round_stamp(size: u32) -> Vec<u8> {
         .expect("png");
     out.into_inner()
 }
+
+/// [`sample_form_pdf`] with Adobe Reader usage rights, as the IRS forms
+/// have: a `/UR3` signature in the catalog's `/Perms` (no signature field).
+pub fn sample_usage_rights_pdf() -> Vec<u8> {
+    use lopdf::dictionary;
+    let mut doc = Document::load_mem(&sample_form_pdf()).expect("sample form");
+    let sig = doc.add_object(dictionary! {
+        "Type" => "Sig",
+        "Filter" => "Adobe.PPKLite",
+        "SubFilter" => "adbe.pkcs7.detached",
+        "ByteRange" => vec![0.into(), 0.into(), 0.into(), 0.into()],
+        "Contents" => Object::String(vec![0; 8], StringFormat::Hexadecimal),
+        "Reference" => vec![Object::Dictionary(dictionary! {
+            "Type" => "SigRef",
+            "TransformMethod" => "UR3",
+            "TransformParams" => dictionary! { "Type" => "TransformParams", "V" => "2.2" },
+        })],
+    });
+    doc.catalog_mut()
+        .expect("catalog")
+        .set("Perms", dictionary! { "UR3" => sig });
+    let mut out = Vec::new();
+    doc.save_to(&mut out).expect("save");
+    out
+}

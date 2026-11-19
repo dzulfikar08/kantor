@@ -47,12 +47,82 @@ impl Signatures {
     }
 }
 
+/// A usage-rights signature (Adobe Reader Extensions, `/Perms /UR3`): it
+/// unlocks features in Adobe Reader and says nothing about who signed the
+/// document, so it isn't counted as a signature.
+fn is_usage_rights(doc: &Document, d: &lopdf::Dictionary) -> bool {
+    d.get(b"Reference")
+        .ok()
+        .and_then(|r| doc.dereference(r).ok())
+        .and_then(|(_, r)| r.as_array().ok())
+        .is_some_and(|refs| {
+            refs.iter().any(|r| {
+                doc.dereference(r)
+                    .ok()
+                    .and_then(|(_, r)| r.as_dict().ok())
+                    .and_then(|r| r.get(b"TransformMethod").ok())
+                    .and_then(|m| m.as_name().ok())
+                    .is_some_and(|m| m == b"UR3" || m == b"UR")
+            })
+        })
+}
+
+/// The document has Adobe Reader usage rights (`/Perms /UR3`, as the IRS
+/// forms do). They stay valid only through incremental updates, so form
+/// entries are saved that way; a rewritten file drops them
+/// ([`drop_usage_rights`]).
+pub fn usage_rights(pdf: &Pdf) -> bool {
+    perms(&pdf.doc).is_some_and(|p| p.has(b"UR3") || p.has(b"UR"))
+}
+
+fn perms(doc: &Document) -> Option<&lopdf::Dictionary> {
+    let p = doc.catalog().ok()?.get(b"Perms").ok()?;
+    doc.dereference(p).ok()?.1.as_dict().ok()
+}
+
+/// Remove the usage rights from a document about to be written again from
+/// scratch: their signature no longer matches the file, and Adobe Reader
+/// would say the document was changed and turn its features off (as
+/// `qpdf --remove-restrictions` does). A DocMDP entry is left alone.
+pub(crate) fn drop_usage_rights(doc: &mut Document) {
+    let Ok(cat) = doc.catalog() else {
+        return;
+    };
+    let target = match cat.get(b"Perms") {
+        Ok(Object::Reference(id)) => Some(*id),
+        Ok(Object::Dictionary(_)) => None,
+        _ => return,
+    };
+    let emptied = {
+        let dict = match target {
+            Some(id) => doc.get_object_mut(id).and_then(Object::as_dict_mut),
+            None => doc
+                .catalog_mut()
+                .and_then(|c| c.get_mut(b"Perms"))
+                .and_then(Object::as_dict_mut),
+        };
+        let Ok(dict) = dict else {
+            return;
+        };
+        if !dict.has(b"UR3") && !dict.has(b"UR") {
+            return;
+        }
+        dict.remove(b"UR3");
+        dict.remove(b"UR");
+        dict.is_empty()
+    };
+    if emptied && let Ok(c) = doc.catalog_mut() {
+        c.remove(b"Perms");
+    }
+}
+
 fn is_signature(doc: &Document, o: &Object) -> bool {
     let d = match o {
         Object::Dictionary(d) => d,
         _ => return false,
     };
-    d.has(b"ByteRange")
+    !is_usage_rights(doc, d)
+        && d.has(b"ByteRange")
         && d.has(b"Contents")
         && d.get(b"Type")
             .ok()

@@ -174,7 +174,11 @@ impl Pdf {
     }
 
     /// Serialize the PDF.
+    ///
+    /// Usage rights (`/Perms /UR3`) are dropped: they don't survive a
+    /// rewrite.
     pub fn to_bytes(&mut self) -> Result<Vec<u8>> {
+        sig::drop_usage_rights(&mut self.doc);
         // Edits remove objects; the trailer's /Size follows the highest id left.
         if let Some(&(max, _)) = self.doc.objects.keys().next_back() {
             self.doc.max_id = max;
