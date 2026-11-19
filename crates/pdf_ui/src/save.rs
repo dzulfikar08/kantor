@@ -295,7 +295,7 @@ impl PdfView {
                 None => build(&plan, keep_encryption)?,
             };
             kantor_pdf::write_atomic(&out, &bytes)?;
-            Ok::<usize, kantor_pdf::Error>(bytes.len())
+            Ok::<Arc<Vec<u8>>, kantor_pdf::Error>(Arc::new(bytes))
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = work.await;
@@ -303,7 +303,13 @@ impl PdfView {
                 this.saving = false;
                 this.busy = None;
                 match result {
-                    Ok(len) => {
+                    Ok(bytes) => {
+                        let len = bytes.len();
+                        // A signed file: check its signatures again as saved
+                        // (comments and stamps show as changes after signing).
+                        if this.sigs.signed() {
+                            this.check_signatures(bytes, false, cx);
+                        }
                         if let Some(d) = this.doc_mut() {
                             d.model.mark_saved(rev);
                         }

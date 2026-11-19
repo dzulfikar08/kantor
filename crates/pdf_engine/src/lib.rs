@@ -18,6 +18,7 @@
 
 mod nav;
 mod render;
+pub mod signatures;
 mod text;
 
 use std::sync::Arc;

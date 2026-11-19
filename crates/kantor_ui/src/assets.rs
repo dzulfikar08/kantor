@@ -111,6 +111,10 @@ icon_assets!(
         Pentagon,
         MousePointer2,
         MessageSquareText,
+        // PDF signature checker
+        ShieldCheck,
+        ShieldX,
+        ShieldQuestionMark,
     ]
 );
 

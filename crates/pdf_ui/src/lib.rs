@@ -35,6 +35,7 @@ mod organize;
 mod save;
 mod side;
 mod sign;
+mod signatures;
 mod toolbar;
 mod worker;
 
@@ -66,6 +67,7 @@ pub use dialog::PdfEvent;
 pub use layout::Zoom;
 use layout::{Column, ImageCache, PX_PER_PT};
 pub use markup::Mode;
+pub use signatures::{online_signature_checks_enabled, toggle_online_signature_checks};
 use worker::{Msg, PageJob, Worker};
 
 /// Key context of the page area.
@@ -272,6 +274,7 @@ pub enum Panel {
     Thumbnails,
     Bookmarks,
     Comments,
+    Signatures,
 }
 
 pub struct PdfView {
@@ -349,6 +352,8 @@ pub struct PdfView {
     opened_dirty: Option<u64>,
     entity_id: EntityId,
     dialog_subs: Vec<Subscription>,
+    /// The digital signature check ([`sign`]).
+    sigs: signatures::Sigs,
     _subs: Vec<Subscription>,
 }
 
@@ -463,6 +468,7 @@ impl PdfView {
             opened_dirty: None,
             entity_id: cx.entity_id(),
             dialog_subs: Vec::new(),
+            sigs: signatures::Sigs::default(),
             _subs: subs,
         };
         this.start(String::new(), cx);
@@ -527,6 +533,7 @@ impl PdfView {
                     self.panel = Some(Panel::Bookmarks);
                 }
                 self.title = source.title.clone();
+                self.check_signatures(source.bytes.clone(), false, cx);
                 let id = source.id;
                 let model = Model::new(source);
                 self.state = State::Ready(Box::new(Doc {
@@ -1853,6 +1860,10 @@ impl Render for PdfView {
                 }
             },
             Escape => |v, w, cx| {
+                if v.sigs.cert.take().is_some() {
+                    cx.notify();
+                    return;
+                }
                 v.sel = None;
                 v.markup.drag = None;
                 v.markup.poly = None;
@@ -1881,15 +1892,23 @@ impl Render for PdfView {
         );
         let dialog = self.render_dialog(cx);
         let sign = self.render_sign(cx);
+        let cert_dialog = signatures::cert_dialog(self, cx);
+        let banner = if ready {
+            signatures::banner(self, cx)
+        } else {
+            None
+        };
         root.relative()
             .when(ready, |d| d.child(toolbar::render(self, cx)))
             .when(ready && self.markup.mode != Mode::View, |d| {
                 d.child(toolbar::render_markup(self, cx))
             })
+            .children(banner)
             .children(ready.then(|| self.render_form_bar(cx)).flatten())
             .child(body)
             .children(dialog)
             .children(sign)
+            .children(cert_dialog)
     }
 }
 

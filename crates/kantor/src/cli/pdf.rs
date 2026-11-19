@@ -63,6 +63,7 @@ tools:\n\
 \x20 watermark     stamp text across pages\n\
 \x20 page-numbers  number the pages\n\
 \x20 compress      make the file smaller without losing quality\n\
+\x20 verify        check the digital signatures (exit 0 = all valid)\n\
 \n\
 Run `kantor pdf <tool> --help` for a tool's options.\n\
 \n\
@@ -152,6 +153,96 @@ Lossless: removes unused objects, merges identical streams, compresses\n\
 uncompressed streams and packs objects into object streams. Images are\n\
 not re-encoded. If that doesn't make the file smaller, the output is a copy.\n\
 Default output: FILE-compressed.pdf.";
+
+const VERIFY: &str = "usage: kantor pdf verify FILE [--online] [--trust CERTS.pem] [--no-system-roots]\n\
+\n\
+Check every digital signature in FILE, as the Signatures panel does: who\n\
+signed and when, whether the signed bytes are intact, the certificate chain\n\
+up to a trusted root (the system's roots and Kantor's bundled national roots,\n\
+such as Root CA Indonesia DS G1), revocation, time stamps and what changed\n\
+after signing.\n\
+\n\
+\x20 --online           fetch missing issuer certificates and ask OCSP/CRL\n\
+\x20                    servers (otherwise only what the file holds is used)\n\
+\x20 --trust FILE       also trust the root certificates in FILE (PEM or DER)\n\
+\x20 --no-system-roots  don't trust the operating system's roots\n\
+\n\
+Exit status: 0 signed and all signatures valid, 1 a signature has problems,\n\
+3 not signed, 2 usage error.";
+
+/// `kantor pdf verify`: the report and the exit code.
+pub fn verify(rest: &[String]) -> (String, i32) {
+    let failed = |f: Failure| (format!("kantor pdf: {}\n", f.message), f.code);
+    let args = match Args::parse(
+        rest,
+        &["trust"],
+        &["online", "no-system-roots", "help"],
+        VERIFY,
+    ) {
+        Ok(a) => a,
+        Err(f) => return failed(f),
+    };
+    if args.flag("help") {
+        return (format!("{VERIFY}\n"), 0);
+    }
+    if let Err(f) = args.expect(&["FILE"], VERIFY) {
+        return failed(f);
+    }
+    let input = PathBuf::from(&args.positional[0]);
+    let bytes = match std::fs::read(&input) {
+        Ok(b) => b,
+        Err(e) => {
+            return failed(Failure {
+                message: format!("{}: {e}", input.display()),
+                code: 1,
+            });
+        }
+    };
+    use pdf_engine::signatures as sig;
+    let mut trust = if args.flag("no-system-roots") {
+        sig::TrustStore::bundled()
+    } else {
+        sig::TrustStore::standard()
+    };
+    if let Some(path) = args.value("trust") {
+        match std::fs::read(path) {
+            Ok(data) => {
+                let certs = sig::x509::parse_pem_or_der(&data);
+                if certs.is_empty() {
+                    return failed(Failure::usage(format!(
+                        "--trust: no certificates in {path}"
+                    )));
+                }
+                certs.into_iter().for_each(|c| trust.add(c));
+            }
+            Err(e) => {
+                return failed(Failure::usage(format!("--trust: {path}: {e}")));
+            }
+        }
+    }
+    let http = sig::Http::new();
+    let opts = sig::Options {
+        trust,
+        fetch: if args.flag("online") {
+            Some(&http)
+        } else {
+            None
+        },
+        now: sig::now(),
+    };
+    let report = sig::verify(&bytes, &opts);
+    let code = if report.error.is_some() {
+        1
+    } else if !report.is_signed() {
+        3
+    } else if report.all_valid() {
+        0
+    } else {
+        1
+    };
+    let text = sig::text_report(&report).replace("run with --online", "run again with --online");
+    (format!("{}\n{text}", input.display()), code)
+}
 
 /// Parsed arguments for one tool.
 #[derive(Debug, Default)]
@@ -281,6 +372,17 @@ pub fn main(args: Vec<OsString>) -> i32 {
                 .map_err(|a| a.to_string_lossy().into_owned())
         })
         .collect();
+    if let Ok(args) = &args
+        && args.first().map(String::as_str) == Some("verify")
+    {
+        let (text, code) = verify(&args[1..]);
+        if code == 2 {
+            eprint!("{text}");
+        } else {
+            print!("{text}");
+        }
+        return code;
+    }
     let result = match args {
         Ok(args) => run(&args),
         Err(bad) => Err(Failure::usage(format!(
@@ -981,6 +1083,32 @@ mod tests {
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn verify_reports_and_exits_by_status() {
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pdf_engine/tests/fixtures/signatures"
+        );
+        let root = format!("{dir}/test-root.pem");
+        let run = |name: &str| {
+            let file = format!("{dir}/{name}.pdf");
+            verify(&s(&[&file, "--trust", &root, "--no-system-roots"]))
+        };
+        let (text, code) = run("annot_after");
+        assert_eq!(code, 0, "{text}");
+        assert!(text.contains("Stamp added on page 1"), "{text}");
+        let (text, code) = run("tampered");
+        assert_eq!(code, 1, "{text}");
+        assert!(text.contains("At least one signature has problems."));
+        assert_eq!(run("unsigned").1, 3);
+        // Without --trust the test root isn't known (the file doesn't carry it).
+        let file = format!("{dir}/valid.pdf");
+        let (text, code) = verify(&s(&[&file, "--no-system-roots"]));
+        assert_eq!(code, 1, "{text}");
+        assert!(text.contains("Validity unknown"), "{text}");
+        assert_eq!(verify(&s(&["a.pdf", "b.pdf"])).1, 2);
     }
 
     #[test]

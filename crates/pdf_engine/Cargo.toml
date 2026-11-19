@@ -13,10 +13,18 @@ repository.workspace = true
 hayro = { version = "0.9", default-features = true }
 # Arabic presentation forms to plain letters in extracted text.
 unicode-normalization = "0.1"
+# Signatures: the object structure of signed revisions (also used by kantor_pdf).
+lopdf = { version = "0.47", default-features = false }
+# Signatures: digests, RSA and ECDSA checks (already in the tree through rustls).
+ring.workspace = true
+# Signatures: the operating system's trusted roots (already in the tree).
+rustls-native-certs = "0.8"
+# Signatures: optional online issuer/revocation checks, only when allowed.
+ureq.workspace = true
 
 [dev-dependencies]
-# Fixtures: pages, outlines, links and encryption written as test PDFs.
-lopdf = { version = "0.47", default-features = false }
+# Tests: annotations saved after signing through Kantor's own incremental save.
+kantor_pdf.workspace = true
 
 [lints]
 workspace = true

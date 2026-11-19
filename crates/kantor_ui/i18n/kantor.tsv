@@ -629,3 +629,8 @@ More Columns…	Kolom Lainnya…
 Docs · number of columns, widths and spacing, line between, apply to	Docs · jumlah kolom, lebar dan spasi, garis di antara, terapkan ke
 Insert Column Break	Sisipkan Pemisah Kolom
 Docs · the text after the caret starts the next column	Docs · teks setelah kursor memulai kolom berikutnya
+PDF · show the digital signatures and whether they are valid	PDF · tampilkan tanda tangan digital dan keabsahannya
+Let Signature Checks Use the Internet	Izinkan Pemeriksaan Tanda Tangan Memakai Internet
+PDF · fetch missing certificates and revocation status when you ask (turn on or off)	PDF · ambil sertifikat yang hilang dan status pencabutan saat Anda minta (aktifkan atau nonaktifkan)
+Signature checks may use the internet when you click Check Online	Pemeriksaan tanda tangan boleh memakai internet saat Anda mengeklik Periksa Daring
+Signature checks use only what the file contains	Pemeriksaan tanda tangan hanya memakai isi berkas

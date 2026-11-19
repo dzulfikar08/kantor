@@ -55,6 +55,14 @@ pub(crate) fn render(
             i18n::t("Comments"),
             Panel::Comments,
         ))
+        .when(view.sigs.signed() || panel == Panel::Signatures, |d| {
+            d.child(tab(
+                "pdf-signatures",
+                Lucide::Signature,
+                i18n::t("Signatures"),
+                Panel::Signatures,
+            ))
+        })
         .child(
             div()
                 .flex_1()
@@ -65,6 +73,7 @@ pub(crate) fn render(
                     Panel::Thumbnails => i18n::t("Pages"),
                     Panel::Bookmarks => i18n::t("Bookmarks"),
                     Panel::Comments => i18n::t("Comments"),
+                    Panel::Signatures => i18n::t("Signatures"),
                 }),
         );
     let body = match panel {
@@ -75,13 +84,15 @@ pub(crate) fn render(
         }
         Panel::Bookmarks => bookmarks(view, cx),
         Panel::Comments => view.render_comments(cx),
+        Panel::Signatures => crate::signatures::panel(view, cx),
     };
     v_flex()
         .flex_none()
-        .w(px(if panel == Panel::Comments {
-            280.0
-        } else {
-            SIDEBAR_W
+        // Comments and signatures need room for names, times and details.
+        .w(px(match panel {
+            Panel::Comments => 280.0,
+            Panel::Signatures => SIDEBAR_W * 1.6,
+            _ => SIDEBAR_W,
         }))
         .h_full()
         .bg(t.chrome)

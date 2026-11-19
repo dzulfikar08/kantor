@@ -4075,6 +4075,7 @@ dependencies = [
  "kantor_ui",
  "kantor_update",
  "log",
+ "pdf_engine",
  "pdf_ui",
  "ring",
  "serde_json",
@@ -5630,8 +5631,12 @@ name = "pdf_engine"
 version = "0.17.0"
 dependencies = [
  "hayro",
+ "kantor_pdf",
  "lopdf",
+ "ring",
+ "rustls-native-certs",
  "unicode-normalization",
+ "ureq",
 ]
 
 [[package]]
