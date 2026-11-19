@@ -1,4 +1,4 @@
-//! Kantor: one binary for Docs, Sheets and Slides.
+//! Kantor: one binary for Docs, Sheets, Slides and the PDF viewer.
 //!
 //! ```text
 //! kantor                    open the Home screen
@@ -47,7 +47,8 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
     \x20      kantor convert [options] INPUT OUTPUT\n\
     \n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
-    Docs opens .docx (and imports .rtf and .doc), Sheets .xlsx/.csv/.ods, Slides .pptx/.ppt (see plan.md).\n\
+    Docs opens .docx (and imports .rtf and .doc), Sheets .xlsx/.csv/.ods, Slides .pptx/.ppt,\n\
+    and .pdf files open in the PDF viewer (see plan.md).\n\
     `kantor mcp` lets AI agents edit the open documents (kantor mcp --help).\n\
     `kantor pdf` merges, splits, rotates, watermarks and numbers PDFs (kantor pdf --help).\n\
     `kantor convert` converts .docx to .pdf and between spreadsheet formats\n\
@@ -124,6 +125,7 @@ fn main() {
         sheets_ui::init(cx);
         docs_ui::init(cx);
         slides_ui::init(cx);
+        pdf_ui::init(cx);
 
         ai::init(cx);
         workspace::init_cloud_panels(cx);

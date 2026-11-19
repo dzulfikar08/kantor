@@ -29,6 +29,7 @@ fn kind_name(kind: AppKind) -> &'static str {
         AppKind::Sheets => "sheets",
         AppKind::Docs => "docs",
         AppKind::Slides => "slides",
+        AppKind::Pdf => "pdf",
     }
 }
 
@@ -53,6 +54,8 @@ fn saves_as(kind: AppKind) -> &'static [&'static str] {
         AppKind::Sheets => &["xlsx", "csv", "tsv"],
         AppKind::Docs => &["docx"],
         AppKind::Slides => &["pptx"],
+        // The viewer doesn't write PDFs.
+        AppKind::Pdf => &[],
     }
 }
 
@@ -138,6 +141,10 @@ impl Workspace {
                     DocView::Slides(e) => e
                         .read(cx)
                         .agent_read(|p, current| json!({"slide": current + 1, "of": p.len()})),
+                    DocView::Pdf(e) => {
+                        let v = e.read(cx);
+                        json!({"page": v.current_page() + 1, "of": v.page_count()})
+                    }
                 })
             }
             t if t.starts_with("sheets_") => self.sheets_tool(t, args, window, cx),
@@ -352,6 +359,7 @@ impl Workspace {
             DocView::Sheets(e) => e.update(cx, |v, cx| v.agent_save(path.as_deref(), window, cx)),
             DocView::Docs(e) => e.update(cx, |v, cx| v.agent_save(path.as_deref(), window, cx)),
             DocView::Slides(e) => e.update(cx, |v, cx| v.agent_save(path.as_deref(), window, cx)),
+            DocView::Pdf(_) => bail!("PDFs open read-only in Kantor; they can't be saved"),
         }?;
         if let Some(p) = view.path(cx) {
             Session::touch_recent(&mut self.recent, &p);

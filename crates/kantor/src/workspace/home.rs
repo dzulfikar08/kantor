@@ -23,6 +23,7 @@ impl Workspace {
             AppKind::Docs => (t.docs, true),
             AppKind::Sheets => (t.sheets, true),
             AppKind::Slides => (t.slides, true),
+            AppKind::Pdf => (t.danger, true),
         };
         let entity = cx.entity().downgrade();
         v_flex()

@@ -101,6 +101,7 @@ pub const CATALOG_FILES: &[(&str, &str)] = &[
     ("sheets.tsv", include_str!("../i18n/sheets.tsv")),
     ("docs.tsv", include_str!("../i18n/docs.tsv")),
     ("slides.tsv", include_str!("../i18n/slides.tsv")),
+    ("pdf.tsv", include_str!("../i18n/pdf.tsv")),
     ("widgets.tsv", include_str!("../i18n/widgets.tsv")),
     ("content.tsv", include_str!("../i18n/content.tsv")),
 ];
@@ -246,7 +247,14 @@ mod tests {
     }
 
     /// The UI crates whose sources are scanned for catalog keys.
-    const UI_CRATES: &[&str] = &["kantor", "kantor_ui", "sheets_ui", "docs_ui", "slides_ui"];
+    const UI_CRATES: &[&str] = &[
+        "kantor",
+        "kantor_ui",
+        "sheets_ui",
+        "docs_ui",
+        "slides_ui",
+        "pdf_ui",
+    ];
 
     fn crates_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))

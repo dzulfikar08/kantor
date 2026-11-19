@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use docs_ui::DocsView;
 use gpui_kit::*;
+use pdf_ui::PdfView;
 use sheets_ui::{Format, HAlign, SheetsView};
 use slides_ui::SlidesView;
 
@@ -42,6 +43,7 @@ pub(super) enum DocView {
     Sheets(Entity<SheetsView>),
     Docs(Entity<DocsView>),
     Slides(Entity<SlidesView>),
+    Pdf(Entity<PdfView>),
 }
 
 /// Formatting commands both apps understand (palette entries).
@@ -71,6 +73,10 @@ macro_rules! both {
                 let $v = e.read($cx);
                 $body
             }
+            DocView::Pdf(e) => {
+                let $v = e.read($cx);
+                $body
+            }
         }
     };
 }
@@ -90,6 +96,10 @@ macro_rules! both_mut {
                 let $w = $window;
                 $body
             }),
+            DocView::Pdf(e) => e.update($cx, |$v, $c| {
+                let $w = $window;
+                $body
+            }),
         }
     };
 }
@@ -106,6 +116,11 @@ impl DocView {
             AppKind::Sheets => Self::Sheets(cx.new(|cx| SheetsView::new(file, window, cx))),
             AppKind::Docs => Self::Docs(cx.new(|cx| DocsView::new(file, window, cx))),
             AppKind::Slides => Self::Slides(cx.new(|cx| SlidesView::new(file, window, cx))),
+            // A PDF pane always shows a file.
+            AppKind::Pdf => {
+                let file = file?;
+                Self::Pdf(cx.new(|cx| PdfView::new(Some(file), window, cx)))
+            }
         })
     }
 
@@ -196,6 +211,8 @@ impl DocView {
                     },
                 ))
             }
+            // PDFs aren't edited: nothing to recover.
+            Self::Pdf(_) => None,
         }
     }
 
@@ -229,6 +246,7 @@ impl DocView {
             Self::Sheets(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
             Self::Docs(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
             Self::Slides(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
+            Self::Pdf(_) => {}
         }
     }
 
@@ -237,6 +255,7 @@ impl DocView {
             Self::Sheets(_) => AppKind::Sheets,
             Self::Docs(_) => AppKind::Docs,
             Self::Slides(_) => AppKind::Slides,
+            Self::Pdf(_) => AppKind::Pdf,
         }
     }
 
@@ -245,6 +264,7 @@ impl DocView {
             Self::Sheets(e) => e.clone().into(),
             Self::Docs(e) => e.clone().into(),
             Self::Slides(e) => e.clone().into(),
+            Self::Pdf(e) => e.clone().into(),
         }
     }
 
@@ -258,6 +278,7 @@ impl DocView {
             Self::Sheets(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
             Self::Docs(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
             Self::Slides(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
+            Self::Pdf(_) => {}
         }
     }
 
@@ -315,6 +336,7 @@ impl DocView {
             Self::Sheets(e) => e.read(cx).cell_ref(),
             Self::Docs(e) => e.read(cx).location(),
             Self::Slides(e) => e.read(cx).location(),
+            Self::Pdf(e) => e.read(cx).location(),
         }
     }
 
@@ -349,6 +371,7 @@ impl DocView {
             Self::Sheets(e) => e.read(cx).editor_focus_handle(cx),
             Self::Docs(e) => e.read(cx).editor_focus_handle(),
             Self::Slides(e) => e.read(cx).editor_focus_handle(),
+            Self::Pdf(e) => e.read(cx).editor_focus_handle(),
         }
     }
 
@@ -423,6 +446,7 @@ impl DocView {
                 CommonFormat::Underline => v.toggle_doc(Toggle::Underline, window, cx),
                 _ => {}
             }),
+            Self::Pdf(_) => {}
         }
     }
 }

@@ -51,6 +51,7 @@ $(doc_type "Document" Editor org.openxmlformats.wordprocessingml.document)
 $(doc_type "Document (import)" Viewer public.rtf com.microsoft.word.doc com.microsoft.word.dot)
 $(doc_type "Presentation" Editor org.openxmlformats.presentationml.presentation)
 $(doc_type "Presentation (import)" Viewer com.microsoft.powerpoint.ppt com.microsoft.powerpoint.pps com.microsoft.powerpoint.pot)
+$(doc_type "PDF document" Viewer com.adobe.pdf)
   </array>
   <key>UTImportedTypeDeclarations</key>
   <array>

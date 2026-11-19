@@ -44,7 +44,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Open File…"),
-        detail: ".xlsx, .docx, .pptx, .csv, .ods, .xls, .ppt",
+        detail: ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .xls, .ppt",
         keys: "Ctrl O",
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
@@ -1873,9 +1873,10 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Zoom In"),
-        detail: tk("Docs, Sheets · zoom in"),
+        detail: tk("Docs, Sheets, PDF · zoom in"),
         keys: "Ctrl =",
         run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| v.zoom_step(true, None, cx));
             ws.with_docs(window, cx, |v, _, cx| {
                 v.zoom_by(kantor_ui::metrics::ZOOM_STEP, cx)
             });
@@ -1884,9 +1885,10 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Zoom Out"),
-        detail: tk("Docs, Sheets · zoom out"),
+        detail: tk("Docs, Sheets, PDF · zoom out"),
         keys: "Ctrl -",
         run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| v.zoom_step(false, None, cx));
             ws.with_docs(window, cx, |v, _, cx| {
                 v.zoom_by(1.0 / kantor_ui::metrics::ZOOM_STEP, cx)
             });
@@ -1915,9 +1917,72 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Actual Size"),
-        detail: tk("Docs · page zoom 100%"),
+        detail: tk("Docs · page zoom 100% · PDF: Ctrl+1"),
         keys: "Ctrl 0",
-        run: |ws, window, cx| ws.with_docs(window, cx, |v, _, cx| v.set_zoom(1.0, cx)),
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, _, cx| v.set_zoom(1.0, cx));
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.set_zoom(pdf_ui::Zoom::Percent(1.0), None, cx)
+            });
+        },
+    },
+    Command {
+        title: tk("Fit Width"),
+        detail: tk("PDF · the pages fill the window's width"),
+        keys: "Ctrl 2",
+        run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.set_zoom(pdf_ui::Zoom::FitWidth, None, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Fit Page"),
+        detail: tk("PDF · a whole page in the window"),
+        keys: "Ctrl 0",
+        run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.set_zoom(pdf_ui::Zoom::FitPage, None, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Rotate View Clockwise"),
+        detail: tk("PDF · turn the pages on screen (the file isn't changed)"),
+        keys: "Ctrl ]",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, _, cx| v.rotate(true, cx)),
+    },
+    Command {
+        title: tk("Rotate View Counterclockwise"),
+        detail: tk("PDF · turn the pages on screen (the file isn't changed)"),
+        keys: "Ctrl [",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, _, cx| v.rotate(false, cx)),
+    },
+    Command {
+        title: tk("Page Thumbnails"),
+        detail: tk("PDF · show or hide the page thumbnails"),
+        keys: "F4",
+        run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.toggle_panel(pdf_ui::Panel::Thumbnails, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Bookmarks"),
+        detail: tk("PDF · show or hide the document's bookmarks"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.toggle_panel(pdf_ui::Panel::Bookmarks, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Go to Page…"),
+        detail: tk("PDF · type a page number"),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.focus_page_box(w, cx)),
     },
     Command {
         title: tk("New Presentation"),
@@ -2833,7 +2898,7 @@ mod tests {
                 "Slides",
                 "Omarchy, Ghostty",
                 "SF Pro, Inter, …",
-                ".xlsx, .docx, .pptx, .csv, .ods, .xls, .ppt",
+                ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .xls, .ppt",
             ];
             if !same.contains(&c.detail) {
                 assert!(indonesian(c.detail).is_some(), "detail {:?}", c.detail);

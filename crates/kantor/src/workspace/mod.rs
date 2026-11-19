@@ -57,6 +57,8 @@ pub enum AppKind {
     Docs,
     Sheets,
     Slides,
+    /// The PDF viewer (opens files; there is no new PDF).
+    Pdf,
 }
 
 impl AppKind {
@@ -72,6 +74,7 @@ impl AppKind {
             // Slides reads .pptx and imports PowerPoint 97-2003 .ppt/.pps/.pot
             // (.odp isn't supported).
             "pptx" | "ppt" | "pps" | "pot" => Some(Self::Slides),
+            "pdf" => Some(Self::Pdf),
             _ => None,
         }
     }
@@ -82,6 +85,7 @@ impl AppKind {
             Self::Docs => t.docs,
             Self::Sheets => t.sheets,
             Self::Slides => t.slides,
+            Self::Pdf => t.danger,
         }
     }
 
@@ -90,6 +94,7 @@ impl AppKind {
             Self::Docs => "Docs",
             Self::Sheets => "Sheets",
             Self::Slides => "Slides",
+            Self::Pdf => "PDF",
         }
     }
 }
@@ -314,6 +319,11 @@ impl Workspace {
                     on_change(ws, window, cx)
                 })]
             }
+            DocView::Pdf(e) => {
+                vec![cx.observe_in(e, window, move |ws, _, window, cx| {
+                    on_change(ws, window, cx)
+                })]
+            }
         };
         Doc {
             view,
@@ -483,6 +493,18 @@ impl Workspace {
         }
     }
 
+    /// Run `f` if the focused document is a PDF.
+    fn with_pdf(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut pdf_ui::PdfView, &mut Window, &mut Context<pdf_ui::PdfView>),
+    ) {
+        if let Some(DocView::Pdf(view)) = self.focused_view() {
+            view.update(cx, |v, cx| f(v, window, cx));
+        }
+    }
+
     fn new_spreadsheet(&mut self, _: &NewSpreadsheet, window: &mut Window, cx: &mut Context<Self>) {
         self.launch(AppKind::Sheets, None, window, cx);
     }
@@ -510,6 +532,7 @@ impl Workspace {
         self.with_docs(window, cx, |v, w, cx| v.print_doc(w, cx));
         self.with_slides(window, cx, |v, w, cx| v.print_doc(w, cx));
         self.with_sheets_any(window, cx, |v, w, cx| v.print_doc(w, cx));
+        self.with_pdf(window, cx, |v, w, cx| v.print_doc(w, cx));
     }
 
     fn open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
@@ -533,11 +556,16 @@ impl Workspace {
 
     fn split(&mut self, axis: Axis, window: &mut Window, cx: &mut Context<Self>) {
         let kind = self.focused_view().map_or(AppKind::Sheets, |v| v.kind());
+        // A PDF pane splits into a second view of the same file.
+        let file = match kind {
+            AppKind::Pdf => self.focused_view().and_then(|v| v.path(cx)),
+            _ => None,
+        };
         let Some(ti) = self.active else {
             self.launch(kind, None, window, cx);
             return;
         };
-        let Some(pane) = self.new_doc(kind, None, window, cx) else {
+        let Some(pane) = self.new_doc(kind, file, window, cx) else {
             return;
         };
         let tab = &mut self.tabs[ti];

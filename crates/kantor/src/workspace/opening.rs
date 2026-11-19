@@ -187,10 +187,21 @@ mod tests {
 
     #[std::prelude::v1::test]
     fn dropped_pictures_go_into_docs_and_slides_only() {
-        let dropped = paths(&["a.xlsx", "photo.JPG", "b.docx", "logo.png", "notes.txt"]);
+        let dropped = paths(&[
+            "a.xlsx",
+            "photo.JPG",
+            "b.docx",
+            "logo.png",
+            "notes.txt",
+            "c.pdf",
+        ]);
         let plan = plan_drop(&dropped, true);
         assert_eq!(plan.pictures, paths(&["photo.JPG", "logo.png"]));
-        assert_eq!(plan.open, paths(&["a.xlsx", "b.docx", "notes.txt"]));
+        // A PDF dropped on a document opens in the viewer.
+        assert_eq!(
+            plan.open,
+            paths(&["a.xlsx", "b.docx", "notes.txt", "c.pdf"])
+        );
         // Sheets or Home: pictures are opened, which Kantor refuses.
         let plan = plan_drop(&dropped, false);
         assert!(plan.pictures.is_empty());
@@ -203,6 +214,7 @@ mod tests {
         assert_eq!(app_for(None, Path::new("a.tsv")), Some(AppKind::Sheets));
         assert_eq!(app_for(None, Path::new("a.dot")), Some(AppKind::Docs));
         assert_eq!(app_for(None, Path::new("a.pps")), Some(AppKind::Slides));
+        assert_eq!(app_for(None, Path::new("Report.PDF")), Some(AppKind::Pdf));
         assert_eq!(app_for(None, Path::new("a.zip")), None);
         assert_eq!(app_for(None, Path::new("README")), None);
         // `kantor --sheets data.txt`: the flag decides.

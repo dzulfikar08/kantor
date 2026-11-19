@@ -9,6 +9,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- PDF viewer, Kantor's fourth app: `.pdf` files open from File ▸ Open, the start screen, recent files, the command
+  line (`kantor file.pdf`), the system's Open With (also on macOS) and dragging onto the window. Pages scroll in one column; zoom with Ctrl+mouse wheel,
+  Ctrl+= / Ctrl+-, Fit Width (Ctrl+2), Fit Page (Ctrl+0) or Actual Size (Ctrl+1); type a page number to go there;
+  F4 shows page thumbnails or the document's bookmarks; Ctrl+F finds text in the whole document and highlights
+  every hit; drag to select text (double-click a word, triple-click a line) and Ctrl+C copies it; links jump to
+  their page, or ask before opening a web address; Rotate View (Ctrl+] / Ctrl+[) turns the pages on screen;
+  Ctrl+P prints through your PDF viewer. Password-protected PDFs ask for the password, and a damaged file says
+  so. Long documents stay light: page images are kept in a cache of fixed size. Kantor doesn't change the file
+  (Save As writes a copy).
+
 ## [0.16.0] - 2026-11-19
 
 Kantor now opens files from the system: Open With, double-click, the Dock icon and dragging files onto a window.

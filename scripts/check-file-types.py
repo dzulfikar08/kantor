@@ -40,6 +40,7 @@ EXPECTED = {
     "ppt": "com.microsoft.powerpoint.ppt",
     "pps": "com.microsoft.powerpoint.pps",
     "pot": "com.microsoft.powerpoint.pot",
+    "pdf": "com.adobe.pdf",
 }
 # Declared by macOS itself: no import needed.
 SYSTEM = {
@@ -51,6 +52,7 @@ SYSTEM = {
     "com.microsoft.word.doc",
     "org.openxmlformats.presentationml.presentation",
     "com.microsoft.powerpoint.ppt",
+    "com.adobe.pdf",
 }
 
 
@@ -85,6 +87,7 @@ MIME = {
     "ppt": "application/vnd.ms-powerpoint",
     "pps": "application/vnd.ms-powerpoint",
     "pot": "application/vnd.ms-powerpoint",
+    "pdf": "application/pdf",
 }
 SHEETS = {"xlsx", "xlsm", "xls", "xlt", "xlsb", "ods", "csv", "tsv"}
 

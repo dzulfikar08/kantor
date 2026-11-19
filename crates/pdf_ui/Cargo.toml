@@ -1,0 +1,20 @@
+[package]
+name = "pdf_ui"
+description = "Kantor PDF viewer UI: continuous pages, zoom, thumbnails, bookmarks, search, selection and links (GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Results from the render and text threads to the UI.
+async-channel = "2"
+gpui-kit.workspace = true
+image.workspace = true
+kantor_core.workspace = true
+kantor_ui.workspace = true
+log.workspace = true
+pdf_engine.workspace = true
+
+[lints]
+workspace = true

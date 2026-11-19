@@ -1,0 +1,38 @@
+# English<TAB>Indonesian, one string per line (see kantor_ui/src/i18n.rs).
+Bookmarks	Penanda
+Copied	Disalin
+Fit Page	Paskan Halaman
+Fit Width	Paskan Lebar
+Go to Page…	Buka Halaman…
+Kantor can't open “{}”	Kantor tidak dapat membuka “{}”
+Opened {} (1 page)	{} dibuka (1 halaman)
+Opened {} ({} pages)	{} dibuka ({} halaman)
+Opened {} in the PDF viewer to print	{} dibuka di penampil PDF untuk dicetak
+PDF · a whole page in the window	PDF · satu halaman utuh di jendela
+PDF · show or hide the document's bookmarks	PDF · tampilkan atau sembunyikan penanda dokumen
+PDF · show or hide the page thumbnails	PDF · tampilkan atau sembunyikan gambar mini halaman
+PDF · the pages fill the window's width	PDF · halaman memenuhi lebar jendela
+PDF · turn the pages on screen (the file isn't changed)	PDF · putar halaman di layar (berkasnya tidak diubah)
+PDF · type a page number	PDF · ketik nomor halaman
+PDFs open read-only in Kantor; Save As writes a copy	PDF dibuka hanya-baca di Kantor; Simpan Sebagai menulis salinan
+Page Thumbnails	Gambar Mini Halaman
+Page thumbnails	Gambar mini halaman
+Password	Kata sandi
+Read-only (Save As writes a copy)	Hanya-baca (Simpan Sebagai menulis salinan)
+Rotate View Clockwise	Putar Tampilan Searah Jarum Jam
+Rotate View Counterclockwise	Putar Tampilan Berlawanan Arah Jarum Jam
+Rotate clockwise	Putar searah jarum jam
+Rotate counterclockwise	Putar berlawanan arah jarum jam
+Saved a copy as {}	Salinan disimpan sebagai {}
+Sidebar: thumbnails and bookmarks	Bilah samping: gambar mini dan penanda
+Still reading the text of those pages; copy again in a moment	Teks halaman tersebut masih dibaca; salin lagi sebentar lagi
+The document is trying to open {}. Open only links from sources you trust.	Dokumen ini mencoba membuka {}. Buka hanya tautan dari sumber yang Anda percayai.
+The file is damaged and could not be repaired. If it came as an attachment or a download, get it again.	Berkas rusak dan tidak dapat diperbaiki. Jika berkas ini berasal dari lampiran atau unduhan, ambil lagi.
+The file is encrypted in a way Kantor can't read. Open it in another PDF viewer.	Berkas dienkripsi dengan cara yang tidak dapat dibaca Kantor. Buka di penampil PDF lain.
+The password is incorrect. Try again.	Kata sandi salah. Coba lagi.
+There is no page {} in this document	Tidak ada halaman {} di dokumen ini
+This document has no bookmarks.	Dokumen ini tidak memiliki penanda.
+This document is password-protected	Dokumen ini dilindungi kata sandi
+of {}	dari {}
+“{}” is protected. Enter the password to open it.	“{}” dilindungi. Masukkan kata sandi untuk membukanya.
+Kantor can't open {}	Kantor tidak dapat membuka {}
