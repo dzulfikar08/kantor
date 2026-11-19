@@ -6,8 +6,12 @@
 pub mod docs;
 pub mod sheets;
 pub mod slides;
+pub mod slides_author;
+pub mod slides_schema;
 
-use anyhow::{Result, bail};
+use std::path::PathBuf;
+
+use anyhow::{Context as _, Result, bail};
 use serde_json::Value;
 
 /// Longest text accepted for one cell, paragraph or shape.
@@ -71,4 +75,19 @@ pub fn check_len(what: &str, text: &str) -> Result<()> {
 pub fn char_offset(text: &str, offset: usize) -> usize {
     text.get(..offset.min(text.len()))
         .map_or(0, |s| s.chars().count())
+}
+
+/// An absolute path argument (`~/` allowed).
+pub fn path_arg(text: &str) -> Result<PathBuf> {
+    let text = text.trim();
+    let path = match text.strip_prefix("~/") {
+        Some(rest) => kantor_core::dirs::home_dir()
+            .context("HOME is not set")?
+            .join(rest),
+        None => PathBuf::from(text),
+    };
+    if !path.is_absolute() {
+        bail!("give an absolute path (got \"{text}\")");
+    }
+    Ok(path)
 }

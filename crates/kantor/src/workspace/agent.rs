@@ -3,7 +3,7 @@
 //! `agent_*` hooks (so edits are undoable, mark the document unsaved and
 //! redraw like the user's own) and answer with JSON.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context as _, Result, bail};
@@ -12,7 +12,8 @@ use kantor_core::layout::PaneId;
 use kantor_core::session::Session;
 use serde_json::{Value, json};
 use sheets_engine::CellRange;
-use slides_engine::Focus;
+
+use crate::agent::path_arg;
 
 use super::doc::DocView;
 use super::{AppKind, Workspace};
@@ -31,21 +32,6 @@ fn kind_name(kind: AppKind) -> &'static str {
         AppKind::Slides => "slides",
         AppKind::Pdf => "pdf",
     }
-}
-
-/// An absolute path from an argument (`~/` expanded).
-fn path_arg(text: &str) -> Result<PathBuf> {
-    let text = text.trim();
-    let path = match text.strip_prefix("~/") {
-        Some(rest) => kantor_core::dirs::home_dir()
-            .context("HOME is not set")?
-            .join(rest),
-        None => PathBuf::from(text),
-    };
-    if !path.is_absolute() {
-        bail!("give an absolute path (got \"{text}\")");
-    }
-    Ok(path)
 }
 
 /// Extensions each app can save to.
@@ -658,72 +644,15 @@ impl Workspace {
                 e.update(cx, |v, cx| v.agent_go_to(i, cx));
                 return Ok(json!({"slide": i + 1}));
             }
-            "slides_add_slide" => {
-                let plan = e.read(cx).agent_read(|p, _| slides::plan_add(p, args))?;
-                let i = e.update(cx, |v, cx| {
-                    v.agent_edit("added a slide", window, cx, |p, _| {
-                        let i = p.add_slide_with_text(
-                            plan.after,
-                            plan.layout,
-                            plan.title.as_deref(),
-                            &plan.body,
-                        )?;
-                        Ok((i, Focus::slide(i)))
+            t if crate::agent::slides_author::EDIT_TOOLS.contains(&t) => {
+                let (what, out) = e.update(cx, |v, cx| {
+                    v.agent_edit("changed the presentation", window, cx, |p, _| {
+                        let (what, out, focus) =
+                            crate::agent::slides_author::run_tool(p, t, args, None)?;
+                        Ok(((what, out), focus))
                     })
                 })?;
-                (format!("added slide {}", i + 1), json!({"slide": i + 1}))
-            }
-            "slides_set_shape_text" => {
-                let i = e
-                    .read(cx)
-                    .agent_read(|p, _| slides::slide_arg(p, args, "slide"))?;
-                let id =
-                    u32::try_from(agent::req_int(args, "shape_id")?).context("bad `shape_id`")?;
-                let text = agent::req_str(args, "text")?;
-                agent::check_len("`text`", text)?;
-                e.update(cx, |v, cx| {
-                    v.agent_edit("changed text", window, cx, |p, _| {
-                        let ix = p.shape_index(i, id).with_context(|| {
-                            format!("slide {} has no shape with id {id}; see slides_list", i + 1)
-                        })?;
-                        p.set_shape_text((i, ix), text)?;
-                        Ok(((), Focus::shape(i, ix)))
-                    })
-                })?;
-                (format!("changed shape {id} on slide {}", i + 1), json!({}))
-            }
-            "slides_delete_slide" => {
-                let i = e
-                    .read(cx)
-                    .agent_read(|p, _| slides::slide_arg(p, args, "slide"))?;
-                if e.read(cx).agent_read(|p, _| p.len()) == 1 {
-                    bail!("that is the only slide; add another before deleting it");
-                }
-                e.update(cx, |v, cx| {
-                    v.agent_edit("deleted a slide", window, cx, |p, _| {
-                        p.delete_slide(i)?;
-                        let next = i.min(p.len() - 1);
-                        Ok(((), Focus::slide(next)))
-                    })
-                })?;
-                (
-                    format!("deleted slide {}", i + 1),
-                    json!({"slides_now": e.read(cx).agent_read(|p, _| p.len())}),
-                )
-            }
-            "slides_set_notes" => {
-                let i = e
-                    .read(cx)
-                    .agent_read(|p, _| slides::slide_arg(p, args, "slide"))?;
-                let text = agent::req_str(args, "text")?;
-                agent::check_len("`text`", text)?;
-                e.update(cx, |v, cx| {
-                    v.agent_edit("changed speaker notes", window, cx, |p, _| {
-                        p.set_notes_text(i, text)?;
-                        Ok(((), Focus::slide(i)))
-                    })
-                })?;
-                (format!("changed the notes of slide {}", i + 1), json!({}))
+                (what, out)
             }
             other => bail!("unknown tool {other}"),
         };

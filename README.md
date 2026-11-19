@@ -168,7 +168,10 @@ kantor convert -o out/ --to pdf a.docx b.docx
 kantor pdf merge a.pdf b.pdf -o both.pdf       # also split, extract, delete, reorder, rotate,
                                                # info, images, watermark, page-numbers, compress
 kantor pdf verify signed.pdf                   # signature report; exit 0 if all valid,
-                                               # --online, --trust roots.pem
+                                               # --online, --trust roots.pemkantor slides build deck.json -o deck.pptx     # a .pptx from JSON: theme, shapes, pictures,
+                                               # tables, backgrounds, notes (docs/slides-json.md)
+kantor slides list deck.pptx                   # slides and shapes (ids, geometry, text) as JSON
+kantor slides edit deck.pptx add_shape '{"slide": 1, "type": "shape", "x": "1in", "y": "1in", "w": "3in", "h": "1in", "text": "Hi"}'
 ```
 
 Neither opens a window. On Windows these run through `kantor.com` (what a bare `kantor` finds
@@ -197,7 +200,13 @@ instead). Tools: `list_documents`, `open_document`, `new_document`, `save_docume
 `sheets_select`, `sheets_format`, insert/delete rows and columns; Docs `docs_get_paragraphs`,
 `docs_insert_paragraphs`, `docs_replace_paragraph`, `docs_delete_paragraphs`, `docs_find_replace`;
 Slides `slides_list`, `slides_add_slide`, `slides_set_shape_text`, `slides_delete_slide`,
-`slides_set_notes`, `slides_go_to`. The app listens only on a private Unix socket
+`slides_set_notes`, `slides_go_to`, and for designing slides `slides_add_shape` (any preset
+shape, text box or line, with fill, outline, arrowheads and formatted text), `slides_add_picture`
+(crop, fit, cut to a shape), `slides_add_table`, `slides_add_elements`, `slides_set_background`,
+`slides_update_shape`, `slides_delete_shape`, `slides_order_shape`, `slides_group_shapes`, and
+`slides_build`, which writes a whole `.pptx` from the same JSON as `kantor slides build`
+([docs/slides-json.md](docs/slides-json.md), schema in
+[docs/slides-deck.schema.json](docs/slides-deck.schema.json)). The app listens only on a private Unix socket
 (`$XDG_RUNTIME_DIR/kantor/`, on macOS `~/Library/Application Support/Kantor/run/`), readable by
 you alone. On Windows it listens on `127.0.0.1` with a random port, and `kantor mcp` must first
 send a random token that only your user can read (`%LOCALAPPDATA%\Kantor\run\kantor-<pid>.port`).

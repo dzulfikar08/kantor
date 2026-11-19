@@ -134,8 +134,46 @@ impl AppClient {
     }
 }
 
+/// `slides_build`: write the deck's `.pptx` here, without the app.
+pub fn build_deck(args: &Value) -> Result<Value, String> {
+    let run = || -> anyhow::Result<Value> {
+        use anyhow::{Context as _, bail};
+        let deck = args.get("deck").context("`deck` is required")?;
+        let path = crate::agent::path_arg(crate::agent::req_str(args, "path")?)?;
+        if !path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("pptx"))
+        {
+            bail!("`path` must end in .pptx");
+        }
+        let base = crate::agent::opt_str(args, "base_dir")?
+            .map(crate::agent::path_arg)
+            .transpose()?;
+        let overwrite = crate::agent::opt_bool(args, "overwrite")?.unwrap_or(false);
+        if path.exists() && !overwrite {
+            bail!(
+                "{} exists; pass overwrite=true to replace it",
+                path.display()
+            );
+        }
+        let p = crate::agent::slides_author::build(deck, base.as_deref())?;
+        let bytes = p.to_bytes()?;
+        crate::cli::slides::write_file(&path, &bytes)?;
+        Ok(json!({"path": path, "slides": p.len(), "bytes": bytes.len()}))
+    };
+    run().map_err(|e| format!("{e:#}"))
+}
+
 impl Backend for AppClient {
     fn call(&mut self, tool: &str, args: Value) -> Result<Value, String> {
+        if tool == "slides_build" {
+            let mut out = build_deck(&args)?;
+            if args.get("open").and_then(Value::as_bool) == Some(true) {
+                let opened = self.call("open_document", json!({"path": out["path"]}))?;
+                out["opened"] = opened;
+            }
+            return Ok(out);
+        }
         // A connection to an instance that has quit since the last call
         // fails on first use; one fresh connection is tried (that instance
         // is gone, so nothing runs twice). A timeout is not retried.
@@ -146,5 +184,41 @@ impl Backend for AppClient {
             }
             other => other,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[std::prelude::v1::test]
+    fn slides_build_writes_a_deck_and_keeps_existing_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("deck.pptx");
+        let args = json!({
+            "path": path,
+            "deck": {"units": "in", "slides": [{"title": "Hello", "elements": [
+                {"type": "shape", "geometry": "chevron", "x": 1, "y": 2, "w": 3, "h": 1, "text": "Go"}
+            ]}]},
+        });
+        let out = build_deck(&args).unwrap();
+        assert_eq!(out["slides"], 1);
+        let first = std::fs::read(&path).unwrap();
+        assert!(build_deck(&args).unwrap_err().contains("overwrite"));
+        let mut again = args.clone();
+        again["overwrite"] = json!(true);
+        build_deck(&again).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), first);
+        let mut bad = args.clone();
+        bad["path"] = json!("relative.pptx");
+        assert!(build_deck(&bad).is_err());
+    }
+
+    #[std::prelude::v1::test]
+    fn every_slides_editing_tool_is_offered() {
+        for t in crate::agent::slides_author::EDIT_TOOLS {
+            assert!(super::super::tools::exists(t), "{t}");
+        }
+        assert!(super::super::tools::exists("slides_build"));
     }
 }

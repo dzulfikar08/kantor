@@ -1,0 +1,1478 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kantor.paparanai.id/schema/slides-deck.schema.json",
+  "title": "Kantor slide deck",
+  "description": "A presentation for `kantor slides build deck.json -o deck.pptx`. The same elements go to the MCP slides tools.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "slides"
+  ],
+  "properties": {
+    "size": {
+      "description": "Slide size: 16:9 (default, 13.333 × 7.5 in), 4:3, 16:10, a4, letter, or {w, h}.",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "16:9",
+            "widescreen",
+            "4:3",
+            "16:10",
+            "a4",
+            "letter"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "w",
+            "h"
+          ],
+          "properties": {
+            "w": {
+              "$ref": "#/$defs/length"
+            },
+            "h": {
+              "$ref": "#/$defs/length"
+            }
+          }
+        }
+      ]
+    },
+    "units": {
+      "type": "string",
+      "enum": [
+        "emu",
+        "pt",
+        "in",
+        "cm",
+        "mm",
+        "px"
+      ],
+      "description": "What bare numbers in lengths mean (default emu). Strings such as \"1in\" always say their unit."
+    },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "fonts": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "heading": {
+              "type": "string",
+              "description": "Headings (titles) typeface (default Calibri Light)."
+            },
+            "body": {
+              "type": "string",
+              "description": "Body text typeface (default Calibri)."
+            }
+          }
+        },
+        "colors": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Theme colours as #RRGGBB.",
+          "properties": {
+            "dk1": {
+              "type": "string"
+            },
+            "lt1": {
+              "type": "string"
+            },
+            "dk2": {
+              "type": "string"
+            },
+            "lt2": {
+              "type": "string"
+            },
+            "accent1": {
+              "type": "string"
+            },
+            "accent2": {
+              "type": "string"
+            },
+            "accent3": {
+              "type": "string"
+            },
+            "accent4": {
+              "type": "string"
+            },
+            "accent5": {
+              "type": "string"
+            },
+            "accent6": {
+              "type": "string"
+            },
+            "hlink": {
+              "type": "string"
+            },
+            "folHlink": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "text": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Default text formatting of every element.",
+      "properties": {
+        "font": {
+          "type": "string",
+          "description": "Typeface, e.g. \"Inter\" (default: the theme's body font)."
+        },
+        "size": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Font size in points, e.g. 18."
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "strike": {
+          "type": "boolean",
+          "description": "Strikethrough."
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        }
+      }
+    },
+    "background": {
+      "description": "Every slide's background unless the slide has its own.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/background"
+        }
+      ]
+    },
+    "slides": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/slide"
+      }
+    }
+  },
+  "$defs": {
+    "length": {
+      "description": "A length: a number in `units` (default emu: 914400 per inch, 12700 per point, 360000 per cm) or a string with a unit: \"1.5in\", \"2.5cm\", \"40mm\", \"18pt\", \"120px\", \"914400emu\".",
+      "type": [
+        "number",
+        "string"
+      ]
+    },
+    "fraction": {
+      "type": [
+        "number",
+        "string"
+      ],
+      "description": "0 to 1, or a percentage such as \"25%\"."
+    },
+    "color": {
+      "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "color": {
+              "type": "string"
+            },
+            "opacity": {
+              "$ref": "#/$defs/fraction"
+            }
+          },
+          "required": [
+            "color"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "fill": {
+      "description": "\"none\", a colour, or a gradient.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/color"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "gradient"
+          ],
+          "properties": {
+            "gradient": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "stops"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "linear",
+                    "radial"
+                  ]
+                },
+                "angle": {
+                  "type": "number",
+                  "description": "Degrees: 0 left to right, 90 top to bottom (default)."
+                },
+                "stops": {
+                  "type": "array",
+                  "minItems": 2,
+                  "maxItems": 10,
+                  "items": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/color"
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "color",
+                          "position"
+                        ],
+                        "properties": {
+                          "color": {
+                            "type": "string"
+                          },
+                          "opacity": {
+                            "$ref": "#/$defs/fraction"
+                          },
+                          "position": {
+                            "$ref": "#/$defs/fraction"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "description": "Colours spread evenly, or {color, position}."
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "arrow": {
+      "description": "An arrowhead: a type, or {type, width, length} (small, medium, large).",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "none",
+            "triangle",
+            "stealth",
+            "diamond",
+            "oval",
+            "arrow"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "none",
+                "triangle",
+                "stealth",
+                "diamond",
+                "oval",
+                "arrow"
+              ]
+            },
+            "width": {
+              "type": "string",
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ]
+            },
+            "length": {
+              "type": "string",
+              "enum": [
+                "small",
+                "medium",
+                "large"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "line": {
+      "description": "An outline: \"none\", a colour, or {color, width, dash, head, tail, cap}. Shapes without one get the theme's (accent 1, darker).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/color"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "$ref": "#/$defs/color"
+            },
+            "opacity": {
+              "$ref": "#/$defs/fraction"
+            },
+            "width": {
+              "$ref": "#/$defs/length"
+            },
+            "dash": {
+              "type": "string",
+              "enum": [
+                "solid",
+                "dot",
+                "dash",
+                "lgDash",
+                "dashDot",
+                "lgDashDot",
+                "lgDashDotDot",
+                "sysDash",
+                "sysDot",
+                "sysDashDot",
+                "sysDashDotDot"
+              ]
+            },
+            "head": {
+              "description": "Arrowhead at the start (x1, y1).",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/arrow"
+                }
+              ]
+            },
+            "tail": {
+              "description": "Arrowhead at the end (x2, y2).",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/arrow"
+                }
+              ]
+            },
+            "cap": {
+              "type": "string",
+              "enum": [
+                "flat",
+                "round"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "run": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "A new line is a line break in the paragraph."
+            },
+            "font": {
+              "type": "string",
+              "description": "Typeface, e.g. \"Inter\" (default: the theme's body font)."
+            },
+            "size": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Font size in points, e.g. 18."
+            },
+            "bold": {
+              "type": "boolean"
+            },
+            "italic": {
+              "type": "boolean"
+            },
+            "underline": {
+              "type": "boolean"
+            },
+            "strike": {
+              "type": "boolean",
+              "description": "Strikethrough."
+            },
+            "color": {
+              "$ref": "#/$defs/color"
+            }
+          }
+        }
+      ]
+    },
+    "paragraph": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "runs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/run"
+              }
+            },
+            "align": {
+              "type": "string",
+              "enum": [
+                "left",
+                "center",
+                "right",
+                "justify"
+              ]
+            },
+            "level": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8,
+              "description": "Outline level (indents bullets)."
+            },
+            "bullet": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "true (•), false/\"none\", \"number\" (1. 2. 3.), one character such as \"–\", or a numbering scheme such as \"alphaLcParenR\"."
+            },
+            "line_spacing": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "A multiple of single spacing (1.2) or points (\"20pt\")."
+            },
+            "space_before": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Points before the paragraph."
+            },
+            "space_after": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Points after the paragraph."
+            },
+            "font": {
+              "type": "string",
+              "description": "Typeface, e.g. \"Inter\" (default: the theme's body font)."
+            },
+            "size": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Font size in points, e.g. 18."
+            },
+            "bold": {
+              "type": "boolean"
+            },
+            "italic": {
+              "type": "boolean"
+            },
+            "underline": {
+              "type": "boolean"
+            },
+            "strike": {
+              "type": "boolean",
+              "description": "Strikethrough."
+            },
+            "color": {
+              "$ref": "#/$defs/color"
+            }
+          }
+        }
+      ]
+    },
+    "text": {
+      "description": "A string (a new line starts a paragraph), or paragraphs: strings or {text | runs, align, bullet, level, line_spacing, space_before, space_after, font, size, bold, italic, underline, strike, color}.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/paragraph"
+          }
+        }
+      ]
+    },
+    "cell": {
+      "anyOf": [
+        {
+          "type": [
+            "string",
+            "number",
+            "null"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "$ref": "#/$defs/text"
+            },
+            "fill": {
+              "$ref": "#/$defs/fill"
+            },
+            "border": {
+              "$ref": "#/$defs/line"
+            },
+            "margins": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/length"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/$defs/length"
+                  },
+                  "minItems": 4,
+                  "maxItems": 4
+                }
+              ]
+            },
+            "col_span": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "row_span": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "anchor": {
+              "type": "string",
+              "enum": [
+                "top",
+                "middle",
+                "bottom"
+              ]
+            },
+            "align": {
+              "type": "string",
+              "enum": [
+                "left",
+                "center",
+                "right",
+                "justify"
+              ]
+            },
+            "level": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 8,
+              "description": "Outline level (indents bullets)."
+            },
+            "bullet": {
+              "type": [
+                "boolean",
+                "string"
+              ],
+              "description": "true (•), false/\"none\", \"number\" (1. 2. 3.), one character such as \"–\", or a numbering scheme such as \"alphaLcParenR\"."
+            },
+            "line_spacing": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "A multiple of single spacing (1.2) or points (\"20pt\")."
+            },
+            "space_before": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Points before the paragraph."
+            },
+            "space_after": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Points after the paragraph."
+            },
+            "font": {
+              "type": "string",
+              "description": "Typeface, e.g. \"Inter\" (default: the theme's body font)."
+            },
+            "size": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Font size in points, e.g. 18."
+            },
+            "bold": {
+              "type": "boolean"
+            },
+            "italic": {
+              "type": "boolean"
+            },
+            "underline": {
+              "type": "boolean"
+            },
+            "strike": {
+              "type": "boolean",
+              "description": "Strikethrough."
+            },
+            "color": {
+              "$ref": "#/$defs/color"
+            }
+          }
+        }
+      ]
+    },
+    "shape": {
+      "type": "object",
+      "description": "A shape: geometry, fill, outline and text. Default look as PowerPoint's: accent 1 fill, darker outline, white centred text.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The shape's name (shown in the selection pane)."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "rotation": {
+          "type": "number",
+          "description": "Degrees clockwise."
+        },
+        "flip_h": {
+          "type": "boolean"
+        },
+        "flip_v": {
+          "type": "boolean"
+        },
+        "geometry": {
+          "type": "string",
+          "description": "A DrawingML preset shape: rect (default), roundRect, ellipse (or oval), triangle, diamond, chevron, homePlate (arrow pentagon), pentagon, hexagon, rightArrow, leftArrow, star5, flowChartProcess, ... (all 187 ECMA-376 presets)."
+        },
+        "radius": {
+          "description": "Corner radius of a rounded rectangle (sets geometry roundRect when no geometry is given).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "adjust": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "The preset's adjust values as written in the file, e.g. {\"adj\": 25000} (chevron point depth, 1/1000 % of the shorter side)."
+        },
+        "fill": {
+          "$ref": "#/$defs/fill"
+        },
+        "line": {
+          "$ref": "#/$defs/line"
+        },
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "anchor": {
+          "type": "string",
+          "enum": [
+            "top",
+            "middle",
+            "bottom"
+          ],
+          "description": "Vertical position of the text (shapes: middle, text boxes: top)."
+        },
+        "insets": {
+          "description": "Space between the edge and the text: one length or [left, top, right, bottom] (default 0.1in left/right, 0.05in top/bottom).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/length"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/length"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            }
+          ]
+        },
+        "autofit": {
+          "type": "string",
+          "enum": [
+            "none",
+            "shrink",
+            "resize"
+          ],
+          "description": "none: text may overflow (default); shrink: PowerPoint shrinks text that overflows; resize: the shape grows to fit."
+        },
+        "wrap": {
+          "type": "boolean",
+          "description": "Wrap lines at the shape's width (default true)."
+        },
+        "vertical": {
+          "type": "string",
+          "enum": [
+            "horizontal",
+            "down",
+            "up"
+          ],
+          "description": "Text direction: turned to read downwards or upwards."
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justify"
+          ]
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "description": "Outline level (indents bullets)."
+        },
+        "bullet": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "true (•), false/\"none\", \"number\" (1. 2. 3.), one character such as \"–\", or a numbering scheme such as \"alphaLcParenR\"."
+        },
+        "line_spacing": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "A multiple of single spacing (1.2) or points (\"20pt\")."
+        },
+        "space_before": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points before the paragraph."
+        },
+        "space_after": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points after the paragraph."
+        },
+        "font": {
+          "type": "string",
+          "description": "Typeface, e.g. \"Inter\" (default: the theme's body font)."
+        },
+        "size": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Font size in points, e.g. 18."
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "strike": {
+          "type": "boolean",
+          "description": "Strikethrough."
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "type": {
+          "const": "shape"
+        }
+      },
+      "required": [
+        "type",
+        "w",
+        "h"
+      ],
+      "additionalProperties": false
+    },
+    "text_box": {
+      "type": "object",
+      "description": "A text box: no fill or outline unless given, text from the top left.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The shape's name (shown in the selection pane)."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "rotation": {
+          "type": "number",
+          "description": "Degrees clockwise."
+        },
+        "flip_h": {
+          "type": "boolean"
+        },
+        "flip_v": {
+          "type": "boolean"
+        },
+        "geometry": {
+          "type": "string",
+          "description": "A DrawingML preset shape: rect (default), roundRect, ellipse (or oval), triangle, diamond, chevron, homePlate (arrow pentagon), pentagon, hexagon, rightArrow, leftArrow, star5, flowChartProcess, ... (all 187 ECMA-376 presets)."
+        },
+        "radius": {
+          "description": "Corner radius of a rounded rectangle (sets geometry roundRect when no geometry is given).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "adjust": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "The preset's adjust values as written in the file, e.g. {\"adj\": 25000} (chevron point depth, 1/1000 % of the shorter side)."
+        },
+        "fill": {
+          "$ref": "#/$defs/fill"
+        },
+        "line": {
+          "$ref": "#/$defs/line"
+        },
+        "text": {
+          "$ref": "#/$defs/text"
+        },
+        "anchor": {
+          "type": "string",
+          "enum": [
+            "top",
+            "middle",
+            "bottom"
+          ],
+          "description": "Vertical position of the text (shapes: middle, text boxes: top)."
+        },
+        "insets": {
+          "description": "Space between the edge and the text: one length or [left, top, right, bottom] (default 0.1in left/right, 0.05in top/bottom).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/length"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/length"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            }
+          ]
+        },
+        "autofit": {
+          "type": "string",
+          "enum": [
+            "none",
+            "shrink",
+            "resize"
+          ],
+          "description": "none: text may overflow (default); shrink: PowerPoint shrinks text that overflows; resize: the shape grows to fit."
+        },
+        "wrap": {
+          "type": "boolean",
+          "description": "Wrap lines at the shape's width (default true)."
+        },
+        "vertical": {
+          "type": "string",
+          "enum": [
+            "horizontal",
+            "down",
+            "up"
+          ],
+          "description": "Text direction: turned to read downwards or upwards."
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justify"
+          ]
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8,
+          "description": "Outline level (indents bullets)."
+        },
+        "bullet": {
+          "type": [
+            "boolean",
+            "string"
+          ],
+          "description": "true (•), false/\"none\", \"number\" (1. 2. 3.), one character such as \"–\", or a numbering scheme such as \"alphaLcParenR\"."
+        },
+        "line_spacing": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "A multiple of single spacing (1.2) or points (\"20pt\")."
+        },
+        "space_before": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points before the paragraph."
+        },
+        "space_after": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points after the paragraph."
+        },
+        "font": {
+          "type": "string",
+          "description": "Typeface, e.g. \"Inter\" (default: the theme's body font)."
+        },
+        "size": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Font size in points, e.g. 18."
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "strike": {
+          "type": "boolean",
+          "description": "Strikethrough."
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "type": {
+          "const": "text"
+        }
+      },
+      "required": [
+        "type",
+        "w",
+        "h"
+      ],
+      "additionalProperties": false
+    },
+    "line_element": {
+      "type": "object",
+      "description": "A straight line from (x1, y1) to (x2, y2), optionally with arrowheads.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "x1": {
+          "$ref": "#/$defs/length"
+        },
+        "y1": {
+          "$ref": "#/$defs/length"
+        },
+        "x2": {
+          "$ref": "#/$defs/length"
+        },
+        "y2": {
+          "$ref": "#/$defs/length"
+        },
+        "line": {
+          "$ref": "#/$defs/line"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "width": {
+          "$ref": "#/$defs/length"
+        },
+        "dash": {
+          "type": "string",
+          "enum": [
+            "solid",
+            "dot",
+            "dash",
+            "lgDash",
+            "dashDot",
+            "lgDashDot",
+            "lgDashDotDot",
+            "sysDash",
+            "sysDot",
+            "sysDashDot",
+            "sysDashDotDot"
+          ]
+        },
+        "head": {
+          "$ref": "#/$defs/arrow"
+        },
+        "tail": {
+          "$ref": "#/$defs/arrow"
+        },
+        "cap": {
+          "type": "string",
+          "enum": [
+            "flat",
+            "round"
+          ]
+        },
+        "type": {
+          "const": "line"
+        }
+      },
+      "required": [
+        "type",
+        "x1",
+        "y1",
+        "x2",
+        "y2"
+      ],
+      "additionalProperties": false
+    },
+    "picture": {
+      "type": "object",
+      "description": "A picture from a PNG or JPEG file, optionally cropped and cut to a shape.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The picture's name (shown in the selection pane)."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "rotation": {
+          "type": "number",
+          "description": "Degrees clockwise."
+        },
+        "flip_h": {
+          "type": "boolean"
+        },
+        "flip_v": {
+          "type": "boolean"
+        },
+        "geometry": {
+          "type": "string",
+          "description": "A DrawingML preset shape: rect (default), roundRect, ellipse (or oval), triangle, diamond, chevron, homePlate (arrow pentagon), pentagon, hexagon, rightArrow, leftArrow, star5, flowChartProcess, ... (all 187 ECMA-376 presets)."
+        },
+        "radius": {
+          "description": "Corner radius of a rounded rectangle (sets geometry roundRect when no geometry is given).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "adjust": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "The preset's adjust values as written in the file, e.g. {\"adj\": 25000} (chevron point depth, 1/1000 % of the shorter side)."
+        },
+        "path": {
+          "type": "string",
+          "description": "A PNG or JPEG file: absolute (~ allowed) or, in a deck file, relative to it."
+        },
+        "crop": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Fractions (0.1) or percentages (\"10%\") cut off each side.",
+          "properties": {
+            "left": {
+              "$ref": "#/$defs/fraction"
+            },
+            "top": {
+              "$ref": "#/$defs/fraction"
+            },
+            "right": {
+              "$ref": "#/$defs/fraction"
+            },
+            "bottom": {
+              "$ref": "#/$defs/fraction"
+            }
+          }
+        },
+        "fit": {
+          "type": "string",
+          "enum": [
+            "stretch",
+            "contain",
+            "cover"
+          ],
+          "description": "With both w and h: stretch to the box (default), fit inside it keeping the aspect (contain), or fill it and crop the rest (cover). With one of w/h the other follows the picture's aspect; with neither, its size at 96 dpi."
+        },
+        "keep_aspect": {
+          "type": "boolean",
+          "description": "Same as fit: contain."
+        },
+        "line": {
+          "$ref": "#/$defs/line"
+        },
+        "alt": {
+          "type": "string",
+          "description": "Alternative text."
+        },
+        "type": {
+          "const": "picture"
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "table": {
+      "type": "object",
+      "description": "A table.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "description": "Table width: columns are scaled to it.",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "h": {
+          "description": "Table height when no row heights are given (split evenly).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "columns": {
+          "description": "Column widths, or a number of equal columns (needs w). Default: as many as the first row's cells, splitting w.",
+          "anyOf": [
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/length"
+              }
+            },
+            {
+              "type": "integer",
+              "minimum": 1
+            }
+          ]
+        },
+        "rows": {
+          "type": "array",
+          "description": "Rows of cells: text, numbers, cell objects, or null for a cell covered by a span.",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/cell"
+            }
+          }
+        },
+        "row_height": {
+          "$ref": "#/$defs/length"
+        },
+        "row_heights": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/length"
+          }
+        },
+        "header": {
+          "type": "boolean",
+          "description": "The first row is a header: bold, header_color on header_fill (default true)."
+        },
+        "banded": {
+          "type": "boolean",
+          "description": "Every other body row gets band_fill (default false)."
+        },
+        "header_fill": {
+          "$ref": "#/$defs/fill"
+        },
+        "header_color": {
+          "$ref": "#/$defs/color"
+        },
+        "fill": {
+          "description": "Fill of body cells (default none).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/fill"
+            }
+          ]
+        },
+        "band_fill": {
+          "$ref": "#/$defs/fill"
+        },
+        "border": {
+          "description": "Every cell's borders (default 1 pt #BFBFBF; \"none\" for none).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/line"
+            }
+          ]
+        },
+        "cell_margins": {
+          "description": "One length or [left, top, right, bottom].",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/length"
+            },
+            {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/length"
+              },
+              "minItems": 4,
+              "maxItems": 4
+            }
+          ]
+        },
+        "style_id": {
+          "type": "string",
+          "description": "A PowerPoint table style GUID, e.g. {5C22544A-7EE6-4342-B048-85BDC9FD1C3A}."
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justify"
+          ]
+        },
+        "anchor": {
+          "type": "string",
+          "enum": [
+            "top",
+            "middle",
+            "bottom"
+          ]
+        },
+        "font": {
+          "type": "string",
+          "description": "Typeface, e.g. \"Inter\" (default: the theme's body font)."
+        },
+        "size": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Font size in points, e.g. 18."
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "type": {
+          "const": "table"
+        }
+      },
+      "required": [
+        "type",
+        "rows"
+      ],
+      "additionalProperties": false
+    },
+    "element": {
+      "description": "Something on a slide, by `type`.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/shape"
+        },
+        {
+          "$ref": "#/$defs/text_box"
+        },
+        {
+          "$ref": "#/$defs/line_element"
+        },
+        {
+          "$ref": "#/$defs/picture"
+        },
+        {
+          "$ref": "#/$defs/table"
+        }
+      ]
+    },
+    "background": {
+      "description": "A colour, a gradient, {\"picture\": path}, or \"inherit\" (the layout's).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/fill"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "picture"
+          ],
+          "properties": {
+            "picture": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "slide": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Title Slide, Title and Content, Title Only or Blank (name or number). Default: Title and Content with bullets, Title Only with a title, else Blank."
+        },
+        "title": {
+          "type": "string"
+        },
+        "bullets": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "text"
+                ],
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 8
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "background": {
+          "$ref": "#/$defs/background"
+        },
+        "elements": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/element"
+          },
+          "description": "Drawn in order: later ones on top."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Speaker notes."
+        }
+      }
+    }
+  }
+}

@@ -258,6 +258,7 @@ impl Presentation {
                 suffix: s.src.suffix.clone(),
                 shapes: src_shapes,
                 rels: s.src.rels.clone(),
+                edited: s.src.edited,
             });
         }
         self

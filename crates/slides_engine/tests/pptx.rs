@@ -77,7 +77,11 @@ fn new_presentation_is_a_valid_package() {
     let p = Presentation::new();
     assert_eq!(p.size, SlideSize::WIDE);
     assert_eq!(p.len(), 1);
-    assert_eq!(p.layouts.len(), 2);
+    let names: Vec<&str> = p.layouts.iter().map(|l| l.name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["Title Slide", "Title and Content", "Title Only", "Blank"]
+    );
     assert_eq!(p.layout_of(0).name, "Title Slide");
     assert!(!p.is_dirty());
     assert!(p.needs_save_as(), "untitled");

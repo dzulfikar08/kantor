@@ -20,11 +20,19 @@ pub fn slide_arg(pres: &Presentation, args: &Value, key: &str) -> Result<usize> 
     Ok(n as usize - 1)
 }
 
-fn shape_kind(kind: &ShapeKind) -> String {
-    match kind {
+fn shape_kind(s: &slides_engine::Shape) -> String {
+    match &s.kind {
         ShapeKind::Shape { text_box: true, .. } => "text box".into(),
+        ShapeKind::Shape {
+            geom: slides_engine::Geom::Line,
+            ..
+        } => "line".into(),
         ShapeKind::Shape { .. } => "shape".into(),
         ShapeKind::Picture { .. } => "picture".into(),
+        ShapeKind::Other { .. } if s.table().is_some() => "table".into(),
+        ShapeKind::Other { .. } if s.is_group() => "group".into(),
+        ShapeKind::Other { .. } if s.is_chart() => "chart".into(),
+        ShapeKind::Other { .. } if s.is_smartart() => "SmartArt".into(),
         ShapeKind::Other { what, .. } => what.clone(),
     }
 }
@@ -37,7 +45,8 @@ pub fn list(pres: &Presentation, current: usize) -> Value {
             let shapes: Vec<Value> = slide
                 .shapes
                 .iter()
-                .map(|s| {
+                .enumerate()
+                .map(|(ix, s)| {
                     let text = s
                         .text
                         .as_ref()
@@ -45,7 +54,26 @@ pub fn list(pres: &Presentation, current: usize) -> Value {
                     if s.ph.as_ref().is_some_and(|p| p.is_title()) && title.is_empty() {
                         title = text.clone().unwrap_or_default();
                     }
-                    let mut v = json!({"id": s.id, "name": s.name, "kind": shape_kind(&s.kind)});
+                    let mut v = json!({"id": s.id, "name": s.name, "kind": shape_kind(s)});
+                    // Where it is (EMU; placeholders without their own
+                    // position: as the layout places them).
+                    if let Some(x) = s.xfrm.or_else(|| pres.placed((i, ix)).map(|p| p.xfrm)) {
+                        v["x"] = json!(x.x);
+                        v["y"] = json!(x.y);
+                        v["w"] = json!(x.cx);
+                        v["h"] = json!(x.cy);
+                        if x.rot != 0 {
+                            v["rotation"] = json!(x.rot as f64 / 60_000.0);
+                        }
+                    }
+                    let geometry = match &s.kind {
+                        ShapeKind::Shape { .. } => s.kind.geometry(),
+                        ShapeKind::Picture { geometry, .. } => geometry.clone(),
+                        ShapeKind::Other { .. } => None,
+                    };
+                    if let Some(name) = geometry.as_ref().and_then(|g| g.preset_name()) {
+                        v["geometry"] = json!(name);
+                    }
                     if let Some(ph) = &s.ph {
                         v["placeholder"] = json!(ph.ty());
                     }
@@ -81,7 +109,7 @@ pub fn list(pres: &Presentation, current: usize) -> Value {
 }
 
 /// The layout `args.layout` names (name or number from 1).
-fn layout_arg(pres: &Presentation, args: &Value) -> Result<Option<usize>> {
+pub fn layout_arg(pres: &Presentation, args: &Value) -> Result<Option<usize>> {
     let names = || {
         pres.layouts
             .iter()

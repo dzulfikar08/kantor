@@ -3,6 +3,8 @@
 
 use serde_json::{Value, json};
 
+use crate::agent::slides_schema as schema;
+
 /// `(name, title, description, properties, required, read_only)`.
 type Spec = (
     &'static str,
@@ -19,6 +21,36 @@ fn document() -> Value {
 
 fn sheet() -> Value {
     json!({"type": ["string", "integer"], "description": "Sheet name, or its number counting from 1. Default: the sheet on screen."})
+}
+
+fn slide_no() -> Value {
+    json!({"type": "integer", "minimum": 1, "description": "Slide number from 1."})
+}
+
+fn shape_id() -> Value {
+    json!({"type": "integer", "description": "Shape id from slides_list."})
+}
+
+fn length() -> Value {
+    schema::def("length")
+}
+
+/// `document`, `slide` and `units`, then `more` (inlined).
+fn on_slide(more: serde_json::Map<String, Value>) -> Value {
+    let mut m = serde_json::Map::new();
+    m.insert("document".into(), document());
+    m.insert("slide".into(), slide_no());
+    m.insert("units".into(), schema::units());
+    for (k, v) in more {
+        m.insert(k, schema::inline(&v));
+    }
+    Value::Object(m)
+}
+
+macro_rules! elements_help {
+    () => {
+        "Lengths are EMU (914400 per inch, 12700 per point) unless `units` says otherwise or a string gives its unit (\"1.5in\", \"2cm\", \"18pt\"); x/y from the slide's top left (slides_list gives the size of shapes; a 16:9 slide is 13.333 × 7.5 in). Colours are #RRGGBB or theme colours (accent1, tx1, bg1, ...). One undo step; returns the new shapes' ids."
+    };
 }
 
 const SPECS: &[Spec] = &[
@@ -302,9 +334,9 @@ const SPECS: &[Spec] = &[
     (
         "slides_add_slide",
         "Add a slide",
-        "Add a slide with a title and bullet points. Bullets are strings or {text, level} objects (level 0-8). One undo step; the new slide is shown.",
+        "Add a slide with a title and bullet points (bullets are strings or {text, level} objects, level 0-8), and optionally a background, elements (shapes, text boxes, lines, pictures, tables; as slides_add_elements) and speaker notes. One undo step; the new slide is shown.",
         || {
-            json!({
+            let mut v = json!({
                 "document": document(),
                 "after_slide": {"type": "integer", "minimum": 0, "description": "Slide number it goes after; 0 = first. Default: at the end."},
                 "layout": {"type": ["string", "integer"], "description": "Layout name or number from slides_list. Default: Title and Content (or like the slide before)."},
@@ -316,7 +348,15 @@ const SPECS: &[Spec] = &[
                         {"type": "object", "properties": {"text": {"type": "string"}, "level": {"type": "integer", "minimum": 0, "maximum": 8}}, "required": ["text"]},
                     ]},
                 },
-            })
+                "background": schema::def("background"),
+                "elements": {"type": "array", "items": schema::def("element")},
+                "notes": {"type": "string", "description": "Speaker notes."},
+                "units": schema::units(),
+            });
+            v["layout"]["description"] = json!(
+                "Layout name or number from slides_list. Default: Title and Content (or like the slide before)."
+            );
+            v
         },
         &[],
         false,
@@ -356,6 +396,142 @@ const SPECS: &[Spec] = &[
             })
         },
         &["slide", "text"],
+        false,
+    ),
+    (
+        "slides_add_shape",
+        "Add a shape, text box or line",
+        concat!(
+            "Add a shape (type shape: any preset geometry such as rect, roundRect with radius, ellipse, chevron, homePlate; fill, outline, text), a text box (type text) or a line (type line: x1/y1 to x2/y2, dash, arrowheads) to a slide. Text is a string or paragraphs with runs (font, size, bold, italic, colour), alignment, vertical anchor, line spacing, insets, autofit. Shapes look like PowerPoint's new shapes unless given fill/line. ",
+            elements_help!()
+        ),
+        || {
+            let mut more = schema::shape_props();
+            more.extend(schema::line_props());
+            more.insert(
+                "type".into(),
+                json!({"type": "string", "enum": ["shape", "text", "line"], "default": "shape"}),
+            );
+            on_slide(more)
+        },
+        &["slide"],
+        false,
+    ),
+    (
+        "slides_add_picture",
+        "Add a picture",
+        concat!(
+            "Add a PNG or JPEG picture from a file at x/y/w/h (one of w/h keeps its aspect; fit contain or cover with both), with cropping (crop left/top/right/bottom as fractions), cut to a shape (geometry such as ellipse, or radius for rounded corners), an outline and alternative text. ",
+            elements_help!()
+        ),
+        || on_slide(schema::picture_props()),
+        &["slide", "path"],
+        false,
+    ),
+    (
+        "slides_add_table",
+        "Add a table",
+        concat!(
+            "Add a table: rows of cells (text, numbers, or {text, fill, bold, color, align, col_span, row_span, ...}; null for cells covered by a span), column widths, a header row (bold, header_fill) and banded rows, fills and borders. ",
+            elements_help!()
+        ),
+        || on_slide(schema::table_props()),
+        &["slide", "rows"],
+        false,
+    ),
+    (
+        "slides_add_elements",
+        "Add several elements",
+        concat!(
+            "Add several shapes, text boxes, lines, pictures and tables to a slide at once (each with its `type`; the same objects as slides_add_shape, slides_add_picture and slides_add_table, and as the elements of slides_build). Later ones are on top. ",
+            elements_help!()
+        ),
+        || {
+            let mut more = serde_json::Map::new();
+            more.insert(
+                "elements".into(),
+                json!({"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/element"}}),
+            );
+            on_slide(more)
+        },
+        &["slide", "elements"],
+        false,
+    ),
+    (
+        "slides_set_background",
+        "Set a slide's background",
+        "Set a slide's background: a colour, a gradient, {\"picture\": absolute path}, or \"inherit\" (back to the layout's). One undo step.",
+        || {
+            let mut more = serde_json::Map::new();
+            more.insert("background".into(), json!({"$ref": "#/$defs/background"}));
+            on_slide(more)
+        },
+        &["slide", "background"],
+        false,
+    ),
+    (
+        "slides_update_shape",
+        "Move or resize a shape",
+        "Move, resize, turn or flip a shape: only the given values change (lengths as in slides_add_shape). Tables keep their rows in proportion. One undo step.",
+        || {
+            json!({
+                "document": document(), "slide": slide_no(), "shape_id": shape_id(), "units": schema::units(),
+                "x": length(), "y": length(), "w": length(), "h": length(),
+                "rotation": {"type": "number", "description": "Degrees clockwise."},
+                "flip_h": {"type": "boolean"}, "flip_v": {"type": "boolean"},
+            })
+        },
+        &["slide", "shape_id"],
+        false,
+    ),
+    (
+        "slides_delete_shape",
+        "Delete a shape",
+        "Delete a shape from a slide. One undo step.",
+        || json!({"document": document(), "slide": slide_no(), "shape_id": shape_id()}),
+        &["slide", "shape_id"],
+        false,
+    ),
+    (
+        "slides_order_shape",
+        "Bring forward or send backward",
+        "Change a shape's stacking order: front, back, forward or backward one step, or a position counting from 1 at the back. One undo step.",
+        || {
+            json!({
+                "document": document(), "slide": slide_no(), "shape_id": shape_id(),
+                "to": {"anyOf": [{"type": "string", "enum": ["front", "back", "forward", "backward"]}, {"type": "integer", "minimum": 1}]},
+            })
+        },
+        &["slide", "shape_id", "to"],
+        false,
+    ),
+    (
+        "slides_group_shapes",
+        "Group shapes",
+        "Group two or more shapes of a slide into one group (it moves and resizes as one). One undo step; returns the group's id.",
+        || {
+            json!({
+                "document": document(), "slide": slide_no(),
+                "shape_ids": {"type": "array", "minItems": 2, "items": {"type": "integer"}},
+            })
+        },
+        &["slide", "shape_ids"],
+        false,
+    ),
+    (
+        "slides_build",
+        "Build a .pptx from JSON",
+        "Write a new .pptx from a deck description without opening it: slide size, theme fonts and colours, then each slide's layout, title, bullets, background, elements (as slides_add_elements) and notes. The same JSON as `kantor slides build deck.json -o deck.pptx`. The same deck always gives the same file. open=true then opens it in Kantor.",
+        || {
+            json!({
+                "deck": {"type": "object", "description": "The deck: {size, units, theme, text, background, slides: [{layout, title, bullets, background, elements, notes}]}; see the schema (kantor slides schema) or docs/slides-json.md."},
+                "path": {"type": "string", "description": "Absolute path of the .pptx to write (~ allowed)."},
+                "base_dir": {"type": "string", "description": "Folder that relative picture paths start from (default: they must be absolute)."},
+                "overwrite": {"type": "boolean", "default": false, "description": "Replace an existing file."},
+                "open": {"type": "boolean", "default": false, "description": "Open the new file in Kantor."},
+            })
+        },
+        &["deck", "path"],
         false,
     ),
     (
