@@ -65,7 +65,9 @@ impl PdfFind {
             return;
         }
         let at = self.hits.partition_point(|m| m.page < page);
-        let current = self.current.map(|c| if c >= at { c + found.len() } else { c });
+        let current = self
+            .current
+            .map(|c| if c >= at { c + found.len() } else { c });
         self.hits.splice(at..at, found);
         self.current = current;
     }

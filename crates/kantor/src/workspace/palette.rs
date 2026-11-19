@@ -1931,7 +1931,9 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("PDF · the pages fill the window's width"),
         keys: "Ctrl 2",
         run: |ws, window, cx| {
-            ws.with_pdf(window, cx, |v, _, cx| v.set_zoom(pdf_ui::Zoom::FitWidth, None, cx))
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.set_zoom(pdf_ui::Zoom::FitWidth, None, cx)
+            })
         },
     },
     Command {
@@ -1939,7 +1941,9 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("PDF · a whole page in the window"),
         keys: "Ctrl 0",
         run: |ws, window, cx| {
-            ws.with_pdf(window, cx, |v, _, cx| v.set_zoom(pdf_ui::Zoom::FitPage, None, cx))
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.set_zoom(pdf_ui::Zoom::FitPage, None, cx)
+            })
         },
     },
     Command {
@@ -1959,7 +1963,9 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("PDF · show or hide the page thumbnails"),
         keys: "F4",
         run: |ws, window, cx| {
-            ws.with_pdf(window, cx, |v, _, cx| v.toggle_panel(pdf_ui::Panel::Thumbnails, cx))
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.toggle_panel(pdf_ui::Panel::Thumbnails, cx)
+            })
         },
     },
     Command {
@@ -1967,7 +1973,9 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("PDF · show or hide the document's bookmarks"),
         keys: "",
         run: |ws, window, cx| {
-            ws.with_pdf(window, cx, |v, _, cx| v.toggle_panel(pdf_ui::Panel::Bookmarks, cx))
+            ws.with_pdf(window, cx, |v, _, cx| {
+                v.toggle_panel(pdf_ui::Panel::Bookmarks, cx)
+            })
         },
     },
     Command {
@@ -2890,7 +2898,7 @@ mod tests {
                 "Slides",
                 "Omarchy, Ghostty",
                 "SF Pro, Inter, …",
-                ".xlsx, .docx, .pptx, .csv, .ods, .xls, .ppt",
+                ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .xls, .ppt",
             ];
             if !same.contains(&c.detail) {
                 assert!(indonesian(c.detail).is_some(), "detail {:?}", c.detail);

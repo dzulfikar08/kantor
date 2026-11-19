@@ -283,7 +283,7 @@ fn text_thread(
 /// A raster as an image GPUI can paint (BGRA), made off the UI thread.
 fn to_image(r: pdf_engine::Raster) -> Option<Arc<RenderImage>> {
     let mut bytes = r.rgba;
-    for c in bytes.chunks_exact_mut(4) {
+    for c in bytes.as_chunks_mut::<4>().0 {
         c.swap(0, 2);
     }
     let buf = image::RgbaImage::from_raw(r.width, r.height, bytes)?;

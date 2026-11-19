@@ -182,7 +182,10 @@ fn text_has_lines_and_boxes() {
     assert_eq!(rects.len(), 1);
     assert!(rects[0][1] > 80.0, "second line: {rects:?}");
     // Hit testing picks the character under the point.
-    let (x, y) = ((h.rect[0] + h.rect[2]) / 2.0 - 1.0, (h.rect[1] + h.rect[3]) / 2.0);
+    let (x, y) = (
+        (h.rect[0] + h.rect[2]) / 2.0 - 1.0,
+        (h.rect[1] + h.rect[3]) / 2.0,
+    );
     assert_eq!(t.offset_at(x, y), Some(0));
     assert_eq!(t.word_at(2), 0..5);
     assert_eq!(t.line_at(15), 12..t.text.len());
@@ -198,7 +201,10 @@ fn search_finds_hits_on_every_page() {
     assert_eq!((hits[0].page, hits[1].page), (0, 1));
     assert!(find_in(0, &doc.text(0), "hello", true, false).is_empty());
     // A phrase across a line break is found.
-    assert_eq!(find_in(0, &doc.text(0), "world kantor", false, false).len(), 1);
+    assert_eq!(
+        find_in(0, &doc.text(0), "world kantor", false, false).len(),
+        1
+    );
     // Whole words only.
     assert!(find_in(0, &doc.text(0), "hell", false, true).is_empty());
 }
@@ -247,7 +253,10 @@ fn links_are_read() {
             y: Some(292.0)
         })
     );
-    assert_eq!(links[1].target, LinkTarget::Uri("https://example.com/".into()));
+    assert_eq!(
+        links[1].target,
+        LinkTarget::Uri("https://example.com/".into())
+    );
 }
 
 #[test]

@@ -106,8 +106,16 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("f4", ToggleSidebar, c),
         KeyBinding::new("escape", Escape, c),
     ];
-    keys.push(KeyBinding::new(kantor_ui::keys::primary("ctrl-home"), FirstPage, c));
-    keys.push(KeyBinding::new(kantor_ui::keys::primary("ctrl-end"), LastPage, c));
+    keys.push(KeyBinding::new(
+        kantor_ui::keys::primary("ctrl-home"),
+        FirstPage,
+        c,
+    ));
+    keys.push(KeyBinding::new(
+        kantor_ui::keys::primary("ctrl-end"),
+        LastPage,
+        c,
+    ));
     macro_rules! primary {
         ($($key:literal => $action:expr),* $(,)?) => {
             $(keys.extend(kantor_ui::keys::primary_pair(concat!("ctrl-", $key), $action, c));)*
@@ -231,37 +239,42 @@ impl PdfView {
                     this.submit_password(window, cx);
                 }
             }),
-            cx.subscribe_in(&page_box, window, |this, input, ev: &InputEvent, window, cx| {
-                match ev {
-                    InputEvent::PressEnter { .. } => {
-                        let typed = input.read(cx).value().trim().to_owned();
-                        match typed.parse::<usize>() {
-                            Ok(n) if n >= 1 && n <= this.page_count() => {
-                                this.go_to(
-                                    &Dest {
-                                        page: n - 1,
-                                        x: None,
-                                        y: None,
-                                    },
-                                    cx,
-                                );
+            cx.subscribe_in(
+                &page_box,
+                window,
+                |this, input, ev: &InputEvent, window, cx| {
+                    match ev {
+                        InputEvent::PressEnter { .. } => {
+                            let typed = input.read(cx).value().trim().to_owned();
+                            match typed.parse::<usize>() {
+                                Ok(n) if n >= 1 && n <= this.page_count() => {
+                                    this.go_to(
+                                        &Dest {
+                                            page: n - 1,
+                                            x: None,
+                                            y: None,
+                                        },
+                                        cx,
+                                    );
+                                }
+                                _ => {
+                                    this.status =
+                                        tf("There is no page {} in this document", &[&typed])
+                                            .into();
+                                }
                             }
-                            _ => {
-                                this.status =
-                                    tf("There is no page {} in this document", &[&typed]).into();
-                            }
+                            this.focus(window, cx);
+                            cx.notify();
                         }
-                        this.focus(window, cx);
-                        cx.notify();
+                        InputEvent::Blur => {
+                            // Shows the current page again (render refills it).
+                            input.update(cx, |i, cx| i.set_value("", window, cx));
+                            cx.notify();
+                        }
+                        _ => {}
                     }
-                    InputEvent::Blur => {
-                        // Shows the current page again (render refills it).
-                        input.update(cx, |i, cx| i.set_value("", window, cx));
-                        cx.notify();
-                    }
-                    _ => {}
-                }
-            }),
+                },
+            ),
         ];
         let find = find::PdfFind::new(window, cx);
         let path = path.unwrap_or_default();
@@ -573,9 +586,7 @@ impl PdfView {
             Zoom::Percent(z) => z,
             _ if vw <= 0.0 => 1.0,
             Zoom::FitWidth => layout::fit_width(&doc.sizes, self.turn, vw),
-            Zoom::FitPage => {
-                layout::fit_page(&doc.sizes, self.current_page(), self.turn, (vw, vh))
-            }
+            Zoom::FitPage => layout::fit_page(&doc.sizes, self.current_page(), self.turn, (vw, vh)),
         }
     }
 
@@ -673,9 +684,10 @@ impl PdfView {
 
     fn link_at(&self, pos: Point<Pixels>) -> Option<&Link> {
         let (page, x, y) = self.hit(pos, false)?;
-        self.links.get(&page)?.iter().find(|l| {
-            x >= l.rect[0] && x <= l.rect[2] && y >= l.rect[1] && y <= l.rect[3]
-        })
+        self.links
+            .get(&page)?
+            .iter()
+            .find(|l| x >= l.rect[0] && x <= l.rect[2] && y >= l.rect[1] && y <= l.rect[3])
     }
 
     // ── moving around ─────────────────────────────────────────────────────
@@ -883,7 +895,8 @@ impl PdfView {
             None => {
                 let (a, b) = self.ordered_sel().unwrap_or_default();
                 self.ask_text(a.page..b.page + 1);
-                self.status = i18n::t("Still reading the text of those pages; copy again in a moment").into();
+                self.status =
+                    i18n::t("Still reading the text of those pages; copy again in a moment").into();
             }
         }
         cx.notify();
@@ -895,7 +908,10 @@ impl PdfView {
             return;
         }
         self.ask_text(0..n);
-        let end = self.texts.get(&(n - 1)).map_or(usize::MAX / 2, |t| t.text.len());
+        let end = self
+            .texts
+            .get(&(n - 1))
+            .map_or(usize::MAX / 2, |t| t.text.len());
         self.sel = Some((
             TextPos { page: 0, offset: 0 },
             TextPos {
@@ -1140,7 +1156,8 @@ impl PdfView {
                         window.paint_drop_shadows(r, Corners::default(), &shadow);
                         window.paint_quad(fill(r, paper));
                         if let Some(img) = image {
-                            let _ = window.paint_image(r, r, Corners::default(), img.clone(), 0, false);
+                            let _ =
+                                window.paint_image(r, r, Corners::default(), img.clone(), 0, false);
                         }
                         window.paint_quad(outline(r, border.opacity(0.4), BorderStyle::Solid));
                         for (m, color) in marks {
@@ -1237,11 +1254,10 @@ impl PdfView {
                                     .child(i18n::t("Password")),
                             ),
                     )
-                    .child(
-                        div()
-                            .text_color(t.fg_muted)
-                            .child(tf("“{}” is protected. Enter the password to open it.", &[&self.name])),
-                    )
+                    .child(div().text_color(t.fg_muted).child(tf(
+                        "“{}” is protected. Enter the password to open it.",
+                        &[&self.name],
+                    )))
                     .child(Input::new(&self.password).cleanable(false))
                     .when(*wrong, |d| {
                         d.child(
@@ -1410,9 +1426,7 @@ impl Render for PdfView {
         if ready {
             self.sync_page_box(window, cx);
         }
-        if std::mem::take(&mut self.focus_password)
-            && self.focus.contains_focused(window, cx)
-        {
+        if std::mem::take(&mut self.focus_password) && self.focus.contains_focused(window, cx) {
             self.password.update(cx, |i, cx| i.focus(window, cx));
         }
         macro_rules! on {

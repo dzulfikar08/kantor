@@ -11,11 +11,11 @@
 use std::ops::Range;
 
 use hayro::hayro_interpret::font::{Glyph, GlyphRun};
+use hayro::hayro_interpret::hayro_cmap::BfString;
 use hayro::hayro_interpret::{
     BlendMode, ClipPath, Context, Device, DrawMode, DrawProps, Image, ImageDrawProps,
     InterpreterCache, InterpreterSettings, SoftMask, TransformExt as _, interpret_page,
 };
-use hayro::hayro_interpret::hayro_cmap::BfString;
 use hayro::kurbo::{Affine, BezPath, Point, Rect, Vec2};
 
 use crate::PdfDoc;

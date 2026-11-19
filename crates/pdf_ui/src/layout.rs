@@ -32,7 +32,11 @@ pub enum Zoom {
 /// The next step up or down from `z`.
 pub(crate) fn step(z: f32, up: bool) -> f32 {
     if up {
-        STEPS.iter().copied().find(|s| *s > z + 1e-3).unwrap_or(ZOOM_MAX)
+        STEPS
+            .iter()
+            .copied()
+            .find(|s| *s > z + 1e-3)
+            .unwrap_or(ZOOM_MAX)
     } else {
         STEPS
             .iter()
@@ -190,7 +194,9 @@ impl ImageCache {
 
     /// Whether `page` has any image (thumbnails: any scale will do).
     pub fn has(&self, page: usize, turn: Turn) -> bool {
-        self.entries.iter().any(|e| e.page == page && e.turn == turn)
+        self.entries
+            .iter()
+            .any(|e| e.page == page && e.turn == turn)
     }
 
     /// Add an image; older images of the same page go, then the least
@@ -244,8 +250,7 @@ impl ImageCache {
 
     #[cfg(test)]
     pub fn clear(&mut self) {
-        self.evicted
-            .extend(self.entries.drain(..).map(|e| e.image));
+        self.evicted.extend(self.entries.drain(..).map(|e| e.image));
         self.total = 0;
     }
 

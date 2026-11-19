@@ -8,7 +8,9 @@ use std::time::Instant;
 use pdf_engine::{PdfDoc, Renderer, Turn, find_in};
 
 fn main() {
-    let path = std::env::args().nth(1).expect("usage: bench FILE.pdf [QUERY]");
+    let path = std::env::args()
+        .nth(1)
+        .expect("usage: bench FILE.pdf [QUERY]");
     let query = std::env::args().nth(2).unwrap_or_else(|| "the".into());
     let data = Arc::new(std::fs::read(&path).expect("read"));
     let t = Instant::now();

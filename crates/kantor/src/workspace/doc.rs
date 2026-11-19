@@ -4,8 +4,8 @@
 use std::path::PathBuf;
 
 use docs_ui::DocsView;
-use pdf_ui::PdfView;
 use gpui_kit::*;
+use pdf_ui::PdfView;
 use sheets_ui::{Format, HAlign, SheetsView};
 use slides_ui::SlidesView;
 
