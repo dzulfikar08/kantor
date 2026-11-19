@@ -2041,11 +2041,7 @@ pub(crate) fn resized(orig: [f32; 4], h: Handle, to: [f32; 2], lock: bool) -> [f
         } else {
             orig[0]
         };
-        let ay = if matches!(h, 0 | 1 | 2) {
-            orig[1]
-        } else {
-            orig[3]
-        };
+        let ay = if matches!(h, 0..=2) { orig[1] } else { orig[3] };
         let (cx_mid, cy_mid) = ((orig[0] + orig[2]) / 2.0, (orig[1] + orig[3]) / 2.0);
         let (x0, x1) = match h {
             1 | 5 => (cx_mid - nw / 2.0, cx_mid + nw / 2.0),
@@ -2054,7 +2050,7 @@ pub(crate) fn resized(orig: [f32; 4], h: Handle, to: [f32; 2], lock: bool) -> [f
         };
         let (y0, y1) = match h {
             3 | 7 => (cy_mid - nh / 2.0, cy_mid + nh / 2.0),
-            0 | 1 | 2 => (ay, ay + nh),
+            0..=2 => (ay, ay + nh),
             _ => (ay - nh, ay),
         };
         r = [x0, y0, x1, y1];

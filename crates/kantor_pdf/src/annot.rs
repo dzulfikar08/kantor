@@ -340,17 +340,11 @@ fn name<'a>(d: &'a Dictionary, key: &[u8]) -> Option<&'a [u8]> {
 }
 
 fn points(v: &[f32]) -> Vec<[f32; 2]> {
-    v.chunks_exact(2).map(|c| [c[0], c[1]]).collect()
+    v.as_chunks::<2>().0.to_vec()
 }
 
 fn quads(v: &[f32]) -> Vec<[f32; 8]> {
-    v.chunks_exact(8)
-        .map(|c| {
-            let mut q = [0.0; 8];
-            q.copy_from_slice(c);
-            q
-        })
-        .collect()
+    v.as_chunks::<8>().0.to_vec()
 }
 
 /// The annotation dictionaries of page `page` (0-based) with their object
