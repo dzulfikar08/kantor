@@ -215,6 +215,8 @@ pub struct Document {
     pub(crate) default_tab: u32,
     /// `w:decimalSymbol` from settings.xml.
     pub(crate) decimal: char,
+    /// Word's compatibility mode from settings.xml (15 for new documents).
+    pub(crate) compat_mode: u32,
     /// Track Changes is on (`w:trackRevisions`).
     pub(crate) track: bool,
     /// Who tracked edits are by.
@@ -293,6 +295,7 @@ impl Document {
             comments_modified: false,
             default_tab: 720,
             decimal: '.',
+            compat_mode: 15,
             track: false,
             author: "Kantor".to_owned(),
             notes: Vec::new(),
@@ -419,6 +422,7 @@ impl Document {
             comments_modified: false,
             default_tab: read.default_tab,
             decimal: read.decimal,
+            compat_mode: read.compat_mode,
             track: read.track,
             author: "Kantor".to_owned(),
             notes: read.notes,
@@ -669,6 +673,7 @@ impl Document {
             comments_modified: self.comments_modified,
             default_tab: self.default_tab,
             decimal: self.decimal,
+            compat_mode: self.compat_mode,
             track: self.track,
             author: self.author.clone(),
             notes: self.notes.clone(),

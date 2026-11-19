@@ -245,7 +245,10 @@ pub fn layout_paragraph(
             }
             Object::Float(f) => {
                 if !marks.no_floats {
-                    lp.floats.push(float_spec(index, f));
+                    let mut spec = float_spec(index, f);
+                    spec.keep_on_page |=
+                        spec.wrap != docs_layout::FloatWrap::None && doc.compat_mode() >= 15;
+                    lp.floats.push(spec);
                 }
                 hidden()
             }
@@ -502,6 +505,16 @@ pub fn float_spec(index: usize, f: &docs_engine::Float) -> docs_layout::FloatSpe
         },
         behind: at.behind,
         z: at.z,
+        // Top-and-bottom objects always (Word, LibreOffice); square,
+        // tight and through ones too in Word 2013+ mode
+        // (compatibilityMode 15, set by `layout_paragraph`), as ONLYOFFICE
+        // reproduces Word: sdkjs word/Editor/Paragraph/recalc/
+        // align-recalc-state.js moves the paragraph to a new page when a
+        // wrapping object that moves with the text (ParaDrawing
+        // IsMoveWithTextVertically: from paragraph or line) reaches the
+        // bottom margin, if compatibility mode >= Word15. LibreOffice 25.8
+        // leaves those in the bottom margin instead.
+        keep_on_page: at.wrap == docs_engine::Wrap::TopAndBottom,
     }
 }
 
