@@ -319,11 +319,17 @@ impl Workspace {
                     on_change(ws, window, cx)
                 })]
             }
-            DocView::Pdf(e) => {
-                vec![cx.observe_in(e, window, move |ws, _, window, cx| {
+            DocView::Pdf(e) => vec![
+                cx.observe_in(e, window, move |ws, _, window, cx| {
                     on_change(ws, window, cx)
-                })]
-            }
+                }),
+                // A combined PDF opens in a new tab.
+                cx.subscribe_in(e, window, |ws, _, event, window, cx| match event {
+                    pdf_ui::PdfEvent::Open(path) => {
+                        ws.open_paths(None, vec![path.clone()], window, cx)
+                    }
+                }),
+            ],
         };
         Doc {
             view,

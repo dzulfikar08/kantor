@@ -14,7 +14,6 @@ PDF · show or hide the page thumbnails	PDF · tampilkan atau sembunyikan gambar
 PDF · the pages fill the window's width	PDF · halaman memenuhi lebar jendela
 PDF · turn the pages on screen (the file isn't changed)	PDF · putar halaman di layar (berkasnya tidak diubah)
 PDF · type a page number	PDF · ketik nomor halaman
-PDFs open read-only in Kantor; Save As writes a copy	PDF dibuka hanya-baca di Kantor; Simpan Sebagai menulis salinan
 Page Thumbnails	Gambar Mini Halaman
 Page thumbnails	Gambar mini halaman
 Password	Kata sandi
@@ -23,7 +22,6 @@ Rotate View Clockwise	Putar Tampilan Searah Jarum Jam
 Rotate View Counterclockwise	Putar Tampilan Berlawanan Arah Jarum Jam
 Rotate clockwise	Putar searah jarum jam
 Rotate counterclockwise	Putar berlawanan arah jarum jam
-Saved a copy as {}	Salinan disimpan sebagai {}
 Sidebar: thumbnails and bookmarks	Bilah samping: gambar mini dan penanda
 Still reading the text of those pages; copy again in a moment	Teks halaman tersebut masih dibaca; salin lagi sebentar lagi
 The document is trying to open {}. Open only links from sources you trust.	Dokumen ini mencoba membuka {}. Buka hanya tautan dari sumber yang Anda percayai.
@@ -36,3 +34,144 @@ This document is password-protected	Dokumen ini dilindungi kata sandi
 of {}	dari {}
 “{}” is protected. Enter the password to open it.	“{}” dilindungi. Masukkan kata sandi untuk membukanya.
 Kantor can't open {}	Kantor tidak dapat membuka {}
+Organize Pages	Atur Halaman
+PDF · all pages as a grid: drag to reorder, rotate, delete, insert	PDF · semua halaman dalam kisi: seret untuk menyusun ulang, putar, hapus, sisipkan
+Rotate Pages Left	Putar Halaman ke Kiri
+PDF · turn the selected pages counterclockwise (saved in the file)	PDF · putar halaman terpilih berlawanan arah jarum jam (disimpan di berkas)
+Rotate Pages Right	Putar Halaman ke Kanan
+PDF · turn the selected pages clockwise (saved in the file)	PDF · putar halaman terpilih searah jarum jam (disimpan di berkas)
+Delete Pages	Hapus Halaman
+PDF · delete the selected pages	PDF · hapus halaman terpilih
+Duplicate Pages	Gandakan Halaman
+PDF · copies of the selected pages after them	PDF · salinan halaman terpilih di belakangnya
+Extract Pages…	Ekstrak Halaman…
+PDF · save the selected pages as a new PDF	PDF · simpan halaman terpilih sebagai PDF baru
+Insert Pages from File…	Sisipkan Halaman dari Berkas…
+PDF · pages of other PDFs or pictures, after the selected page	PDF · halaman dari PDF lain atau gambar, setelah halaman terpilih
+Insert Blank Page	Sisipkan Halaman Kosong
+PDF · a blank page after the selected page	PDF · halaman kosong setelah halaman terpilih
+Combine Files…	Gabungkan Berkas…
+PDF · PDFs and pictures in one new PDF	PDF · PDF dan gambar dalam satu PDF baru
+Split Document…	Pisahkan Dokumen…
+PDF · into files of N pages, at bookmarks or by page ranges	PDF · menjadi berkas N halaman, di penanda, atau menurut rentang halaman
+Add Page Numbers…	Tambahkan Nomor Halaman…
+PDF · number the pages	PDF · beri nomor halaman
+Watermark…	Tanda Air…
+PDF · text across the pages, such as DRAFT	PDF · teks melintang di halaman, misalnya DRAF
+Reduce File Size…	Perkecil Ukuran Berkas…
+PDF · save a smaller copy	PDF · simpan salinan yang lebih kecil
+Reduce File Size	Perkecil Ukuran Berkas
+Kantor writes a smaller copy of this document: unused objects are removed, repeated pictures and fonts are stored once and everything is compressed. Pictures keep their quality. This document doesn't change.	Kantor menulis salinan dokumen ini yang lebih kecil: objek yang tidak dipakai dibuang, gambar dan font yang berulang disimpan sekali, dan semuanya dimampatkan. Kualitas gambar tetap. Dokumen ini tidak berubah.
+The copy has no password, even if this document has one.	Salinannya tanpa kata sandi, meskipun dokumen ini memakainya.
+Save Smaller Copy…	Simpan Salinan Lebih Kecil…
+No files to combine	Tidak ada berkas untuk digabungkan
+part {}	bagian {}
+Type pages like 1-3, 5, 8- (or leave it empty for all pages)	Ketik halaman seperti 1-3, 5, 8- (atau kosongkan untuk semua halaman)
+Add PDFs or pictures to combine	Tambahkan PDF atau gambar untuk digabungkan
+Combined	Gabungan
+Combining files…	Menggabungkan berkas…
+Combined {} files into {}	{} berkas digabungkan menjadi {}
+Page 1 of N	Halaman 1 dari N
+e.g. 1-3, 4-10, 11-	mis. 1-3, 4-10, 11-
+Type how many pages go in each file (1 or more)	Ketik berapa halaman per berkas (1 atau lebih)
+Top left	Kiri atas
+Top center	Tengah atas
+This document has no bookmarks to split at	Dokumen ini tidak punya penanda untuk titik pisah
+Type the pages of each file, like 1-3, 4-10, 11-	Ketik halaman tiap berkas, seperti 1-3, 4-10, 11-
+Top right	Kanan atas
+pages {}	halaman {}
+Bottom left	Kiri bawah
+Bottom center	Tengah bawah
+Bottom right	Kanan bawah
+Choose a folder for the parts	Pilih folder untuk bagian-bagiannya
+Splitting…	Memisahkan…
+Split into {} files in {}	Dipisah menjadi {} berkas di {}
+Split failed: {}	Gagal memisahkan: {}
+All pages	Semua halaman
+Adding page numbers…	Menambahkan nomor halaman…
+Numbered {} pages	{} halaman diberi nomor
+e.g. DRAFT or CONFIDENTIAL	mis. DRAFT atau CONFIDENTIAL
+Type the watermark's text	Ketik teks tanda air
+The watermark can use Latin letters, digits and punctuation only	Tanda air hanya bisa memakai huruf Latin, angka, dan tanda baca
+Font size: type a number from 6 to 400	Ukuran font: ketik angka 6 sampai 400
+Adding the watermark…	Menambahkan tanda air…
+Watermarked {} pages	Tanda air ditambahkan ke {} halaman
+Couldn't change the pages: {}	Tidak dapat mengubah halaman: {}
+smaller	lebih kecil
+Reducing the file size…	Memperkecil ukuran berkas…
+Saved {}: {} (was {})	{} disimpan: {} (sebelumnya {})
+Couldn't reduce the file size: {}	Tidak dapat memperkecil ukuran berkas: {}
+Move up	Pindahkan ke atas
+Combine Files	Gabungkan Berkas
+PDFs and pictures are combined in this order into a new PDF, which opens in Kantor.	PDF dan gambar digabungkan dengan urutan ini menjadi PDF baru, yang lalu dibuka di Kantor.
+Add Files…	Tambah Berkas…
+Add at least two files to combine.	Tambahkan sedikitnya dua berkas untuk digabungkan.
+Combine…	Gabungkan…
+Every N pages	Setiap N halaman
+At top-level bookmarks	Di penanda tingkat atas
+By page ranges	Menurut rentang halaman
+Makes 1 file	Menghasilkan 1 berkas
+Makes {} files	Menghasilkan {} berkas
+Split Document	Pisahkan Dokumen
+Pages per file	Halaman per berkas
+Pages of each file	Halaman tiap berkas
+Each top-level bookmark starts a file named after it.	Setiap penanda tingkat atas memulai berkas yang dinamai sesuai penanda itu.
+The files are saved in a folder you choose next. This document doesn't change.	Berkas disimpan di folder yang Anda pilih berikutnya. Dokumen ini tidak berubah.
+Split…	Pisahkan…
+Start at	Mulai dari
+Diagonal	Diagonal
+Angle	Sudut
+Color	Warna
+1 page	1 halaman
+{} pages	{} halaman
+Drag pages to reorder them, or onto another open PDF. Right-click for more. Drop PDFs or pictures here to insert them.	Seret halaman untuk menyusun ulang, atau ke PDF lain yang terbuka. Klik kanan untuk pilihan lain. Jatuhkan PDF atau gambar di sini untuk menyisipkannya.
+Rotated 1 page	1 halaman diputar
+Rotated {} pages	{} halaman diputar
+Deleted 1 page	1 halaman dihapus
+Deleted {} pages	{} halaman dihapus
+A PDF needs at least one page	PDF perlu sedikitnya satu halaman
+Duplicated 1 page	1 halaman digandakan
+Duplicated {} pages	{} halaman digandakan
+Moved 1 page to page {}	1 halaman dipindah ke halaman {}
+Moved {} pages to page {}	{} halaman dipindah ke halaman {}
+Blank page	Halaman kosong
+Inserted a blank page	Halaman kosong disisipkan
+Insert pages from PDFs or pictures	Sisipkan halaman dari PDF atau gambar
+Only PDFs and pictures (PNG, JPEG) can be inserted	Hanya PDF dan gambar (PNG, JPEG) yang dapat disisipkan
+Inserting pages…	Menyisipkan halaman…
+Inserted 1 page	1 halaman disisipkan
+Inserted {} pages	{} halaman disisipkan
+Copied 1 page	1 halaman disalin
+Copied {} pages	{} halaman disalin
+No pages copied: select pages and copy them first	Belum ada halaman yang disalin: pilih halaman dan salin dulu
+Extracted {} pages to {}	{} halaman diekstrak ke {}
+Couldn't extract the pages: {}	Tidak dapat mengekstrak halaman: {}
+Undid: {}	Diurungkan: {}
+Redid: {}	Diulangi: {}
+Move Pages	Pindahkan Halaman
+Rotate Pages	Putar Halaman
+Insert Pages	Sisipkan Halaman
+Paste Pages	Tempel Halaman
+Watermark	Tanda Air
+Page Numbers	Nomor Halaman
+Rotate Left	Putar ke Kiri
+Rotate Right	Putar ke Kanan
+Duplicate	Gandakan
+From File Before…	Dari Berkas, Sebelumnya…
+From File After…	Dari Berkas, Sesudahnya…
+Blank Page Before	Halaman Kosong Sebelumnya
+Blank Page After	Halaman Kosong Sesudahnya
+Couldn't read {}: {}	Tidak dapat membaca {}: {}
+Extract Page…	Ekstrak Halaman…
+Extract {} Pages…	Ekstrak {} Halaman…
+Select All Pages	Pilih Semua Halaman
+{} is password-protected: open it, then copy its pages and paste them here	{} dilindungi kata sandi: buka berkasnya, lalu salin halamannya dan tempel di sini
+Still saving…	Masih menyimpan…
+Not saved: the password protection can't be kept	Tidak disimpan: perlindungan kata sandi tidak dapat dipertahankan
+Save without the password?	Simpan tanpa kata sandi?
+Kantor can't protect “{}” with its password again. Saved now, it opens without a password. Use Save As to keep the protected original.	Kantor tidak dapat melindungi “{}” dengan kata sandinya lagi. Jika disimpan sekarang, berkas terbuka tanpa kata sandi. Gunakan Simpan Sebagai untuk mempertahankan aslinya yang terlindungi.
+Save Without Password	Simpan Tanpa Kata Sandi
+Couldn't print: {}	Tidak dapat mencetak: {}
+No changes to save	Tidak ada perubahan untuk disimpan
+Tools	Alat
+Page tools	Alat halaman

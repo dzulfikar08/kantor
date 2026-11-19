@@ -41,6 +41,11 @@ impl PdfFind {
         self.bar.read(cx).is_open().then(|| self.bar.clone())
     }
 
+    /// A search is on (its hits follow page changes).
+    pub fn is_searching(&self) -> bool {
+        self.query.is_some()
+    }
+
     pub fn current_hit(&self) -> Option<&Match> {
         self.hits.get(self.current?)
     }
@@ -85,7 +90,7 @@ impl PdfView {
             FindBarEvent::Search => self.find_search(cx),
             FindBarEvent::Next => self.find_step(true, cx),
             FindBarEvent::Prev => self.find_step(false, cx),
-            // PDFs can't be edited: no replacing.
+            // A PDF's text isn't edited: no replacing.
             FindBarEvent::Replace | FindBarEvent::ReplaceAll => {}
             FindBarEvent::Closed => {
                 self.find.query = None;
@@ -115,7 +120,7 @@ impl PdfView {
         self.find_step(forward, cx);
     }
 
-    fn find_search(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn find_search(&mut self, cx: &mut Context<Self>) {
         let bar = self.find.bar.read(cx);
         let query = bar.active_query(cx).map(|q| (q, bar.options()));
         self.find.query = query.clone();
@@ -138,11 +143,17 @@ impl PdfView {
         cx.notify();
     }
 
-    fn ask_text_in_order(&mut self, pages: impl Iterator<Item = usize>) {
+    pub(crate) fn ask_text_in_order(&mut self, pages: impl Iterator<Item = usize>) {
         let Some(w) = self.worker.clone() else {
             return;
         };
-        let new: Vec<usize> = pages.filter(|p| self.asked_text.insert(*p)).collect();
+        let keys: Vec<_> = pages
+            .filter_map(|i| self.page_ref(i).map(|p| p.key()))
+            .collect();
+        let new: Vec<_> = keys
+            .into_iter()
+            .filter(|k| self.asked_text.insert(*k))
+            .collect();
         if !new.is_empty() {
             w.want_text(new);
         }

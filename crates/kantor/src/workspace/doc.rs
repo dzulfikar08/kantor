@@ -19,6 +19,8 @@ pub(super) enum Snapshot {
     Sheets(Box<sheets_engine::XlsxSnapshot>),
     /// A document or presentation, already serialised (quick).
     Bytes(anyhow::Result<Vec<u8>>),
+    /// An edited PDF, built in the background.
+    Build(Box<dyn FnOnce() -> anyhow::Result<Vec<u8>> + Send>),
 }
 
 impl Snapshot {
@@ -26,6 +28,7 @@ impl Snapshot {
         match self {
             Self::Sheets(s) => Ok(s.render()?.bytes),
             Self::Bytes(b) => b,
+            Self::Build(f) => f(),
         }
     }
 }
@@ -166,6 +169,11 @@ impl DocView {
                 )?;
                 Self::Slides(cx.new(|cx| SlidesView::new_recovered(p, window, cx)))
             }
+            RApp::Pdf => {
+                let bytes = std::fs::read(&found.copy)?;
+                let (original, name) = (doc.original.clone(), doc.name.clone());
+                Self::Pdf(cx.new(|cx| PdfView::new_recovered(bytes, original, name, window, cx)))
+            }
         })
     }
 
@@ -211,8 +219,17 @@ impl DocView {
                     },
                 ))
             }
-            // PDFs aren't edited: nothing to recover.
-            Self::Pdf(_) => None,
+            Self::Pdf(e) => {
+                let build = e.read(cx).recovery_snapshot(cx)?;
+                Some((
+                    Snapshot::Build(build),
+                    SnapshotInfo {
+                        original: self.path(cx),
+                        source_format: None,
+                        unsupported: Vec::new(),
+                    },
+                ))
+            }
         }
     }
 
@@ -229,6 +246,7 @@ impl DocView {
         }
         match self {
             Self::Sheets(e) => e.update(cx, |v, cx| v.autosave(window, cx)),
+            Self::Pdf(e) => e.update(cx, |v, cx| v.autosave(window, cx)),
             _ => {
                 self.save(window, cx);
                 Task::ready(if self.is_dirty(cx) {
@@ -246,7 +264,7 @@ impl DocView {
             Self::Sheets(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
             Self::Docs(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
             Self::Slides(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
-            Self::Pdf(_) => {}
+            Self::Pdf(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
         }
     }
 

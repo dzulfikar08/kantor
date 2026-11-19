@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 # Results from the render and text threads to the UI.
 async-channel = "2"
 gpui-kit.workspace = true
@@ -15,6 +16,11 @@ kantor_core.workspace = true
 kantor_ui.workspace = true
 log.workspace = true
 pdf_engine.workspace = true
+# Page tools and saving: assemble, page numbers, watermark, split, compress.
+kantor_pdf.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true
