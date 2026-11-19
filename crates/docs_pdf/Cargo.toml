@@ -25,6 +25,8 @@ krilla = { version = "0.8", default-features = false, features = ["raster-images
 flate2 = "1"
 
 [dev-dependencies]
+# Reads the test variable font's character map.
+skrifa = "0.42"
 kantor_ooxml.workspace = true
 # Builds .docx fixtures.
 zip.workspace = true

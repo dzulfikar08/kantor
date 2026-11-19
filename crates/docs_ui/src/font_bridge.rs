@@ -15,6 +15,12 @@
 //!
 //! A face that still doesn't verify maps to `None` and its glyphs aren't
 //! painted (logged once) rather than painted with the wrong glyph ids.
+//!
+//! Runs in a variable font at another instance than its default (bold
+//! text when only a variable font is installed) are painted with a static
+//! font cut at that instance ([`docs_layout::instance`]), registered with
+//! GPUI under its own family name: GPUI's rasterizer draws only a face's
+//! default instance.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -27,6 +33,8 @@ use skrifa::{MetadataProvider as _, string::StringId};
 #[derive(Default)]
 pub struct FontBridge {
     faces: HashMap<(u64, u32), Option<FontId>>,
+    /// Variable-font instances, by face and axis values.
+    instances: HashMap<docs_layout::instance::Key, Option<FontId>>,
 }
 
 /// What GPUI needs to know about a parley face.
@@ -81,12 +89,28 @@ fn describe(font: &FontData) -> Option<Face> {
 impl FontBridge {
     /// The GPUI font for a parley face. `sample` is text the face shaped
     /// (used to reach script-only faces through GPUI's fallback path).
+    /// `variations` is the run's variable-font instance (empty for the
+    /// default instance or a static font).
     pub fn font_id(
         &mut self,
         font: &FontData,
+        variations: &[([u8; 4], f32)],
         sample: &str,
         ts: &WindowTextSystem,
     ) -> Option<FontId> {
+        if !variations.is_empty() {
+            let key = docs_layout::instance::key(font, variations);
+            if let Some(id) = self.instances.get(&key) {
+                return *id;
+            }
+            let id = docs_layout::instance::instance(font, variations)
+                .and_then(|inst| Self::resolve_instance(&inst, ts));
+            self.instances.insert(key, id);
+            if id.is_some() {
+                return id;
+            }
+            // Not instanced: the default instance is better than nothing.
+        }
         let key = (font.data.id(), font.index);
         if let Some(id) = self.faces.get(&key) {
             return *id;
@@ -101,6 +125,35 @@ impl FontBridge {
         }
         self.faces.insert(key, id);
         id
+    }
+
+    /// Register a static instance's bytes with GPUI and resolve its family.
+    fn resolve_instance(
+        inst: &docs_layout::instance::Instance,
+        ts: &WindowTextSystem,
+    ) -> Option<FontId> {
+        let data = FontData::new(
+            docs_layout::parley::fontique::Blob::new(inst.data.clone()),
+            0,
+        );
+        let face = describe(&data)?;
+        ts.add_fonts(vec![Cow::Owned(inst.data.to_vec())]).ok()?;
+        let mut f = gpui_kit::font(face.family.clone());
+        f.weight = FontWeight(face.weight);
+        f.style = if face.italic {
+            FontStyle::Italic
+        } else {
+            FontStyle::Normal
+        };
+        let id = ts.resolve_font(&f);
+        let ok = verify(&face, id, ts);
+        if !ok {
+            log::warn!(
+                "docs: GPUI didn't take the {} instance; drawing the default one",
+                inst.postscript_name
+            );
+        }
+        ok.then_some(id)
     }
 
     fn resolve(font: &FontData, sample: &str, ts: &WindowTextSystem) -> Option<FontId> {
@@ -201,7 +254,7 @@ mod tests {
             faces += 1;
             let sample = &paras[run.para].text[run.text_range.clone()];
             let name = describe(&run.font).map(|f| f.family).unwrap_or_default();
-            match bridge.font_id(&run.font, sample, &ts) {
+            match bridge.font_id(&run.font, &run.variations, sample, &ts) {
                 Some(_) => mapped += 1,
                 None => eprintln!("unmapped face: {name}"),
             }
@@ -217,5 +270,59 @@ mod tests {
         }
         assert!(faces >= 3, "{faces} faces");
         assert_eq!(mapped, faces, "every face maps to the same GPUI font file");
+    }
+
+    /// Bold in a variable font (the only face of its family) is painted
+    /// with a static bold instance: a different GPUI font from regular's,
+    /// with the bold advances.
+    #[std::prelude::v1::test]
+    fn variable_font_bold_maps_to_its_instance() {
+        let platform = Arc::new(gpui_wgpu::CosmicTextSystem::new("Liberation Sans"));
+        let ts = WindowTextSystem::new(Arc::new(TextSystem::new(platform)));
+        let bytes = include_bytes!("../../../tests/fonts/KantorVarTest.ttf").to_vec();
+        let font = FontData::new(docs_layout::parley::fontique::Blob::new(Arc::new(bytes)), 0);
+        let mut bridge = FontBridge::default();
+        let bold = bridge
+            .font_id(&font, &[(*b"wght", 700.0)], "mmm", &ts)
+            .expect("bold instance");
+        let regular = bridge.font_id(&font, &[], "mmm", &ts).expect("regular");
+        assert_ne!(bold, regular);
+        let m = |id| f32::from(ts.advance(id, px(1000.), 'm').unwrap().width);
+        assert!(m(bold) > m(regular) + 5.0, "{} vs {}", m(bold), m(regular));
+        // Cached.
+        assert_eq!(
+            bridge.font_id(&font, &[(*b"wght", 700.0)], "mmm", &ts),
+            Some(bold)
+        );
+
+        // GPUI's own text (Sheets cells, the UI) asks for bold by weight:
+        // the variable face is loaded again at `wght` 700 (KANTOR PATCH 3
+        // in vendor/gpui-pre-wgpu), with the instance's advances.
+        let mut f = gpui_kit::font("Kantor Var Test");
+        let plain = ts.resolve_font(&f);
+        f.weight = FontWeight::BOLD;
+        let gpui_bold = ts.resolve_font(&f);
+        assert_ne!(gpui_bold, plain);
+        assert!(
+            (m(gpui_bold) - m(bold)).abs() < 1.0,
+            "{} vs {}",
+            m(gpui_bold),
+            m(bold)
+        );
+        let line = |id: FontId| {
+            let font = ts.get_font_for_id(id).unwrap_or_else(|| f.clone());
+            let run = TextRun {
+                len: 4,
+                font,
+                color: Hsla::default(),
+                background_color: None,
+                underline: None,
+                strikethrough: None,
+            };
+            f32::from(ts.layout_line("mmmm", px(20.), &[run], None).width)
+        };
+        // Shaped at the instance's advances: as wide as the static instance.
+        assert!(line(gpui_bold) > line(plain) + 0.5);
+        assert!((line(gpui_bold) - line(bold)).abs() < 0.05);
     }
 }

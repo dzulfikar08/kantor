@@ -626,7 +626,7 @@ impl Pen<'_> {
     fn runs(&mut self, surface: &mut Surface, line: &Line, t: Transform, c: u32) {
         surface.push_transform(&t);
         for run in &line.runs {
-            let Some(font) = self.fonts.get(&run.font) else {
+            let Some(font) = self.fonts.get(&run.font, &run.variations) else {
                 continue;
             };
             let mut run = run.clone();
@@ -647,7 +647,7 @@ impl Pen<'_> {
             let tr = Transform::from_translate(x0 + PAD_X, y0 + PAD_Y + base);
             surface.push_transform(&tr);
             for run in &line.runs {
-                if let Some(font) = self.fonts.get(&run.font) {
+                if let Some(font) = self.fonts.get(&run.font, &run.variations) {
                     draw_run(surface, run, font);
                 }
             }

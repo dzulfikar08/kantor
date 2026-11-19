@@ -82,6 +82,31 @@ fn docx_to_pdf_and_refusing_to_overwrite() {
     );
 }
 
+/// The refusal reaches the terminal even when stdout goes nowhere
+/// (`kantor convert a.docx a.pdf > /dev/null`): the hint is on stderr.
+#[test]
+fn refusal_hint_is_on_stderr_with_stdout_discarded() {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    docx(d, "memo.docx", "Rapat.");
+    std::fs::write(d.join("memo.pdf"), b"keep").unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_kantor"))
+        .current_dir(d)
+        .args(["convert", "memo.docx", "memo.pdf"])
+        .env_remove("WAYLAND_DISPLAY")
+        .env_remove("DISPLAY")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .expect("kantor runs");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        stderr(&out).contains("memo.pdf exists (use -f to overwrite)"),
+        "{}",
+        stderr(&out)
+    );
+}
+
 #[test]
 fn several_inputs_into_a_folder() {
     let dir = tempfile::tempdir().unwrap();

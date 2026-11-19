@@ -363,7 +363,7 @@ fn draw_text(surface: &mut Surface, text: &Text, t: &Affine, fonts: &mut Fonts) 
         .then(Affine::scale(TO_PT, TO_PT));
     surface.push_transform(&transform(&to_pt));
     for r in &text.runs {
-        let Some(font) = fonts.get(&r.run.font) else {
+        let Some(font) = fonts.get(&r.run.font, &r.run.variations) else {
             continue;
         };
         draw_run(

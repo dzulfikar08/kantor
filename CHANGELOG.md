@@ -47,6 +47,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   reorder, insert, watermark, page numbers, smaller file), would invalidate the signature: Kantor warns and saves
   those as a copy instead.
 
+### Fixed
+
+- Bold (and other weights) in fonts installed only as variable fonts, such as Inter or Plus Jakarta Sans, showed
+  as regular. Docs, Slides and Sheets now draw the font's real bold on screen, and PDFs (export, print and
+  `kantor convert`) embed the bold instance as its own font (listed as `PlusJakartaSans-Bold`), as Word,
+  PowerPoint and Excel do. Line breaks already used the bold widths.
+- Docs and Slides find fonts named after one style of a family, as Windows lists the styles of a variable font
+  (`Plus Jakarta Sans ExtraBold`, `Inter SemiBold Italic`), and use that weight of the family instead of another
+  font.
+
 ## [0.17.0] - 2026-11-19
 
 Kantor gets a fourth app, a PDF viewer with page tools. PDFs open from the system, File ▸ Open or the command line;
