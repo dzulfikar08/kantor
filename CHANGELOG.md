@@ -19,6 +19,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Kantor opens files from the system: Finder's **Open With**, double-clicks and dropping files on
+  the Dock icon on macOS (the app now declares its file types the way current macOS expects, so it
+  is offered for Excel, Word, PowerPoint, OpenDocument, CSV and RTF files without becoming the
+  default app), whether Kantor was running or not. On Linux the app menu entries open several
+  selected files at once and are offered for every type Kantor reads (.xlsb, .ods, .tsv, .doc and
+  .dot too); the Windows installer adds .xlsb and .tsv to Open With.
+- Drag files onto a Kantor window to open them: the window is highlighted while you drag, each
+  file opens in a tab, a PNG or JPEG dropped on a Docs document or a presentation is inserted as a
+  picture, and a file Kantor can't open gets Excel's "file format or file extension is not valid"
+  message (also for such a file given on the command line, which was ignored before).
 - Docs: SmartArt in line with the text gets Layout Options as in Word: choose Square, Tight, Through, Top and Bottom,
   Behind Text or In Front of Text to make it floating where it stands, or In Line with Text to put floating SmartArt
   back in its line; the file is saved as Word saves it, and Undo puts it back.

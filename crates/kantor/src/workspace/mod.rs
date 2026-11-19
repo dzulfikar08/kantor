@@ -18,6 +18,7 @@ mod cloud;
 mod doc;
 mod home;
 mod naming;
+mod opening;
 mod palette;
 mod panels;
 mod read_only;
@@ -164,7 +165,7 @@ pub struct Workspace {
 impl Workspace {
     pub fn new(
         app: Option<AppKind>,
-        file: Option<PathBuf>,
+        files: Vec<PathBuf>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -211,16 +212,26 @@ impl Workspace {
             }),
         });
 
-        let app = app.or_else(|| file.as_deref().and_then(AppKind::for_path));
-        if app.is_none() {
+        // Started for documents (`kantor a.xlsx`, Open With): those open
+        // instead of the last session's tabs.
+        let for_documents = app.is_some() || files.iter().any(|f| AppKind::for_path(f).is_some());
+        if !for_documents {
             this.restore_tabs(&session, window, cx);
         }
         match app {
-            Some(app) => this.launch(app, file, window, cx),
-            None => {
+            Some(app) if files.is_empty() => this.launch(app, None, window, cx),
+            _ if files.is_empty() || !for_documents => {
                 let active = session.active.filter(|&i| i < this.tabs.len());
                 this.activate(active, window, cx);
             }
+            _ => {}
+        }
+        let refused = this.launch_paths(app, files, window, cx);
+        if !refused.is_empty() {
+            // The message is a dialog: after the window is up.
+            cx.defer_in(window, move |ws, window, cx| {
+                ws.cant_open(&refused, window, cx)
+            });
         }
         if std::env::var_os("KANTOR_BENCH_PALETTE").is_some() {
             this.bench_palette(window, cx);
@@ -490,13 +501,7 @@ impl Workspace {
     }
 
     fn open_path(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
-        match AppKind::for_path(&path) {
-            Some(app) => self.launch(app, Some(path), window, cx),
-            None => {
-                self.message = tf("Kantor can't open {}", &[&path.display()]).into();
-                cx.notify();
-            }
-        }
+        self.open_paths(None, vec![path], window, cx);
     }
 
     /// Print the focused document: a PDF opened in the system's viewer
@@ -888,8 +893,9 @@ impl Render for Workspace {
         // Under gpui-kit's menus: nothing beside an open menu hovers.
         root = root.children(kantor_ui::overlay::menu_shield(window));
 
+        let drop_target = self.render_drop_target(cx);
         let Some((tabs, status, sidebar, inspector)) = chrome else {
-            return root.child(content).children(cloud_panel);
+            return root.child(content).children(cloud_panel).child(drop_target);
         };
         let column = v_flex()
             .flex_1()
@@ -955,5 +961,7 @@ impl Render for Workspace {
         .children(palette)
         .children(ai_panel)
         .children(cloud_panel)
+        // Last, so it is over everything a file can be dropped on.
+        .child(drop_target)
     }
 }

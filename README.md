@@ -66,7 +66,7 @@ then, try the nightly builds `Kantor-Setup-nightly-x64.exe` / `Kantor-nightly-x6
 - **Installer:** run `Kantor-Setup-x64.exe` (or `Kantor-Setup-arm64.exe`). It installs for you
   alone in `%LOCALAPPDATA%\Programs\Kantor`, with no administrator prompt, and adds a Start menu
   entry, an uninstall entry (Settings → Apps) and **Open with → Kantor** for `.xlsx`, `.xlsm`,
-  `.xls`, `.xlt`, `.ods`, `.csv`, `.docx`, `.rtf`, `.doc`, `.pptx` and `.ppt`. Your default apps stay as they are. An optional
+  `.xls`, `.xlt`, `.xlsb`, `.ods`, `.csv`, `.tsv`, `.docx`, `.rtf`, `.doc`, `.dot`, `.pptx`, `.ppt`, `.pps` and `.pot`. Your default apps stay as they are. An optional
   task adds Kantor to your `PATH`.
 - **Portable:** unzip `Kantor-x64.zip` anywhere and run `kantor.exe`.
 - The builds aren't code-signed yet, so SmartScreen says *Windows protected your PC* the first
@@ -81,7 +81,7 @@ Arch Linux: a PKGBUILD for a future `kantor-bin` AUR package lives in [packaging
 
 ## What works
 
-`kantor` opens the Home screen (Docs · Sheets · Slides); `kantor file.xlsx` (or `.docx`, `.pptx`) opens the file, and `kantor --sheets`, `--docs` or `--slides` starts a new document. Documents open in tabs that you can split side by side; Find & Replace (`Ctrl F` / `Ctrl H`) and undo work the same in all three apps.
+`kantor` opens the Home screen (Docs · Sheets · Slides); `kantor file.xlsx` (or `.docx`, `.pptx`, several files at once) opens the files, and `kantor --sheets`, `--docs` or `--slides` starts a new document. Kantor is listed under **Open With** for the files it opens on macOS (Finder, and dropping files on its Dock icon), Linux (the install script's app menu entries) and Windows (the installer), without becoming the default app; files dragged onto a Kantor window open in tabs (a PNG or JPEG dropped on a document or presentation is inserted as a picture), and a file Kantor can't open gets Excel's message. Documents open in tabs that you can split side by side; Find & Replace (`Ctrl F` / `Ctrl H`) and undo work the same in all three apps.
 
 ### Sheets
 

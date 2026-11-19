@@ -1631,13 +1631,24 @@ impl SlidesView {
                 return;
             };
             let _ = this.update_in(cx, |this, window, cx| {
-                let res = std::fs::read(&path)
-                    .map_err(anyhow::Error::from)
-                    .and_then(|bytes| this.pres.add_picture(this.current, bytes));
-                this.inserted(res, false, window, cx);
+                this.insert_image_file(&path, window, cx)
             });
         })
         .detach();
+    }
+
+    /// Add the PNG or JPEG at `path` to the current slide (Insert Picture,
+    /// or a picture file dropped on the window).
+    pub fn insert_image_file(
+        &mut self,
+        path: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let res = std::fs::read(path)
+            .map_err(anyhow::Error::from)
+            .and_then(|bytes| self.pres.add_picture(self.current, bytes));
+        self.inserted(res, false, window, cx);
     }
 
     pub fn present_doc(&mut self, from_start: bool, window: &mut Window, cx: &mut Context<Self>) {
