@@ -784,7 +784,13 @@ fn judge(s: &mut Signature) {
         notes.push(m);
     };
     if let Some(m) = s.integrity.msg() {
-        worse(Status::Invalid, m, &mut notes);
+        // An algorithm Kantor can't check says nothing about the signature
+        // (ETSI EN 319 102-1: indeterminate, not failed).
+        let st = match s.integrity {
+            Integrity::Unsupported(_) => Status::Unknown,
+            _ => Status::Invalid,
+        };
+        worse(st, m, &mut notes);
     }
     if let Some(at) = s.path.as_ref().and_then(Path::revoked) {
         worse(

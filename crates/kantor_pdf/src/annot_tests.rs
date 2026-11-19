@@ -558,3 +558,56 @@ fn layers_show_check_boxes_without_appearances() {
         assert!(checked, "the check shows in the layer");
     }
 }
+
+#[test]
+fn xfa_form_with_only_a_signature_field_is_xfa_only() {
+    // Like Canada's IMM 1344: dynamic XFA, the AcroForm holds one
+    // signature field.
+    let pdf = Pdf::from_bytes(&sample_form_pdf(), None).unwrap();
+    let mut f = form::read_form(&pdf).unwrap();
+    f.xfa = true;
+    assert!(!f.xfa_only(), "AcroForm fields to fill beside the XFA");
+    let field = f.fields[0].clone();
+    f.fields = vec![form::Field {
+        name: "Signature1".into(),
+        kind: FieldKind::Signature,
+        ..field
+    }];
+    assert!(f.xfa_only());
+    f.xfa = false;
+    assert!(!f.xfa_only());
+}
+
+#[test]
+fn usage_rights_are_not_a_signature_and_survive_form_fill() {
+    let original = crate::testing::sample_usage_rights_pdf();
+    let pdf = Pdf::from_bytes(&original, None).unwrap();
+    assert_eq!(crate::sig::signatures(&pdf), None, "UR3 is not a signature");
+    assert!(crate::sig::usage_rights(&pdf));
+    // Form entries as an incremental update keep them.
+    let mut values = HashMap::new();
+    values.insert("name".to_owned(), FieldValue::Text("Budi".into()));
+    let out = crate::sig::incremental(&original, None, |p| form::set_values(p, &values)).unwrap();
+    assert!(out.starts_with(&original));
+    assert!(crate::sig::usage_rights(
+        &Pdf::from_bytes(&out, None).unwrap()
+    ));
+    // A rewrite drops them (they no longer match the file).
+    for compact in [false, true] {
+        let mut pdf = Pdf::from_bytes(&original, None).unwrap();
+        let bytes = if compact {
+            pdf.to_bytes_encrypted(true).unwrap()
+        } else {
+            pdf.to_bytes().unwrap()
+        };
+        let again = Pdf::from_bytes(&bytes, None).unwrap();
+        assert!(!crate::sig::usage_rights(&again));
+        assert!(!again.doc.catalog().unwrap().has(b"Perms"));
+    }
+    // A certification beside them stays.
+    let signed = fixture("signed-certify-p2.pdf");
+    let mut pdf = Pdf::from_bytes(&signed, None).unwrap();
+    let bytes = pdf.to_bytes().unwrap();
+    let again = Pdf::from_bytes(&bytes, None).unwrap();
+    assert_eq!(crate::sig::signatures(&again).unwrap().docmdp, Some(2));
+}

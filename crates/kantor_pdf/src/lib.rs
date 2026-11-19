@@ -125,13 +125,16 @@ impl Pdf {
             Some(p) => LoadOptions::with_password(p),
             None => LoadOptions::default(),
         };
-        let doc = match Document::load_mem_with_options(bytes, options) {
+        let mut doc = match Document::load_mem_with_options(bytes, options) {
             Ok(doc) => doc,
             Err(lopdf::Error::InvalidPassword) => return Err(Error::WrongPassword),
             Err(_) if password.is_none() && sniff_encrypt(bytes) => return Err(Error::Encrypted),
             Err(e) => return Err(Error::NotPdf(e.to_string())),
         };
         let was_encrypted = encrypted(&doc);
+        if !was_encrypted {
+            recover_unsized_streams(&mut doc, bytes);
+        }
         if was_encrypted {
             if password.is_none() {
                 return Err(Error::Encrypted);
@@ -171,7 +174,11 @@ impl Pdf {
     }
 
     /// Serialize the PDF.
+    ///
+    /// Usage rights (`/Perms /UR3`) are dropped: they don't survive a
+    /// rewrite.
     pub fn to_bytes(&mut self) -> Result<Vec<u8>> {
+        sig::drop_usage_rights(&mut self.doc);
         // Edits remove objects; the trailer's /Size follows the highest id left.
         if let Some(&(max, _)) = self.doc.objects.keys().next_back() {
             self.doc.max_id = max;
@@ -191,6 +198,55 @@ impl Pdf {
             source,
         })
     }
+}
+
+/// Streams whose dictionary has no usable `/Length`: lopdf leaves them
+/// empty, so a save would drop their data (a page's whole content). Take the
+/// bytes up to `endstream`, as poppler and qpdf do.
+fn recover_unsized_streams(doc: &mut Document, bytes: &[u8]) {
+    let bad: Vec<lopdf::ObjectId> = doc
+        .objects
+        .iter()
+        .filter_map(|(id, o)| {
+            let s = o.as_stream().ok()?;
+            if !s.content.is_empty() || s.start_position.is_none() {
+                return None;
+            }
+            let sized = s
+                .dict
+                .get(b"Length")
+                .and_then(|l| doc.dereference(l))
+                .is_ok_and(|(_, l)| l.as_i64().is_ok() || l.as_f32().is_ok());
+            (!sized).then_some(*id)
+        })
+        .collect();
+    for id in bad {
+        if let Ok(lopdf::Object::Stream(s)) = doc.get_object_mut(id)
+            && let Some(data) = s.start_position.and_then(|at| stream_data(bytes, at))
+        {
+            s.set_content(data.to_vec());
+            s.start_position = None;
+        }
+    }
+}
+
+/// The data of a stream starting at `start` in `bytes`, up to its
+/// `endstream` (without the end-of-line before it); `None` when `endobj`
+/// comes first.
+fn stream_data(bytes: &[u8], start: usize) -> Option<&[u8]> {
+    let rest = bytes.get(start..)?;
+    let find = |pat: &[u8]| rest.windows(pat.len()).position(|w| w == pat);
+    let end = find(b"endstream")?;
+    if find(b"endobj").is_some_and(|o| o < end) {
+        return None;
+    }
+    let data = &rest[..end];
+    let data = data
+        .strip_suffix(b"\r\n")
+        .or_else(|| data.strip_suffix(b"\n"))
+        .or_else(|| data.strip_suffix(b"\r"))
+        .unwrap_or(data);
+    Some(data)
 }
 
 /// A cheap check for `/Encrypt` in the file's trailer area, for files lopdf

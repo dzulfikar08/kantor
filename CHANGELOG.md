@@ -56,6 +56,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Docs and Slides find fonts named after one style of a family, as Windows lists the styles of a variable font
   (`Plus Jakarta Sans ExtraBold`, `Inter SemiBold Italic`), and use that weight of the family instead of another
   font.
+- PDF: saving a PDF whose page content has no stream length (as some generators write it) kept the page but lost
+  everything drawn on it; the content is now read up to its end as other PDF readers do.
 
 ## [0.17.0] - 2026-11-19
 

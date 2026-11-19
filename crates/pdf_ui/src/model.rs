@@ -52,6 +52,9 @@ pub(crate) struct SourceMarks {
     pub form: Option<Form>,
     /// Its digital signatures, if signed.
     pub sigs: Option<kantor_pdf::sig::Signatures>,
+    /// Adobe Reader usage rights (`/Perms /UR3`): kept by saving form
+    /// entries and comments as an incremental update.
+    pub usage_rights: bool,
 }
 
 impl Source {
@@ -88,11 +91,13 @@ impl Source {
                     .collect();
                 let form = kantor_pdf::form::read_form(&pdf);
                 let sigs = kantor_pdf::sig::signatures(&pdf);
+                let usage_rights = kantor_pdf::sig::usage_rights(&pdf);
                 Some(Arc::new(SourceMarks {
                     pdf,
                     pages,
                     form,
                     sigs,
+                    usage_rights,
                 }))
             })
             .as_ref()
@@ -661,14 +666,16 @@ impl Plan {
         Ok(())
     }
 
-    /// The base file is digitally signed and only its annotations or form
-    /// values changed: saved as an incremental update that keeps the
-    /// signatures valid.
+    /// The base file is digitally signed (or has Reader usage rights) and
+    /// only its annotations or form values changed: saved as an incremental
+    /// update that keeps the signatures valid.
     pub fn incremental(&self) -> bool {
         self.pages_as_base
             && !self.flatten
             && self.sources.len() == 1
-            && self.sources[0].marks().is_some_and(|m| m.sigs.is_some())
+            && self.sources[0]
+                .marks()
+                .is_some_and(|m| m.sigs.is_some() || m.usage_rights)
     }
 
     /// The sources as `kantor_pdf` documents with the edits applied.
@@ -1084,6 +1091,32 @@ mod save_tests {
         assert!(!flat.incremental());
         m.rotate(&set(&[0]), true);
         assert!(!m.plan().incremental());
+    }
+
+    #[std::prelude::v1::test]
+    fn usage_rights_keep_form_entries_incremental() {
+        let original = kantor_pdf::testing::sample_usage_rights_pdf();
+        let s = read(original.clone(), "");
+        let marks = s.marks().unwrap();
+        assert!(marks.sigs.is_none(), "usage rights aren't a signature");
+        assert!(marks.usage_rights);
+        let mut m = Model::new(s.clone());
+        m.set_fields(
+            s.id,
+            vec![("name".into(), FieldValue::Text("Budi".into()))],
+            Change::Markup("Fill"),
+        );
+        let plan = m.plan();
+        assert!(plan.incremental());
+        let bytes = build(&plan, true).unwrap();
+        assert!(bytes.starts_with(&original), "incremental update");
+        // Pages changed: rewritten, without the stale usage rights.
+        m.rotate(&set(&[0]), true);
+        let plan = m.plan();
+        assert!(!plan.incremental());
+        let bytes = build(&plan, true).unwrap();
+        let pdf = kantor_pdf::Pdf::from_bytes(&bytes, None).unwrap();
+        assert!(!kantor_pdf::sig::usage_rights(&pdf));
     }
 
     fn a_len(m: &Model) -> usize {

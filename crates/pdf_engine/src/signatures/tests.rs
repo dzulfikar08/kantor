@@ -182,6 +182,176 @@ fn docmdp_no_changes_allows_ltv() {
 }
 
 #[test]
+fn developer_extensions_added_with_ltv_are_allowed() {
+    // PAdES LTV updates declare `/Extensions << /ESIC … >>` in the catalog,
+    // often as an indirect object (ETSI plugtest Signature-P-HU_MIC-3).
+    use lopdf::{Document, IncrementalDocument, Object, dictionary};
+    let original = load("docmdp_p1_ltv");
+    let prev = Document::load_mem(&original).unwrap();
+    let mut inc = IncrementalDocument::create_from(original.clone(), prev.clone());
+    let new = &mut inc.new_document;
+    new.max_id = prev.max_id;
+    let ext = new.add_object(dictionary! {
+        "ESIC" => dictionary! { "BaseVersion" => Object::Name(b"1.7".to_vec()), "ExtensionLevel" => 1 },
+    });
+    let root = prev.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let mut catalog = prev.get_dictionary(root).unwrap().clone();
+    catalog.set("Extensions", ext);
+    new.objects.insert(root, Object::Dictionary(catalog));
+    let mut bytes = Vec::new();
+    inc.save_to(&mut bytes).unwrap();
+    let r = verify(
+        &bytes,
+        &Options {
+            trust: test_trust(),
+            fetch: None,
+            now: now(),
+        },
+    );
+    let s = only(&r);
+    assert_eq!(s.certification, Some(1));
+    assert_eq!(s.changes, vec![Change::LtvAdded], "{}", text_report(&r));
+    assert_eq!(s.status, Status::Valid, "{}", text_report(&r));
+}
+
+/// `docmdp_p1_ltv` with an incremental update that rewrites the page
+/// tree's root as `edit` says.
+fn with_pages_edited(edit: impl FnOnce(&mut lopdf::Dictionary)) -> Report {
+    use lopdf::{Document, IncrementalDocument, Object};
+    let original = load("docmdp_p1_ltv");
+    let prev = Document::load_mem(&original).unwrap();
+    let mut inc = IncrementalDocument::create_from(original.clone(), prev.clone());
+    let pages = prev
+        .catalog()
+        .unwrap()
+        .get(b"Pages")
+        .unwrap()
+        .as_reference()
+        .unwrap();
+    let mut node = prev.get_dictionary(pages).unwrap().clone();
+    edit(&mut node);
+    inc.new_document.max_id = prev.max_id;
+    inc.new_document
+        .objects
+        .insert(pages, Object::Dictionary(node));
+    let mut bytes = Vec::new();
+    inc.save_to(&mut bytes).unwrap();
+    verify(
+        &bytes,
+        &Options {
+            trust: test_trust(),
+            fetch: None,
+            now: now(),
+        },
+    )
+}
+
+#[test]
+fn private_keys_in_the_page_tree_are_not_page_changes() {
+    // iText adds /ITXT to the page tree's root when it signs (DSS's
+    // pkcs7_sha1.pdf): no page shows anything different.
+    let r = with_pages_edited(|d| d.set("ITXT", lopdf::Object::string_literal("5.0.0")));
+    let s = only(&r);
+    assert_eq!(s.changes, vec![Change::LtvAdded], "{}", text_report(&r));
+    assert_eq!(s.status, Status::Valid, "{}", text_report(&r));
+    // An inherited attribute does change the pages.
+    let r = with_pages_edited(|d| d.set("Rotate", 90));
+    let s = only(&r);
+    assert!(
+        s.changes
+            .contains(&Change::PageContentChanged { page: None }),
+        "{:?}",
+        s.changes
+    );
+    assert_eq!(s.status, Status::Invalid);
+}
+
+/// `docmdp_p1_ltv` with an incremental update that rewrites the catalog as
+/// `edit` says (it may add objects).
+fn with_catalog_edited(edit: impl FnOnce(&mut lopdf::Document, &mut lopdf::Dictionary)) -> Report {
+    use lopdf::{Document, IncrementalDocument, Object};
+    let original = load("docmdp_p1_ltv");
+    let prev = Document::load_mem(&original).unwrap();
+    let mut inc = IncrementalDocument::create_from(original.clone(), prev.clone());
+    let root = prev.trailer.get(b"Root").unwrap().as_reference().unwrap();
+    let mut catalog = prev.get_dictionary(root).unwrap().clone();
+    inc.new_document.max_id = prev.max_id;
+    edit(&mut inc.new_document, &mut catalog);
+    inc.new_document
+        .objects
+        .insert(root, Object::Dictionary(catalog));
+    let mut bytes = Vec::new();
+    inc.save_to(&mut bytes).unwrap();
+    verify(
+        &bytes,
+        &Options {
+            trust: test_trust(),
+            fetch: None,
+            now: now(),
+        },
+    )
+}
+
+#[test]
+fn strings_written_another_way_are_not_changes() {
+    use lopdf::{Object, StringFormat};
+    // DSS's pades-signed-annot-added.pdf rewrites the catalog's /Lang as a
+    // literal string where the signed revision had a hex one.
+    let lang = |s: &[u8], f| Object::String(s.to_vec(), f);
+    let literal = lang(b"en-US", StringFormat::Literal);
+    assert!(super::diff::same(
+        &literal,
+        &lang(b"en-US", StringFormat::Hexadecimal)
+    ));
+    assert!(!super::diff::same(
+        &literal,
+        &lang(b"en-GB", StringFormat::Literal)
+    ));
+    let dict = |o| Object::Dictionary(lopdf::dictionary! { "Lang" => o });
+    assert!(super::diff::same(
+        &dict(literal.clone()),
+        &dict(lang(b"en-US", StringFormat::Hexadecimal))
+    ));
+    // Adding a /Lang the signed version didn't have is still a change.
+    let r = with_catalog_edited(|_, c| c.set("Lang", literal.clone()));
+    assert!(only(&r).changes.contains(&Change::Other {
+        what: "Lang".into()
+    }));
+}
+
+#[test]
+fn appearance_names_are_part_of_annotations() {
+    use lopdf::{Object, dictionary};
+    // Acrobat names stamp appearances in /Names /AP when it adds stamps.
+    let r = with_catalog_edited(|doc, c| {
+        let ap = doc.add_object(dictionary! { "Names" => vec![
+            Object::string_literal("Approved"), Object::Null,
+        ]});
+        let names = doc.add_object(dictionary! { "AP" => ap });
+        c.set("Names", names);
+    });
+    let s = only(&r);
+    assert_eq!(s.changes, vec![Change::LtvAdded], "{}", text_report(&r));
+    assert_eq!(s.status, Status::Valid);
+    // A script is a change.
+    let r = with_catalog_edited(|doc, c| {
+        let js = doc.add_object(dictionary! { "Names" => vec![
+            Object::string_literal("run"), Object::Null,
+        ]});
+        c.set("Names", dictionary! { "JavaScript" => js });
+    });
+    let s = only(&r);
+    assert!(
+        s.changes.contains(&Change::Other {
+            what: "Names".into()
+        }),
+        "{:?}",
+        s.changes
+    );
+    assert_eq!(s.status, Status::Invalid);
+}
+
+#[test]
 fn form_filling_under_certification() {
     let r = check("form_filled");
     let s = only(&r);
@@ -355,4 +525,19 @@ fn kantor_incremental_annotations_keep_the_signature_valid() {
     );
     assert!(s.changes.iter().all(|c| c.allowed(s.docmdp)), "{said:?}");
     assert!(r.all_valid());
+}
+
+#[test]
+fn an_algorithm_kantor_cant_check_is_unknown_not_invalid() {
+    // DSS's TeleSec_PKS_eIDAS_QES_CA_1-baseline-b.pdf: plain ECDSA on a
+    // brainpool curve, which ring doesn't do. DSS (and ETSI EN 319 102-1)
+    // call that indeterminate.
+    let r = check("valid");
+    let mut s = only(&r).clone();
+    s.integrity = Integrity::Unsupported("ECDSA brainpoolP256r1".into());
+    judge(&mut s);
+    assert_eq!(s.status, Status::Unknown);
+    s.integrity = Integrity::BadSignature;
+    judge(&mut s);
+    assert_eq!(s.status, Status::Invalid);
 }

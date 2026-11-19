@@ -937,3 +937,48 @@ fn saving_keeps_aes_256_protection() {
     assert_eq!(layout(&mut again), [(2, 0), (1, 180)]);
     assert!(qpdf_ok_with(&saved, Some("user")));
 }
+
+/// A one-page PDF whose content stream has no `/Length` (pdf.js
+/// issue1293r.pdf is such a file), with a correct xref table.
+fn unsized_stream_pdf() -> Vec<u8> {
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 50] \
+         /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>"
+            .to_string(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Times-Roman >>".to_string(),
+        "<<\n>>\nstream\nBT\n10 20 TD\n/F1 20 Tf\n(Issue 1293) Tj\nET\n\nendstream ".to_string(),
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).bytes());
+    }
+    let xref = out.len();
+    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).bytes());
+    for o in offsets {
+        out.extend(format!("{o:010} 00000 n \n").bytes());
+    }
+    out.extend(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .bytes(),
+    );
+    out
+}
+
+#[test]
+fn stream_without_length_keeps_its_data() {
+    let pdf = open(&unsized_stream_pdf());
+    let text = content_text(&pdf, 1);
+    assert!(text.contains("(Issue 1293) Tj"), "{text:?}");
+    assert!(text.trim_end().ends_with("ET"), "{text:?}");
+    // Saved (page tools, annotations): the content survives, with a /Length.
+    let mut pdf = pdf;
+    let again = open(&pdf.to_bytes().unwrap());
+    assert!(content_text(&again, 1).contains("(Issue 1293) Tj"));
+}
