@@ -18,6 +18,10 @@ path = "src/realworld.rs"
 name = "pdf_probe"
 path = "src/pdf_probe.rs"
 
+[[bin]]
+name = "pdf_markup_probe"
+path = "src/pdf_markup_probe.rs"
+
 [dependencies]
 anyhow.workspace = true
 sheets_engine.workspace = true

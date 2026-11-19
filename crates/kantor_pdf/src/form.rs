@@ -94,7 +94,12 @@ pub struct Form {
 impl Form {
     /// Only XFA: nothing Kantor can fill.
     pub fn xfa_only(&self) -> bool {
-        self.xfa && self.fields.iter().all(|f| f.widgets.is_empty())
+        // A signature field or button beside the XFA is nothing to fill.
+        self.xfa
+            && self
+                .fields
+                .iter()
+                .all(|f| f.widgets.is_empty() || !fillable(&f.kind))
     }
 
     pub fn field(&self, name: &str) -> Option<&Field> {

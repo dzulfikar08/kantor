@@ -558,3 +558,22 @@ fn layers_show_check_boxes_without_appearances() {
         assert!(checked, "the check shows in the layer");
     }
 }
+
+#[test]
+fn xfa_form_with_only_a_signature_field_is_xfa_only() {
+    // Like Canada's IMM 1344: dynamic XFA, the AcroForm holds one
+    // signature field.
+    let pdf = Pdf::from_bytes(&sample_form_pdf(), None).unwrap();
+    let mut f = form::read_form(&pdf).unwrap();
+    f.xfa = true;
+    assert!(!f.xfa_only(), "AcroForm fields to fill beside the XFA");
+    let field = f.fields[0].clone();
+    f.fields = vec![form::Field {
+        name: "Signature1".into(),
+        kind: FieldKind::Signature,
+        ..field
+    }];
+    assert!(f.xfa_only());
+    f.xfa = false;
+    assert!(!f.xfa_only());
+}
