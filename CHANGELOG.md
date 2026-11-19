@@ -9,6 +9,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-11-20
+
+The PDF app gets comments, forms, Fill & Sign and image stamps such as a company stamp with a transparent
+background, and digitally signed PDFs (an e-meterai, for example) stay valid when you add them. A new signature
+checker shows who signed, whether the document changed since and whether the certificate is trusted, with
+Indonesia's root built in (also `kantor pdf verify`). Agents can build whole decks: `kantor slides build deck.json`
+and new MCP tools add shapes, pictures, tables and backgrounds. Bold and italic now work with fonts installed only
+as variable fonts (Plus Jakarta Sans, Inter) on screen and in PDFs.
+
 ### Added
 
 - Slides from JSON, for AI agents and scripts. `kantor slides build deck.json -o deck.pptx` writes a presentation
@@ -2181,7 +2190,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/dzulfikar08/kantor/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/dzulfikar08/kantor/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/dzulfikar08/kantor/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/dzulfikar08/kantor/compare/v0.14.0...v0.15.0
