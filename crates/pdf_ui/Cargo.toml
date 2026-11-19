@@ -19,6 +19,12 @@ pdf_engine.workspace = true
 # Page tools and saving: assemble, page numbers, watermark, split, compress.
 kantor_pdf.workspace = true
 
+# Typed signatures: a script font from the system, as outlines (both already
+# in the tree through GPUI / usvg).
+fontdb = "0.23"
+ttf-parser = "0.25"
+imagesize.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

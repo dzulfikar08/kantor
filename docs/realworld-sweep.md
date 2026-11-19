@@ -624,6 +624,38 @@ import has no theme part to keep). Fixture `29_custom_theme.xlsx` and the
 office scenario `sheets_custom_theme_kept.xlsx` cover it. Results in
 `~/.cache/realworld-out/theme-2026-11-19/`.
 
+## PDF files (2026-11-19, before v0.17.0)
+
+The PDF viewer and page tools have their own set: 63 public PDFs in
+`~/.cache/realworld/pdf/`, listed with url, licence and sha256 in
+`~/.cache/realworld/pdf-manifest.tsv` (`pdf-plan.tsv` is the fetch plan):
+US government forms and reports (IRS AcroForm/XFA forms, NIST, the Federal
+Register), Indonesian regulations (scanned PMKs with an OCR layer, one of 642
+pages), UN documents in Arabic and Chinese, the UDHR in Chinese, Japanese,
+Korean, Indonesian, Hindi and Thai, ISO 32000 (756 pages, encrypted), a
+scanned image-only NARA release, LaTeX papers, LibreOffice, Word and Google
+Docs (Skia) exports, PDF/A, and the broken, incremental, linearized and
+encrypted test files of the qpdf and pdf.js test suites.
+
+    python3 -I tools/realworld/fetch.py ~/.cache/realworld/pdf-plan.tsv \
+        --manifest pdf-manifest.tsv --max-mb 60
+    python3 -I tools/realworld/pdf_sweep.py --probe ~/.cache/rw-target/release/pdf_probe \
+        --out ~/.cache/realworld-out/pdf --dpi 54
+
+`pdf_probe` (tools/fidelity) opens each file with pdf_engine, renders the
+first 50 pages and scores each against poppler's `pdftoppm` of the same page,
+extracts and searches the text, then turns page 1, deletes the last page and
+saves with kantor_pdf; the sweep checks the result with `qpdf --check` and
+reopens it with poppler.
+
+First run: 56 ok, 4 pages that differ from poppler (thin table lines poppler
+draws heavier at low resolution, and a SafeDocs image test poppler decodes
+wrongly), 2 files neither reader opens, 1 that needs a password in both.
+Fixed then: Arabic text in visual order (search and copy got it reversed),
+glyphs drawn twice for bold (doubled letters), space glyphs at line ends
+leaving boxes that pointed into the next line, and XFA kept after pages
+changed.
+
 ## Left
 
 Refused (6):

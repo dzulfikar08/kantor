@@ -622,6 +622,73 @@ fn assemble_inserts_pages_of_other_pdfs() {
     assert_eq!(reopened.page_count(), 5);
 }
 
+/// `sample_pdf(pages)` with an AcroForm that has an XFA part, and the
+/// catalog asking for it to be rendered.
+fn sample_pdf_xfa(pages: u32) -> Pdf {
+    let mut pdf = open(&sample_pdf(pages));
+    let doc = &mut pdf.doc;
+    let xfa = doc.add_object(lopdf::Stream::new(
+        lopdf::Dictionary::new(),
+        b"<xdp:xdp xmlns:xdp=\"http://ns.adobe.com/xdp/\"/>".to_vec(),
+    ));
+    let mut form = lopdf::Dictionary::new();
+    form.set("Fields", Vec::<lopdf::Object>::new());
+    form.set("XFA", xfa);
+    let form = doc.add_object(form);
+    let catalog = doc.catalog_mut().unwrap();
+    catalog.set("AcroForm", form);
+    catalog.set("NeedsRendering", true);
+    pdf
+}
+
+fn has_xfa(pdf: &Pdf) -> (bool, bool) {
+    let doc = pdf.document();
+    let catalog = doc.catalog().unwrap();
+    let form = catalog
+        .get(b"AcroForm")
+        .ok()
+        .and_then(|f| doc.dereference(f).ok())
+        .and_then(|(_, f)| f.as_dict().ok().cloned());
+    (
+        form.is_some_and(|f| f.has(b"XFA")),
+        catalog.has(b"NeedsRendering"),
+    )
+}
+
+#[test]
+fn assemble_drops_xfa_when_pages_change() {
+    // Pages as they are (turned is fine): the XFA form still fits them.
+    let out = assemble(
+        vec![sample_pdf_xfa(3)],
+        &[pick(0, 0, 90), pick(0, 1, 0), pick(0, 2, 0)],
+    )
+    .unwrap();
+    assert_eq!(has_xfa(&out), (true, true));
+    // A page deleted, pages moved, or pages of another file added: it doesn't.
+    for picks in [
+        vec![pick(0, 0, 0), pick(0, 1, 0)],
+        vec![pick(0, 1, 0), pick(0, 0, 0), pick(0, 2, 0)],
+    ] {
+        let out = assemble(vec![sample_pdf_xfa(3)], &picks).unwrap();
+        assert_eq!(has_xfa(&out), (false, false), "{picks:?}");
+    }
+    // The command-line page tools too.
+    let mut pdf = sample_pdf_xfa(3);
+    delete(&mut pdf, &ranges("2")).unwrap();
+    assert_eq!(has_xfa(&pdf), (false, false));
+    let merged = merge(sample_pdf_xfa(2), vec![open(&sample_pdf(1))]).unwrap();
+    assert!(!has_xfa(&merged).0);
+    let mut pdf = sample_pdf_xfa(2);
+    reorder(&mut pdf, &ranges("1-2")).unwrap();
+    assert!(has_xfa(&pdf).0);
+    let out = assemble(
+        vec![open(&sample_pdf(1)), sample_pdf_xfa(2)],
+        &[pick(0, 0, 0), pick(1, 0, 0)],
+    )
+    .unwrap();
+    assert!(!has_xfa(&out).0);
+}
+
 #[test]
 fn assemble_checks_its_picks() {
     let e = assemble(vec![open(&sample_pdf(2))], &[pick(0, 5, 0)]).unwrap_err();

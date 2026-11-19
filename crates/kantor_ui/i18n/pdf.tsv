@@ -230,7 +230,6 @@ Not checked	Tidak diperiksa
 Stamp	Stempel
 Highlight	Sorotan
 Squiggly underline	Garis bawah bergelombang
-Drawing	Gambar tangan
 Polygon	Poligon
 Polyline	Polilinea
 Attachment	Lampiran
@@ -313,3 +312,95 @@ Certificate Details	Detail Sertifikat
 Signatures	Tanda Tangan
 {} (signed version, revision {})	{} (versi bertanda tangan, revisi {})
 Kantor couldn't open the signed version	Kantor tidak dapat membuka versi bertanda tangan
+A scan or photo of your signature (PNG keeps a transparent background).	Pindaian atau foto tanda tangan Anda (PNG menjaga latar transparan).
+Add Date	Tambah Tanggal
+Add Image / Stamp…	Tambah Gambar / Stempel…
+Add Mark	Tambah Tanda
+Add Shape	Tambah Bentuk
+Add Signature	Tambah Tanda Tangan
+Add Signature…	Tambah Tanda Tangan…
+Add Stamp	Tambah Stempel
+Add Sticky Note	Tambah Catatan Tempel
+Add Text	Tambah Teks
+Add Text Box	Tambah Kotak Teks
+Add a signature or a saved stamp	Tambahkan tanda tangan atau stempel tersimpan
+Change Color	Ubah Warna
+Change Font	Ubah Fon
+Change Font Size	Ubah Ukuran Fon
+Change Line Width	Ubah Tebal Garis
+Change Opacity	Ubah Opasitas
+Changing pages invalidates the document's digital signature: save these changes as a copy	Mengubah halaman membatalkan tanda tangan digital dokumen: simpan perubahan ini sebagai salinan
+Check Mark	Tanda Centang
+Choose Image…	Pilih Gambar…
+Choose a PNG or JPEG picture	Pilih gambar PNG atau JPEG
+Choose a picture of your signature	Pilih gambar tanda tangan Anda
+Click the page where it goes	Klik halaman di tempat yang diinginkan
+Copies the selected stamp to the same place on these pages. Leave empty for all pages, or type pages like 1-3, 5.	Menyalin stempel yang dipilih ke posisi yang sama di halaman-halaman ini. Kosongkan untuk semua halaman, atau ketik halaman seperti 1-3, 5.
+Couldn't use {}: {}	Tidak dapat memakai {}: {}
+Cross Mark	Tanda Silang
+Delete Comment	Hapus Komentar
+Draw	Gambar Bebas
+Drawing	Coretan
+Fill & Sign	Isi & Tanda Tangan
+Fill Form	Isi Formulir
+Fill in forms, add text, dates, check marks, signatures and stamps	Isi formulir, tambahkan teks, tanggal, tanda centang, tanda tangan, dan stempel
+Flatten	Ratakan
+Flatten Anyway	Tetap Ratakan
+Flatten stamps into the pages?	Ratakan stempel ke halaman?
+Flattened stamps and signatures are drawn into the page content of the copy, so they can't be moved or deleted. Kept as annotations, they stay movable.	Stempel dan tanda tangan yang diratakan digambar ke isi halaman salinan, sehingga tidak bisa dipindah atau dihapus. Jika tetap sebagai anotasi, keduanya masih bisa dipindah.
+Highlight Text	Sorot Teks
+Highlight, notes, text boxes, drawing and stamps	Sorotan, catatan, kotak teks, coretan, dan stempel
+Keep as Annotations	Tetap sebagai Anotasi
+Keep the signature valid	Jaga tanda tangan tetap sah
+Line width	Tebal garis
+Mark Completed	Tandai Selesai
+Mark Not Completed	Tandai Belum Selesai
+Move Comment	Pindahkan Komentar
+My Signatures & Stamps	Tanda Tangan & Stempel Saya
+No comments yet. Use Comment on the toolbar to highlight text, add notes, draw or stamp.	Belum ada komentar. Pakai Komentar di bilah alat untuk menyorot teks, menambah catatan, menggambar, atau membubuhkan stempel.
+Only PNG and JPEG pictures can be placed	Hanya gambar PNG dan JPEG yang bisa ditempatkan
+PDF · copy the selected stamp to every page or the pages you type	PDF · salin stempel yang dipilih ke semua halaman atau halaman yang Anda ketik
+PDF · draw, type or pick a picture of your signature	PDF · gambar, ketik, atau pilih gambar tanda tangan Anda
+PDF · fill in forms, add text, dates, marks, signatures and stamps	PDF · isi formulir, tambahkan teks, tanggal, tanda, tanda tangan, dan stempel
+PDF · highlight, notes, text boxes, drawing and stamps	PDF · sorotan, catatan, kotak teks, coretan, dan stempel
+PDF · place a PNG or JPEG picture, such as a company stamp, on a page	PDF · tempatkan gambar PNG atau JPEG, misalnya stempel perusahaan, di halaman
+PDF · put every form field back to its default	PDF · kembalikan semua isian formulir ke nilai awalnya
+PDF · show or hide the list of comments	PDF · tampilkan atau sembunyikan daftar komentar
+Pink	Merah Muda
+Place	Tempatkan
+Place on Pages	Tempatkan di Halaman
+Place on Pages…	Tempatkan di Halaman…
+Placed on {} pages	Ditempatkan di {} halaman
+Remember on this computer	Ingat di komputer ini
+Remove from My Stamps	Hapus dari Stempel Saya
+Reset Form	Atur Ulang Formulir
+Resize Comment	Ubah Ukuran Komentar
+Rotate Stamp	Putar Stempel
+Save a Copy…	Simpan Salinan…
+Select	Pilih
+Select a stamp or comment to place on other pages	Pilih stempel atau komentar untuk ditempatkan di halaman lain
+Sign	Tanda Tangan
+Signature	Tanda Tangan
+Signature {}	Tanda Tangan {}
+Signatures added here are pictures, not certificate-based digital signatures	Tanda tangan di sini berupa gambar, bukan tanda tangan digital bersertifikat
+Stamp {}	Stempel {}
+Sticky Note	Catatan Tempel
+Still reading the page's comments; try again in a moment	Masih membaca komentar halaman; coba lagi sebentar lagi
+Strikethrough Text	Coret Teks
+This document has form fields you can fill in.	Dokumen ini punya isian formulir yang bisa Anda isi.
+This document has no form fields	Dokumen ini tidak punya isian formulir
+This document is certified with a digital signature that allows no changes.	Dokumen ini disertifikasi dengan tanda tangan digital yang tidak mengizinkan perubahan.
+This document is certified with a digital signature that allows no changes. Saving would invalidate it. Save your changes as a copy and keep the signed original.	Dokumen ini disertifikasi dengan tanda tangan digital yang tidak mengizinkan perubahan. Menyimpan akan membatalkannya. Simpan perubahan Anda sebagai salinan dan biarkan dokumen asli yang ditandatangani.
+This document is certified with a signature that allows no changes	Dokumen ini disertifikasi dengan tanda tangan yang tidak mengizinkan perubahan
+This document is certified with a signature that allows only filling in forms and signing	Dokumen ini disertifikasi dengan tanda tangan yang hanya mengizinkan pengisian formulir dan penandatanganan
+This document is digitally signed. Comments, stamps and form entries are saved after the signed part, so the signature stays valid; page changes would invalidate it.	Dokumen ini bertanda tangan digital. Komentar, stempel, dan isian formulir disimpan setelah bagian yang ditandatangani, sehingga tanda tangan tetap sah; perubahan halaman akan membatalkannya.
+This document is digitally signed. Only filling in its form keeps the signature valid; Kantor saves entries after the signed part.	Dokumen ini bertanda tangan digital. Hanya pengisian formulir yang menjaga tanda tangan tetap sah; Kantor menyimpan isian setelah bagian yang ditandatangani.
+This document is digitally signed. Saving these page changes (rotating, deleting, moving or inserting pages, a watermark, page numbers or a smaller file) would invalidate its signature. Save them as a copy and keep the signed original.	Dokumen ini bertanda tangan digital. Menyimpan perubahan halaman ini (memutar, menghapus, memindah, atau menyisipkan halaman, tanda air, nomor halaman, atau berkas lebih kecil) akan membatalkan tanda tangannya. Simpan sebagai salinan dan biarkan dokumen asli yang ditandatangani.
+This form uses XFA, which Kantor can't fill. Open it in Adobe Acrobat or Reader to fill it in.	Formulir ini memakai XFA, yang tidak bisa diisi Kantor. Buka di Adobe Acrobat atau Reader untuk mengisinya.
+This places a picture of your signature on the page. It is not a certificate-based digital signature.	Ini menempatkan gambar tanda tangan Anda di halaman. Ini bukan tanda tangan digital bersertifikat.
+This would invalidate the digital signature by changing the page content. Keep the stamps and signatures as annotations to keep the signature valid.	Ini akan membatalkan tanda tangan digital karena mengubah isi halaman. Biarkan stempel dan tanda tangan sebagai anotasi agar tanda tangan tetap sah.
+Type here	Ketik di sini
+Type your name	Ketik nama Anda
+Underline Text	Garis Bawahi Teks
+Write a reply	Tulis balasan
+p. {}	hlm. {}

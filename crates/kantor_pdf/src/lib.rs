@@ -6,13 +6,19 @@
 //! [`Pdf`] in memory; [`Pdf::to_bytes`] or [`Pdf::save`] writes the result.
 //! Pages are numbered from 1 everywhere (see [`range`]).
 
+pub mod annot;
+#[cfg(test)]
+mod annot_tests;
 mod compress;
 mod edit;
+pub mod form;
 mod images;
 mod info;
 mod overlay;
 mod pages;
+mod pdfstr;
 pub mod range;
+pub mod sig;
 #[doc(hidden)]
 pub mod testing;
 #[cfg(test)]
@@ -29,6 +35,7 @@ pub use images::{ImageOptions, Orientation, PageSize, images_to_pdf};
 pub use info::{Info, PageInfo, info};
 pub use overlay::{PageNumberOptions, Position, WatermarkOptions, add_page_numbers, add_watermark};
 pub use pages::{SplitPart, delete, every, extract, merge, reorder, rotate, split};
+pub use pdfstr::{pdf_date, pdf_date_now, show_date};
 pub use range::{PageRanges, RangeError};
 
 /// What went wrong, worded for the person running the tool.

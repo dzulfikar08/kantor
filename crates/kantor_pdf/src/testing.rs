@@ -240,3 +240,146 @@ pub fn sample_pdf_linked(pages: u32) -> Vec<u8> {
     cat.set("OpenAction", dest(last));
     save(doc)
 }
+
+/// A one-page sample PDF (612 × 800) with an AcroForm: text field `name`
+/// (value "Ann"), multi-line `notes`, check box `agree` (on state `Yes`),
+/// radio group `size` (`S`, `M`, `L`; `M` chosen), drop-down `city`
+/// (Jakarta, Bandung) and list box `fruit` (apple, pear). No appearances:
+/// filling must write them.
+pub fn sample_form_pdf() -> Vec<u8> {
+    let mut doc = build(1, false);
+    let page = doc.get_pages()[&1];
+    let mut annots = Vec::new();
+    let mut fields = Vec::new();
+    let s = |t: &str| Object::string_literal(t);
+    let rect = |r: [i64; 4]| Object::Array(r.iter().map(|&v| v.into()).collect());
+    let mut widget = |doc: &mut Document, mut d: Dictionary, r: [i64; 4]| {
+        d.set("Type", "Annot");
+        d.set("Subtype", "Widget");
+        d.set("Rect", rect(r));
+        d.set("P", page);
+        d.set("F", 4);
+        let mut mk = Dictionary::new();
+        mk.set("BC", vec![0.into(), 0.into(), 0.into()]);
+        d.set("MK", mk);
+        let id = doc.add_object(d);
+        annots.push(Object::Reference(id));
+        id
+    };
+    let mut d = Dictionary::new();
+    d.set("FT", "Tx");
+    d.set("T", s("name"));
+    d.set("V", s("Ann"));
+    d.set("DA", s("/Helv 12 Tf 0 g"));
+    fields.push(Object::Reference(widget(&mut doc, d, [72, 600, 300, 624])));
+    let mut d = Dictionary::new();
+    d.set("FT", "Tx");
+    d.set("T", s("notes"));
+    d.set("Ff", 1 << 12);
+    d.set("DA", s("/Helv 10 Tf 0 g"));
+    fields.push(Object::Reference(widget(&mut doc, d, [72, 500, 300, 580])));
+    let mut d = Dictionary::new();
+    d.set("FT", "Btn");
+    d.set("T", s("agree"));
+    d.set("V", Object::Name(b"Off".to_vec()));
+    d.set("AS", Object::Name(b"Off".to_vec()));
+    d.set("DA", s("/ZaDb 0 Tf 0 g"));
+    fields.push(Object::Reference(widget(&mut doc, d, [72, 460, 90, 478])));
+    // Radio group: a parent with three widget kids.
+    let parent = doc.new_object_id();
+    let mut kids = Vec::new();
+    for (i, st) in ["S", "M", "L"].iter().enumerate() {
+        let mut k = Dictionary::new();
+        k.set("Parent", parent);
+        k.set(
+            "AS",
+            Object::Name(if *st == "M" {
+                b"M".to_vec()
+            } else {
+                b"Off".to_vec()
+            }),
+        );
+        let form = |content: &[u8]| {
+            let mut d = Dictionary::new();
+            d.set("Type", "XObject");
+            d.set("Subtype", "Form");
+            d.set("BBox", vec![0.into(), 0.into(), 18.into(), 18.into()]);
+            Stream::new(d, content.to_vec())
+        };
+        let mut n = Dictionary::new();
+        n.set(
+            *st,
+            doc.add_object(form(b"0 g 5 5 m 13 5 l 13 13 l 5 13 l h f")),
+        );
+        n.set("Off", doc.add_object(form(b"")));
+        let mut ap = Dictionary::new();
+        ap.set("N", n);
+        k.set("AP", ap);
+        let x = 72 + 30 * i as i64;
+        kids.push(Object::Reference(widget(
+            &mut doc,
+            k,
+            [x, 420, x + 18, 438],
+        )));
+    }
+    let mut d = Dictionary::new();
+    d.set("FT", "Btn");
+    d.set("Ff", 1 << 15);
+    d.set("T", s("size"));
+    d.set("V", Object::Name(b"M".to_vec()));
+    d.set("Kids", kids);
+    doc.objects.insert(parent, Object::Dictionary(d));
+    fields.push(Object::Reference(parent));
+    let mut d = Dictionary::new();
+    d.set("FT", "Ch");
+    d.set("T", s("city"));
+    d.set("Ff", 1 << 17);
+    d.set("Opt", vec![s("Jakarta"), s("Bandung")]);
+    d.set("DA", s("/Helv 11 Tf 0 g"));
+    fields.push(Object::Reference(widget(&mut doc, d, [72, 380, 250, 400])));
+    let mut d = Dictionary::new();
+    d.set("FT", "Ch");
+    d.set("T", s("fruit"));
+    d.set("Opt", vec![s("apple"), s("pear")]);
+    d.set("DA", s("/Helv 11 Tf 0 g"));
+    fields.push(Object::Reference(widget(&mut doc, d, [72, 300, 250, 360])));
+    doc.get_dictionary_mut(page)
+        .expect("page")
+        .set("Annots", annots);
+    let mut helv = Dictionary::new();
+    helv.set("Type", "Font");
+    helv.set("Subtype", "Type1");
+    helv.set("BaseFont", "Helvetica");
+    let mut fonts = Dictionary::new();
+    fonts.set("Helv", doc.add_object(helv));
+    let mut dr = Dictionary::new();
+    dr.set("Font", fonts);
+    let mut form = Dictionary::new();
+    form.set("Fields", fields);
+    form.set("DR", dr);
+    form.set("DA", s("/Helv 0 Tf 0 g"));
+    let form = doc.add_object(form);
+    doc.catalog_mut().expect("catalog").set("AcroForm", form);
+    save(doc)
+}
+
+/// A round red stamp, `size` px square: opaque ring and text-like bar,
+/// half-transparent inside, fully transparent outside the circle.
+pub fn sample_round_stamp(size: u32) -> Vec<u8> {
+    let c = size as f32 / 2.0;
+    let img = image::RgbaImage::from_fn(size, size, |x, y| {
+        let d = ((x as f32 + 0.5 - c).powi(2) + (y as f32 + 0.5 - c).powi(2)).sqrt();
+        if d > c {
+            image::Rgba([0, 0, 0, 0])
+        } else if d > c * 0.8 || (y as f32 - c).abs() < c * 0.1 {
+            image::Rgba([200, 20, 30, 255])
+        } else {
+            image::Rgba([200, 20, 30, 70])
+        }
+    });
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(img)
+        .write_to(&mut out, image::ImageFormat::Png)
+        .expect("png");
+    out.into_inner()
+}

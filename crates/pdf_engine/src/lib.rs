@@ -155,6 +155,19 @@ impl PdfDoc {
             .collect()
     }
 
+    /// The map from page `page`'s PDF user space (points, y up) to page
+    /// space (y down, the page's crop box and rotation applied), as
+    /// `[a, b, c, d, e, f]`.
+    pub fn user_to_page(&self, page: usize) -> [f64; 6] {
+        use hayro::hayro_interpret::TransformExt as _;
+        self.pdf
+            .pages()
+            .get(page)
+            .map_or([1.0, 0.0, 0.0, -1.0, 0.0, 792.0], |p| {
+                p.initial_transform(true).to_kurbo().as_coeffs()
+            })
+    }
+
     /// The document's title from its information dictionary, if set.
     pub fn title(&self) -> Option<String> {
         let raw = self.pdf.metadata().title.as_deref()?;

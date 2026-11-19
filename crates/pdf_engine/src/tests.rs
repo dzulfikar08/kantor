@@ -337,3 +337,59 @@ fn long_files_open_and_search_quickly() {
     assert_eq!(hits, vec![99, 199, 299, 399, 499]);
     assert_eq!(doc.text(519).text, "Page 520");
 }
+
+/// One page drawing `content` with font F1: Helvetica whose ToUnicode
+/// CMap maps the bytes a–d to the Arabic letters م ا ل س.
+fn arabic_page(content: &str) -> Arc<Vec<u8>> {
+    let mut doc = Document::with_version("1.5");
+    let pages_id = doc.new_object_id();
+    let cmap = "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n\
+        /CMapName /Arabic def /CMapType 2 def\n\
+        1 begincodespacerange <00> <FF> endcodespacerange\n\
+        4 beginbfchar <61> <0645> <62> <0627> <63> <0644> <64> <0633> endbfchar\n\
+        endcmap CMapName currentdict /CMap defineresource pop end end\n";
+    let to_unicode = doc.add_object(Stream::new(dictionary! {}, cmap.as_bytes().to_vec()));
+    let font_id = doc.add_object(dictionary! {
+        "Type" => "Font",
+        "Subtype" => "Type1",
+        "BaseFont" => "Helvetica",
+        "ToUnicode" => to_unicode,
+    });
+    let contents_id = doc.add_object(Stream::new(dictionary! {}, content.as_bytes().to_vec()));
+    let page_id = doc.add_object(dictionary! {
+        "Type" => "Page",
+        "Parent" => pages_id,
+        "MediaBox" => vec![0.into(), 0.into(), 612.into(), 792.into()],
+        "Resources" => dictionary! { "Font" => dictionary! { "F1" => font_id } },
+        "Contents" => contents_id,
+    });
+    doc.objects.insert(
+        pages_id,
+        Object::Dictionary(dictionary! {
+            "Type" => "Pages",
+            "Kids" => vec![page_id.into()],
+            "Count" => 1,
+        }),
+    );
+    let catalog = doc.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages_id });
+    doc.trailer.set("Root", catalog);
+    bytes(doc)
+}
+
+#[test]
+fn arabic_drawn_left_to_right_is_read_right_to_left() {
+    // “سلام” as Word and most producers write it: the glyphs in visual
+    // order, the line struck twice a little apart (fake bold).
+    let doc = PdfDoc::open(
+        arabic_page(
+            "BT /F1 12 Tf 1 0 0 1 72 720 Tm (abcd) Tj ET\n\
+             BT /F1 12 Tf 1 0 0 1 72.3 720 Tm (abcd) Tj ET\n",
+        ),
+        "",
+    )
+    .unwrap();
+    let t = doc.text(0);
+    assert_eq!(t.text, "سلام");
+    assert_eq!(t.boxes.len(), 4);
+    assert_eq!(find_in(0, &t, "سلام", false, false).len(), 1);
+}

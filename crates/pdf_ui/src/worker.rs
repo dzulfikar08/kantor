@@ -25,14 +25,47 @@ use crate::model::{PageKey, Source, SrcId};
 /// Pages drawn with one hayro cache before it is replaced.
 const RENEW_CACHE: u32 = 48;
 
+/// A page's annotations as they are being edited: a one-page PDF drawn
+/// over the page instead of the page's own annotations.
+#[derive(Clone)]
+pub(crate) struct Layer {
+    /// Unique for its content.
+    pub id: u64,
+    pub bytes: Arc<Vec<u8>>,
+}
+
+impl PartialEq for Layer {
+    fn eq(&self, o: &Self) -> bool {
+        self.id == o.id
+    }
+}
+
+impl std::fmt::Debug for Layer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Layer({})", self.id)
+    }
+}
+
 /// A page raster to make.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PageJob {
     pub key: PageKey,
+    pub layer: Option<Layer>,
     /// Device pixels per point.
     pub scale: f32,
     /// The view's rotation plus the page's own extra rotation.
     pub turn: Turn,
+}
+
+impl PageJob {
+    /// The image's key in the caches.
+    pub fn img_key(&self) -> crate::layout::ImgKey {
+        (
+            self.key.0,
+            self.key.1,
+            self.layer.as_ref().map_or(0, |l| l.id),
+        )
+    }
 }
 
 /// What the threads report.
@@ -327,7 +360,11 @@ fn render_source(
         if rendered.is_multiple_of(RENEW_CACHE) {
             renderer = Renderer::new(doc);
         }
-        let Some(raster) = renderer.render(j.key.1, j.scale, j.turn) else {
+        let layer = j
+            .layer
+            .as_ref()
+            .and_then(|l| PdfDoc::open(l.bytes.clone(), "").ok());
+        let Some(raster) = renderer.render_layered(j.key.1, j.scale, j.turn, layer.as_ref()) else {
             continue;
         };
         let bytes = raster.bytes();

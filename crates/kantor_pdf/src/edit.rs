@@ -114,6 +114,16 @@ pub fn assemble(mut sources: Vec<Pdf>, picks: &[Pick]) -> Result<Pdf> {
     if !fields.is_empty() {
         add_fields(doc, fields, form_extra)?;
     }
+    // An XFA form describes the original pages: once pages are added,
+    // removed or moved, readers must use the pages' own form fields.
+    let same_pages = picks.len() == ids[0].len()
+        && picks
+            .iter()
+            .enumerate()
+            .all(|(i, p)| p.source == 0 && p.page as usize == i);
+    if !same_pages {
+        drop_xfa(doc);
+    }
     let removed: HashSet<ObjectId> = ids
         .iter()
         .flatten()
@@ -127,6 +137,33 @@ pub fn assemble(mut sources: Vec<Pdf>, picks: &[Pick]) -> Result<Pdf> {
     prune_dead_targets(doc);
     doc.prune_objects();
     Ok(base)
+}
+
+/// Remove the form's XFA part (and the catalog's request to render it),
+/// as Acrobat does when pages change: the AcroForm fields on the pages stay.
+pub(crate) fn drop_xfa(doc: &mut Document) {
+    let form = doc
+        .catalog()
+        .ok()
+        .and_then(|c| c.get(b"AcroForm").ok().cloned());
+    match form {
+        Some(Object::Reference(id)) => {
+            if let Ok(Object::Dictionary(d)) = doc.get_object_mut(id) {
+                d.remove(b"XFA");
+            }
+        }
+        Some(Object::Dictionary(mut d)) => {
+            if d.remove(b"XFA").is_some()
+                && let Ok(c) = doc.catalog_mut()
+            {
+                c.set("AcroForm", d);
+            }
+        }
+        _ => {}
+    }
+    if let Ok(c) = doc.catalog_mut() {
+        c.remove(b"NeedsRendering");
+    }
 }
 
 /// The document's interactive form dictionary, if any.

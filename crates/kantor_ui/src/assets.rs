@@ -102,11 +102,19 @@ icon_assets!(
         // PDF page tools
         LayoutGrid,
         Wrench,
-        // PDF signatures
+        // PDF Comment and Fill & Sign
+        StickyNote,
+        PenLine,
         Signature,
+        Stamp,
+        MoveUpRight,
+        Pentagon,
+        MousePointer2,
+        MessageSquareText,
+        // PDF signature checker
         ShieldCheck,
         ShieldX,
-        ShieldQuestionMark
+        ShieldQuestionMark,
     ]
 );
 

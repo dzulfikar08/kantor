@@ -11,6 +11,38 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- PDF annotations, forms and Fill & Sign. *Comment* on the toolbar: highlight, underline or strike out selected
+  text, sticky notes, text boxes (Helvetica or Courier, size, colour, border, background), the pen, rectangles,
+  ellipses, lines, arrows and polygons; select an annotation to move, resize, recolour, change its width or
+  opacity, edit its text (double-click) or delete it; all undoable. The Comments panel lists every comment with its
+  author (Settings, else your account name), date, text and replies; reply, mark completed (Acrobat's review
+  state) and jump to it. Comments from Acrobat and other programs show in the list and can be moved and edited;
+  other annotations are kept as they are. Everything is saved as standard PDF annotations with their own
+  appearance, so Acrobat, Preview, browsers and poppler show them the same; printing keeps them.
+- PDF forms: fill text fields, check boxes, radio buttons, drop-downs and list boxes (Tab goes to the next field),
+  Reset Form; the values are saved with their appearance, so every viewer shows them. XFA-only forms say Kantor
+  can't fill them.
+- *Fill & Sign*: add text, today's date, check and cross marks, and a signature drawn with the mouse or trackpad,
+  typed in a script font, or from a picture. Signatures are pictures on the page, not certificate-based digital
+  signatures (the dialog says so). *Add Image / Stamp…* (toolbar, palette, right-click on a page, or drop a PNG or
+  JPEG on a page) places a picture such as a company stamp, keeping PNG transparency; resize it (aspect kept,
+  Shift for free), rotate it in quarter turns, set its opacity, and *Place on Pages…* copies it to every page or
+  the pages you type. Signatures and stamps you add are remembered in *My Signatures & Stamps*
+  (`~/.config/kantor/stamps`, never uploaded). Save As offers to flatten stamps and signatures into the pages.
+- Digitally signed PDFs (such as one with an e-meterai) stay valid: comments, stamps and form entries are saved as
+  an incremental update after the signed bytes, which are kept exactly; a certification's DocMDP permissions are
+  respected (no changes, form filling only, or annotations too). Flattening, and page changes (rotate, delete,
+  reorder, insert, watermark, page numbers, smaller file), would invalidate the signature: Kantor warns and saves
+  those as a copy instead.
+
+## [0.17.0] - 2026-11-19
+
+Kantor gets a fourth app, a PDF viewer with page tools. PDFs open from the system, File ▸ Open or the command line;
+pages can be searched, copied, zoomed and printed, and reordered, rotated, deleted, inserted, combined, split,
+numbered and watermarked, with Undo and safe saves. Arabic and Hebrew text is found and copied in reading order.
+
+### Added
+
 - PDF viewer, Kantor's fourth app: `.pdf` files open from File ▸ Open, the start screen, recent files, the command
   line (`kantor file.pdf`), the system's Open With (also on macOS) and dragging onto the window. Pages scroll in one column; zoom with Ctrl+mouse wheel,
   Ctrl+= / Ctrl+-, Fit Width (Ctrl+2), Fit Page (Ctrl+0) or Actual Size (Ctrl+1); type a page number to go there;
@@ -42,6 +74,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Checks Use the Internet*).
 - `kantor pdf verify file.pdf` prints the same signature report for scripts (exit status 0 when all signatures are
   valid); `--online` checks online, `--trust` adds roots.
+- PDF: Arabic and Hebrew text that the file stores left to right (as Word and most other programs write it) is
+  searched and copied in reading order, with the letters' joined shapes as plain letters, and a search ignores the
+  kashida (ـ) that stretches a word. Text drawn twice for a bold effect is found and copied once, not as "第第二二".
+- PDF: when pages are deleted, moved or added, an XFA form (Adobe LiveCycle Designer forms, such as IRS forms) is
+  saved without its XFA part, as Acrobat does, so readers use the form fields on the pages; `kantor pdf delete`,
+  `extract`, `reorder` and `merge` do the same.
 
 ## [0.16.0] - 2026-11-19
 
@@ -2119,7 +2157,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/dzulfikar08/kantor/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/dzulfikar08/kantor/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/dzulfikar08/kantor/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/dzulfikar08/kantor/compare/v0.13.0...v0.14.0

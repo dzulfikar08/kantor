@@ -9,6 +9,10 @@ use pdf_engine::Turn;
 
 use crate::model::PageKey;
 
+/// A page image's key: the source page and its annotation layer (0: the
+/// file's own annotations).
+pub(crate) type ImgKey = (crate::model::SrcId, usize, u64);
+
 /// Space around the column of pages and between pages, px.
 pub(crate) const MARGIN: f32 = 16.0;
 pub(crate) const GAP: f32 = 12.0;
@@ -140,7 +144,7 @@ pub(crate) fn fit_page(pages: &[(f32, f32)], page: usize, turn: Turn, view: (f32
 
 /// A drawn page or thumbnail.
 struct Entry {
-    page: PageKey,
+    page: ImgKey,
     turn: Turn,
     scale: f32,
     image: Arc<RenderImage>,
@@ -179,28 +183,34 @@ impl ImageCache {
     /// the closest scale, to show stretched until the right one comes.
     pub fn get(
         &mut self,
-        page: PageKey,
+        page: ImgKey,
         turn: Turn,
         scale: f32,
     ) -> Option<(Arc<RenderImage>, bool)> {
         self.tick += 1;
         let tick = self.tick;
+        // The page drawn with another layer will do until this one comes.
+        let same_layer = self
+            .entries
+            .iter()
+            .any(|e| e.page == page && e.turn == turn);
         let e = self
             .entries
             .iter_mut()
-            .filter(|e| e.page == page && e.turn == turn)
+            .filter(|e| (e.page.0, e.page.1) == (page.0, page.1) && e.turn == turn)
+            .filter(|e| !same_layer || e.page.2 == page.2)
             .min_by(|a, b| {
                 let da = (a.scale / scale).ln().abs();
                 let db = (b.scale / scale).ln().abs();
                 da.total_cmp(&db)
             })?;
         e.used = tick;
-        let exact = (e.scale / scale - 1.0).abs() < 0.02;
+        let exact = (e.scale / scale - 1.0).abs() < 0.02 && e.page.2 == page.2;
         Some((e.image.clone(), exact))
     }
 
     /// Whether `page` has any image (thumbnails: any scale will do).
-    pub fn has(&self, page: PageKey, turn: Turn) -> bool {
+    pub fn has(&self, page: ImgKey, turn: Turn) -> bool {
         self.entries
             .iter()
             .any(|e| e.page == page && e.turn == turn)
@@ -210,7 +220,7 @@ impl ImageCache {
     /// recently used ones outside `keep` until the cache fits its budget.
     pub fn insert(
         &mut self,
-        page: PageKey,
+        page: ImgKey,
         turn: Turn,
         scale: f32,
         image: Arc<RenderImage>,
@@ -221,7 +231,7 @@ impl ImageCache {
         let mut i = 0;
         while i < self.entries.len() {
             let e = &self.entries[i];
-            if e.page == page {
+            if (e.page.0, e.page.1) == (page.0, page.1) {
                 let e = self.entries.swap_remove(i);
                 self.total -= e.bytes;
                 self.evicted.push(e.image);
@@ -243,7 +253,7 @@ impl ImageCache {
                 .entries
                 .iter()
                 .enumerate()
-                .filter(|(_, e)| !keep.contains(&e.page))
+                .filter(|(_, e)| !keep.contains(&(e.page.0, e.page.1)))
                 .min_by_key(|(_, e)| e.used)
                 .map(|(i, _)| i);
             let Some(i) = victim else {
@@ -311,25 +321,25 @@ mod tests {
     #[std::prelude::v1::test]
     fn cache_stays_in_budget_but_keeps_visible_pages() {
         let mut c = ImageCache::new(250);
-        let k = |p: usize| (1, p);
+        let k = |p: usize| (1, p, 0);
         for p in 0..5 {
-            c.insert(k(p), Turn(0), 1.0, img(), 100, &[k(p)]);
+            c.insert(k(p), Turn(0), 1.0, img(), 100, &[(1, p)]);
         }
         assert!(c.bytes() <= 250);
         assert!(c.has(k(4), Turn(0)) && c.has(k(3), Turn(0)));
         assert!(!c.has(k(0), Turn(0)));
         assert_eq!(c.take_evicted().len(), 3);
         // A page on screen is kept even over budget.
-        c.insert(k(9), Turn(0), 1.0, img(), 300, &[k(3), k(9)]);
+        c.insert(k(9), Turn(0), 1.0, img(), 300, &[(1, 3), (1, 9)]);
         assert!(c.has(k(9), Turn(0)) && c.has(k(3), Turn(0)));
         // A new scale replaces the old image of that page; the nearest
         // one is offered until then.
         let (_, exact) = c.get(k(9), Turn(0), 2.0).unwrap();
         assert!(!exact);
-        c.insert(k(9), Turn(0), 2.0, img(), 10, &[k(9)]);
+        c.insert(k(9), Turn(0), 2.0, img(), 10, &[(1, 9)]);
         assert!(c.get(k(9), Turn(0), 2.0).unwrap().1);
         // Another source's page with the same number is another page.
-        assert!(!c.has((2, 9), Turn(0)));
+        assert!(!c.has((2, 9, 0), Turn(0)));
         c.clear();
         assert_eq!(c.bytes(), 0);
     }

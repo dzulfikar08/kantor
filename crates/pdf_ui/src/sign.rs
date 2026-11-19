@@ -1,1007 +1,1255 @@
-//! Digital signatures: when a signed PDF opens, its signatures are checked
-//! in the background ([`pdf_engine::signatures`]); a banner above the pages
-//! gives the verdict, the Signatures panel in the sidebar lists each
-//! signature (signer, time, type, what changed after signing), a dialog
-//! shows the certificates, and View Signed Version opens the exact bytes
-//! that were signed, read-only.
+//! Fill & Sign: signatures drawn, typed or from a picture, image stamps
+//! (a company stamp PNG), *My Stamps* (kept in `~/.config/kantor/stamps`,
+//! never uploaded), the page's right-click menu, dropping a picture on a
+//! page, Place on Pages, and the bar about forms and digital signatures.
 //!
-//! Network: nothing is fetched unless "Let Signature Checks Use the
-//! Internet" is on (`[pdf] online_signature_checks`, default on) *and* the
-//! user clicks Check Online for this document (see PRIVACY.md).
+//! These signatures are pictures on the page (Ink and Stamp annotations),
+//! not certificate-based digital signatures; the dialog says so.
 
-use std::collections::HashSet;
-use std::sync::Arc;
+use std::cell::Cell;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::sync::{Arc, OnceLock};
 
 use gpui_kit::assets::IconName as Lucide;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{Sizable as _, h_flex, v_flex};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::{
+    Sizable as _,
+    button::{Button, ButtonVariants as _},
+    h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
-use kantor_core::settings::Settings;
-use kantor_ui::i18n::{self, tf, tk};
+use kantor_pdf::annot::Seg;
+use kantor_ui::i18n::{self, tf};
 use kantor_ui::{metrics::*, tokens};
-use pdf_engine::signatures::{
-    self as sig, Arg, Change, Msg, PathEnd, Report, RootSource, Signature, Status,
-};
 
-use crate::{Panel, PdfEvent, PdfView};
+use crate::PdfView;
+use crate::markup::{Placed, Tool};
 
-/// The signature check of one view.
-#[derive(Default)]
-pub(crate) struct Sigs {
-    pub report: Option<Arc<Report>>,
-    pub checking: bool,
-    pub banner_closed: bool,
-    /// Signatures whose details are open in the panel.
-    pub open: HashSet<usize>,
-    /// The certificate dialog: signature, certificate on its path.
-    pub cert: Option<(usize, usize)>,
-    /// The file's bytes as opened (what was checked).
-    bytes: Option<Arc<Vec<u8>>>,
-    _task: Option<Task<()>>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SignTab {
+    Draw,
+    Type,
+    Image,
 }
 
-impl Sigs {
-    pub fn signed(&self) -> bool {
-        self.report.as_ref().is_some_and(|r| r.is_signed())
+pub(crate) enum SignDialog {
+    /// Make a signature.
+    Signature {
+        tab: SignTab,
+        /// Strokes drawn on the pad, px in the pad.
+        strokes: Vec<Vec<[f32; 2]>>,
+        drawing: bool,
+        pad: Rc<Cell<Bounds<Pixels>>>,
+        typed: Entity<InputState>,
+        /// The typed name as outlines (made in the background).
+        outlines: Option<(String, Arc<Vec<Seg>>, f32)>,
+        remember: bool,
+        _sub: Subscription,
+    },
+    /// Place the selected stamp on other pages.
+    PlacePages {
+        pages: Entity<InputState>,
+        error: Option<String>,
+    },
+}
+
+// ── My Stamps ──────────────────────────────────────────────────────────────
+
+/// A remembered signature or stamp.
+#[derive(Clone, Debug)]
+pub(crate) struct Saved {
+    pub path: PathBuf,
+    pub what: Placed,
+    pub signature: bool,
+}
+
+/// Where My Stamps live.
+pub(crate) fn stamps_dir() -> Option<PathBuf> {
+    kantor_core::settings::config_dir().map(|d| d.join("stamps"))
+}
+
+fn stamp_name(ext: &str) -> String {
+    let t = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    format!("{t}.{ext}")
+}
+
+/// Remember `what` (a copy of the picture, or the strokes / typed name).
+pub(crate) fn remember(what: &Placed, typed: Option<&str>, signature: bool) -> std::io::Result<()> {
+    let Some(dir) = stamps_dir() else {
+        return Ok(());
+    };
+    std::fs::create_dir_all(&dir)?;
+    let kind = if signature { "sig" } else { "stamp" };
+    match what {
+        Placed::Image { bytes, .. } => {
+            // The same picture once.
+            for s in load_saved() {
+                if let Placed::Image { bytes: b, .. } = &s.what
+                    && b == bytes
+                {
+                    return Ok(());
+                }
+            }
+            let ext = if bytes.starts_with(b"\x89PNG") {
+                "png"
+            } else {
+                "jpg"
+            };
+            std::fs::write(
+                dir.join(stamp_name(&format!("{kind}.{ext}"))),
+                bytes.as_slice(),
+            )
+        }
+        Placed::Ink { strokes, aspect } => {
+            let mut s = format!("{aspect}\n");
+            for st in strokes {
+                let line: Vec<String> = st.iter().map(|p| format!("{},{}", p[0], p[1])).collect();
+                s.push_str(&line.join(" "));
+                s.push('\n');
+            }
+            std::fs::write(dir.join(stamp_name(&format!("{kind}.ink"))), s)
+        }
+        Placed::Typed { .. } => match typed {
+            Some(t) => std::fs::write(dir.join(stamp_name(&format!("{kind}.typed"))), t),
+            None => Ok(()),
+        },
     }
 }
 
-/// The setting, read once per session.
-struct OnlinePolicy {
-    on: bool,
+/// My Stamps, oldest first.
+pub(crate) fn load_saved() -> Vec<Saved> {
+    let Some(dir) = stamps_dir() else {
+        return Vec::new();
+    };
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut paths: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+    paths.sort();
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let name = path.file_name()?.to_string_lossy().into_owned();
+            let signature = name.contains(".sig.");
+            let what = if name.ends_with(".png") || name.ends_with(".jpg") {
+                let bytes = std::fs::read(&path).ok()?;
+                image_placed(bytes).ok()?
+            } else if name.ends_with(".ink") {
+                let text = std::fs::read_to_string(&path).ok()?;
+                let mut lines = text.lines();
+                let aspect: f32 = lines.next()?.trim().parse().ok()?;
+                let strokes = lines
+                    .filter(|l| !l.trim().is_empty())
+                    .map(|l| {
+                        l.split_whitespace()
+                            .filter_map(|p| {
+                                let (x, y) = p.split_once(',')?;
+                                Some([x.parse().ok()?, y.parse().ok()?])
+                            })
+                            .collect()
+                    })
+                    .collect();
+                Placed::Ink { strokes, aspect }
+            } else if name.ends_with(".typed") {
+                let text = std::fs::read_to_string(&path).ok()?;
+                let (segs, aspect) = typed_outlines(text.trim())?;
+                Placed::Typed {
+                    segs: Arc::new(segs),
+                    aspect,
+                }
+            } else {
+                return None;
+            };
+            Some(Saved {
+                path,
+                what,
+                signature,
+            })
+        })
+        .collect()
 }
-impl Global for OnlinePolicy {}
 
-fn policy(cx: &mut App) -> &mut OnlinePolicy {
-    if !cx.has_global::<OnlinePolicy>() {
-        cx.set_global(OnlinePolicy {
-            on: Settings::load().pdf.online_signature_checks,
-        });
+/// A PNG or JPEG file as something to place.
+pub(crate) fn image_placed(bytes: Vec<u8>) -> Result<Placed, String> {
+    let size = imagesize::blob_size(&bytes).map_err(|e| e.to_string())?;
+    match image::guess_format(&bytes) {
+        Ok(image::ImageFormat::Png | image::ImageFormat::Jpeg) => {}
+        _ => return Err(i18n::t("Only PNG and JPEG pictures can be placed").into()),
     }
-    cx.global_mut::<OnlinePolicy>()
+    Ok(Placed::Image {
+        bytes: Arc::new(bytes),
+        size: (size.width as u32, size.height as u32),
+    })
 }
 
-/// "Let Signature Checks Use the Internet" is on.
-pub fn online_signature_checks_enabled(cx: &mut App) -> bool {
-    policy(cx).on
+fn is_image(p: &Path) -> bool {
+    p.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| matches!(e.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg"))
 }
 
-/// Turn online signature checks on or off, and remember it. Returns the
-/// new state.
-pub fn toggle_online_signature_checks(cx: &mut App) -> bool {
-    let p = policy(cx);
-    p.on = !p.on;
-    let on = p.on;
-    cx.background_spawn(async move {
-        let mut s = Settings::load();
-        if s.pdf.online_signature_checks != on {
-            s.pdf.online_signature_checks = on;
-            if let Err(err) = s.save() {
-                log::error!("saving settings: {err:#}");
+// ── typed signatures ───────────────────────────────────────────────────────
+
+/// The system's fonts (read once, in the background).
+fn fonts() -> &'static fontdb::Database {
+    static DB: OnceLock<fontdb::Database> = OnceLock::new();
+    DB.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        db
+    })
+}
+
+/// Script-like families tried for a typed signature, then any italic.
+const SCRIPT_FONTS: &[&str] = &[
+    "Dancing Script",
+    "Great Vibes",
+    "Allura",
+    "Satisfy",
+    "Pacifico",
+    "Z003",
+    "URW Chancery L",
+    "Brush Script MT",
+    "Segoe Script",
+    "Snell Roundhand",
+    "Apple Chancery",
+    "Lucida Handwriting",
+];
+
+struct Outline {
+    segs: Vec<Seg>,
+    dx: f32,
+}
+
+impl ttf_parser::OutlineBuilder for Outline {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.segs.push(Seg::Move(x + self.dx, y));
+    }
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.segs.push(Seg::Line(x + self.dx, y));
+    }
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        // As a cubic from the current point.
+        let (px0, py0) = match self.segs.last() {
+            Some(Seg::Move(a, b) | Seg::Line(a, b) | Seg::Curve(_, _, _, _, a, b)) => (*a, *b),
+            _ => (x1 + self.dx, y1),
+        };
+        let (qx, qy) = (x1 + self.dx, y1);
+        let (ex, ey) = (x + self.dx, y);
+        self.segs.push(Seg::Curve(
+            px0 + 2.0 / 3.0 * (qx - px0),
+            py0 + 2.0 / 3.0 * (qy - py0),
+            ex + 2.0 / 3.0 * (qx - ex),
+            ey + 2.0 / 3.0 * (qy - ey),
+            ex,
+            ey,
+        ));
+    }
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        let d = self.dx;
+        self.segs.push(Seg::Curve(x1 + d, y1, x2 + d, y2, x + d, y));
+    }
+    fn close(&mut self) {
+        self.segs.push(Seg::Close);
+    }
+}
+
+/// `text` in a script font as outlines in a 0..1 box (y up), and the box's
+/// width / height.
+pub(crate) fn typed_outlines(text: &str) -> Option<(Vec<Seg>, f32)> {
+    if text.trim().is_empty() {
+        return None;
+    }
+    let db = fonts();
+    let mut families: Vec<fontdb::Family> = SCRIPT_FONTS
+        .iter()
+        .map(|f| fontdb::Family::Name(f))
+        .collect();
+    families.push(fontdb::Family::Cursive);
+    families.push(fontdb::Family::Serif);
+    let id = db.query(&fontdb::Query {
+        families: &families,
+        style: fontdb::Style::Italic,
+        ..Default::default()
+    })?;
+    let segs = db.with_face_data(id, |data, index| {
+        let face = ttf_parser::Face::parse(data, index).ok()?;
+        let mut o = Outline {
+            segs: Vec::new(),
+            dx: 0.0,
+        };
+        for ch in text.chars() {
+            let Some(g) = face.glyph_index(ch) else {
+                o.dx += f32::from(face.units_per_em()) * 0.3;
+                continue;
+            };
+            face.outline_glyph(g, &mut o);
+            o.dx += f32::from(face.glyph_hor_advance(g).unwrap_or(0));
+        }
+        Some(o.segs)
+    })??;
+    // Normalize to the outlines' bounds.
+    let mut b = [f32::MAX, f32::MAX, f32::MIN, f32::MIN];
+    let mut grow = |x: f32, y: f32| b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
+    for s in &segs {
+        match *s {
+            Seg::Move(x, y) | Seg::Line(x, y) => grow(x, y),
+            Seg::Curve(a, c, d, e, x, y) => {
+                grow(a, c);
+                grow(d, e);
+                grow(x, y);
+            }
+            Seg::Close => {}
+        }
+    }
+    if b[0] >= b[2] || b[1] >= b[3] {
+        return None;
+    }
+    let (w, h) = (b[2] - b[0], b[3] - b[1]);
+    let n = |x: f32, y: f32| ((x - b[0]) / w, (y - b[1]) / h);
+    let segs = segs
+        .into_iter()
+        .map(|s| match s {
+            Seg::Move(x, y) => {
+                let (x, y) = n(x, y);
+                Seg::Move(x, y)
+            }
+            Seg::Line(x, y) => {
+                let (x, y) = n(x, y);
+                Seg::Line(x, y)
+            }
+            Seg::Curve(a, c, d, e, x, y) => {
+                let (a, c) = n(a, c);
+                let (d, e) = n(d, e);
+                let (x, y) = n(x, y);
+                Seg::Curve(a, c, d, e, x, y)
+            }
+            Seg::Close => Seg::Close,
+        })
+        .collect();
+    Some((segs, w / h))
+}
+
+/// Paint a placeable item into `b` (window px): strokes, outlines, or a
+/// placeholder frame for pictures (shown by an img element instead).
+fn paint_placed(window: &mut Window, b: Bounds<Pixels>, what: &Placed, color: Hsla) {
+    let fit = |aspect: f32| {
+        let (bw, bh) = (f32::from(b.size.width), f32::from(b.size.height));
+        let (w, h) = if bw / bh > aspect {
+            (bh * aspect, bh)
+        } else {
+            (bw, bw / aspect)
+        };
+        let x = f32::from(b.origin.x) + (bw - w) / 2.0;
+        let y = f32::from(b.origin.y) + (bh - h) / 2.0;
+        move |p: [f32; 2]| point(px(x + p[0] * w), px(y + (1.0 - p[1]) * h))
+    };
+    match what {
+        Placed::Ink { strokes, aspect } => {
+            let f = fit(*aspect);
+            for s in strokes {
+                let Some(first) = s.first() else { continue };
+                let mut pb = PathBuilder::stroke(px(2.));
+                pb.move_to(f(*first));
+                for p in &s[1..] {
+                    pb.line_to(f(*p));
+                }
+                if let Ok(p) = pb.build() {
+                    window.paint_path(p, color);
+                }
             }
         }
-    })
-    .detach();
-    cx.refresh_windows();
-    on
-}
-
-/// The roots to trust: the system's, Kantor's bundled ones and, for tests
-/// and screenshots, the PEM file named by `KANTOR_PDF_TRUST`.
-fn trust_store() -> sig::TrustStore {
-    let mut t = sig::TrustStore::standard();
-    if let Some(path) = std::env::var_os("KANTOR_PDF_TRUST")
-        && let Ok(data) = std::fs::read(path)
-    {
-        sig::x509::parse_pem_or_der(&data)
-            .into_iter()
-            .for_each(|c| t.add(c));
+        Placed::Typed { segs, aspect } => {
+            let f = fit(*aspect);
+            let mut pb = PathBuilder::fill();
+            for s in segs.iter() {
+                match *s {
+                    Seg::Move(x, y) => pb.move_to(f([x, y])),
+                    Seg::Line(x, y) => pb.line_to(f([x, y])),
+                    Seg::Curve(a, c, d, e, x, y) => {
+                        pb.cubic_bezier_to(f([x, y]), f([a, c]), f([d, e]))
+                    }
+                    Seg::Close => pb.close(),
+                }
+            }
+            if let Ok(p) = pb.build() {
+                window.paint_path(p, color);
+            }
+        }
+        Placed::Image { .. } => {}
     }
-    t
 }
 
 impl PdfView {
-    /// Check the signatures of `bytes` (the file as opened) in the
-    /// background. `online`: the user allowed fetching for this check.
-    pub(crate) fn check_signatures(
+    // ── adding pictures ────────────────────────────────────────────────────
+
+    /// Add Image / Stamp…: pick a PNG or JPEG; it goes where the page menu
+    /// was opened, else where the user clicks next. `path`: a file already
+    /// chosen.
+    pub fn add_image_stamp(
         &mut self,
-        bytes: Arc<Vec<u8>>,
-        online: bool,
+        path: Option<PathBuf>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.sigs.bytes = Some(bytes.clone());
-        self.sigs.checking = true;
-        let work = cx.background_spawn(async move {
-            if !online && !sig::has_signatures(&bytes) {
-                return None;
-            }
-            let http = sig::Http::new();
-            let opts = sig::Options {
-                trust: trust_store(),
-                fetch: if online { Some(&http) } else { None },
-                now: sig::now(),
-            };
-            Some(Arc::new(sig::verify(&bytes, &opts)))
+        if self.page_count() == 0 {
+            return;
+        }
+        let at = self.context_at.take();
+        if let Some(p) = path {
+            self.stamp_from_file(&p, at, cx);
+            return;
+        }
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(i18n::t("Choose a PNG or JPEG picture").into()),
         });
-        self.sigs._task = Some(cx.spawn(async move |this, cx| {
-            let report = work.await;
-            let _ = this.update(cx, |v, cx| {
-                v.sigs.checking = false;
-                let first = v.sigs.report.is_none();
-                if let Some(r) = &report
-                    && r.is_signed()
-                    && first
-                    && !r.all_valid()
-                {
-                    // Problems show at once, as in Acrobat: the panel opens
-                    // with the details of the signatures that have them.
-                    if v.panel.is_none() {
-                        v.panel = Some(Panel::Signatures);
-                    }
-                    v.sigs.open = r
-                        .signatures
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, s)| !s.status.is_ok())
-                        .map(|(i, _)| i)
-                        .collect();
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(p) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| this.stamp_from_file(&p, at, cx));
+        })
+        .detach();
+    }
+
+    fn stamp_from_file(&mut self, p: &Path, at: Option<(usize, [f32; 2])>, cx: &mut Context<Self>) {
+        let placed = std::fs::read(p)
+            .map_err(|e| e.to_string())
+            .and_then(image_placed);
+        match placed {
+            Ok(what) => {
+                if let Err(e) = remember(&what, None, false) {
+                    log::warn!("keeping the stamp in My Stamps: {e}");
                 }
-                v.sigs.report = report;
+                self.use_placed(what, false, at, cx);
+            }
+            Err(e) => {
+                self.status = tf("Couldn't use {}: {}", &[&p.display(), &e]).into();
                 cx.notify();
-            });
-        }));
+            }
+        }
+    }
+
+    /// Put `what` at `at`, or arm the Place tool for the next click.
+    pub(crate) fn use_placed(
+        &mut self,
+        what: Placed,
+        signature: bool,
+        at: Option<(usize, [f32; 2])>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.markup.mode == crate::Mode::View {
+            self.markup.mode = crate::Mode::FillSign;
+        }
+        self.load_all_marks(cx);
+        match at {
+            Some((place, pt)) => self.place_item(place, pt, &what, signature, cx),
+            None => {
+                self.markup.tool = Tool::Place { what, signature };
+                self.status = i18n::t("Click the page where it goes").into();
+            }
+        }
         cx.notify();
     }
 
-    fn recheck_signatures(&mut self, online: bool, cx: &mut Context<Self>) {
-        if let Some(bytes) = self.sigs.bytes.clone() {
-            self.check_signatures(bytes, online, cx);
+    /// A picture dragged from the file manager over the pages.
+    pub(crate) fn stamp_drag_over(
+        &mut self,
+        ev: &DragMoveEvent<ExternalPaths>,
+        cx: &mut Context<Self>,
+    ) {
+        let images = ev.drag(cx).paths().iter().any(|p| is_image(p));
+        let at = if images {
+            self.user_at(ev.event.position, false)
+                .map(|(p, _, pt)| (p, pt))
+        } else {
+            None
+        };
+        if at != self.markup.stamp_drop {
+            self.markup.stamp_drop = at;
+            cx.notify();
         }
     }
 
-    /// Open the revision signature `i` signed, read-only, in a new tab.
-    fn view_signed_version(&mut self, i: usize, cx: &mut Context<Self>) {
-        let (Some(report), Some(bytes)) = (&self.sigs.report, &self.sigs.bytes) else {
-            return;
+    /// Files dropped on the pages: pictures become stamps there.
+    pub(crate) fn drop_stamps(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) -> bool {
+        let Some((place, pt)) = self.markup.stamp_drop.take() else {
+            return false;
         };
-        let Some(s) = report.signatures.get(i) else {
-            return;
-        };
-        let data = sig::signed_version(bytes, s);
-        let stem = self
-            .path
-            .file_stem()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| self.name.clone());
-        let stem = tf("{} (signed version, revision {})", &[&stem, &s.revision]);
-        let written = kantor_core::dirs::print_pdf_path(&stem)
-            .and_then(|path| std::fs::write(&path, data).map(|()| path));
-        match written {
-            Ok(path) => cx.emit(PdfEvent::OpenSignedVersion(path)),
-            Err(e) => {
-                log::warn!("writing the signed version: {e}");
-                self.status = i18n::t("Kantor couldn't open the signed version").into();
-                cx.notify();
+        let images: Vec<&PathBuf> = paths.iter().filter(|p| is_image(p)).collect();
+        if images.is_empty() {
+            return false;
+        }
+        for (i, p) in images.into_iter().enumerate() {
+            let pt = [pt[0] + 12.0 * i as f32, pt[1] - 12.0 * i as f32];
+            self.stamp_from_file(p, Some((place, pt)), cx);
+        }
+        true
+    }
+
+    // ── the signature dialog ───────────────────────────────────────────────
+
+    pub fn add_signature(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let typed = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("Type your name")));
+        typed.update(cx, |i, cx| {
+            i.set_value(self.markup.author.clone(), window, cx)
+        });
+        let sub = cx.subscribe_in(&typed, window, |this, input, ev: &InputEvent, _, cx| {
+            if let InputEvent::Change = ev {
+                let text = input.read(cx).value().to_string();
+                this.make_outlines(text, cx);
             }
-        }
+        });
+        // Fonts are read in the background the first time.
+        let text = self.markup.author.clone();
+        self.sign = Some(SignDialog::Signature {
+            tab: SignTab::Draw,
+            strokes: Vec::new(),
+            drawing: false,
+            pad: Rc::default(),
+            typed,
+            outlines: None,
+            remember: true,
+            _sub: sub,
+        });
+        self.make_outlines(text, cx);
+        cx.notify();
     }
-}
 
-/// A message in the interface language.
-pub(crate) fn text(m: &Msg) -> String {
-    let args: Vec<String> = m
-        .args
-        .iter()
-        .map(|a| match a {
-            Arg::Word(w) => i18n::t(w).to_owned(),
-            Arg::Text(t) => t.clone(),
-        })
-        .collect();
-    let args: Vec<&dyn std::fmt::Display> =
-        args.iter().map(|a| a as &dyn std::fmt::Display).collect();
-    i18n::fill(i18n::t_dyn(m.template), &args)
-}
-
-fn status_look(status: Status, cx: &App) -> (Lucide, Hsla) {
-    let t = tokens(cx);
-    match status {
-        Status::Valid | Status::ValidWithChanges => (Lucide::ShieldCheck, t.success),
-        Status::Unknown => (Lucide::ShieldQuestionMark, t.warning),
-        Status::Invalid => (Lucide::ShieldX, t.danger),
-    }
-}
-
-fn status_text(status: Status) -> &'static str {
-    match status {
-        Status::Valid => i18n::t("Valid"),
-        Status::ValidWithChanges => i18n::t("Valid, with allowed changes"),
-        Status::Unknown => i18n::t("Validity unknown"),
-        Status::Invalid => i18n::t("Invalid"),
-    }
-}
-
-fn icon(icon: Lucide, color: Hsla, size: Pixels) -> impl IntoElement {
-    gpui_kit::component::Icon::new(icon)
-        .with_size(size)
-        .text_color(color)
-}
-
-/// The bar above the pages of a signed document.
-pub(crate) fn banner(view: &PdfView, cx: &mut Context<PdfView>) -> Option<AnyElement> {
-    let s = &view.sigs;
-    if s.banner_closed {
-        return None;
-    }
-    let report = s.report.as_ref().filter(|r| r.is_signed())?;
-    let t = tokens(cx);
-    let worst = report.overall().unwrap_or(Status::Unknown);
-    let (ic, color) = status_look(worst, cx);
-    let msg = if report.all_valid() {
-        if report.signatures.len() == 1 {
-            i18n::t("Signed and the signature is valid.")
-        } else {
-            i18n::t("Signed and all signatures are valid.")
-        }
-    } else {
-        i18n::t("At least one signature has problems.")
-    };
-    let weak = cx.entity().downgrade();
-    let close = weak.clone();
-    let panel_open = view.panel == Some(Panel::Signatures);
-    Some(
-        h_flex()
-            .flex_none()
-            .w_full()
-            .px(SPACE_6)
-            .py(SPACE_2)
-            .gap(SPACE_4)
-            .bg(color.opacity(0.12))
-            .border_b_1()
-            .border_color(color.opacity(0.4))
-            .text_size(FONT_SMALL)
-            .text_color(t.fg)
-            .child(icon(ic, color, ICON_MD))
-            .child(div().flex_1().min_w_0().truncate().child(msg))
-            .when(!panel_open, |d| {
-                d.child(
-                    Button::new("pdf-sig-open-panel")
-                        .small()
-                        .outline()
-                        .label(i18n::t("Signature Panel"))
-                        .on_click(move |_, _, cx| {
-                            let _ = weak.update(cx, |v, cx| {
-                                v.panel = Some(Panel::Signatures);
-                                cx.notify();
-                            });
-                        }),
-                )
-            })
-            .child(
-                Button::new("pdf-sig-banner-close")
-                    .ghost()
-                    .xsmall()
-                    .icon(Lucide::X)
-                    .tooltip(i18n::t("Close"))
-                    .on_click(move |_, _, cx| {
-                        let _ = close.update(cx, |v, cx| {
-                            v.sigs.banner_closed = true;
-                            cx.notify();
-                        });
-                    }),
-            )
-            .into_any_element(),
-    )
-}
-
-fn detail_row(label: &str, value: impl Into<SharedString>, cx: &App) -> Div {
-    let t = tokens(cx);
-    h_flex()
-        .items_start()
-        .gap(SPACE_3)
-        .child(
-            div()
-                .flex_none()
-                .w(px(64.))
-                .text_color(t.fg_muted)
-                .child(label.to_owned()),
-        )
-        .child(div().flex_1().min_w_0().child(value.into()))
-}
-
-fn time_text(t: i64) -> String {
-    sig::format_time(t)
-}
-
-/// The Signatures panel's body.
-pub(crate) fn panel(view: &mut PdfView, cx: &mut Context<PdfView>) -> AnyElement {
-    let t = tokens(cx);
-    let weak = cx.entity().downgrade();
-    let muted = |s: &str| {
-        div()
-            .p(SPACE_6)
-            .text_size(FONT_SMALL)
-            .text_color(t.fg_muted)
-            .child(s.to_owned())
-            .into_any_element()
-    };
-    let Some(report) = view.sigs.report.clone() else {
-        return if view.sigs.checking {
-            muted(i18n::t("Checking signatures…"))
-        } else {
-            muted(i18n::t("This document isn't signed."))
-        };
-    };
-    if let Some(e) = &report.error {
-        log::warn!("signature check: {e}");
-        return muted(i18n::t("Kantor can't read this document's signatures."));
-    }
-    if !report.is_signed() && report.empty_fields.is_empty() {
-        return muted(i18n::t("This document isn't signed."));
-    }
-    let mut list = v_flex().gap(SPACE_3).p(SPACE_3);
-    for (i, s) in report.signatures.iter().enumerate() {
-        list = list.child(signature_card(i, s, view.sigs.open.contains(&i), cx));
-    }
-    for f in &report.empty_fields {
-        let page = f.page.map(|p| tf("page {}", &[&p])).unwrap_or_default();
-        list = list.child(
-            h_flex()
-                .gap(SPACE_2)
-                .px(SPACE_3)
-                .py(SPACE_2)
-                .rounded(RADIUS_MD)
-                .border_1()
-                .border_color(t.border)
-                .text_size(FONT_SMALL)
-                .text_color(t.fg_muted)
-                .child(icon(Lucide::Signature, t.fg_muted, ICON_SM))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .child(tf("Empty signature field {} {}", &[&f.name, &page])),
-                ),
-        );
-    }
-    // Online checks and checking again.
-    let allowed = online_signature_checks_enabled(cx);
-    let mut foot = v_flex().gap(SPACE_2).px(SPACE_3).pb(SPACE_4);
-    if report.online_would_help && !report.checked_online {
-        if allowed {
-            let w = weak.clone();
-            foot = foot
-                .child(
-                    div()
-                        .text_size(FONT_SMALL)
-                        .text_color(t.fg_muted)
-                        .child(i18n::t("Some certificates can be checked online: Kantor asks the certificate authorities for missing certificates and whether they were revoked.")),
-                )
-                .child(
-                    Button::new("pdf-sig-online")
-                        .small()
-                        .outline()
-                        .icon(Lucide::Globe)
-                        .label(i18n::t("Check Online"))
-                        .loading(view.sigs.checking)
-                        .on_click(move |_, _, cx| {
-                            let _ = w.update(cx, |v, cx| v.recheck_signatures(true, cx));
-                        }),
-                );
-        } else {
-            foot = foot.child(
-                div()
-                    .text_size(FONT_SMALL)
-                    .text_color(t.fg_muted)
-                    .child(i18n::t("Turn on Let Signature Checks Use the Internet (command palette) to check certificates online.")),
-            );
-        }
-    }
-    let w = weak.clone();
-    foot = foot.child(
-        Button::new("pdf-sig-recheck")
-            .small()
-            .ghost()
-            .icon(Lucide::RefreshCw)
-            .label(i18n::t("Check Again"))
-            .loading(view.sigs.checking)
-            .on_click(move |_, _, cx| {
-                let _ = w.update(cx, |v, cx| v.recheck_signatures(false, cx));
-            }),
-    );
-    div()
-        .id("pdf-sig-panel")
-        .size_full()
-        .overflow_y_scroll()
-        .child(list)
-        .child(foot)
-        .into_any_element()
-}
-
-fn signature_card(i: usize, s: &Signature, open: bool, cx: &mut Context<PdfView>) -> Div {
-    let t = tokens(cx);
-    let weak = cx.entity().downgrade();
-    let (ic, color) = status_look(s.status, cx);
-    let title = if s.kind == sig::SigKind::DocTimestamp {
-        i18n::t("Document time stamp").to_owned()
-    } else {
-        tf("Signed by {}", &[&s.signer_name()])
-    };
-    let toggle = weak.clone();
-    let head = h_flex()
-        .id(("pdf-sig-head", i))
-        .items_start()
-        .gap(SPACE_2)
-        .cursor_pointer()
-        .child(div().pt(px(1.)).child(icon(ic, color, ICON_MD)))
-        .child(
-            v_flex()
-                .flex_1()
-                .min_w_0()
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(t.fg)
-                        .child(title),
-                )
-                .child(
-                    div()
-                        .text_color(color)
-                        .child(status_text(s.status).to_owned()),
-                )
-                .children(
-                    s.time()
-                        .map(|tm| div().text_color(t.fg_muted).child(time_text(tm))),
-                ),
-        )
-        .child(icon(
-            if open {
-                Lucide::ChevronDown
-            } else {
-                Lucide::ChevronRight
-            },
-            t.fg_muted,
-            ICON_SM,
-        ))
-        .on_click(move |_, _, cx| {
-            let _ = toggle.update(cx, |v, cx| {
-                if !v.sigs.open.remove(&i) {
-                    v.sigs.open.insert(i);
+    fn make_outlines(&mut self, text: String, cx: &mut Context<Self>) {
+        let t2 = text.clone();
+        let work = cx.background_spawn(async move { typed_outlines(&t2) });
+        cx.spawn(async move |this, cx| {
+            let r = work.await;
+            let _ = this.update(cx, |this, cx| {
+                if let Some(SignDialog::Signature { outlines, .. }) = &mut this.sign {
+                    *outlines = r.map(|(s, a)| (text, Arc::new(s), a));
                 }
                 cx.notify();
             });
-        });
-    let mut card = v_flex()
-        .gap(SPACE_2)
-        .p(SPACE_3)
-        .rounded(RADIUS_MD)
-        .bg(t.surface)
-        .border_1()
-        .border_color(t.border)
-        .text_size(FONT_SMALL)
-        .text_color(t.fg)
-        .child(head);
-    if !open {
-        return card;
-    }
-    let mut notes = v_flex().gap(SPACE_1);
-    for n in &s.notes {
-        notes = notes.child(div().child(text(n)));
-    }
-    card = card.child(notes);
-    let mut rows = v_flex().gap(SPACE_1).text_color(t.fg);
-    if let Some(org) = s.organisation() {
-        rows = rows.child(detail_row(i18n::t("Org."), org, cx));
-    }
-    if let Some(r) = &s.reason {
-        rows = rows.child(detail_row(i18n::t("Reason"), r.clone(), cx));
-    }
-    if let Some(l) = &s.location {
-        rows = rows.child(detail_row(i18n::t("Location"), l.clone(), cx));
-    }
-    if let Some(tm) = s.time() {
-        let how = if s.timestamp.as_ref().is_some_and(sig::Timestamp::trusted) {
-            i18n::t("trusted time stamp")
-        } else if s.kind == sig::SigKind::DocTimestamp {
-            i18n::t("time stamp")
-        } else {
-            i18n::t("signer's computer clock")
-        };
-        rows = rows.child(detail_row(
-            i18n::t("Time"),
-            format!("{} ({how})", time_text(tm)),
-            cx,
-        ));
-    }
-    rows = rows.child(detail_row(i18n::t("Type"), text(&s.kind.label()), cx));
-    if let Some(p) = s.certification {
-        let level = match p {
-            1 => i18n::t("Certified: no changes allowed"),
-            3 => i18n::t("Certified: form filling, signing and comments allowed"),
-            _ => i18n::t("Certified: form filling and signing allowed"),
-        };
-        rows = rows.child(detail_row(i18n::t("Certifies"), level, cx));
-    }
-    if let Some(ts) = &s.timestamp {
-        let by = ts
-            .tsa
-            .as_ref()
-            .map(|c| c.subject_name().display_name())
-            .unwrap_or_default();
-        let state = if ts.trusted() {
-            i18n::t("valid")
-        } else if ts.integrity == sig::Integrity::Intact {
-            i18n::t("authority not trusted")
-        } else {
-            i18n::t("invalid")
-        };
-        rows = rows.child(detail_row(
-            i18n::t("Time stamp"),
-            format!("{by} ({state})"),
-            cx,
-        ));
-    }
-    if let Some(path) = &s.path {
-        let end = match path.end {
-            PathEnd::Trusted(RootSource::System) => i18n::t("Trusted root (system)"),
-            PathEnd::Trusted(RootSource::Bundled) => i18n::t("Trusted root (bundled with Kantor)"),
-            PathEnd::Trusted(RootSource::Extra) => i18n::t("Trusted root (added)"),
-            PathEnd::UntrustedRoot => i18n::t("Root not trusted"),
-            PathEnd::Incomplete => i18n::t("Chain incomplete"),
-        };
-        let root = path
-            .certs
-            .last()
-            .map(|c| c.cert.subject_name().display_name())
-            .unwrap_or_default();
-        rows = rows.child(detail_row(
-            i18n::t("Issued by"),
-            format!("{root} · {end}"),
-            cx,
-        ));
-    }
-    rows = rows.child(detail_row(
-        i18n::t("Revision"),
-        tf("{} of {}", &[&s.revision, &s.revisions]),
-        cx,
-    ));
-    card = card.child(rows);
-    // Changes after signing.
-    if !s.covers_whole_file {
-        let mut changes = v_flex().gap(SPACE_1).child(
-            div()
-                .text_color(t.fg_muted)
-                .child(i18n::t("Changes after signing")),
-        );
-        if s.changes.is_empty() {
-            changes = changes.child(div().child(i18n::t("None")));
-        }
-        for c in &s.changes {
-            changes = changes.child(change_row(c, c.allowed(s.docmdp), cx));
-        }
-        card = card.child(changes);
-    }
-    // Actions.
-    let (w1, w2, w3) = (weak.clone(), weak.clone(), weak.clone());
-    let mut actions = h_flex().flex_wrap().gap(SPACE_2).pt(SPACE_1);
-    if s.path.is_some() {
-        actions = actions.child(
-            Button::new(("pdf-sig-cert", i))
-                .xsmall()
-                .outline()
-                .label(i18n::t("Certificate…"))
-                .on_click(move |_, window, cx| {
-                    let _ = w1.update(cx, |v, cx| {
-                        v.sigs.cert = Some((i, 0));
-                        window.focus(&v.dialog_focus, cx);
-                        cx.notify();
-                    });
-                }),
-        );
-    }
-    if !s.covers_whole_file && s.signed_len > 0 {
-        actions = actions.child(
-            Button::new(("pdf-sig-signed", i))
-                .xsmall()
-                .outline()
-                .label(i18n::t("View Signed Version"))
-                .on_click(move |_, _, cx| {
-                    let _ = w2.update(cx, |v, cx| v.view_signed_version(i, cx));
-                }),
-        );
-    }
-    if let Some(p) = s.page {
-        actions = actions.child(
-            Button::new(("pdf-sig-page", i))
-                .xsmall()
-                .ghost()
-                .label(tf("Go to page {}", &[&p]))
-                .on_click(move |_, _, cx| {
-                    let _ = w3.update(cx, |v, cx| v.go_to_page(p - 1, cx));
-                }),
-        );
-    }
-    card.child(actions)
-}
-
-fn change_row(c: &Change, allowed: bool, cx: &App) -> Div {
-    let t = tokens(cx);
-    let (ic, color) = if allowed {
-        (Lucide::Check, t.fg_muted)
-    } else {
-        (Lucide::TriangleAlert, t.danger)
-    };
-    h_flex()
-        .items_start()
-        .gap(SPACE_2)
-        .child(div().pt(px(2.)).child(icon(ic, color, ICON_SM)))
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .text_color(if allowed { t.fg } else { t.danger })
-                .child(text(&c.msg())),
-        )
-}
-
-/// The certificate dialog.
-pub(crate) fn cert_dialog(view: &PdfView, cx: &mut Context<PdfView>) -> Option<AnyElement> {
-    let (si, ci) = view.sigs.cert?;
-    let report = view.sigs.report.as_ref()?;
-    let s = report.signatures.get(si)?;
-    // The signer's path, then the time stamp authority's.
-    let mut certs: Vec<(&sig::PathCert, bool)> = s
-        .path
-        .iter()
-        .flat_map(|p| p.certs.iter().map(|c| (c, false)))
-        .collect();
-    if let Some(p) = s.timestamp.as_ref().and_then(|ts| ts.path.as_ref()) {
-        certs.extend(p.certs.iter().map(|c| (c, true)));
-    }
-    let (pc, _) = certs.get(ci).copied().or_else(|| certs.first().copied())?;
-    let t = tokens(cx);
-    let weak = cx.entity().downgrade();
-    let mut chain = v_flex().gap(SPACE_1).w(px(220.)).flex_none();
-    let mut last_tsa = false;
-    for (k, (c, tsa)) in certs.iter().enumerate() {
-        if *tsa && !last_tsa {
-            chain = chain.child(
-                div()
-                    .pt(SPACE_3)
-                    .text_size(FONT_SMALL)
-                    .text_color(t.fg_muted)
-                    .child(i18n::t("Time stamp authority")),
-            );
-        }
-        last_tsa = *tsa;
-        let w = weak.clone();
-        let depth = if *tsa {
-            certs.iter().take(k).filter(|(_, x)| *x).count()
-        } else {
-            k
-        };
-        let (ic, color) = if c.revocation == sig::Revocation::Unknown || !c.problems.is_empty() {
-            (Lucide::ShieldQuestionMark, t.warning)
-        } else if matches!(c.revocation, sig::Revocation::Revoked { .. }) {
-            (Lucide::ShieldX, t.danger)
-        } else {
-            (Lucide::ShieldCheck, t.success)
-        };
-        chain = chain.child(
-            h_flex()
-                .id(("pdf-cert-row", k))
-                .gap(SPACE_2)
-                .pl(px(8. + 12. * depth as f32))
-                .pr(SPACE_2)
-                .py(SPACE_1)
-                .rounded(RADIUS_SM)
-                .cursor_pointer()
-                .when(k == ci, |d| d.bg(t.selected))
-                .hover(|d| d.bg(t.hover))
-                .text_size(FONT_SMALL)
-                .child(icon(ic, color, ICON_SM))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .truncate()
-                        .child(c.cert.subject_name().display_name()),
-                )
-                .on_click(move |_, _, cx| {
-                    let _ = w.update(cx, |v, cx| {
-                        v.sigs.cert = Some((si, k));
-                        cx.notify();
-                    });
-                }),
-        );
-    }
-    let c = &pc.cert;
-    let row = |label: &str, value: String| {
-        h_flex()
-            .items_start()
-            .gap(SPACE_4)
-            .child(
-                div()
-                    .flex_none()
-                    .w(px(120.))
-                    .text_color(t.fg_muted)
-                    .child(label.to_owned()),
-            )
-            .child(div().flex_1().min_w_0().child(value))
-    };
-    let ku = c
-        .ext
-        .key_usage
-        .map(|k| {
-            sig::x509::key_usage_names(k)
-                .into_iter()
-                .map(|n| i18n::t_dyn(n).to_owned())
-                .collect::<Vec<_>>()
-                .join(", ")
         })
-        .unwrap_or_else(|| i18n::t("Not limited").to_owned());
-    let eku = c
-        .ext
-        .eku
-        .iter()
-        .map(|e| sig::x509::eku_name(e))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let mut problems = Vec::new();
-    for p in &pc.problems {
-        problems.push(match p {
-            sig::CertProblem::Expired => i18n::t("Expired at the time checked"),
-            sig::CertProblem::NotYetValid => i18n::t("Not yet valid at the time checked"),
-            sig::CertProblem::NotACa => i18n::t("Not allowed to issue certificates"),
-            sig::CertProblem::KeyUsage => i18n::t("Key usage doesn't allow this use"),
-            sig::CertProblem::UnknownCritical(_) => {
-                i18n::t("Has a critical extension Kantor doesn't understand")
+        .detach();
+    }
+
+    fn sign_ok(&mut self, cx: &mut Context<Self>) {
+        let Some(SignDialog::Signature {
+            tab,
+            strokes,
+            pad,
+            outlines,
+            remember: keep,
+            ..
+        }) = &self.sign
+        else {
+            return;
+        };
+        let (what, typed) = match tab {
+            SignTab::Draw => {
+                let b = pad.get();
+                let all: Vec<[f32; 2]> = strokes.iter().flatten().copied().collect();
+                if all.len() < 2 {
+                    return;
+                }
+                let x0 = all.iter().map(|p| p[0]).fold(f32::MAX, f32::min);
+                let x1 = all.iter().map(|p| p[0]).fold(f32::MIN, f32::max);
+                let y0 = all.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
+                let y1 = all.iter().map(|p| p[1]).fold(f32::MIN, f32::max);
+                let (w, h) = ((x1 - x0).max(1.0), (y1 - y0).max(1.0));
+                let _ = b;
+                let norm = strokes
+                    .iter()
+                    .map(|s| {
+                        s.iter()
+                            .map(|p| [(p[0] - x0) / w, 1.0 - (p[1] - y0) / h])
+                            .collect()
+                    })
+                    .collect();
+                (
+                    Placed::Ink {
+                        strokes: norm,
+                        aspect: w / h,
+                    },
+                    None,
+                )
+            }
+            SignTab::Type => {
+                let Some((text, segs, aspect)) = outlines.clone() else {
+                    return;
+                };
+                (Placed::Typed { segs, aspect }, Some(text))
+            }
+            SignTab::Image => return,
+        };
+        if *keep && let Err(e) = remember(&what, typed.as_deref(), true) {
+            log::warn!("keeping the signature: {e}");
+        }
+        self.sign = None;
+        self.use_placed(what, true, None, cx);
+    }
+
+    fn sign_image(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(i18n::t("Choose a picture of your signature").into()),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else {
+                return;
+            };
+            let Some(p) = paths.into_iter().next() else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                match std::fs::read(&p)
+                    .map_err(|e| e.to_string())
+                    .and_then(image_placed)
+                {
+                    Ok(what) => {
+                        let keep = matches!(
+                            &this.sign,
+                            Some(SignDialog::Signature { remember: true, .. })
+                        );
+                        if keep && let Err(e) = remember(&what, None, true) {
+                            log::warn!("keeping the signature: {e}");
+                        }
+                        this.sign = None;
+                        this.use_placed(what, true, None, cx);
+                    }
+                    Err(e) => this.status = tf("Couldn't use {}: {}", &[&p.display(), &e]).into(),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    // ── Place on Pages ─────────────────────────────────────────────────────
+
+    pub fn place_on_pages(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let is_stamp = self
+            .markup
+            .sel
+            .clone()
+            .and_then(|s| self.find_mark(&s))
+            .is_some_and(|a| a.kind.editable());
+        if !is_stamp {
+            self.status = i18n::t("Select a stamp or comment to place on other pages").into();
+            cx.notify();
+            return;
+        }
+        let pages = cx.new(|cx| InputState::new(window, cx).placeholder(i18n::t("All pages")));
+        pages.update(cx, |i, cx| i.focus(window, cx));
+        self.dialog_subs.clear();
+        let sub = cx.subscribe_in(&pages, window, |this, _, ev: &InputEvent, window, cx| {
+            if let InputEvent::PressEnter { .. } = ev {
+                this.place_pages_ok(window, cx);
             }
         });
+        self.dialog_subs.push(sub);
+        self.sign = Some(SignDialog::PlacePages { pages, error: None });
+        self.load_all_marks(cx);
+        cx.notify();
     }
-    let mut details = v_flex()
-        .flex_1()
-        .min_w_0()
-        .gap(SPACE_2)
-        .text_size(FONT_SMALL)
-        .child(row(i18n::t("Issued to"), c.subject_name().to_string()))
-        .child(row(i18n::t("Issued by"), c.issuer_name().to_string()))
-        .child(row(i18n::t("Valid from"), time_text(c.not_before)))
-        .child(row(i18n::t("Valid to"), time_text(c.not_after)))
-        .child(row(
-            i18n::t("Serial number"),
-            sig::x509::colon_hex(&c.serial),
-        ))
-        .child(row(i18n::t("Public key"), c.key.describe()))
-        .child(row(i18n::t("Key usage"), ku));
-    if !eku.is_empty() {
-        details = details.child(row(i18n::t("Extended key usage"), eku));
+
+    fn place_pages_ok(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(SignDialog::PlacePages { pages, .. }) = &self.sign else {
+            return;
+        };
+        let text = pages.read(cx).value().to_string();
+        let n = self.page_count() as u32;
+        let set = crate::dialog::parse_pages(&text)
+            .and_then(|r| r.resolve_set(n).map_err(|e| e.to_string()));
+        match set {
+            Ok(set) => {
+                let places: Vec<usize> = set.into_iter().map(|p| p as usize - 1).collect();
+                self.sign = None;
+                self.stamp_on_pages(&places, cx);
+                self.focus(window, cx);
+            }
+            Err(e) => {
+                if let Some(SignDialog::PlacePages { error, .. }) = &mut self.sign {
+                    *error = Some(e);
+                }
+            }
+        }
+        cx.notify();
     }
-    details = details
-        .child(row(i18n::t("Revocation"), text(&pc.revocation.msg())))
-        .child(row(
-            i18n::t("SHA-256 fingerprint"),
-            sig::x509::colon_hex(&c.sha256()),
-        ))
-        .child(row(
-            i18n::t("SHA-1 fingerprint"),
-            sig::x509::colon_hex(&c.sha1()),
-        ));
-    if !problems.is_empty() {
-        details = details.child(div().text_color(t.danger).child(problems.join(" · ")));
-    }
-    let close = weak.clone();
-    let card = v_flex()
-        .id("pdf-cert-dialog")
-        .occlude()
-        .w(px(760.))
-        .max_h(px(560.))
-        .gap(SPACE_5)
-        .p(SPACE_6)
-        .rounded(RADIUS_MD)
-        .bg(t.surface)
-        .border_1()
-        .border_color(t.border_strong)
-        .shadow_md()
-        .text_size(FONT_BODY)
-        .text_color(t.fg)
-        .track_focus(&view.dialog_focus)
-        .on_key_down(move |e, window, cx| {
-            if e.keystroke.key == "escape" || e.keystroke.key == "enter" {
-                cx.stop_propagation();
-                let _ = close.update(cx, |v, cx| {
-                    v.sigs.cert = None;
-                    v.focus(window, cx);
+
+    // ── rendering ──────────────────────────────────────────────────────────
+
+    pub(crate) fn render_sign(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let d = self.sign.as_ref()?;
+        let t = tokens(cx);
+        let view = cx.entity().downgrade();
+        let close = {
+            let v = view.clone();
+            move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                let _ = v.update(cx, |this, cx| {
+                    this.sign = None;
+                    this.focus(window, cx);
                     cx.notify();
                 });
             }
-        })
-        .child(
-            div()
-                .text_size(FONT_EMPHASIS)
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(i18n::t("Certificate Details")),
-        )
-        .child(
-            h_flex()
-                .items_start()
-                .gap(SPACE_5)
-                .min_h_0()
-                .child(chain)
-                .child(details),
-        )
-        .child(
-            h_flex().justify_end().child(
-                Button::new("pdf-cert-close")
-                    .primary()
-                    .label(i18n::t("Close"))
-                    .on_click(move |_, window, cx| {
-                        let _ = weak.update(cx, |v, cx| {
-                            v.sigs.cert = None;
-                            v.focus(window, cx);
-                            cx.notify();
+        };
+        let card = match d {
+            SignDialog::PlacePages { pages, error } => {
+                let ok = view.clone();
+                crate::dialog::card(i18n::t("Place on Pages"), 380.0, cx)
+                    .child(div().text_color(t.fg_muted).text_size(FONT_SMALL).child(i18n::t(
+                        "Copies the selected stamp to the same place on these pages. Leave empty for all pages, or type pages like 1-3, 5.",
+                    )))
+                    .child(Input::new(pages))
+                    .children(error.as_ref().map(|e| div().text_size(FONT_SMALL).text_color(t.danger).child(e.clone())))
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap(SPACE_3)
+                            .child(Button::new("pdf-place-cancel").ghost().small().label(i18n::t("Cancel")).on_click(close))
+                            .child(Button::new("pdf-place-ok").primary().small().label(i18n::t("Place")).on_click(
+                                move |_, window, cx| {
+                                    let _ = ok.update(cx, |this, cx| this.place_pages_ok(window, cx));
+                                },
+                            )),
+                    )
+            }
+            SignDialog::Signature {
+                tab,
+                strokes,
+                pad,
+                typed,
+                outlines,
+                remember,
+                ..
+            } => {
+                let tab_btn = |id: &'static str, label: &'static str, which: SignTab| {
+                    let v = view.clone();
+                    Button::new(id)
+                        .small()
+                        .label(i18n::t(label))
+                        .when(*tab == which, |b| b.primary())
+                        .when(*tab != which, |b| b.ghost())
+                        .on_click(move |_, _, cx| {
+                            let _ = v.update(cx, |this, cx| {
+                                if let Some(SignDialog::Signature { tab, .. }) = &mut this.sign {
+                                    *tab = which;
+                                }
+                                cx.notify();
+                            });
+                        })
+                };
+                let ink = t.fg;
+                let body: AnyElement = match tab {
+                    SignTab::Draw => {
+                        let pad_b = pad.clone();
+                        let lines = strokes.clone();
+                        let (vd, vm, vu) = (view.clone(), view.clone(), view.clone());
+                        div()
+                            .id("pdf-sign-pad")
+                            .h(px(150.))
+                            .w_full()
+                            .rounded(RADIUS_MD)
+                            .border_1()
+                            .border_color(t.border_strong)
+                            .bg(t.paper)
+                            .cursor(CursorStyle::Crosshair)
+                            .child(
+                                canvas(
+                                    move |b, _, _| pad_b.set(b),
+                                    move |b, _, window, _| {
+                                        // The signing line.
+                                        let y = b.origin.y + b.size.height * 0.75;
+                                        window.paint_quad(fill(
+                                            Bounds::new(
+                                                point(b.origin.x + px(16.), y),
+                                                size(b.size.width - px(32.), px(1.)),
+                                            ),
+                                            ink.opacity(0.25),
+                                        ));
+                                        for s in &lines {
+                                            let Some(first) = s.first() else { continue };
+                                            let mut pb = PathBuilder::stroke(px(2.));
+                                            let at = |p: [f32; 2]| {
+                                                point(b.origin.x + px(p[0]), b.origin.y + px(p[1]))
+                                            };
+                                            pb.move_to(at(*first));
+                                            if s.len() == 1 {
+                                                pb.line_to(at([first[0] + 0.5, first[1]]));
+                                            }
+                                            for p in &s[1..] {
+                                                pb.line_to(at(*p));
+                                            }
+                                            if let Ok(p) = pb.build() {
+                                                window.paint_path(p, ink);
+                                            }
+                                        }
+                                    },
+                                )
+                                .size_full(),
+                            )
+                            .on_mouse_down(MouseButton::Left, move |ev, _, cx| {
+                                let _ = vd.update(cx, |this, cx| {
+                                    if let Some(SignDialog::Signature {
+                                        strokes,
+                                        drawing,
+                                        pad,
+                                        ..
+                                    }) = &mut this.sign
+                                    {
+                                        let o = pad.get().origin;
+                                        strokes.push(vec![[
+                                            f32::from(ev.position.x - o.x),
+                                            f32::from(ev.position.y - o.y),
+                                        ]]);
+                                        *drawing = true;
+                                    }
+                                    cx.notify();
+                                });
+                            })
+                            .on_mouse_move(move |ev, _, cx| {
+                                let _ = vm.update(cx, |this, cx| {
+                                    if let Some(SignDialog::Signature {
+                                        strokes,
+                                        drawing: true,
+                                        pad,
+                                        ..
+                                    }) = &mut this.sign
+                                        && let Some(s) = strokes.last_mut()
+                                    {
+                                        let o = pad.get().origin;
+                                        s.push([
+                                            f32::from(ev.position.x - o.x),
+                                            f32::from(ev.position.y - o.y),
+                                        ]);
+                                        cx.notify();
+                                    }
+                                });
+                            })
+                            .on_mouse_up(MouseButton::Left, move |_, _, cx| {
+                                let _ = vu.update(cx, |this, _| {
+                                    if let Some(SignDialog::Signature { drawing, .. }) =
+                                        &mut this.sign
+                                    {
+                                        *drawing = false;
+                                    }
+                                });
+                            })
+                            .into_any_element()
+                    }
+                    SignTab::Type => {
+                        let preview = outlines.as_ref().map(|(_, segs, aspect)| Placed::Typed {
+                            segs: segs.clone(),
+                            aspect: *aspect,
                         });
-                    }),
-            ),
-        );
-    Some(
-        kantor_ui::overlay::backdrop()
-            .child(
-                h_flex()
-                    .absolute()
-                    .top(CONTROL_LG * 2. + SPACE_5)
-                    .left_0()
-                    .right_0()
-                    .justify_center()
-                    .child(card),
+                        v_flex()
+                            .gap(SPACE_3)
+                            .child(Input::new(typed))
+                            .child(
+                                div()
+                                    .h(px(110.))
+                                    .w_full()
+                                    .rounded(RADIUS_MD)
+                                    .border_1()
+                                    .border_color(t.border_strong)
+                                    .bg(t.paper)
+                                    .p(SPACE_4)
+                                    .child(
+                                        canvas(
+                                            |_, _, _| {},
+                                            move |b, _, window, _| {
+                                                if let Some(p) = &preview {
+                                                    paint_placed(window, b, p, ink);
+                                                }
+                                            },
+                                        )
+                                        .size_full(),
+                                    ),
+                            )
+                            .into_any_element()
+                    }
+                    SignTab::Image => {
+                        let v = view.clone();
+                        v_flex()
+                            .h(px(150.))
+                            .items_center()
+                            .justify_center()
+                            .gap(SPACE_3)
+                            .child(div().text_color(t.fg_muted).text_size(FONT_SMALL).child(i18n::t(
+                                "A scan or photo of your signature (PNG keeps a transparent background).",
+                            )))
+                            .child(Button::new("pdf-sign-image").small().icon(Lucide::ImagePlus).label(i18n::t("Choose Image…")).on_click(
+                                move |_, window, cx| {
+                                    let _ = v.update(cx, |this, cx| this.sign_image(window, cx));
+                                },
+                            ))
+                            .into_any_element()
+                    }
+                };
+                let saved = saved_list(&view, cx);
+                let (vc, vr, vo) = (view.clone(), view.clone(), view.clone());
+                let remember = *remember;
+                crate::dialog::card(i18n::t("Add Signature"), 520.0, cx)
+                    .child(
+                        h_flex()
+                            .gap(SPACE_2)
+                            .child(tab_btn("pdf-sign-draw", "Draw", SignTab::Draw))
+                            .child(tab_btn("pdf-sign-type", "Type", SignTab::Type))
+                            .child(tab_btn("pdf-sign-img", "Image", SignTab::Image)),
+                    )
+                    .child(body)
+                    .child(
+                        div().text_size(FONT_SMALL).text_color(t.fg_muted).child(i18n::t(
+                            "This places a picture of your signature on the page. It is not a certificate-based digital signature.",
+                        )),
+                    )
+                    .child(
+                        h_flex()
+                            .gap(SPACE_3)
+                            .child(
+                                gpui_kit::component::checkbox::Checkbox::new("pdf-sign-remember")
+                                    .checked(remember)
+                                    .label(i18n::t("Remember on this computer"))
+                                    .on_click(move |c, _, cx| {
+                                        let c = *c;
+                                        let _ = vr.update(cx, |this, cx| {
+                                            if let Some(SignDialog::Signature { remember, .. }) = &mut this.sign {
+                                                *remember = c;
+                                            }
+                                            cx.notify();
+                                        });
+                                    }),
+                            )
+                            .child(div().flex_1())
+                            .child(Button::new("pdf-sign-clear").ghost().small().label(i18n::t("Clear")).on_click(move |_, _, cx| {
+                                let _ = vc.update(cx, |this, cx| {
+                                    if let Some(SignDialog::Signature { strokes, .. }) = &mut this.sign {
+                                        strokes.clear();
+                                    }
+                                    cx.notify();
+                                });
+                            }))
+                            .child(Button::new("pdf-sign-cancel").ghost().small().label(i18n::t("Cancel")).on_click(close))
+                            .child(Button::new("pdf-sign-ok").primary().small().label(i18n::t("Place")).on_click(move |_, _, cx| {
+                                let _ = vo.update(cx, |this, cx| this.sign_ok(cx));
+                            })),
+                    )
+                    .children(saved)
+            }
+        };
+        let esc = view.clone();
+        let card = card.on_key_down(move |e, window, cx| {
+            if e.keystroke.key == "escape" {
+                cx.stop_propagation();
+                let _ = esc.update(cx, |this, cx| {
+                    this.sign = None;
+                    this.focus(window, cx);
+                    cx.notify();
+                });
+            }
+        });
+        Some(
+            kantor_ui::overlay::backdrop()
+                .child(
+                    h_flex()
+                        .absolute()
+                        .top(CONTROL_LG * 2. + SPACE_5)
+                        .left_0()
+                        .right_0()
+                        .justify_center()
+                        .child(card),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// The bar under the toolbar for forms and signed documents.
+    pub(crate) fn render_form_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let t = tokens(cx);
+        let sigs = self.signatures();
+        let form = self.form_state();
+        if sigs.is_none() && form.is_none() {
+            return None;
+        }
+        let mut bar = h_flex()
+            .flex_none()
+            .px(SPACE_5)
+            .py(SPACE_2)
+            .gap(SPACE_4)
+            .bg(t.chrome)
+            .border_b_1()
+            .border_color(t.border)
+            .text_size(FONT_SMALL)
+            .text_color(t.fg_muted);
+        if let Some(s) = sigs {
+            let msg = match s.allowed() {
+                kantor_pdf::sig::Allowed::Nothing => i18n::t(
+                    "This document is certified with a digital signature that allows no changes.",
+                ),
+                kantor_pdf::sig::Allowed::FormFill => i18n::t(
+                    "This document is digitally signed. Only filling in its form keeps the signature valid; Kantor saves entries after the signed part.",
+                ),
+                kantor_pdf::sig::Allowed::Annotations => i18n::t(
+                    "This document is digitally signed. Comments, stamps and form entries are saved after the signed part, so the signature stays valid; page changes would invalidate it.",
+                ),
+            };
+            bar = bar
+                .child(gpui_kit::component::Icon::new(Lucide::Lock).with_size(ICON_SM))
+                .child(div().flex_1().child(msg));
+        }
+        match form {
+            Some(true) => {
+                bar = bar.child(div().flex_1().text_color(t.danger).child(i18n::t(
+                    "This form uses XFA, which Kantor can't fill. Open it in Adobe Acrobat or Reader to fill it in.",
+                )));
+            }
+            Some(false) => {
+                let v = cx.entity().downgrade();
+                bar = bar
+                    .when(sigs.is_none(), |b| {
+                        b.child(
+                            div()
+                                .flex_1()
+                                .child(i18n::t("This document has form fields you can fill in.")),
+                        )
+                    })
+                    .child(
+                        Button::new("pdf-reset-form")
+                            .ghost()
+                            .xsmall()
+                            .label(i18n::t("Reset Form"))
+                            .on_click(move |_, _, cx| {
+                                let _ = v.update(cx, |this, cx| this.reset_form(cx));
+                            }),
+                    );
+            }
+            None => {}
+        }
+        Some(bar.into_any_element())
+    }
+
+    /// Page changes on a signed document: say once that saving would
+    /// invalidate the signature.
+    pub(crate) fn warn_signed_pages(&mut self) {
+        if self.signed_warned || self.signatures().is_none() {
+            return;
+        }
+        if self.doc().is_some_and(|d| !d.model.pages_as_base()) {
+            self.signed_warned = true;
+            self.status = i18n::t(
+                "Changing pages invalidates the document's digital signature: save these changes as a copy",
             )
-            .into_any_element(),
+            .into();
+        }
+    }
+}
+
+/// My Stamps in the signature dialog: click to place, × to forget.
+fn saved_list(view: &WeakEntity<PdfView>, cx: &App) -> Option<Div> {
+    let saved = load_saved();
+    if saved.is_empty() {
+        return None;
+    }
+    let t = tokens(cx);
+    let mut row = h_flex().gap(SPACE_3).flex_wrap();
+    for (i, s) in saved.into_iter().enumerate() {
+        let (vp, vx) = (view.clone(), view.clone());
+        let what = s.what.clone();
+        let sig = s.signature;
+        let path = s.path.clone();
+        let ink = t.fg;
+        let thumb: AnyElement = match &s.what {
+            Placed::Image { .. } => img(s.path.clone())
+                .size_full()
+                .object_fit(ObjectFit::Contain)
+                .into_any_element(),
+            p => {
+                let p = p.clone();
+                canvas(
+                    |_, _, _| {},
+                    move |b, _, window, _| paint_placed(window, b, &p, ink),
+                )
+                .size_full()
+                .into_any_element()
+            }
+        };
+        row = row.child(
+            div()
+                .id(("pdf-saved", i))
+                .relative()
+                .w(px(110.))
+                .h(px(56.))
+                .p(SPACE_2)
+                .rounded(RADIUS_SM)
+                .border_1()
+                .border_color(t.border)
+                .bg(t.paper)
+                .cursor_pointer()
+                .hover(|d| d.border_color(t.accent))
+                .child(thumb)
+                .on_click(move |_, _, cx| {
+                    let what = what.clone();
+                    let _ = vp.update(cx, |this, cx| {
+                        this.sign = None;
+                        this.use_placed(what, sig, None, cx);
+                    });
+                })
+                .child(
+                    div().absolute().top(px(-6.)).right(px(-6.)).child(
+                        Button::new(("pdf-saved-x", i))
+                            .xsmall()
+                            .ghost()
+                            .icon(Lucide::X)
+                            .tooltip(i18n::t("Remove from My Stamps"))
+                            .on_click(move |_, _, cx| {
+                                cx.stop_propagation();
+                                let _ = std::fs::remove_file(&path);
+                                let _ = vx.update(cx, |_, cx| cx.notify());
+                            }),
+                    ),
+                ),
+        );
+    }
+    Some(
+        v_flex()
+            .gap(SPACE_2)
+            .child(
+                div()
+                    .text_size(FONT_SMALL)
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(i18n::t("My Signatures & Stamps")),
+            )
+            .child(row),
     )
 }
 
-/// Message templates and words from [`pdf_engine::signatures`], shown
-/// with [`text`] (`t_dyn`): listed here so the catalog check sees them.
-#[cfg_attr(
-    not(test),
-    allow(dead_code, reason = "read by the catalog check and the test below")
-)]
-pub(crate) const ENGINE_KEYS: &[&str] = &[
-    tk("PKCS #7, detached (adbe.pkcs7.detached)"),
-    tk("PKCS #7 with SHA-1 (adbe.pkcs7.sha1)"),
-    tk("CAdES / PAdES (ETSI.CAdES.detached)"),
-    tk("Document time stamp (RFC 3161)"),
-    tk("Other ({})"),
-    tk("The signature's byte range doesn't cover the signed revision correctly."),
-    tk(
-        "The document was altered or damaged after signing: the signed bytes don't match the signature.",
-    ),
-    tk("The signature doesn't match the signer's certificate."),
-    tk("The signature names a different signing certificate than the one it carries."),
-    tk("The signer's certificate isn't in the signature."),
-    tk("Kantor can't check this kind of signature ({})."),
-    tk("The signature data can't be read."),
-    tk("A certificate in the chain was revoked on {}."),
-    tk("The document was modified after it was signed."),
-    tk("The document was changed after signing in ways the certifying signer didn't allow."),
-    tk(
-        "The signer's identity can't be confirmed: the certificate chain ends at a root that isn't trusted.",
-    ),
-    tk("The signer's identity can't be confirmed: an issuer's certificate is missing."),
-    tk("A certificate in the chain had expired at the time it was checked."),
-    tk("A certificate in the chain wasn't valid yet at the time it was checked."),
-    tk("A certificate in the chain isn't allowed to issue certificates."),
-    tk("A certificate's key usage doesn't allow it to be used this way."),
-    tk("A certificate has a critical extension Kantor doesn't understand."),
-    tk("Revocation not checked: Kantor couldn't confirm that the certificates weren't revoked."),
-    tk("The signature's time stamp couldn't be verified."),
-    tk("The time stamp authority isn't trusted; the signature was checked as of now."),
-    tk("The document was changed after signing, in ways the signer allowed."),
-    tk("The document hasn't been changed since it was signed."),
-    tk("The signed revision is unchanged; only signatures or validation data were added after it."),
-    tk("Long-term validation data added"),
-    tk("Signature added ({})"),
-    tk("Document time stamp added"),
-    tk("Form field filled in"),
-    tk("Form field filled in: {}"),
-    tk("{} added on page {}"),
-    tk("{} added"),
-    tk("{} changed on page {}"),
-    tk("{} changed"),
-    tk("Annotation removed on page {}"),
-    tk("Page content changed on page {}"),
-    tk("Page content changed"),
-    tk("Pages added, removed or reordered"),
-    tk("Document properties changed"),
-    tk("Other change ({})"),
-    tk("Trusted root (not checked)"),
-    tk("Not revoked (OCSP response in the file)"),
-    tk("Not revoked (CRL in the file)"),
-    tk("Not revoked (checked online, OCSP)"),
-    tk("Not revoked (checked online, CRL)"),
-    tk("Revoked on {}"),
-    tk("The issuer publishes no revocation information"),
-    tk("Not checked (OCSP responder certificate)"),
-    tk("Not checked"),
-    tk("Stamp"),
-    tk("Comment"),
-    tk("Text box"),
-    tk("Highlight"),
-    tk("Underline"),
-    tk("Strikethrough"),
-    tk("Squiggly underline"),
-    tk("Drawing"),
-    tk("Rectangle"),
-    tk("Oval"),
-    tk("Line"),
-    tk("Polygon"),
-    tk("Polyline"),
-    tk("Attachment"),
-    tk("Link"),
-    tk("Insertion mark"),
-    tk("Redaction"),
-    tk("Sound"),
-    tk("Annotation"),
-    tk("Digital Signature"),
-    tk("Non-Repudiation"),
-    tk("Key Encipherment"),
-    tk("Data Encipherment"),
-    tk("Key Agreement"),
-    tk("Certificate Sign"),
-    tk("CRL Sign"),
-    tk("Encipher Only"),
-    tk("Decipher Only"),
-];
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Every message the checker gives for the fixtures is a catalog key
-    /// listed in [`ENGINE_KEYS`] with an Indonesian translation.
-    #[std::prelude::v1::test]
-    fn engine_messages_are_translated() {
-        let dir = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../pdf_engine/tests/fixtures/signatures"
-        );
-        let mut trust = sig::TrustStore::bundled();
-        let pem = std::fs::read(format!("{dir}/test-root.pem")).unwrap();
-        sig::x509::parse_pem_or_der(&pem)
-            .into_iter()
-            .for_each(|c| trust.add(c));
-        let opts = sig::Options {
-            trust,
-            fetch: None,
-            now: sig::now(),
+/// The Sign menu: My Stamps, Add Signature…, Add Image / Stamp….
+pub(crate) fn sign_menu(menu: PopupMenu, view: &WeakEntity<PdfView>) -> PopupMenu {
+    let mut menu = menu;
+    for (i, s) in load_saved().into_iter().enumerate() {
+        let v = view.clone();
+        let label = match (&s.what, s.signature) {
+            (_, true) => tf("Signature {}", &[&(i + 1)]),
+            (Placed::Image { .. }, false) => s
+                .path
+                .file_name()
+                .map(|_| tf("Stamp {}", &[&(i + 1)]))
+                .unwrap_or_default(),
+            _ => tf("Stamp {}", &[&(i + 1)]),
         };
-        let mut msgs: Vec<Msg> = Vec::new();
-        for e in std::fs::read_dir(dir).unwrap().flatten() {
-            if e.path().extension().is_none_or(|x| x != "pdf") {
-                continue;
-            }
-            let r = sig::verify(&std::fs::read(e.path()).unwrap(), &opts);
-            for s in &r.signatures {
-                msgs.extend(s.notes.iter().cloned());
-                msgs.extend(s.changes.iter().map(Change::msg));
-                msgs.push(s.kind.label());
-                for p in s.path.iter() {
-                    msgs.extend(p.certs.iter().map(|c| c.revocation.msg()));
-                }
-            }
-        }
-        assert!(msgs.len() > 20);
-        let mut keys: Vec<&str> = Vec::new();
-        for m in &msgs {
-            keys.push(m.template);
-            for a in &m.args {
-                if let Arg::Word(w) = a {
-                    keys.push(w);
-                }
-            }
-        }
-        for k in keys {
-            assert!(ENGINE_KEYS.contains(&k), "{k:?} missing from ENGINE_KEYS");
-            assert!(i18n::indonesian(k).is_some(), "{k:?} has no Indonesian");
-        }
+        let what = s.what.clone();
+        let sig = s.signature;
+        menu = menu.item(PopupMenuItem::new(label).on_click(move |_, _, cx| {
+            let what = what.clone();
+            let _ = v.update(cx, |this, cx| this.use_placed(what, sig, None, cx));
+        }));
     }
+    let (a, b) = (view.clone(), view.clone());
+    menu.separator()
+        .item(
+            PopupMenuItem::new(i18n::t("Add Signature…")).on_click(move |_, window, cx| {
+                let _ = a.update(cx, |this, cx| this.add_signature(window, cx));
+            }),
+        )
+        .item(
+            PopupMenuItem::new(i18n::t("Add Image / Stamp…")).on_click(move |_, window, cx| {
+                let _ = b.update(cx, |this, cx| this.add_image_stamp(None, window, cx));
+            }),
+        )
+}
+
+/// The pages' right-click menu.
+pub(crate) fn page_menu(
+    menu: PopupMenu,
+    view: &WeakEntity<PdfView>,
+    _: &mut Window,
+    cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let Some(v) = view.upgrade() else {
+        return menu;
+    };
+    let (has_text, has_mark, has_form) = {
+        let v = v.read(cx);
+        (
+            v.ordered_sel().is_some(),
+            v.markup.sel.is_some(),
+            v.form_state() == Some(false),
+        )
+    };
+    let item = |label: &'static str, run: fn(&mut PdfView, &mut Window, &mut Context<PdfView>)| {
+        let v = view.clone();
+        PopupMenuItem::new(i18n::t(label)).on_click(move |_, window, cx| {
+            let _ = v.update(cx, |this, cx| run(this, window, cx));
+        })
+    };
+    let mut menu = menu;
+    if has_text {
+        menu = menu
+            .item(item("Highlight Text", |v, _, cx| {
+                v.markup_selection(&Tool::Highlight, cx)
+            }))
+            .item(item("Underline Text", |v, _, cx| {
+                v.markup_selection(&Tool::Underline, cx)
+            }))
+            .item(item("Strikethrough Text", |v, _, cx| {
+                v.markup_selection(&Tool::StrikeOut, cx)
+            }))
+            .item(item("Copy", |v, _, cx| v.copy_text(cx)))
+            .separator();
+    }
+    menu = menu
+        .item(item("Add Sticky Note", |v, w, cx| {
+            if let Some((place, pt)) = v.context_at.take() {
+                let mut a = kantor_pdf::annot::Annot::new(
+                    kantor_pdf::annot::Kind::Note,
+                    [pt[0], pt[1] - 20.0, pt[0] + 20.0, pt[1]],
+                    crate::markup::YELLOW,
+                );
+                a.author = v.markup.author.clone();
+                let id = a.id.clone();
+                if v.edit_marks(
+                    place,
+                    kantor_ui::i18n::tk("Add Sticky Note"),
+                    |l| l.push(a),
+                    cx,
+                ) {
+                    v.markup.sel = Some(crate::markup::Sel {
+                        place,
+                        id: id.clone(),
+                    });
+                    v.open_text_edit(place, id, w, cx);
+                }
+            }
+        }))
+        .item(item("Add Image / Stamp…", |v, w, cx| {
+            v.add_image_stamp(None, w, cx)
+        }))
+        .item(item("Add Signature…", |v, w, cx| v.add_signature(w, cx)));
+    if has_mark {
+        menu = menu
+            .separator()
+            .item(item("Place on Pages…", |v, w, cx| {
+                v.place_on_pages(w, cx)
+            }))
+            .item(item("Delete Comment", |v, _, cx| {
+                v.delete_mark(cx);
+            }));
+    }
+    if has_form {
+        menu = menu
+            .separator()
+            .item(item("Reset Form", |v, _, cx| v.reset_form(cx)));
+    }
+    menu
 }

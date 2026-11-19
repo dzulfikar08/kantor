@@ -1,6 +1,6 @@
 //! Rasterizing pages.
 
-use hayro::hayro_interpret::{InterpreterSettings, TransformExt as _};
+use hayro::hayro_interpret::{InterpreterSettings, RenderContent, TransformExt as _};
 use hayro::kurbo::Affine;
 use hayro::vello_cpu::color::palette::css::WHITE;
 use hayro::vello_cpu::{self, Pixmap, RenderContext};
@@ -46,6 +46,19 @@ impl<'a> Renderer<'a> {
     /// Page `page` at `scale` pixels per point, turned by `turn`; the
     /// scale is lowered so no side passes [`MAX_SIDE`].
     pub fn render(&self, page: usize, scale: f32, turn: Turn) -> Option<Raster> {
+        self.render_layered(page, scale, turn, None)
+    }
+
+    /// Like [`Self::render`]; with a `layer` (a one-page PDF of the same
+    /// size holding the page's annotations as they are being edited) the
+    /// page's own annotations are left out and the layer's drawn instead.
+    pub fn render_layered(
+        &self,
+        page: usize,
+        scale: f32,
+        turn: Turn,
+        layer: Option<&PdfDoc>,
+    ) -> Option<Raster> {
         let p = self.doc.pdf().pages().get(page)?;
         let (w, h) = p.render_dimensions();
         let (w, h) = (w.max(1.0), h.max(1.0));
@@ -57,14 +70,44 @@ impl<'a> Renderer<'a> {
             * Affine::new(turn.coeffs(f64::from(w), f64::from(h)))
             * p.initial_transform(true).to_kurbo();
         let mut ctx = RenderContext::new(px_w, px_h);
+        let page_only;
+        let settings = match layer {
+            Some(_) => {
+                page_only = InterpreterSettings {
+                    render_content: RenderContent::PAGE,
+                    ..self.settings.clone()
+                };
+                &page_only
+            }
+            None => &self.settings,
+        };
         render_into(
             p,
             &self.cache,
-            &self.settings,
+            settings,
             &RenderSettings::default(),
             &mut ctx,
             transform,
         );
+        if let Some(l) = layer
+            && let Some(lp) = l.pdf().pages().first()
+        {
+            let annots = InterpreterSettings {
+                render_content: RenderContent::ANNOTATIONS,
+                ..self.settings.clone()
+            };
+            let lt = Affine::scale(f64::from(scale))
+                * Affine::new(turn.coeffs(f64::from(w), f64::from(h)))
+                * lp.initial_transform(true).to_kurbo();
+            render_into(
+                lp,
+                &RenderCache::new(),
+                &annots,
+                &RenderSettings::default(),
+                &mut ctx,
+                lt,
+            );
+        }
         ctx.flush();
         let mut pixmap = Pixmap::new(ctx.width(), ctx.height());
         ctx.render_with(

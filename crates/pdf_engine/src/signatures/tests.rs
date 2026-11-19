@@ -306,3 +306,53 @@ fn text_report_reads_well() {
     let t = text_report(&check("tampered"));
     assert!(t.contains("At least one signature has problems."), "{t}");
 }
+
+/// A comment and an image stamp added to a signed PDF by Kantor's own
+/// incremental save (Comment / Fill & Sign) leave the signature intact,
+/// with the annotations listed as allowed changes.
+#[test]
+fn kantor_incremental_annotations_keep_the_signature_valid() {
+    use kantor_pdf::annot::{self, Annot, Art, Kind};
+    let original = load("valid");
+    let pdf = kantor_pdf::Pdf::from_bytes(&original, None).unwrap();
+    let mut marks = annot::read_page(&pdf, 0);
+    let mut note = Annot::new(Kind::Note, [400.0, 700.0, 420.0, 720.0], [1.0, 0.85, 0.2]);
+    note.contents = "Checked".into();
+    marks.push(note);
+    marks.push(Annot::new(
+        Kind::Stamp {
+            art: Art::Image(std::sync::Arc::new(
+                kantor_pdf::testing::sample_round_stamp(48),
+            )),
+            rotate: 0.0,
+            signature: false,
+        },
+        [300.0, 500.0, 400.0, 600.0],
+        [0.0; 3],
+    ));
+    let out =
+        kantor_pdf::sig::incremental(&original, None, |p| annot::apply_page(p, 0, &marks)).unwrap();
+    assert!(out.starts_with(&original));
+    let r = verify(
+        &out,
+        &Options {
+            trust: test_trust(),
+            fetch: None,
+            now: now(),
+        },
+    );
+    let s = only(&r);
+    assert_eq!(s.integrity, Integrity::Intact, "{}", text_report(&r));
+    assert_eq!(s.status, Status::ValidWithChanges, "{}", text_report(&r));
+    let said: Vec<String> = s.changes.iter().map(|c| c.msg().to_string()).collect();
+    assert!(
+        said.contains(&"Stamp added on page 1".to_string()),
+        "{said:?}"
+    );
+    assert!(
+        said.contains(&"Comment added on page 1".to_string()),
+        "{said:?}"
+    );
+    assert!(s.changes.iter().all(|c| c.allowed(s.docmdp)), "{said:?}");
+    assert!(r.all_valid());
+}

@@ -7,9 +7,11 @@
 //! undo step.
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
+use kantor_pdf::annot::Annot;
+use kantor_pdf::form::{FieldValue, Form};
 use pdf_engine::{OutlineItem, PdfDoc, Turn};
 
 /// A source's id, unique in the process (pages pasted between windows keep
@@ -36,6 +38,20 @@ pub(crate) struct Source {
     pub sizes: Vec<(f32, f32)>,
     pub outline: Vec<OutlineItem>,
     pub title: Option<String>,
+    /// Each page's map from PDF user space to page space.
+    pub xf: Vec<[f64; 6]>,
+    /// Its annotations and form, read once when first needed.
+    pub marks: OnceLock<Option<Arc<SourceMarks>>>,
+}
+
+/// A source's annotations and form as `kantor_pdf` reads them.
+pub(crate) struct SourceMarks {
+    pub pdf: kantor_pdf::Pdf,
+    /// Each page's annotations in the file.
+    pub pages: Vec<Arc<Vec<Annot>>>,
+    pub form: Option<Form>,
+    /// Its digital signatures, if signed.
+    pub sigs: Option<kantor_pdf::sig::Signatures>,
 }
 
 impl Source {
@@ -50,12 +66,85 @@ impl Source {
         Ok(Self {
             id: next_id(),
             name,
+            xf: (0..doc.page_count()).map(|i| doc.user_to_page(i)).collect(),
+            marks: OnceLock::new(),
             sizes: doc.page_sizes(),
             outline: doc.outline(),
             title: doc.title(),
             bytes,
             password,
         })
+    }
+
+    /// Its annotations and form (read with lopdf the first time: call off
+    /// the UI thread for big files). `None` when lopdf can't read it.
+    pub fn marks(&self) -> Option<&Arc<SourceMarks>> {
+        self.marks
+            .get_or_init(|| {
+                let pdf = self.lopdf().ok()?;
+                let n = pdf.page_count();
+                let pages = (0..n)
+                    .map(|p| Arc::new(kantor_pdf::annot::read_page(&pdf, p)))
+                    .collect();
+                let form = kantor_pdf::form::read_form(&pdf);
+                let sigs = kantor_pdf::sig::signatures(&pdf);
+                Some(Arc::new(SourceMarks {
+                    pdf,
+                    pages,
+                    form,
+                    sigs,
+                }))
+            })
+            .as_ref()
+    }
+
+    /// Already read ([`Self::marks`] won't block).
+    pub fn marks_ready(&self) -> Option<&Arc<SourceMarks>> {
+        self.marks.get().and_then(Option::as_ref)
+    }
+
+    /// Page `page`'s point `(x, y)` of page space in PDF user space.
+    pub fn to_user(&self, page: usize, x: f32, y: f32) -> [f32; 2] {
+        let m = self
+            .xf
+            .get(page)
+            .copied()
+            .unwrap_or([1.0, 0.0, 0.0, -1.0, 0.0, 792.0]);
+        let det = m[0] * m[3] - m[1] * m[2];
+        if det.abs() < 1e-12 {
+            return [x, y];
+        }
+        let (x, y) = (f64::from(x) - m[4], f64::from(y) - m[5]);
+        [
+            ((m[3] * x - m[2] * y) / det) as f32,
+            ((-m[1] * x + m[0] * y) / det) as f32,
+        ]
+    }
+
+    /// A point of user space on page `page` in page space.
+    pub fn to_page(&self, page: usize, x: f32, y: f32) -> [f32; 2] {
+        let m = self
+            .xf
+            .get(page)
+            .copied()
+            .unwrap_or([1.0, 0.0, 0.0, -1.0, 0.0, 792.0]);
+        let (x, y) = (f64::from(x), f64::from(y));
+        [
+            (m[0] * x + m[2] * y + m[4]) as f32,
+            (m[1] * x + m[3] * y + m[5]) as f32,
+        ]
+    }
+
+    /// A user-space rectangle as a page-space one.
+    pub fn rect_to_page(&self, page: usize, r: [f32; 4]) -> [f32; 4] {
+        let a = self.to_page(page, r[0], r[1]);
+        let b = self.to_page(page, r[2], r[3]);
+        [
+            a[0].min(b[0]),
+            a[1].min(b[1]),
+            a[0].max(b[0]),
+            a[1].max(b[1]),
+        ]
     }
 
     /// The source as a `kantor_pdf` document (decrypted).
@@ -95,13 +184,23 @@ pub(crate) enum Change {
     Paste,
     Watermark,
     PageNumbers,
+    /// An annotation or form change: its name for Undo (an English
+    /// catalog key).
+    Markup(&'static str),
 }
+
+/// Annotation lists that replace a page's own, by source page.
+pub(crate) type Marks = HashMap<PageKey, Arc<Vec<Annot>>>;
+/// Form values set, by source and field name.
+pub(crate) type Fields = HashMap<SrcId, Arc<HashMap<String, FieldValue>>>;
 
 #[derive(Clone, Debug, PartialEq)]
 struct State {
     base: SrcId,
     pages: Vec<PageRef>,
     rev: u64,
+    marks: Arc<Marks>,
+    fields: Arc<Fields>,
 }
 
 pub(crate) struct Model {
@@ -126,6 +225,8 @@ impl Model {
                 base,
                 pages,
                 rev: 0,
+                marks: Arc::default(),
+                fields: Arc::default(),
             },
             undo: Vec::new(),
             redo: Vec::new(),
@@ -215,9 +316,25 @@ impl Model {
     }
 
     fn commit(&mut self, base: SrcId, pages: Vec<PageRef>, change: Change) {
+        let marks = self.cur.marks.clone();
+        let fields = self.cur.fields.clone();
+        self.commit_state(
+            State {
+                base,
+                pages,
+                rev: 0,
+                marks,
+                fields,
+            },
+            change,
+        );
+    }
+
+    fn commit_state(&mut self, mut state: State, change: Change) {
         let rev = self.next_rev;
         self.next_rev += 1;
-        let old = std::mem::replace(&mut self.cur, State { base, pages, rev });
+        state.rev = rev;
+        let old = std::mem::replace(&mut self.cur, state);
         self.undo.push((old, change));
         self.redo.clear();
         self.reindex();
@@ -340,7 +457,130 @@ impl Model {
         let pages = all_pages(&source);
         let id = source.id;
         self.add_source(source);
-        self.commit(id, pages, change);
+        // The edits are part of the new source's pages now.
+        self.commit_state(
+            State {
+                base: id,
+                pages,
+                rev: 0,
+                marks: Arc::default(),
+                fields: Arc::default(),
+            },
+            change,
+        );
+    }
+
+    // ── annotations and forms ────────────────────────────────────────────
+
+    /// The annotations of source page `key` as they are now: edited, or
+    /// the file's (`None` while the file's aren't read yet).
+    pub fn marks(&self, key: PageKey) -> Option<Arc<Vec<Annot>>> {
+        if let Some(m) = self.cur.marks.get(&key) {
+            return Some(m.clone());
+        }
+        let s = self.sources.get(&key.0)?.marks_ready()?;
+        s.pages.get(key.1).cloned()
+    }
+
+    /// Source pages whose annotations were changed.
+    pub fn edited_keys(&self) -> impl Iterator<Item = PageKey> + '_ {
+        self.cur.marks.keys().copied()
+    }
+
+    /// Every source's form values set.
+    pub fn all_field_values(&self) -> Vec<(SrcId, Arc<HashMap<String, FieldValue>>)> {
+        self.cur
+            .fields
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect()
+    }
+
+    /// The pages are the base file's, in order, unturned (only
+    /// annotations and form values may have changed).
+    pub fn pages_as_base(&self) -> bool {
+        let base = self.base();
+        self.cur.pages.len() == base.sizes.len()
+            && self
+                .cur
+                .pages
+                .iter()
+                .enumerate()
+                .all(|(i, p)| p.src == base.id && p.page == i && p.rot == 0)
+    }
+
+    /// Replace source page `key`'s annotations (one undo step).
+    pub fn set_marks(&mut self, key: PageKey, marks: Vec<Annot>, change: Change) {
+        self.set_many_marks(vec![(key, marks)], change);
+    }
+
+    /// Replace several pages' annotations in one undo step.
+    pub fn set_many_marks(&mut self, list: Vec<(PageKey, Vec<Annot>)>, change: Change) {
+        let mut state = self.cur.clone();
+        let mut all = (*state.marks).clone();
+        for (key, marks) in list {
+            all.insert(key, Arc::new(marks));
+        }
+        state.marks = Arc::new(all);
+        self.commit_state(state, change);
+    }
+
+    /// Form values set in source `src` (over the file's).
+    pub fn field_values(&self, src: SrcId) -> Option<&Arc<HashMap<String, FieldValue>>> {
+        self.cur.fields.get(&src)
+    }
+
+    /// A field's value now.
+    pub fn field_value(&self, src: SrcId, name: &str) -> Option<FieldValue> {
+        if let Some(v) = self.cur.fields.get(&src).and_then(|f| f.get(name)) {
+            return Some(v.clone());
+        }
+        let s = self.sources.get(&src)?.marks_ready()?;
+        Some(s.form.as_ref()?.field(name)?.value.clone())
+    }
+
+    /// Set form values of source `src` (one undo step).
+    pub fn set_fields(&mut self, src: SrcId, values: Vec<(String, FieldValue)>, change: Change) {
+        let mut state = self.cur.clone();
+        let mut all = (*state.fields).clone();
+        let mut f = all.get(&src).map(|f| (**f).clone()).unwrap_or_default();
+        f.extend(values);
+        all.insert(src, Arc::new(f));
+        state.fields = Arc::new(all);
+        self.commit_state(state, change);
+    }
+
+    /// Whether any page has annotation edits or the form values set.
+    pub fn has_markup_edits(&self) -> bool {
+        !self.cur.marks.is_empty() || !self.cur.fields.is_empty()
+    }
+
+    /// Everything to build the PDF from.
+    pub fn plan(&self) -> Plan {
+        let (sources, picks) = self.picks();
+        let marks = sources
+            .iter()
+            .map(|s| {
+                self.cur
+                    .marks
+                    .iter()
+                    .filter(|(k, _)| k.0 == s.id)
+                    .map(|(k, v)| (k.1, v.clone()))
+                    .collect()
+            })
+            .collect();
+        let fields = sources
+            .iter()
+            .map(|s| self.cur.fields.get(&s.id).cloned())
+            .collect();
+        Plan {
+            sources,
+            picks,
+            marks,
+            fields,
+            flatten: false,
+            pages_as_base: self.pages_as_base(),
+        }
     }
 
     /// The sources to build the PDF from (the base first) and the pages as
@@ -370,7 +610,8 @@ impl Model {
     /// keep the bytes as they are).
     pub fn is_base_as_is(&self) -> bool {
         let base = self.base();
-        self.cur.pages.len() == base.sizes.len()
+        !self.has_markup_edits()
+            && self.cur.pages.len() == base.sizes.len()
             && self
                 .cur
                 .pages
@@ -390,19 +631,89 @@ fn all_pages(s: &Source) -> Vec<PageRef> {
         .collect()
 }
 
+/// What the PDF is built from: the sources (the base first), the pages
+/// picked, and each source's annotation edits and form values.
+#[derive(Clone)]
+pub(crate) struct Plan {
+    pub sources: Vec<Arc<Source>>,
+    pub picks: Vec<kantor_pdf::Pick>,
+    /// By source index: page → its annotations.
+    pub marks: Vec<HashMap<usize, Arc<Vec<Annot>>>>,
+    pub fields: Vec<Option<Arc<HashMap<String, FieldValue>>>>,
+    /// Draw stamps and signatures into the pages.
+    pub flatten: bool,
+    /// Only annotations or form values changed (a signed file can get an
+    /// incremental update).
+    pub pages_as_base: bool,
+}
+
+impl Plan {
+    /// Source `i`'s annotation edits and form values, applied to `pdf`.
+    fn apply(&self, i: usize, pdf: &mut kantor_pdf::Pdf) -> kantor_pdf::Result<()> {
+        if let Some(Some(f)) = self.fields.get(i) {
+            kantor_pdf::form::set_values(pdf, f)?;
+        }
+        if let Some(m) = self.marks.get(i) {
+            for (&page, marks) in m {
+                kantor_pdf::annot::apply_page(pdf, page as u32, marks)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The base file is digitally signed and only its annotations or form
+    /// values changed: saved as an incremental update that keeps the
+    /// signatures valid.
+    pub fn incremental(&self) -> bool {
+        self.pages_as_base
+            && !self.flatten
+            && self.sources.len() == 1
+            && self.sources[0].marks().is_some_and(|m| m.sigs.is_some())
+    }
+
+    /// The sources as `kantor_pdf` documents with the edits applied.
+    pub fn load(&self) -> kantor_pdf::Result<Vec<kantor_pdf::Pdf>> {
+        let mut out = Vec::with_capacity(self.sources.len());
+        for (i, s) in self.sources.iter().enumerate() {
+            let mut pdf = s.lopdf()?;
+            self.apply(i, &mut pdf)?;
+            if self.flatten {
+                kantor_pdf::annot::flatten(
+                    &mut pdf,
+                    kantor_pdf::annot::FlattenWhat::StampsAndSignatures,
+                )?;
+            }
+            out.push(pdf);
+        }
+        Ok(out)
+    }
+
+    /// The pages (and their sources) as one PDF.
+    pub fn assemble(&self) -> kantor_pdf::Result<kantor_pdf::Pdf> {
+        kantor_pdf::assemble(self.load()?, &self.picks)
+    }
+
+    /// Only the pages `which` (indexes into the picks).
+    pub fn only(&self, which: &[usize]) -> Plan {
+        let mut p = self.clone();
+        p.picks = which
+            .iter()
+            .filter_map(|&i| self.picks.get(i).copied())
+            .collect();
+        p
+    }
+}
+
 /// Build the edited PDF's bytes (on a background thread). `keep_encryption`:
 /// when the base is password-protected, protect the result the same way;
 /// fails with `kantor_pdf::Error::Encryption` when that isn't possible.
-pub(crate) fn build(
-    sources: &[Arc<Source>],
-    picks: &[kantor_pdf::Pick],
-    keep_encryption: bool,
-) -> kantor_pdf::Result<Vec<u8>> {
-    let pdfs = sources
-        .iter()
-        .map(|s| s.lopdf())
-        .collect::<kantor_pdf::Result<Vec<_>>>()?;
-    let mut pdf = kantor_pdf::assemble(pdfs, picks)?;
+pub(crate) fn build(plan: &Plan, keep_encryption: bool) -> kantor_pdf::Result<Vec<u8>> {
+    if plan.incremental() {
+        let base = &plan.sources[0];
+        let password = (!base.password.is_empty()).then_some(base.password.as_str());
+        return kantor_pdf::sig::incremental(&base.bytes, password, |pdf| plan.apply(0, pdf));
+    }
+    let mut pdf = plan.assemble()?;
     pdf.to_bytes_encrypted(keep_encryption)
 }
 
@@ -419,6 +730,8 @@ mod tests {
             sizes: (0..n).map(|i| (600.0 + i as f32, 800.0)).collect(),
             outline: Vec::new(),
             title: None,
+            xf: Vec::new(),
+            marks: OnceLock::new(),
         })
     }
 
@@ -550,8 +863,7 @@ mod save_tests {
     }
 
     fn save(m: &Model) -> Vec<u8> {
-        let (s, p) = m.picks();
-        let bytes = build(&s, &p, true).unwrap();
+        let bytes = build(&m.plan(), true).unwrap();
         qpdf_check(&bytes, None);
         bytes
     }
@@ -619,8 +931,7 @@ mod save_tests {
         let a = read(sample_pdf_encrypted(3, "owner", "user"), "user");
         let mut m = Model::new(a);
         m.move_pages(&set(&[2]), 0);
-        let (s, p) = m.picks();
-        let bytes = build(&s, &p, true).unwrap();
+        let bytes = build(&m.plan(), true).unwrap();
         assert!(PdfDoc::open(Arc::new(bytes.clone()), "").is_err());
         assert_eq!(widths(bytes.clone(), "user"), [3, 1, 2]);
         qpdf_check(&bytes, Some("user"));
@@ -660,8 +971,7 @@ mod save_tests {
         m.rotate(&(0..300).collect(), false);
         let edit = t.elapsed();
         let t = std::time::Instant::now();
-        let (s, p) = m.picks();
-        let bytes = build(&s, &p, true).unwrap();
+        let bytes = build(&m.plan(), true).unwrap();
         let saved = t.elapsed();
         eprintln!(
             "{n} pages: edits {edit:.1?}, save {saved:.1?} ({} KB)",
@@ -672,6 +982,108 @@ mod save_tests {
         let doc = PdfDoc::open(Arc::new(bytes.clone()), "").unwrap();
         assert_eq!(doc.page_count(), a_len(&m));
         qpdf_check(&bytes, None);
+    }
+
+    fn annots_of(bytes: &[u8], page: u32) -> Vec<kantor_pdf::annot::Annot> {
+        let pdf = kantor_pdf::Pdf::from_bytes(bytes, None).unwrap();
+        kantor_pdf::annot::read_page(&pdf, page)
+    }
+
+    #[std::prelude::v1::test]
+    fn annotations_and_forms_save_and_undo() {
+        use kantor_pdf::annot::{Annot, Kind};
+        use kantor_pdf::form::FieldValue;
+        let a = read(sample_pdf(3), "");
+        let mut m = Model::new(a.clone());
+        assert!(a.marks().is_some());
+        assert_eq!(m.marks((a.id, 1)).unwrap().len(), 0);
+        let note = Annot::new(Kind::Note, [10.0, 10.0, 30.0, 30.0], [1.0, 0.8, 0.0]);
+        m.set_marks(
+            (a.id, 1),
+            vec![note.clone()],
+            Change::Markup("Add Sticky Note"),
+        );
+        assert!(m.is_dirty() && !m.is_base_as_is());
+        // Moved first: the annotation goes with its page.
+        m.move_pages(&set(&[1]), 0);
+        let bytes = save(&m);
+        let back = annots_of(&bytes, 0);
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].id, note.id);
+        assert!(annots_of(&bytes, 1).is_empty());
+        // Undo both: the original file again.
+        assert_eq!(m.undo(), Some(Change::Move));
+        assert_eq!(m.undo(), Some(Change::Markup("Add Sticky Note")));
+        assert!(m.is_base_as_is());
+        assert_eq!(m.marks((a.id, 1)).unwrap().len(), 0);
+        // Forms.
+        let f = read(kantor_pdf::testing::sample_form_pdf(), "");
+        let mut m = Model::new(f.clone());
+        f.marks();
+        assert_eq!(
+            m.field_value(f.id, "name"),
+            Some(FieldValue::Text("Ann".into()))
+        );
+        m.set_fields(
+            f.id,
+            vec![("name".into(), FieldValue::Text("Rina".into()))],
+            Change::Markup("Fill Form"),
+        );
+        assert_eq!(
+            m.field_value(f.id, "name"),
+            Some(FieldValue::Text("Rina".into()))
+        );
+        let bytes = save(&m);
+        let form = kantor_pdf::form::read_form(&kantor_pdf::Pdf::from_bytes(&bytes, None).unwrap())
+            .unwrap();
+        assert_eq!(
+            form.field("name").unwrap().value,
+            FieldValue::Text("Rina".into())
+        );
+        m.undo();
+        assert_eq!(
+            m.field_value(f.id, "name"),
+            Some(FieldValue::Text("Ann".into()))
+        );
+    }
+
+    #[std::prelude::v1::test]
+    fn signed_files_keep_their_signed_bytes() {
+        use kantor_pdf::annot::{Annot, Art, Kind};
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../kantor_pdf/tests/fixtures/signed/signed-approval.pdf");
+        let original = std::fs::read(path).unwrap();
+        let s = read(original.clone(), "");
+        assert!(s.marks().unwrap().sigs.is_some());
+        let mut m = Model::new(s.clone());
+        let stamp = Annot::new(
+            Kind::Stamp {
+                art: Art::Image(Arc::new(kantor_pdf::testing::sample_round_stamp(32))),
+                rotate: 0.0,
+                signature: false,
+            },
+            [100.0, 100.0, 200.0, 200.0],
+            [0.0; 3],
+        );
+        let mut list = (*m.marks((s.id, 0)).unwrap()).clone();
+        list.push(stamp);
+        list.push(Annot::new(
+            Kind::Note,
+            [10.0, 10.0, 30.0, 30.0],
+            [1.0, 0.8, 0.0],
+        ));
+        m.set_marks((s.id, 0), list, Change::Markup("Add Stamp"));
+        let plan = m.plan();
+        assert!(plan.incremental());
+        let bytes = build(&plan, true).unwrap();
+        assert!(bytes.starts_with(&original), "incremental update");
+        qpdf_check(&bytes, None);
+        // Flattened or with pages changed: a full rewrite (a copy).
+        let mut flat = m.plan();
+        flat.flatten = true;
+        assert!(!flat.incremental());
+        m.rotate(&set(&[0]), true);
+        assert!(!m.plan().incremental());
     }
 
     fn a_len(m: &Model) -> usize {
