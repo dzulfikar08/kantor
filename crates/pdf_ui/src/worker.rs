@@ -285,11 +285,11 @@ fn open_source<'a>(
     docs: &'a mut HashMap<SrcId, PdfDoc>,
     id: SrcId,
 ) -> Option<&'a PdfDoc> {
-    if !docs.contains_key(&id) {
+    if let std::collections::hash_map::Entry::Vacant(slot) = docs.entry(id) {
         let source = shared.q.lock().ok()?.sources.get(&id).cloned()?;
         match PdfDoc::open(source.bytes.clone(), &source.password) {
             Ok(d) => {
-                docs.insert(id, d);
+                slot.insert(d);
             }
             Err(e) => {
                 log::warn!("opening {} for drawing: {e}", source.name);

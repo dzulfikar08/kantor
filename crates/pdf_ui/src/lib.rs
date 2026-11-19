@@ -213,7 +213,7 @@ enum State {
         wrong: bool,
     },
     Failed(OpenError),
-    Ready(Doc),
+    Ready(Box<Doc>),
 }
 
 /// The open file, as the UI knows it.
@@ -492,10 +492,10 @@ impl PdfView {
                 }
                 self.title = source.title.clone();
                 let model = Model::new(source);
-                self.state = State::Ready(Doc {
+                self.state = State::Ready(Box::new(Doc {
                     sizes: model.sizes(),
                     model,
-                });
+                }));
                 if let Some(rev) = self.opened_dirty.take()
                     && let State::Ready(d) = &mut self.state
                 {

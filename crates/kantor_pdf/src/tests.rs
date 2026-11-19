@@ -748,7 +748,7 @@ fn saving_keeps_the_password_protection() {
     ));
     let mut again = Pdf::from_bytes(&saved, Some("user")).unwrap();
     assert!(again.was_encrypted());
-    assert_eq!(content_text(&again, 1).contains("Page 3"), true);
+    assert!(content_text(&again, 1).contains("Page 3"));
     assert_eq!(layout(&mut again), [(3, 0), (1, 90)]);
     // The owner password still works too, and the in-memory copy stays readable.
     assert!(Pdf::from_bytes(&saved, Some("owner")).is_ok());

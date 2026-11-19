@@ -47,6 +47,9 @@ const POSITIONS: &[(Position, &str)] = &[
     (Position::BottomRight, tk("Bottom right")),
 ];
 
+/// A Split part: its pages (1-based) and the name it is saved under.
+type Part = (Vec<u32>, Option<String>);
+
 pub(crate) enum Dialog {
     Combine {
         files: Vec<PathBuf>,
@@ -245,10 +248,7 @@ pub(crate) fn free_path(dir: &Path, name: &str, taken: &mut BTreeSet<PathBuf>) -
 /// Split groups (1-based pages) at the top-level bookmarks' pages: one part
 /// per bookmark, plus the pages before the first one. Each part is named
 /// after its bookmark.
-pub(crate) fn bookmark_groups(
-    starts: &[(usize, String)],
-    n: usize,
-) -> Vec<(Vec<u32>, Option<String>)> {
+pub(crate) fn bookmark_groups(starts: &[(usize, String)], n: usize) -> Vec<Part> {
     let mut starts: Vec<(usize, String)> = starts.iter().filter(|(p, _)| *p < n).cloned().collect();
     starts.sort_by_key(|(p, _)| *p);
     starts.dedup_by_key(|(p, _)| *p);
@@ -401,7 +401,7 @@ impl PdfView {
 
     pub fn split_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let every = input(window, cx, "1", "");
-        let ranges = input(window, cx, "", &i18n::t("e.g. 1-3, 4-10, 11-"));
+        let ranges = input(window, cx, "", i18n::t("e.g. 1-3, 4-10, 11-"));
         self.dialog_subs.clear();
         self.submit_on_enter(&every, window, cx);
         self.submit_on_enter(&ranges, window, cx);
@@ -425,7 +425,7 @@ impl PdfView {
     }
 
     /// The parts Split makes now: (pages, name) in document order.
-    fn split_groups(&self, cx: &App) -> Result<Vec<(Vec<u32>, Option<String>)>, String> {
+    fn split_groups(&self, cx: &App) -> Result<Vec<Part>, String> {
         let Some(Dialog::Split {
             by, every, ranges, ..
         }) = &self.dialog
@@ -533,7 +533,7 @@ impl PdfView {
 
     pub fn add_page_numbers(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let start = input(window, cx, "1", "");
-        let pages = input(window, cx, "", &i18n::t("All pages"));
+        let pages = input(window, cx, "", i18n::t("All pages"));
         self.dialog_subs.clear();
         self.submit_on_enter(&start, window, cx);
         self.submit_on_enter(&pages, window, cx);
@@ -597,9 +597,9 @@ impl PdfView {
     }
 
     pub fn add_watermark(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let text = input(window, cx, "", &i18n::t("e.g. DRAFT or CONFIDENTIAL"));
+        let text = input(window, cx, "", i18n::t("e.g. DRAFT or CONFIDENTIAL"));
         let size = input(window, cx, "60", "");
-        let pages = input(window, cx, "", &i18n::t("All pages"));
+        let pages = input(window, cx, "", i18n::t("All pages"));
         self.dialog_subs.clear();
         for i in [&text, &size, &pages] {
             self.submit_on_enter(i, window, cx);

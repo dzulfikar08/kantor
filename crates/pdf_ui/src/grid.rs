@@ -40,12 +40,15 @@ pub(crate) enum ListKind {
     Grid,
 }
 
+type CellPage = (PageKey, Turn, (f32, f32));
+
 /// What the cells of one frame need (they're built inside the lists'
 /// closures, away from the view).
 #[derive(Clone)]
 pub(crate) struct Cells {
     kind: ListKind,
-    keys: Rc<Vec<(PageKey, Turn, (f32, f32))>>,
+    /// Each page's source page, turn and size as shown.
+    keys: Rc<Vec<CellPage>>,
     selected: Rc<BTreeSet<usize>>,
     current: Option<usize>,
     drop_at: Option<usize>,
