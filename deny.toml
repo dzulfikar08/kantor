@@ -24,6 +24,9 @@ ignore = [
     { id = "RUSTSEC-2026-0548", reason = "zip 8 via docx-rs; ZipStreamReader never used" },
     # chrono is unmaintained (no safe upgrade); GPUI, IronCalc and chrono-tz depend on it too.
     { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no replacement yet; used by GPUI and IronCalc" },
+    # ttf-parser is unmaintained (no security issue); fontdb, cosmic-text, resvg and krilla's
+    # stack use it, and pdf_ui reads glyph outlines of the typed-signature font with it.
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser unmaintained; used by fontdb/cosmic-text/resvg, read-only parsing" },
 ]
 
 [licenses]

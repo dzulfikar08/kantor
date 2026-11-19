@@ -1,0 +1,8 @@
+# Binary fixtures must reach Windows checkouts byte for byte (signature byte ranges, offsets).
+*.pdf binary
+*.der binary
+*.p12 binary
+*.ttf binary
+# Generated files compared byte for byte in tests.
+docs/slides-deck.schema.json text eol=lf
+*.pem text eol=lf
