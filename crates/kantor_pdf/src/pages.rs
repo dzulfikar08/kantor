@@ -159,7 +159,8 @@ fn check_pages(pages: &[u32], total: u32) -> Result<()> {
 pub(crate) fn select(pdf: &mut Pdf, pages: &[u32]) -> Result<()> {
     let doc = &mut pdf.doc;
     let ids = page_ids(doc);
-    check_pages(pages, ids.len() as u32)?;
+    let ids_len = ids.len() as u32;
+    check_pages(pages, ids_len)?;
     let root = pages_root(doc)?;
     let keep: HashSet<u32> = pages.iter().copied().collect();
     for &p in &keep {
@@ -192,6 +193,9 @@ pub(crate) fn select(pdf: &mut Pdf, pages: &[u32]) -> Result<()> {
         doc.objects.remove(id);
     }
     crate::edit::prune_dead_targets(doc);
+    if !pages.iter().copied().eq(1..=ids_len) {
+        crate::edit::drop_xfa(doc);
+    }
     doc.prune_objects();
     Ok(())
 }
@@ -430,6 +434,7 @@ pub fn split(
 pub fn merge(mut base: Pdf, others: Vec<Pdf>) -> Result<Pdf> {
     let root = pages_root(&base.doc)?;
     let mut kids: Vec<Object> = Vec::new();
+    let base_pages = page_ids(&base.doc).len() as u32;
     for id in page_ids(&base.doc) {
         materialize(&mut base.doc, id)?;
         base.doc.get_dictionary_mut(id)?.set("Parent", root);
@@ -457,6 +462,9 @@ pub fn merge(mut base: Pdf, others: Vec<Pdf>) -> Result<Pdf> {
     tree.set("Kids", kids);
     tree.set("Count", count);
     base.doc.objects.insert(root, Object::Dictionary(tree));
+    if count > i64::from(base_pages) {
+        crate::edit::drop_xfa(&mut base.doc);
+    }
     base.doc.prune_objects();
     Ok(base)
 }

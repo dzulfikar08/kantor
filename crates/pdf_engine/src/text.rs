@@ -7,6 +7,12 @@
 //! producer writes text in; a space goes in where two glyphs on one line are
 //! apart by more than a fraction of the font size, a line break where the
 //! baseline moves. Invisible text (OCR layers of scanned pages) counts.
+//!
+//! Two clean-ups follow what other readers do: a glyph drawn again on top
+//! of itself (fake bold, shadows) counts once, and Arabic and Hebrew lines
+//! that the file stores in visual order (left to right, as most producers
+//! do) are put back in reading order, with presentation forms turned into
+//! plain letters, so search and copy see the words as typed.
 
 use std::ops::Range;
 
@@ -17,6 +23,7 @@ use hayro::hayro_interpret::{
     InterpreterCache, InterpreterSettings, SoftMask, TransformExt as _, interpret_page,
 };
 use hayro::kurbo::{Affine, BezPath, Point, Rect, Vec2};
+use unicode_normalization::UnicodeNormalization as _;
 
 use crate::PdfDoc;
 
@@ -67,8 +74,9 @@ impl PageText {
             if let Some(last) = out.last_mut() {
                 let h = (last[3] - last[1]).max(r[3] - r[1]);
                 let overlap = last[3].min(r[3]) - last[1].max(r[1]);
-                let gap = r[0] - last[2];
-                if overlap > h * 0.5 && gap < h * 1.5 && gap > -h {
+                // Apart either way: right-to-left text runs leftwards.
+                let gap = (r[0] - last[2]).max(last[0] - r[2]);
+                if overlap > h * 0.5 && gap < h * 1.5 {
                     last[0] = last[0].min(r[0]);
                     last[1] = last[1].min(r[1]);
                     last[2] = last[2].max(r[2]);
@@ -168,6 +176,8 @@ pub fn find_in(
         .collect()
 }
 
+const TATWEEL: char = '\u{0640}';
+
 /// Case-folded, whole-word aware substring search (byte ranges on char
 /// boundaries). Kept here so the engine doesn't need the UI's crates.
 fn find_all(text: &str, needle: &str, match_case: bool, whole_word: bool) -> Vec<Range<usize>> {
@@ -196,6 +206,11 @@ fn find_all(text: &str, needle: &str, match_case: bool, whole_word: bool) -> Vec
         let mut i = 0;
         let mut end = None;
         'chars: for (off, c) in text[start..].char_indices() {
+            // Arabic kashida only stretches a word: “المتحـدة” is found
+            // as “المتحدة”.
+            if c == TATWEEL && off > 0 && folded.get(i) != Some(&TATWEEL) {
+                continue;
+            }
             buf.clear();
             fold(c, &mut buf);
             for f in &buf {
@@ -247,7 +262,7 @@ impl PdfDoc {
         );
         let mut dev = TextDevice::default();
         interpret_page(p, &mut ctx, &mut dev);
-        dev.out
+        reading_order(dev.out)
     }
 }
 
@@ -266,7 +281,24 @@ struct TextDevice {
     pen: Option<Pen>,
 }
 
+/// How many of the last glyphs a new one is compared with to find one
+/// drawn again on top of itself (fake bold strikes each glyph or each line
+/// twice, a little apart).
+const OVERDRAW_LOOKBACK: usize = 64;
+
 impl TextDevice {
+    /// Whether the same text was just drawn at (nearly) the same place.
+    fn drawn_again(&self, text: &str, rect: [f32; 4], tol: f32) -> bool {
+        let n = self.out.boxes.len();
+        self.out.boxes[n.saturating_sub(OVERDRAW_LOOKBACK)..]
+            .iter()
+            .rev()
+            .any(|b| {
+                b.rect.iter().zip(rect).all(|(a, b)| (a - b).abs() <= tol)
+                    && self.out.text.get(b.start as usize..b.end as usize) == Some(text)
+            })
+    }
+
     fn glyph(&mut self, t: Affine, adv: f64, text: &str) {
         let origin = t * Point::ORIGIN;
         let x_axis = t * Point::new(1000.0, 0.0) - origin;
@@ -280,6 +312,20 @@ impl TextDevice {
         } else {
             Vec2::new(1.0, 0.0)
         };
+        let corners = [
+            t * Point::new(0.0, -220.0),
+            t * Point::new(adv, -220.0),
+            t * Point::new(0.0, 880.0),
+            t * Point::new(adv, 880.0),
+        ];
+        let x0 = corners.iter().map(|p| p.x).fold(f64::MAX, f64::min);
+        let y0 = corners.iter().map(|p| p.y).fold(f64::MAX, f64::min);
+        let x1 = corners.iter().map(|p| p.x).fold(f64::MIN, f64::max);
+        let y1 = corners.iter().map(|p| p.y).fold(f64::MIN, f64::max);
+        let rect = [x0 as f32, y0 as f32, x1 as f32, y1 as f32];
+        if self.drawn_again(text, rect, (size * 0.15) as f32) {
+            return;
+        }
         if let Some(pen) = &self.pen {
             let d = origin - pen.end;
             // Distance along the line and across it, in the font size.
@@ -292,6 +338,11 @@ impl TextDevice {
                     while self.out.text.ends_with(' ') {
                         self.out.text.pop();
                     }
+                    // Space glyphs dropped at the line end lose their boxes.
+                    let len = self.out.text.len() as u32;
+                    while self.out.boxes.last().is_some_and(|b| b.end > len) {
+                        self.out.boxes.pop();
+                    }
                     if !self.out.text.ends_with('\n') {
                         self.out.text.push('\n');
                     }
@@ -300,25 +351,11 @@ impl TextDevice {
                 self.out.text.push(' ');
             }
         }
-        let corners = [
-            t * Point::new(0.0, -220.0),
-            t * Point::new(adv, -220.0),
-            t * Point::new(0.0, 880.0),
-            t * Point::new(adv, 880.0),
-        ];
-        let x0 = corners.iter().map(|p| p.x).fold(f64::MAX, f64::min);
-        let y0 = corners.iter().map(|p| p.y).fold(f64::MAX, f64::min);
-        let x1 = corners.iter().map(|p| p.x).fold(f64::MIN, f64::max);
-        let y1 = corners.iter().map(|p| p.y).fold(f64::MIN, f64::max);
         let start = self.out.text.len() as u32;
         self.out.text.push_str(text);
         let end = self.out.text.len() as u32;
         if end > start {
-            self.out.boxes.push(CharBox {
-                start,
-                end,
-                rect: [x0 as f32, y0 as f32, x1 as f32, y1 as f32],
-            });
+            self.out.boxes.push(CharBox { start, end, rect });
         }
         self.pen = Some(Pen {
             end: t * Point::new(adv, 0.0),
@@ -348,6 +385,9 @@ fn glyph_text(g: &Glyph<'_>) -> String {
             '\u{00AD}' => {}
             c if c.is_control() => {}
             '\u{00A0}' => out.push(' '),
+            // Arabic presentation forms (each letter's joined shape, and
+            // ligatures such as lam-alef) are the letters themselves.
+            c if is_presentation_form(c) => out.extend(std::iter::once(c).nfkc()),
             c => out.push(c),
         }
     }
@@ -381,4 +421,345 @@ impl<'a> Device<'a> for TextDevice {
     fn draw_image(&mut self, _: Image<'a, '_>, _: ImageDrawProps<'a>) {}
     fn pop_clip(&mut self) {}
     fn pop_transparency_group(&mut self) {}
+}
+
+fn is_presentation_form(c: char) -> bool {
+    matches!(c, '\u{FB50}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+}
+
+/// Right-to-left letters: Hebrew, Arabic, Syriac, Thaana, N'Ko and their
+/// presentation forms.
+fn is_rtl(c: char) -> bool {
+    matches!(c,
+        '\u{0590}'..='\u{05FF}' | '\u{0600}'..='\u{065F}' | '\u{066A}'..='\u{06EF}'
+        | '\u{06FA}'..='\u{08FF}' | '\u{FB1D}'..='\u{FDFF}' | '\u{FE70}'..='\u{FEFF}')
+        && c != TATWEEL
+}
+
+/// The direction class of a piece of a line, for reordering.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Dir {
+    Rtl,
+    /// Left-to-right letters or digits (digits keep their order in
+    /// right-to-left text too).
+    Ltr,
+    Neutral,
+}
+
+fn dir_of(s: &str) -> Dir {
+    if s.chars().any(|c| is_rtl(c) || c == TATWEEL) {
+        Dir::Rtl
+    } else if s.chars().any(char::is_alphanumeric) {
+        Dir::Ltr
+    } else {
+        Dir::Neutral
+    }
+}
+
+/// A piece of a line: one glyph's text with its box, or a space put in
+/// between glyphs.
+struct Piece<'a> {
+    text: &'a str,
+    rect: Option<[f32; 4]>,
+}
+
+/// Put lines with right-to-left text that the page draws in visual order
+/// back in reading order (see the module comment). Lines without such text
+/// stay as they are.
+fn reading_order(page: PageText) -> PageText {
+    if !page.text.chars().any(is_rtl) {
+        return page;
+    }
+    let mut out = PageText {
+        text: String::with_capacity(page.text.len()),
+        boxes: Vec::with_capacity(page.boxes.len()),
+    };
+    let mut boxes = page.boxes.iter().peekable();
+    let mut line_start = 0;
+    for line in page.text.split_inclusive('\n') {
+        let line_end = line_start + line.len();
+        // The line as pieces: glyph texts and the spaces between them.
+        let mut pieces = Vec::new();
+        let mut at = line_start;
+        while at < line_end {
+            while boxes.peek().is_some_and(|b| (b.start as usize) < at) {
+                boxes.next();
+            }
+            match boxes.peek() {
+                Some(b) if (b.start as usize) == at && (b.end as usize) <= line_end => {
+                    pieces.push(Piece {
+                        text: &page.text[at..b.end as usize],
+                        rect: Some(b.rect),
+                    });
+                    at = b.end as usize;
+                    boxes.next();
+                }
+                next => {
+                    let to = next.map_or(line_end, |b| (b.start as usize).min(line_end));
+                    let to = if to <= at { line_end } else { to };
+                    pieces.push(Piece {
+                        text: &page.text[at..to],
+                        rect: None,
+                    });
+                    at = to;
+                }
+            }
+        }
+        let newline = pieces
+            .last()
+            .is_some_and(|p| p.rect.is_none() && p.text.ends_with('\n'));
+        let tail = if newline { pieces.pop() } else { None };
+        if is_visual_rtl(&pieces) {
+            reorder(&mut pieces);
+        }
+        for p in pieces.iter().chain(tail.iter()) {
+            let start = out.text.len() as u32;
+            out.text.push_str(p.text);
+            if let Some(rect) = p.rect {
+                out.boxes.push(CharBox {
+                    start,
+                    end: out.text.len() as u32,
+                    rect,
+                });
+            }
+        }
+        line_start = line_end;
+    }
+    out
+}
+
+/// Whether the line's right-to-left glyphs come left to right (visual
+/// order) rather than right to left (already in reading order).
+fn is_visual_rtl(pieces: &[Piece<'_>]) -> bool {
+    let xs: Vec<f32> = pieces
+        .iter()
+        .filter(|p| dir_of(p.text) == Dir::Rtl)
+        .filter_map(|p| p.rect.map(|r| (r[0] + r[2]) / 2.0))
+        .collect();
+    let (mut right, mut left) = (0, 0);
+    for w in xs.windows(2) {
+        if w[1] > w[0] {
+            right += 1;
+        } else if w[1] < w[0] {
+            left += 1;
+        }
+    }
+    right > left
+}
+
+/// Visual (left-to-right) order to reading order: in a line that is mostly
+/// right-to-left, the whole line turns round and its left-to-right runs
+/// (words, numbers) turn back; otherwise only the right-to-left runs turn.
+fn reorder(pieces: &mut [Piece<'_>]) {
+    // The line's direction goes by its letters (digits have none).
+    let rtl = pieces
+        .iter()
+        .flat_map(|p| p.text.chars())
+        .filter(|&c| is_rtl(c))
+        .count();
+    let ltr = pieces
+        .iter()
+        .flat_map(|p| p.text.chars())
+        .filter(|&c| c.is_alphabetic() && !is_rtl(c) && c != TATWEEL)
+        .count();
+    let (turned, keep) = if rtl >= ltr {
+        pieces.reverse();
+        (Dir::Ltr, Dir::Rtl)
+    } else {
+        (Dir::Rtl, Dir::Ltr)
+    };
+    // Each run from a `turned` piece to the last one before a `keep`
+    // piece (neutrals at its ends stay where they are) turns round.
+    let mut i = 0;
+    while i < pieces.len() {
+        if dir_of(pieces[i].text) != turned {
+            i += 1;
+            continue;
+        }
+        let mut last = i;
+        let mut j = i + 1;
+        while j < pieces.len() {
+            match dir_of(pieces[j].text) {
+                d if d == keep => break,
+                d if d == turned => last = j,
+                _ => {}
+            }
+            j += 1;
+        }
+        pieces[i..=last].reverse();
+        i = last + 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A 12 pt glyph `text` at (`x`, `y`) (page space), 6 pt wide.
+    fn draw(dev: &mut TextDevice, x: f64, y: f64, text: &str) {
+        dev.glyph(Affine::new([0.012, 0.0, 0.0, -0.012, x, y]), 500.0, text);
+    }
+
+    /// `glyphs` drawn left to right from `x`, one per 6 pt; `' '` leaves a
+    /// gap instead of drawing.
+    fn line(dev: &mut TextDevice, x: f64, y: f64, glyphs: &str) {
+        for (i, c) in glyphs.chars().enumerate() {
+            if c != ' ' {
+                draw(dev, x + 6.0 * i as f64, y, &c.to_string());
+            }
+        }
+    }
+
+    fn page(f: impl FnOnce(&mut TextDevice)) -> PageText {
+        let mut dev = TextDevice::default();
+        f(&mut dev);
+        reading_order(dev.out)
+    }
+
+    /// Every box covers its own text, in order, without overlaps.
+    fn boxes_consistent(p: &PageText) {
+        let mut at = 0;
+        for b in &p.boxes {
+            assert!(b.start >= at && b.end > b.start, "{:?}", p.boxes);
+            assert!(p.text.is_char_boundary(b.start as usize));
+            at = b.end;
+        }
+        assert!(at as usize <= p.text.len());
+    }
+
+    #[std::prelude::v1::test]
+    fn arabic_in_visual_order_reads_right_to_left() {
+        // “سلام” drawn as most producers do: its last letter leftmost.
+        let p = page(|d| line(d, 72.0, 100.0, "مالس"));
+        assert_eq!(p.text, "سلام");
+        boxes_consistent(&p);
+        // The first letter's box is the rightmost.
+        assert!(p.boxes[0].rect[0] > p.boxes[3].rect[0]);
+        assert_eq!(find_in(0, &p, "سلام", false, false).len(), 1);
+    }
+
+    #[std::prelude::v1::test]
+    fn numbers_and_latin_keep_their_order_in_arabic_lines() {
+        // “خطة العام 2030” in an Arabic line, shown left to right.
+        let p = page(|d| line(d, 72.0, 100.0, "2030 ماعلا ةطخ"));
+        assert_eq!(p.text, "خطة العام 2030");
+        boxes_consistent(&p);
+        let p = page(|d| line(d, 72.0, 100.0, "A/RES/70/1 ماعلا ةطخ"));
+        assert_eq!(p.text, "خطة العام A/RES/70/1");
+        boxes_consistent(&p);
+    }
+
+    #[std::prelude::v1::test]
+    fn arabic_words_in_a_latin_line_turn_alone() {
+        let p = page(|d| line(d, 72.0, 100.0, "The word مالس means peace"));
+        assert_eq!(p.text, "The word سلام means peace");
+        boxes_consistent(&p);
+    }
+
+    #[std::prelude::v1::test]
+    fn arabic_already_in_reading_order_stays() {
+        // Drawn right to left: the file has the letters in reading order.
+        let p = page(|d| {
+            for (i, c) in "سلام".chars().enumerate() {
+                draw(d, 200.0 - 6.0 * i as f64, 100.0, &c.to_string());
+            }
+        });
+        assert_eq!(p.text, "سلام");
+    }
+
+    #[std::prelude::v1::test]
+    fn only_lines_with_right_to_left_text_change() {
+        let p = page(|d| {
+            line(d, 72.0, 100.0, "Plain line");
+            line(d, 72.0, 130.0, "مالس");
+            line(d, 72.0, 160.0, "Last line");
+        });
+        assert_eq!(p.text, "Plain line\nسلام\nLast line");
+        boxes_consistent(&p);
+    }
+
+    #[std::prelude::v1::test]
+    fn presentation_forms_are_plain_letters() {
+        // Final heh-goal… : “ﻻ” (lam-alef) and “ﺔ” (final teh marbuta).
+        let p = page(|d| {
+            draw(d, 72.0, 100.0, &glyph_char('\u{FE94}'));
+            draw(d, 78.0, 100.0, &glyph_char('\u{FEFB}'));
+        });
+        assert_eq!(p.text, "لاة");
+        assert_eq!(find_in(0, &p, "لاة", false, false).len(), 1);
+    }
+
+    fn glyph_char(c: char) -> String {
+        let mut out = String::new();
+        if is_presentation_form(c) {
+            out.extend(std::iter::once(c).nfkc());
+        } else {
+            out.push(c);
+        }
+        out
+    }
+
+    #[std::prelude::v1::test]
+    fn kashida_does_not_stop_a_search() {
+        let p = PageText {
+            text: "الأمم المتحـدة".into(),
+            boxes: Vec::new(),
+        };
+        let hits = find_in(0, &p, "المتحدة", false, false);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(&p.text[hits[0].range.clone()], "المتحـدة");
+    }
+
+    #[std::prelude::v1::test]
+    fn glyphs_drawn_twice_count_once() {
+        // Fake bold: each glyph struck twice, a little apart.
+        let p = page(|d| {
+            for (i, c) in "第二条".chars().enumerate() {
+                let x = 72.0 + 6.0 * i as f64;
+                draw(d, x, 100.0, &c.to_string());
+                draw(d, x + 0.4, 100.0, &c.to_string());
+            }
+        });
+        assert_eq!(p.text, "第二条");
+        // A whole line drawn again, as some producers do for bold.
+        let p = page(|d| {
+            line(d, 72.0, 100.0, "Bold");
+            line(d, 72.3, 100.0, "Bold");
+            line(d, 72.0, 130.0, "Next");
+        });
+        assert_eq!(p.text, "Bold\nNext");
+        // The same letter twice in a row, side by side, is two letters.
+        let p = page(|d| line(d, 72.0, 100.0, "aa"));
+        assert_eq!(p.text, "aa");
+    }
+
+    #[std::prelude::v1::test]
+    fn space_glyphs_at_a_line_end_leave_no_box_behind() {
+        // Word draws the space after the last word of a line.
+        let mut dev = TextDevice::default();
+        line(&mut dev, 72.0, 100.0, "ab");
+        draw(&mut dev, 84.0, 100.0, " ");
+        line(&mut dev, 72.0, 130.0, "cd");
+        let p = dev.out;
+        assert_eq!(p.text, "ab\ncd");
+        boxes_consistent(&p);
+        for b in &p.boxes {
+            assert!(!p.text[b.start as usize..b.end as usize].contains('\n'));
+        }
+        // The same with right-to-left lines, which are rebuilt.
+        let p = page(|d| {
+            line(d, 72.0, 100.0, "مالس");
+            draw(d, 96.0, 100.0, " ");
+            line(d, 72.0, 130.0, "مالس");
+        });
+        assert_eq!(p.text, "سلام\nسلام");
+        assert_eq!(p.boxes.len(), 8);
+        boxes_consistent(&p);
+    }
+
+    #[std::prelude::v1::test]
+    fn selection_rects_join_right_to_left_runs() {
+        let p = page(|d| line(d, 72.0, 100.0, "مالس"));
+        assert_eq!(p.rects(0..p.text.len()).len(), 1);
+    }
 }
