@@ -2189,7 +2189,7 @@ fn paint_runs<'a>(
             .run_text(run, text_of(run.para))
             .get(run.text_range.clone())
             .unwrap_or_default();
-        let Some(font_id) = bridge.font_id(&run.font, sample, ts) else {
+        let Some(font_id) = bridge.font_id(&run.font, &run.variations, sample, ts) else {
             continue;
         };
         let color: Hsla = match run.source {

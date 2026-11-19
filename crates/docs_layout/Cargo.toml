@@ -8,13 +8,17 @@ repository.workspace = true
 
 [dependencies]
 parley = "0.12"
+log.workspace = true
+# Static instances of variable fonts (instance.rs): reading, and cutting
+# outlines at a location (the same crates krilla uses).
+skrifa = "0.42"
+subsetter = { version = "0.2.6", features = ["variable-fonts"] }
 
 [dev-dependencies]
 krilla = "0.8"
 # Only for examples/gpui_compare.rs: GPUI's Linux text system, used headless.
 gpui = { package = "gpui-pre", version = "0.3.11" }
 gpui_wgpu = { package = "gpui-pre-wgpu", version = "0.3.11" }
-skrifa = "0.42"
 
 [lints]
 workspace = true

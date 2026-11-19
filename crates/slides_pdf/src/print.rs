@@ -281,7 +281,7 @@ fn encode(job: &PrintJob, images: &mut Images) -> Result<Vec<u8>, KrillaError> {
                         notes[1] * TO_PT,
                     ));
                     for run in runs {
-                        if let Some(font) = fonts.get(&run.font) {
+                        if let Some(font) = fonts.get(&run.font, &run.variations) {
                             draw_run(&mut surface, run, font);
                         }
                     }

@@ -111,6 +111,9 @@ pub struct TextRun {
     pub font: FontData,
     pub font_size: f32,
     pub color: Rgba,
+    /// Variable-font instance (user-space axis values): see
+    /// [`docs_layout::instance`].
+    pub variations: Vec<([u8; 4], f32)>,
     pub embolden: bool,
     pub skew_deg: Option<f32>,
     pub origin_x: f32,
@@ -128,6 +131,7 @@ impl TextRun {
             font: run.font.clone(),
             font_size: run.font_size,
             color: run.color,
+            variations: run.variations.clone(),
             embolden: run.embolden,
             skew_deg: run.skew_deg,
             origin_x: run.origin_x,
@@ -700,17 +704,33 @@ pub fn encode_retrying(
     }
 }
 
-/// Fonts embedded so far, by font data and index.
+/// Fonts embedded so far, by font data, index and variable-font instance.
 #[derive(Default)]
-pub struct Fonts(HashMap<(u64, u32), Option<Font>>);
+pub struct Fonts(HashMap<FontKey, Option<Font>>);
+
+type FontKey = (u64, u32, Vec<([u8; 4], u32)>);
 
 impl Fonts {
-    /// The krilla font for `font`; `None` (with a warning, once) when
-    /// krilla can't read it.
-    pub fn get(&mut self, font: &FontData) -> Option<Font> {
+    /// The krilla font for `font` at `variations` (a run's variable-font
+    /// instance, e.g. `wght` 700 for bold): a static font cut at that
+    /// instance and named after it (`PlusJakartaSans-Bold`), so the PDF
+    /// shows the real bold. `None` (with a warning, once) when krilla
+    /// can't read it.
+    pub fn get(&mut self, font: &FontData, variations: &[([u8; 4], f32)]) -> Option<Font> {
+        let key = (
+            font.data.id(),
+            font.index,
+            variations.iter().map(|(t, v)| (*t, v.to_bits())).collect(),
+        );
         self.0
-            .entry((font.data.id(), font.index))
+            .entry(key)
             .or_insert_with(|| {
+                if let Some(inst) = docs_layout::instance::instance(font, variations) {
+                    let made = Font::new(inst.data.to_vec().into(), 0);
+                    if made.is_some() {
+                        return made;
+                    }
+                }
                 let (data, _) = font.data.clone().into_raw_parts();
                 let made = Font::new(data.into(), font.index);
                 if made.is_none() {
@@ -965,7 +985,7 @@ fn draw_content(
         draw_path(surface, p);
     }
     for run in &content.runs {
-        let Some(font) = fonts.get(&run.font) else {
+        let Some(font) = fonts.get(&run.font, &run.variations) else {
             continue;
         };
         draw_run(surface, run, font);

@@ -17,7 +17,9 @@
 //! as a zero-width space with the object's box at the same offset.
 
 mod float;
+pub mod instance;
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -505,6 +507,49 @@ const MARKER_GAP: f32 = 6.0;
 pub struct Engine {
     pub fonts: FontContext,
     layout_cx: LayoutContext<Rgba>,
+    /// Family lists naming a style ("Plus Jakarta Sans ExtraBold"), see
+    /// [`Engine::style_family`].
+    styled: HashMap<String, Option<StyledFamily>>,
+}
+
+/// A family name that names a style of another family, the way Windows
+/// lists each weight of a variable font (or of a big static family) as a
+/// family of its own: "Plus Jakarta Sans ExtraBold" is Plus Jakarta Sans
+/// at weight 800.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StyledFamily {
+    /// The family list with the style taken off the first name.
+    pub family: String,
+    pub weight: f32,
+    pub italic: bool,
+}
+
+/// `"ExtraBold Italic"` → (800, true); `None` for words that aren't a style.
+fn style_words(words: &str) -> Option<(f32, bool)> {
+    let mut w = words.to_ascii_lowercase().replace(['-', '_'], " ");
+    let mut italic = false;
+    for suffix in [" italic", " oblique"] {
+        if let Some(rest) = w.strip_suffix(suffix) {
+            w = rest.to_owned();
+            italic = true;
+        }
+    }
+    if matches!(w.as_str(), "italic" | "oblique") {
+        return Some((400.0, true));
+    }
+    let weight = match w.replace(' ', "").as_str() {
+        "thin" | "hairline" => 100.0,
+        "extralight" | "ultralight" => 200.0,
+        "light" => 300.0,
+        "regular" | "normal" | "book" => 400.0,
+        "medium" => 500.0,
+        "semibold" | "demibold" => 600.0,
+        "bold" => 700.0,
+        "extrabold" | "ultrabold" => 800.0,
+        "black" | "heavy" => 900.0,
+        _ => return None,
+    };
+    Some((weight, italic))
 }
 
 impl Default for Engine {
@@ -513,11 +558,27 @@ impl Default for Engine {
     }
 }
 
-fn push_span(b: &mut parley::RangedBuilder<'_, Rgba>, span: &Span, r: Range<usize>) {
+/// Push a span's style. `styled` is what its family names (see
+/// [`Engine::style_family`]), `base` the paragraph's own.
+fn push_span(
+    b: &mut parley::RangedBuilder<'_, Rgba>,
+    span: &Span,
+    r: Range<usize>,
+    styled: Option<&StyledFamily>,
+    base: Option<&StyledFamily>,
+) {
+    let style = styled.or(if span.family.is_none() { base } else { None });
+    let weight = style.map_or(400.0, |s| s.weight);
     if span.bold {
-        b.push(StyleProperty::FontWeight(FontWeight::BOLD), r.clone());
+        // Bold on a style that is already bold or heavier keeps it.
+        b.push(
+            StyleProperty::FontWeight(FontWeight::new(weight.max(700.0))),
+            r.clone(),
+        );
+    } else if let Some(s) = styled {
+        b.push(StyleProperty::FontWeight(FontWeight::new(s.weight)), r.clone());
     }
-    if span.italic {
+    if span.italic || styled.is_some_and(|s| s.italic) {
         b.push(StyleProperty::FontStyle(FontStyle::Italic), r.clone());
     }
     if span.underline {
@@ -530,10 +591,30 @@ fn push_span(b: &mut parley::RangedBuilder<'_, Rgba>, span: &Span, r: Range<usiz
         b.push(StyleProperty::Brush(color), r.clone());
     }
     if let Some(family) = span.family.as_deref() {
+        let family = styled.map_or(family, |s| s.family.as_str());
         b.push(
-            StyleProperty::FontFamily(FontFamily::Source(family.into())),
+            StyleProperty::FontFamily(FontFamily::Source(family.to_owned().into())),
             r,
         );
+    }
+}
+
+/// The default family (and the style it names, see
+/// [`Engine::style_family`]).
+fn push_family_default(
+    b: &mut parley::RangedBuilder<'_, Rgba>,
+    family: &str,
+    styled: Option<&StyledFamily>,
+) {
+    let family = styled.map_or(family, |s| s.family.as_str());
+    b.push_default(StyleProperty::FontFamily(FontFamily::Source(
+        family.to_owned().into(),
+    )));
+    if let Some(s) = styled {
+        b.push_default(StyleProperty::FontWeight(FontWeight::new(s.weight)));
+        if s.italic {
+            b.push_default(StyleProperty::FontStyle(FontStyle::Italic));
+        }
     }
 }
 
@@ -548,7 +629,55 @@ impl Engine {
         Self {
             fonts,
             layout_cx: LayoutContext::new(),
+            styled: HashMap::new(),
         }
+    }
+
+    /// The family and style a family list's first name stands for when no
+    /// family has that name but it is an installed family plus a style
+    /// ("Plus Jakarta Sans ExtraBold", "Inter SemiBold Italic"): what
+    /// PowerPoint and Word write when a style of a variable font is picked
+    /// as a font on Windows. `None` for every other list.
+    pub fn style_family(&mut self, list: &str) -> Option<StyledFamily> {
+        if let Some(hit) = self.styled.get(list) {
+            return hit.clone();
+        }
+        let found = self.find_styled(list);
+        self.styled.insert(list.to_owned(), found.clone());
+        found
+    }
+
+    fn find_styled(&mut self, list: &str) -> Option<StyledFamily> {
+        let (first, rest) = match list.split_once(',') {
+            Some((a, b)) => (a, Some(b)),
+            None => (list, None),
+        };
+        let name = first.trim().trim_matches(['"', '\'']);
+        let collection = &mut self.fonts.collection;
+        if name.is_empty() || collection.family_id(name).is_some() {
+            return None;
+        }
+        // Take one, two or three words off the end as the style.
+        let words: Vec<&str> = name.split(' ').filter(|w| !w.is_empty()).collect();
+        for n in 1..=3.min(words.len().saturating_sub(1)) {
+            let (base, style) = words.split_at(words.len() - n);
+            let Some((weight, italic)) = style_words(&style.join(" ")) else {
+                continue;
+            };
+            let base = base.join(" ");
+            if collection.family_id(&base).is_some() {
+                let family = match rest {
+                    Some(r) => format!("\"{base}\",{r}"),
+                    None => format!("\"{base}\""),
+                };
+                return Some(StyledFamily {
+                    family,
+                    weight,
+                    italic,
+                });
+            }
+        }
+        None
     }
 
     /// A one-line label or marker layout.
@@ -560,14 +689,18 @@ impl Engine {
         style: Option<&Span>,
         color: Rgba,
     ) -> Layout<Rgba> {
+        let base = self.style_family(family);
+        let styled = style
+            .and_then(|s| s.family.as_deref())
+            .and_then(|f| self.style_family(f));
         let mut b = self
             .layout_cx
             .ranged_builder(&mut self.fonts, text, 1.0, true);
-        b.push_default(StyleProperty::FontFamily(FontFamily::Source(family.into())));
+        push_family_default(&mut b, family, base.as_ref());
         b.push_default(StyleProperty::FontSize(size_pt * PT));
         b.push_default(StyleProperty::Brush(color));
         if let Some(s) = style {
-            push_span(&mut b, s, 0..text.len());
+            push_span(&mut b, s, 0..text.len(), styled.as_ref(), base.as_ref());
         }
         let mut layout = b.build(text);
         layout.break_all_lines(None);
@@ -775,12 +908,16 @@ impl Engine {
         }
 
         let text = para.shaped_text();
+        let base = self.style_family(&para.family);
+        let styled: Vec<Option<StyledFamily>> = para
+            .spans
+            .iter()
+            .map(|s| s.family.as_deref().and_then(|f| self.style_family(f)))
+            .collect();
         let mut b = self
             .layout_cx
             .ranged_builder(&mut self.fonts, &text, 1.0, true);
-        b.push_default(StyleProperty::FontFamily(FontFamily::Source(
-            para.family.as_str().into(),
-        )));
+        push_family_default(&mut b, &para.family, base.as_ref());
         b.push_default(StyleProperty::FontSize(para.size_pt * PT));
         b.push_default(StyleProperty::LineHeight(
             para.line_height
@@ -790,8 +927,14 @@ impl Engine {
         if let Some(locale) = para.locale.as_deref().and_then(|l| l.parse().ok()) {
             b.push_default(StyleProperty::Locale(Some(locale)));
         }
-        for span in &para.spans {
-            push_span(&mut b, span, span.range.clone());
+        for (span, styled) in para.spans.iter().zip(&styled) {
+            push_span(
+                &mut b,
+                span,
+                span.range.clone(),
+                styled.as_ref(),
+                base.as_ref(),
+            );
         }
         for (at, _) in para.text.char_indices().filter(|(_, c)| *c == '\t') {
             b.push(StyleProperty::FontSize(0.01), at..at + 1);
@@ -1158,6 +1301,9 @@ pub struct GlyphRun {
     pub color: Rgba,
     /// Variation coordinates of the selected instance (variable fonts).
     pub normalized_coords: Vec<i16>,
+    /// The same instance as user-space axis values (`wght` 700, …): what
+    /// [`instance::instance`] takes to make a static font for renderers.
+    pub variations: Vec<([u8; 4], f32)>,
     /// Synthetic bold / oblique the renderer must apply itself.
     pub embolden: bool,
     pub skew_deg: Option<f32>,
@@ -1185,6 +1331,15 @@ pub struct PositionedGlyph {
     pub advance: f32,
     /// Source text of the glyph's cluster (for PDF ToUnicode and copy).
     pub cluster: Range<usize>,
+}
+
+/// The axis values fontique chose for a run (bold → `wght` 700, …).
+pub fn variations(synthesis: &parley::fontique::Synthesis) -> Vec<([u8; 4], f32)> {
+    synthesis
+        .variation_settings()
+        .iter()
+        .map(|(t, v)| (t.to_be_bytes(), *v))
+        .collect()
 }
 
 /// An object's box on a page.
@@ -3645,6 +3800,7 @@ fn emit_runs(
                 .iter()
                 .map(|c| c.to_bits())
                 .collect(),
+            variations: variations(&synthesis),
             embolden: synthesis.embolden(),
             skew_deg: synthesis.skew(),
             baseline,

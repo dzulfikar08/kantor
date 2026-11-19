@@ -212,6 +212,7 @@ impl Shaper {
                 r.font.data.id() == run.font.data.id()
                     && r.font.index == run.font.index
                     && r.font_size == run.font_size
+                    && r.variations == run.variations
                     && r.embolden == run.embolden
                     && r.skew_deg == run.skew_deg
             });
@@ -366,6 +367,7 @@ fn line_of(line: &docs_layout::parley::Line<'_, Rgba>, text: &Arc<str>) -> Line 
             font: run.font().clone(),
             font_size: run.font_size(),
             color: gr.style().brush,
+            variations: docs_layout::variations(&synthesis),
             embolden: synthesis.embolden(),
             skew_deg: synthesis.skew(),
             origin_x: gr.offset(),

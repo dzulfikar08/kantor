@@ -1652,8 +1652,10 @@ dependencies = [
  "gpui-pre",
  "gpui-pre-wgpu",
  "krilla",
+ "log",
  "parley",
  "skrifa 0.42.1",
+ "subsetter",
 ]
 
 [[package]]
@@ -1670,6 +1672,7 @@ dependencies = [
  "krilla",
  "log",
  "roxmltree 0.21.2",
+ "skrifa 0.42.1",
  "slides_engine",
  "slides_scene",
  "tempfile",

@@ -136,6 +136,8 @@ fn rgba_hsla(c: SRgba) -> Hsla {
 /// A glyph run ready to paint (slide px).
 pub(crate) struct GRun {
     font: FontData,
+    /// Variable-font instance (bold of a variable font, …).
+    variations: Vec<([u8; 4], f32)>,
     /// Text the run shows (picks the GPUI face).
     sample: String,
     size: f32,
@@ -517,6 +519,7 @@ impl Painter {
                                 .collect();
                             GRun {
                                 font: run.font.clone(),
+                                variations: run.variations.clone(),
                                 sample: r.sample().to_owned(),
                                 size: run.font_size,
                                 color: rgba_hsla(run.color),
@@ -1197,7 +1200,7 @@ fn paint_runs(runs: &[GRun], view: View, bridge: &RefCell<FontBridge>, window: &
     let ts = window.text_system().clone();
     let mut bridge = bridge.borrow_mut();
     for run in runs {
-        let Some(font_id) = bridge.font_id(&run.font, &run.sample, &ts) else {
+        let Some(font_id) = bridge.font_id(&run.font, &run.variations, &run.sample, &ts) else {
             continue;
         };
         let size = px(run.size * k);
