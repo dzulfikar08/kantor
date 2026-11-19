@@ -4179,6 +4179,7 @@ version = "0.16.0"
 dependencies = [
  "image",
  "lopdf",
+ "tempfile",
 ]
 
 [[package]]

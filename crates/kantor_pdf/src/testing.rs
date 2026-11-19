@@ -151,3 +151,92 @@ pub fn sample_jpeg(width: u32, height: u32) -> Vec<u8> {
         .expect("jpeg");
     out.into_inner()
 }
+
+/// A sample PDF with a bookmark per page ("Page k", the last one with a
+/// child bookmark to page 1), a link on page 1 to the last page, a named
+/// destination "last" for it and a link on page 2 that goes there.
+pub fn sample_pdf_linked(pages: u32) -> Vec<u8> {
+    let mut doc = build(pages, false);
+    let ids: Vec<lopdf::ObjectId> = doc.get_pages().into_values().collect();
+    let last = *ids.last().expect("pages");
+    let dest = |page| {
+        Object::Array(vec![
+            Object::Reference(page),
+            "XYZ".into(),
+            Object::Null,
+            Object::Null,
+            Object::Null,
+        ])
+    };
+    let outlines = doc.new_object_id();
+    let mut items = Vec::new();
+    for (k, &page) in ids.iter().enumerate() {
+        let mut item = Dictionary::new();
+        item.set(
+            "Title",
+            Object::string_literal(format!("Page {}", k + 1).as_str()),
+        );
+        item.set("Parent", outlines);
+        item.set("Dest", dest(page));
+        items.push(doc.add_object(item));
+    }
+    // A child under the last bookmark.
+    let mut child = Dictionary::new();
+    child.set("Title", Object::string_literal("Back to start"));
+    child.set("Parent", *items.last().expect("items"));
+    child.set("Dest", dest(ids[0]));
+    let child = doc.add_object(child);
+    for (i, &id) in items.iter().enumerate() {
+        let d = doc.get_dictionary_mut(id).expect("item");
+        if i > 0 {
+            d.set("Prev", items[i - 1]);
+        }
+        if let Some(&n) = items.get(i + 1) {
+            d.set("Next", n);
+        }
+        if i + 1 == items.len() {
+            d.set("First", child);
+            d.set("Last", child);
+            d.set("Count", 1);
+        }
+    }
+    let mut root = Dictionary::new();
+    root.set("Type", "Outlines");
+    root.set("First", items[0]);
+    root.set("Last", *items.last().expect("items"));
+    root.set("Count", items.len() as i64 + 1);
+    doc.objects.insert(outlines, Object::Dictionary(root));
+    // Named destination "last" and the links.
+    let mut dests = Dictionary::new();
+    dests.set("last", dest(last));
+    let link = |doc: &mut Document, target: Object, named: bool| {
+        let mut a = Dictionary::new();
+        a.set("Type", "Annot");
+        a.set("Subtype", "Link");
+        a.set("Rect", vec![72.into(), 600.into(), 200.into(), 620.into()]);
+        if named {
+            let mut act = Dictionary::new();
+            act.set("S", "GoTo");
+            act.set("D", target);
+            a.set("A", act);
+        } else {
+            a.set("Dest", target);
+        }
+        doc.add_object(a)
+    };
+    let l1 = link(&mut doc, dest(last), false);
+    let l2 = link(&mut doc, Object::Name(b"last".to_vec()), true);
+    doc.get_dictionary_mut(ids[0])
+        .expect("page")
+        .set("Annots", vec![Object::Reference(l1)]);
+    if ids.len() > 1 {
+        doc.get_dictionary_mut(ids[1])
+            .expect("page")
+            .set("Annots", vec![Object::Reference(l2)]);
+    }
+    let cat = doc.catalog_mut().expect("catalog");
+    cat.set("Outlines", outlines);
+    cat.set("Dests", dests);
+    cat.set("OpenAction", dest(last));
+    save(doc)
+}
