@@ -4179,6 +4179,7 @@ version = "0.16.0"
 dependencies = [
  "image",
  "lopdf",
+ "tempfile",
 ]
 
 [[package]]
@@ -5634,13 +5635,16 @@ dependencies = [
 name = "pdf_ui"
 version = "0.16.0"
 dependencies = [
+ "anyhow",
  "async-channel",
  "gpui-kit",
  "image",
  "kantor_core",
+ "kantor_pdf",
  "kantor_ui",
  "log",
  "pdf_engine",
+ "tempfile",
 ]
 
 [[package]]

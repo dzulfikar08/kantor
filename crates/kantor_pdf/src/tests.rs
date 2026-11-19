@@ -560,3 +560,313 @@ fn compress_report_percent() {
     };
     assert_eq!(r.saved_percent(), 25.0);
 }
+
+// ── assembling edited documents ──────────────────────────────────────────
+
+fn pick(source: usize, page: u32, turn: i64) -> Pick {
+    Pick { source, page, turn }
+}
+
+#[test]
+fn assemble_reorders_rotates_and_duplicates() {
+    let base = open(&sample_pdf(4));
+    let picks = [
+        pick(0, 2, 0),
+        pick(0, 0, 0),
+        pick(0, 0, 90),
+        pick(0, 3, -90),
+    ];
+    let mut out = assemble(vec![base], &picks).unwrap();
+    assert_eq!(layout(&mut out), [(3, 0), (1, 0), (1, 90), (4, 270)]);
+    // Page 2 is gone from the file.
+    let text: String = (1..=4).map(|p| content_text(&out, p)).collect();
+    assert!(!text.contains("Page 2"), "{text}");
+    assert_eq!(
+        info(&out.to_bytes().unwrap(), None)
+            .unwrap()
+            .title
+            .as_deref(),
+        Some("Sample")
+    );
+}
+
+#[test]
+fn assemble_adds_rotation_to_inherited_rotation() {
+    let base = open(&sample_pdf_inherited(2));
+    let mut out = assemble(vec![base], &[pick(0, 1, 90), pick(0, 0, 0)]).unwrap();
+    assert_eq!(layout(&mut out), [(2, 180), (1, 90)]);
+}
+
+#[test]
+fn assemble_inserts_pages_of_other_pdfs() {
+    let base = open(&sample_pdf(3));
+    let other = open(&sample_pdf(2));
+    let blank = blank_page(300.0, 400.0);
+    let picks = [
+        pick(0, 0, 0),
+        pick(1, 1, 0),
+        pick(2, 0, 0),
+        pick(0, 1, 0),
+        pick(0, 2, 0),
+    ];
+    let mut out = assemble(vec![base, other, blank], &picks).unwrap();
+    let bytes = out.to_bytes_compact().unwrap();
+    assert!(qpdf_ok(&bytes));
+    let i = info(&bytes, None).unwrap();
+    let widths: Vec<f32> = i.pages.iter().map(|p| p.width).collect();
+    assert_eq!(widths, [601.0, 602.0, 300.0, 602.0, 603.0]);
+    assert_eq!(page_size(&out, 2), Some((300.0, 400.0)));
+    // The pages of the other file came with their contents.
+    assert!(content_text(&out, 2).contains("Page 2"));
+    let reopened = open(&bytes);
+    assert_eq!(reopened.page_count(), 5);
+}
+
+#[test]
+fn assemble_checks_its_picks() {
+    let e = assemble(vec![open(&sample_pdf(2))], &[pick(0, 5, 0)]).unwrap_err();
+    assert!(e.to_string().contains("out of range"), "{e}");
+    let e = assemble(vec![open(&sample_pdf(2))], &[pick(0, 0, 45)]).unwrap_err();
+    assert!(e.to_string().contains("multiple of 90"), "{e}");
+    let e = assemble(vec![open(&sample_pdf(2))], &[]).unwrap_err();
+    assert!(e.to_string().contains("at least one page"), "{e}");
+}
+
+/// Bookmark titles, depth-first, with their nesting depth.
+fn bookmarks(pdf: &Pdf) -> Vec<(usize, String)> {
+    fn walk(
+        doc: &lopdf::Document,
+        node: lopdf::ObjectId,
+        depth: usize,
+        out: &mut Vec<(usize, String)>,
+    ) {
+        let mut next = doc
+            .get_dictionary(node)
+            .ok()
+            .and_then(|d| d.get(b"First").ok())
+            .and_then(|o| o.as_reference().ok());
+        while let Some(id) = next {
+            let d = doc.get_dictionary(id).unwrap();
+            let title = d.get(b"Title").and_then(|t| t.as_str()).unwrap_or(b"");
+            out.push((depth, String::from_utf8_lossy(title).into_owned()));
+            walk(doc, id, depth + 1, out);
+            next = d.get(b"Next").ok().and_then(|o| o.as_reference().ok());
+        }
+    }
+    let doc = pdf.document();
+    let mut out = Vec::new();
+    if let Ok(root) = doc
+        .catalog()
+        .unwrap()
+        .get(b"Outlines")
+        .and_then(|o| o.as_reference())
+    {
+        walk(doc, root, 0, &mut out);
+    }
+    out
+}
+
+fn link_count(pdf: &Pdf, page: u32) -> usize {
+    let doc = pdf.document();
+    let id = doc.get_pages()[&page];
+    doc.get_dictionary(id)
+        .unwrap()
+        .get(b"Annots")
+        .and_then(|a| a.as_array())
+        .map_or(0, |a| a.len())
+}
+
+#[test]
+fn deleting_pages_drops_dead_bookmarks_and_links() {
+    let base = open(&sample_pdf_linked(4));
+    assert_eq!(bookmarks(&base).len(), 5);
+    // Page 4 goes; page 2 moves first.
+    let mut out = assemble(vec![base], &[pick(0, 1, 0), pick(0, 0, 0), pick(0, 2, 0)]).unwrap();
+    let bytes = out.to_bytes().unwrap();
+    let out = open(&bytes);
+    // "Page 4" had a child, so it stays as a heading without a target.
+    assert_eq!(
+        bookmarks(&out),
+        [
+            (0, "Page 1".into()),
+            (0, "Page 2".into()),
+            (0, "Page 3".into()),
+            (0, "Page 4".into()),
+            (1, "Back to start".into()),
+        ]
+    );
+    // Both links led to page 4 (one by name): gone, with the open action.
+    assert_eq!(link_count(&out, 1), 0);
+    assert_eq!(link_count(&out, 2), 0);
+    assert!(
+        out.document()
+            .catalog()
+            .unwrap()
+            .get(b"OpenAction")
+            .is_err()
+    );
+    assert!(qpdf_ok(&bytes));
+}
+
+#[test]
+fn kept_targets_follow_their_pages() {
+    let base = open(&sample_pdf_linked(3));
+    // Page 1 goes: its bookmark goes; the other bookmarks and links stay.
+    let mut out = assemble(vec![base], &[pick(0, 2, 0), pick(0, 1, 0)]).unwrap();
+    let out = open(&out.to_bytes().unwrap());
+    let titles: Vec<String> = bookmarks(&out).into_iter().map(|(_, t)| t).collect();
+    // "Back to start" pointed at page 1: gone too.
+    assert_eq!(titles, ["Page 2", "Page 3"]);
+    // Page 2's named link to the last page stays (page 2 is now second).
+    assert_eq!(link_count(&out, 2), 1);
+    let root = out.document().catalog().unwrap();
+    let outlines = out
+        .document()
+        .get_dictionary(root.get(b"Outlines").unwrap().as_reference().unwrap())
+        .unwrap();
+    assert_eq!(outlines.get(b"Count").unwrap().as_i64().unwrap(), 2);
+}
+
+#[test]
+fn delete_tool_also_drops_dead_bookmarks() {
+    let mut pdf = open(&sample_pdf_linked(3));
+    delete(&mut pdf, &ranges("3")).unwrap();
+    let titles: Vec<String> = bookmarks(&pdf).into_iter().map(|(_, t)| t).collect();
+    assert_eq!(titles, ["Page 1", "Page 2", "Page 3", "Back to start"]);
+    assert_eq!(link_count(&pdf, 1), 0);
+}
+
+#[test]
+fn saving_keeps_the_password_protection() {
+    let bytes = sample_pdf_encrypted(3, "owner", "user");
+    let base = Pdf::from_bytes(&bytes, Some("user")).unwrap();
+    let mut out = assemble(vec![base], &[pick(0, 2, 0), pick(0, 0, 90)]).unwrap();
+    let saved = out.to_bytes_encrypted(true).unwrap();
+    assert!(matches!(
+        Pdf::from_bytes(&saved, None),
+        Err(Error::Encrypted)
+    ));
+    let mut again = Pdf::from_bytes(&saved, Some("user")).unwrap();
+    assert!(again.was_encrypted());
+    assert!(content_text(&again, 1).contains("Page 3"));
+    assert_eq!(layout(&mut again), [(3, 0), (1, 90)]);
+    // The owner password still works too, and the in-memory copy stays readable.
+    assert!(Pdf::from_bytes(&saved, Some("owner")).is_ok());
+    assert!(content_text(&out, 1).contains("Page 3"));
+    assert!(qpdf_ok_with(&saved, Some("user")));
+    // Without keeping it, the result opens without a password.
+    let plain = out.to_bytes_encrypted(false).unwrap();
+    assert!(Pdf::from_bytes(&plain, None).is_ok());
+    assert!(qpdf_ok(&plain));
+}
+
+#[test]
+fn write_atomic_replaces_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("a.pdf");
+    std::fs::write(&path, b"old").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+    }
+    write_atomic(&path, b"new").unwrap();
+    assert_eq!(std::fs::read(&path).unwrap(), b"new");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o640);
+    }
+    // No temporary file is left behind.
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
+
+#[test]
+fn duplicated_pages_get_their_own_annotations() {
+    let base = open(&sample_pdf_linked(2));
+    let mut out = assemble(vec![base], &[pick(0, 0, 0), pick(0, 0, 0), pick(0, 1, 0)]).unwrap();
+    let bytes = out.to_bytes().unwrap();
+    let out = open(&bytes);
+    let doc = out.document();
+    let pages = doc.get_pages();
+    let annot = |p: u32| {
+        doc.get_dictionary(pages[&p])
+            .unwrap()
+            .get(b"Annots")
+            .unwrap()
+            .as_array()
+            .unwrap()[0]
+            .as_reference()
+            .unwrap()
+    };
+    assert_ne!(annot(1), annot(2));
+    let p = |a| {
+        doc.get_dictionary(a)
+            .unwrap()
+            .get(b"P")
+            .ok()
+            .and_then(|o| o.as_reference().ok())
+    };
+    assert_eq!(p(annot(2)), Some(pages[&2]));
+    assert!(qpdf_ok(&bytes));
+}
+
+/// `qpdf --check` passes (skipped when qpdf isn't installed).
+fn qpdf_ok(bytes: &[u8]) -> bool {
+    qpdf_ok_with(bytes, None)
+}
+
+fn qpdf_ok_with(bytes: &[u8], password: Option<&str>) -> bool {
+    let Ok(dir) = tempfile::tempdir() else {
+        return true;
+    };
+    let path = dir.path().join("check.pdf");
+    std::fs::write(&path, bytes).unwrap();
+    let mut cmd = std::process::Command::new("qpdf");
+    if let Some(p) = password {
+        cmd.arg(format!("--password={p}"));
+    }
+    match cmd.arg("--check").arg(&path).output() {
+        Ok(out) => {
+            if !out.status.success() {
+                eprintln!(
+                    "qpdf: {}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            out.status.success()
+        }
+        Err(_) => true,
+    }
+}
+
+/// AES-256 files (made by qpdf, when it is installed) keep their protection.
+#[test]
+fn saving_keeps_aes_256_protection() {
+    let dir = tempfile::tempdir().unwrap();
+    let plain = dir.path().join("plain.pdf");
+    let locked = dir.path().join("locked.pdf");
+    std::fs::write(&plain, sample_pdf(3)).unwrap();
+    let made = std::process::Command::new("qpdf")
+        .args(["--encrypt", "user", "owner", "256", "--"])
+        .arg(&plain)
+        .arg(&locked)
+        .status();
+    if !made.is_ok_and(|s| s.success()) {
+        eprintln!("qpdf not available: skipped");
+        return;
+    }
+    let bytes = std::fs::read(&locked).unwrap();
+    let base = Pdf::from_bytes(&bytes, Some("user")).unwrap();
+    let mut out = assemble(vec![base], &[pick(0, 1, 0), pick(0, 0, 180)]).unwrap();
+    let saved = out.to_bytes_encrypted(true).unwrap();
+    assert!(matches!(
+        Pdf::from_bytes(&saved, None),
+        Err(Error::Encrypted)
+    ));
+    let mut again = Pdf::from_bytes(&saved, Some("user")).unwrap();
+    assert_eq!(layout(&mut again), [(2, 0), (1, 180)]);
+    assert!(qpdf_ok_with(&saved, Some("user")));
+}

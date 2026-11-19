@@ -86,7 +86,7 @@ pub(crate) fn rotation(doc: &Document, page: ObjectId) -> i64 {
 
 /// Copy inherited attributes into the page itself, so it survives being
 /// moved to another page tree.
-fn materialize(doc: &mut Document, page: ObjectId) -> Result<()> {
+pub(crate) fn materialize(doc: &mut Document, page: ObjectId) -> Result<()> {
     let mut attrs = Vec::new();
     for key in [&b"MediaBox"[..], b"CropBox", b"Resources", b"Rotate"] {
         if let Some(v) = inherited(doc, page, key) {
@@ -112,7 +112,7 @@ fn materialize(doc: &mut Document, page: ObjectId) -> Result<()> {
     Ok(())
 }
 
-fn pages_root(doc: &Document) -> Result<ObjectId> {
+pub(crate) fn pages_root(doc: &Document) -> Result<ObjectId> {
     doc.catalog()?
         .get(b"Pages")
         .and_then(Object::as_reference)
@@ -120,7 +120,7 @@ fn pages_root(doc: &Document) -> Result<ObjectId> {
 }
 
 /// Replace every reference to `removed` with null, in all objects and the trailer.
-fn null_references(doc: &mut Document, removed: &HashSet<ObjectId>) {
+pub(crate) fn null_references(doc: &mut Document, removed: &HashSet<ObjectId>) {
     if removed.is_empty() {
         return;
     }
@@ -191,6 +191,7 @@ pub(crate) fn select(pdf: &mut Pdf, pages: &[u32]) -> Result<()> {
     for id in &removed {
         doc.objects.remove(id);
     }
+    crate::edit::prune_dead_targets(doc);
     doc.prune_objects();
     Ok(())
 }

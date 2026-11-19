@@ -12,21 +12,33 @@
 //! click a word, triple click a line), Ctrl+C copies it, links go to their
 //! place in the document or, after asking, open in the browser.
 //!
-//! The file is never written: PDFs open read-only (Save As writes a copy).
+//! Pages can be organized ([`organize`]): selected in the thumbnails or
+//! the Organize Pages grid ([`grid`]), dragged to a new place (or to
+//! another open PDF), rotated, deleted, duplicated, copied and pasted,
+//! inserted from files; and the whole document stamped with page numbers
+//! or a watermark, split, or combined with other files ([`dialog`]). The
+//! document is a list of pages of sources ([`model`]): an edit is instant
+//! and only pages that changed are drawn again. Save writes the file in
+//! place, safely ([`save`]).
 //! A protected file asks for its password; a damaged one says so.
 
 extern crate gpui_kit as gpui;
 
+mod dialog;
 mod find;
+mod grid;
 mod layout;
+mod model;
+mod organize;
+mod save;
 mod side;
 mod toolbar;
 mod worker;
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -44,6 +56,9 @@ use kantor_ui::tokens::Elevation;
 use kantor_ui::{metrics::*, tokens};
 use pdf_engine::{Dest, Link, LinkTarget, OpenError, OutlineItem, PageText, Turn};
 
+use model::{Model, PageKey, PageRef};
+
+pub use dialog::PdfEvent;
 pub use layout::Zoom;
 use layout::{Column, ImageCache, PX_PER_PT};
 use worker::{Msg, PageJob, Worker};
@@ -84,7 +99,25 @@ actions!(
         ToggleSidebar,
         SelectAll,
         Copy,
+        Cut,
+        Paste,
         Escape,
+        Save,
+        SaveAs,
+        Undo,
+        Redo,
+        DeletePages,
+        SelectAllPages,
+        PrevPageSel,
+        NextPageSel,
+        PrevPageSelExtend,
+        NextPageSelExtend,
+        RowUpSel,
+        RowDownSel,
+        RotatePagesLeft,
+        RotatePagesRight,
+        ToggleOrganize,
+        LeavePages,
     ]
 );
 
@@ -135,7 +168,40 @@ pub fn init(cx: &mut App) {
         "[" => RotateCcw,
         "a" => SelectAll,
         "c" => Copy,
+        "x" => Cut,
+        "v" => Paste,
+        "s" => Save,
+        "shift-s" => SaveAs,
+        "z" => Undo,
+        "shift-z" => Redo,
+        "y" => Redo,
+        "shift-o" => ToggleOrganize,
     );
+    // The thumbnails and the grid (as in Acrobat's page panel).
+    let p = Some(grid::PAGES_CONTEXT);
+    keys.extend([
+        KeyBinding::new("delete", DeletePages, p),
+        KeyBinding::new("backspace", DeletePages, p),
+        KeyBinding::new("up", PrevPageSel, p),
+        KeyBinding::new("down", NextPageSel, p),
+        KeyBinding::new("left", PrevPageSel, p),
+        KeyBinding::new("right", NextPageSel, p),
+        KeyBinding::new("shift-up", PrevPageSelExtend, p),
+        KeyBinding::new("shift-down", NextPageSelExtend, p),
+        KeyBinding::new("shift-left", PrevPageSelExtend, p),
+        KeyBinding::new("shift-right", NextPageSelExtend, p),
+        KeyBinding::new("pageup", RowUpSel, p),
+        KeyBinding::new("pagedown", RowDownSel, p),
+        KeyBinding::new("escape", LeavePages, p),
+    ]);
+    keys.extend(kantor_ui::keys::primary_pair("ctrl-a", SelectAllPages, p));
+    // Shift+[ types `{` on most layouts: every spelling.
+    for k in ["ctrl-shift-[", "ctrl-{", "ctrl-shift-{"] {
+        keys.extend(kantor_ui::keys::primary_pair(k, RotatePagesLeft, p));
+    }
+    for k in ["ctrl-shift-]", "ctrl-}", "ctrl-shift-}"] {
+        keys.extend(kantor_ui::keys::primary_pair(k, RotatePagesRight, p));
+    }
     cx.bind_keys(keys);
 }
 
@@ -147,13 +213,14 @@ enum State {
         wrong: bool,
     },
     Failed(OpenError),
-    Ready(Doc),
+    Ready(Box<Doc>),
 }
 
 /// The open file, as the UI knows it.
 struct Doc {
+    model: Model,
+    /// Each page's size as shown (its own rotation applied), points.
     sizes: Vec<(f32, f32)>,
-    outline: Vec<OutlineItem>,
 }
 
 /// A place in the text: page and byte offset in its [`PageText`].
@@ -209,9 +276,31 @@ pub struct PdfView {
     panel: Option<Panel>,
     pages: ImageCache,
     thumbs: Rc<RefCell<ImageCache>>,
+    /// Text and links of each page, by place (from [`Self::src_texts`]).
     texts: HashMap<usize, Arc<PageText>>,
     links: HashMap<usize, Vec<Link>>,
-    asked_text: HashSet<usize>,
+    /// Text and links read, by source page (links still in source pages).
+    src_texts: HashMap<PageKey, (Arc<PageText>, Vec<Link>)>,
+    asked_text: HashSet<PageKey>,
+    /// Pages selected in the thumbnails or the grid, and the page Shift+click
+    /// extends from.
+    page_sel: BTreeSet<usize>,
+    sel_anchor: Option<usize>,
+    /// The thumbnails and the grid: Delete, Ctrl+A, Ctrl+C… act on pages.
+    pages_focus: FocusHandle,
+    /// The Organize Pages grid replaces the pages.
+    organize: bool,
+    /// Where dragged pages or files would go (a gap before this page).
+    drop_at: Option<usize>,
+    grid_scroll: UniformListScrollHandle,
+    /// Bounds of the thumbnails list and the grid (last paint).
+    thumbs_bounds: Rc<Cell<Bounds<Pixels>>>,
+    grid_bounds: Rc<Cell<Bounds<Pixels>>>,
+    dialog: Option<dialog::Dialog>,
+    dialog_focus: FocusHandle,
+    /// Work in the background (saving, inserting…): its message.
+    busy: Option<SharedString>,
+    disk_guard: Option<kantor_ui::disk_guard::DiskGuard>,
     sel: Option<(TextPos, TextPos)>,
     press: Option<Press>,
     hover: Hover,
@@ -222,6 +311,13 @@ pub struct PdfView {
     thumb_followed: Option<usize>,
     /// Put the caret in the password field on the next frame.
     focus_password: bool,
+    saving: bool,
+    /// Opened from a recovery copy: these bytes, unsaved changes.
+    recovered: Option<Arc<Vec<u8>>>,
+    /// Mark the document as changed once it opens (a recovery copy).
+    opened_dirty: Option<u64>,
+    entity_id: EntityId,
+    dialog_subs: Vec<Subscription>,
     _subs: Vec<Subscription>,
 }
 
@@ -305,7 +401,20 @@ impl PdfView {
             thumbs: Rc::new(RefCell::new(ImageCache::new(THUMB_BUDGET))),
             texts: HashMap::new(),
             links: HashMap::new(),
+            src_texts: HashMap::new(),
             asked_text: HashSet::new(),
+            page_sel: BTreeSet::new(),
+            sel_anchor: None,
+            pages_focus: cx.focus_handle(),
+            organize: false,
+            drop_at: None,
+            grid_scroll: UniformListScrollHandle::new(),
+            thumbs_bounds: Rc::default(),
+            grid_bounds: Rc::default(),
+            dialog: None,
+            dialog_focus: cx.focus_handle(),
+            busy: None,
+            disk_guard: None,
             sel: None,
             press: None,
             hover: Hover::None,
@@ -313,8 +422,32 @@ impl PdfView {
             thumb_scroll: UniformListScrollHandle::new(),
             thumb_followed: None,
             focus_password: false,
+            saving: false,
+            recovered: None,
+            opened_dirty: None,
+            entity_id: cx.entity_id(),
+            dialog_subs: Vec::new(),
             _subs: subs,
         };
+        this.start(String::new(), cx);
+        this
+    }
+
+    /// A view of a recovery copy (`bytes`) of the PDF at `original`: it
+    /// opens with unsaved changes; Save writes the original file.
+    pub fn new_recovered(
+        bytes: Vec<u8>,
+        original: Option<PathBuf>,
+        name: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new(original.clone(), window, cx);
+        if original.is_none() {
+            this.name = name;
+        }
+        this.recovered = Some(Arc::new(bytes));
+        this.opened_dirty = Some(u64::MAX);
         this.start(String::new(), cx);
         this
     }
@@ -322,7 +455,11 @@ impl PdfView {
     /// (Re)open the file with `password`.
     fn start(&mut self, password: String, cx: &mut Context<Self>) {
         let (tx, rx) = async_channel::unbounded();
-        self.worker = Some(Rc::new(Worker::start(self.path.clone(), password, tx)));
+        let worker = match &self.recovered {
+            Some(bytes) => Worker::start_bytes(self.name.clone(), bytes.clone(), password, tx),
+            None => Worker::start(self.path.clone(), password, tx),
+        };
+        self.worker = Some(Rc::new(worker));
         self.state = State::Loading;
         self._receiver = Some(cx.spawn(async move |this, cx| {
             while let Ok(msg) = rx.recv().await {
@@ -347,18 +484,23 @@ impl PdfView {
 
     fn on_msg(&mut self, msg: Msg, cx: &mut Context<Self>) {
         match msg {
-            Msg::Opened {
-                sizes,
-                outline,
-                title,
-            } => {
-                let n = sizes.len();
-                self.expanded = initially_open(&outline);
-                if !outline.is_empty() && self.panel.is_none() {
+            Msg::Opened(source) => {
+                let n = source.sizes.len();
+                self.expanded = initially_open(&source.outline);
+                if !source.outline.is_empty() && self.panel.is_none() {
                     self.panel = Some(Panel::Bookmarks);
                 }
-                self.state = State::Ready(Doc { sizes, outline });
-                self.title = title;
+                self.title = source.title.clone();
+                let model = Model::new(source);
+                self.state = State::Ready(Box::new(Doc {
+                    sizes: model.sizes(),
+                    model,
+                }));
+                if let Some(rev) = self.opened_dirty.take()
+                    && let State::Ready(d) = &mut self.state
+                {
+                    d.model.mark_saved(rev);
+                }
                 self.status = if n == 1 {
                     tf("Opened {} (1 page)", &[&self.name]).into()
                 } else {
@@ -382,20 +524,41 @@ impl PdfView {
                 bytes,
             } => {
                 if thumb {
-                    let keep = job.page..job.page + 1;
-                    self.thumbs
-                        .borrow_mut()
-                        .insert(job.page, job.turn, job.scale, image, bytes, keep);
+                    self.thumbs.borrow_mut().insert(
+                        job.key,
+                        job.turn,
+                        job.scale,
+                        image,
+                        bytes,
+                        &[job.key],
+                    );
                 } else {
-                    let keep = self.visible_pages();
+                    let keep: Vec<PageKey> = self
+                        .visible_pages()
+                        .filter_map(|i| self.page_ref(i).map(PageRef::key))
+                        .collect();
                     self.pages
-                        .insert(job.page, job.turn, job.scale, image, bytes, keep);
+                        .insert(job.key, job.turn, job.scale, image, bytes, &keep);
                 }
             }
-            Msg::Text { page, text, links } => {
-                self.find.on_text(page, &text);
-                self.texts.insert(page, text);
-                self.links.insert(page, links);
+            Msg::Text { key, text, links } => {
+                self.src_texts.insert(key, (text.clone(), links));
+                let places: Vec<usize> = self
+                    .doc()
+                    .map(|d| {
+                        d.model
+                            .pages()
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, p)| p.key() == key)
+                            .map(|(i, _)| i)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                for page in places {
+                    self.find.on_text(page, &text);
+                    self.place_text(page);
+                }
                 self.find_after_text(cx);
             }
         }
@@ -419,8 +582,68 @@ impl PdfView {
         }
     }
 
+    fn doc_mut(&mut self) -> Option<&mut Doc> {
+        match &mut self.state {
+            State::Ready(d) => Some(d),
+            _ => None,
+        }
+    }
+
     pub fn page_count(&self) -> usize {
         self.doc().map_or(0, |d| d.sizes.len())
+    }
+
+    /// The page at place `i`.
+    pub(crate) fn page_ref(&self, i: usize) -> Option<PageRef> {
+        self.doc()?.model.page(i)
+    }
+
+    /// The view's rotation plus page `i`'s own (the turn its text, links
+    /// and image are mapped with).
+    pub(crate) fn page_turn(&self, i: usize) -> Turn {
+        let rot = self.page_ref(i).map_or(0, |p| p.rot);
+        Turn((self.turn.0 + rot) % 4)
+    }
+
+    /// The bookmarks of the document (its base file's).
+    pub(crate) fn outline(&self) -> &[OutlineItem] {
+        self.doc()
+            .map_or(&[], |d| d.model.base().outline.as_slice())
+    }
+
+    /// Put the text and links read for page `i`'s source page at place `i`,
+    /// links to other pages pointing where those pages are now (links to
+    /// pages that are gone are left out).
+    fn place_text(&mut self, i: usize) {
+        let Some(p) = self.page_ref(i) else {
+            return;
+        };
+        let Some((text, links)) = self.src_texts.get(&p.key()).cloned() else {
+            self.texts.remove(&i);
+            self.links.remove(&i);
+            return;
+        };
+        let links = links
+            .into_iter()
+            .filter_map(|mut l| {
+                l.target = self.map_target(p.src, l.target)?;
+                Some(l)
+            })
+            .collect();
+        self.texts.insert(i, text);
+        self.links.insert(i, links);
+    }
+
+    /// A link target of source `src` as a target in the document now:
+    /// `None` when its page was deleted.
+    pub(crate) fn map_target(&self, src: model::SrcId, target: LinkTarget) -> Option<LinkTarget> {
+        match target {
+            LinkTarget::Dest(mut d) => {
+                d.page = self.doc()?.model.index_of((src, d.page))?;
+                Some(LinkTarget::Dest(d))
+            }
+            uri => Some(uri),
+        }
     }
 
     // ── the shell's interface ──────────────────────────────────────────────
@@ -428,6 +651,7 @@ impl PdfView {
     /// What the inspector shows.
     pub fn info(&self) -> PdfInfo {
         let bytes = std::fs::metadata(&self.path).map_or(0, |m| m.len());
+        let dirty = self.doc().is_some_and(|d| d.model.is_dirty());
         PdfInfo {
             name: self.name.clone(),
             path: self.path.clone(),
@@ -435,6 +659,7 @@ impl PdfView {
             pages: self.page_count(),
             current: self.current_page(),
             size: size_text(bytes),
+            dirty,
         }
     }
 
@@ -454,7 +679,61 @@ impl PdfView {
     }
 
     pub fn status(&self) -> SharedString {
-        self.status.clone()
+        self.busy.clone().unwrap_or_else(|| self.status.clone())
+    }
+
+    /// Copy: the selected pages when the thumbnails or the grid have the
+    /// focus, else the selected text.
+    pub fn copy_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pages_focused(window, cx) {
+            self.copy_pages(cx);
+        } else {
+            self.copy_text(cx);
+        }
+    }
+
+    /// Cut: pages (thumbnails or grid focused); text is only copied.
+    pub fn cut_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pages_focused(window, cx) {
+            self.cut_pages(cx);
+        } else {
+            self.copy_text(cx);
+        }
+    }
+
+    /// Paste: copied pages after the selected ones (or the current page).
+    pub fn paste_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+        self.paste_pages(cx);
+    }
+
+    fn pages_focused(&self, window: &Window, cx: &App) -> bool {
+        self.organize || self.pages_focus.contains_focused(window, cx)
+    }
+
+    /// Organize Pages: the grid of pages instead of the pages themselves.
+    pub fn toggle_organize(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.organize = !self.organize;
+        if self.organize {
+            let cur = self.current_page();
+            if self.page_sel.is_empty() {
+                self.page_sel.insert(cur);
+                self.sel_anchor = Some(cur);
+            }
+            let cols = self.grid_columns();
+            self.grid_scroll
+                .scroll_to_item(cur / cols.max(1), ScrollStrategy::Center);
+            window.focus(&self.pages_focus, cx);
+        } else {
+            if let Some(&p) = self.page_sel.iter().next() {
+                self.go_to_page(p, cx);
+            }
+            self.focus(window, cx);
+        }
+        cx.notify();
+    }
+
+    pub fn is_organizing(&self) -> bool {
+        self.organize
     }
 
     /// For the status bar: `Page 2 of 12`.
@@ -479,94 +758,6 @@ impl PdfView {
 
     pub fn panel(&self) -> Option<Panel> {
         self.panel
-    }
-
-    /// Print: the file itself opened in the system's PDF viewer.
-    pub fn print_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        if self.path.as_os_str().is_empty() {
-            return;
-        }
-        cx.open_with_system(&self.path);
-        self.status = tf("Opened {} in the PDF viewer to print", &[&self.name]).into();
-        cx.notify();
-    }
-
-    /// Save As: a copy of the file somewhere else (Kantor doesn't change
-    /// PDFs).
-    pub fn save_as_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let dir = self
-            .path
-            .parent()
-            .map(Path::to_path_buf)
-            .or_else(kantor_core::dirs::home_dir)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let target = cx.prompt_for_new_path(&dir, Some(&self.name));
-        let source = self.path.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let Ok(Ok(Some(mut to))) = target.await else {
-                return;
-            };
-            if to.extension().is_none() {
-                to.set_extension("pdf");
-            }
-            let result = if to == source {
-                Ok(0)
-            } else {
-                std::fs::copy(&source, &to)
-            };
-            let _ = this.update(cx, |this, cx| {
-                let name = to
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                this.status = match result {
-                    Ok(_) => tf("Saved a copy as {}", &[&name]).into(),
-                    Err(e) => tf("Save failed: {}", &[&e]).into(),
-                };
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    /// Never changes: PDFs aren't edited.
-    pub fn revision(&self, _: &App) -> Option<u64> {
-        Some(0)
-    }
-
-    pub fn is_dirty(&self, _: &App) -> bool {
-        false
-    }
-
-    pub fn can_autosave(&self, _: &App) -> bool {
-        false
-    }
-
-    /// PDFs always have a file.
-    pub fn set_untitled_name(&mut self, _: String, _: &mut Context<Self>) {}
-
-    pub fn save_doc_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.save_as_doc(window, cx);
-    }
-
-    /// Nothing to save before closing.
-    pub fn save_for_close(&mut self, _: &mut Window, _: &mut Context<Self>) -> Task<bool> {
-        Task::ready(true)
-    }
-
-    pub fn undo_doc(&mut self, _: &mut Window, _: &mut Context<Self>) {}
-    pub fn redo_doc(&mut self, _: &mut Window, _: &mut Context<Self>) {}
-    pub fn paste_doc(&mut self, _: &mut Window, _: &mut Context<Self>) {}
-
-    /// Cut copies (the PDF can't change).
-    pub fn cut_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.copy_doc(window, cx);
-    }
-
-    /// Save: there's nothing to save in a viewer.
-    pub fn save_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
-        self.status = i18n::t("PDFs open read-only in Kantor; Save As writes a copy").into();
-        cx.notify();
     }
 
     // ── geometry ───────────────────────────────────────────────────────────
@@ -652,7 +843,7 @@ impl PdfView {
     fn screen_rect(&self, page: usize, r: [f32; 4]) -> Bounds<Pixels> {
         let pr = self.page_rect(page);
         let (w, h) = self.page_points(page);
-        let r = self.turn.map_rect(w, h, r);
+        let r = self.page_turn(page).map_rect(w, h, r);
         let k = self.zoom_value() * PX_PER_PT;
         Bounds::from_corners(
             point(pr.origin.x + px(r[0] * k), pr.origin.y + px(r[1] * k)),
@@ -660,10 +851,12 @@ impl PdfView {
         )
     }
 
+    /// Page `page`'s size in its own space (without its extra rotation).
     fn page_points(&self, page: usize) -> (f32, f32) {
-        self.doc()
-            .and_then(|d| d.sizes.get(page).copied())
-            .unwrap_or((612.0, 792.0))
+        match (self.doc(), self.page_ref(page)) {
+            (Some(d), Some(p)) => d.model.unturned_size(p),
+            _ => (612.0, 792.0),
+        }
     }
 
     /// The page under a window position and the point on it (page space);
@@ -694,7 +887,7 @@ impl PdfView {
         let tx = f32::from(local.x - r.origin.x).clamp(0.0, f32::from(r.size.width)) / k;
         let ty = f32::from(local.y - r.origin.y).clamp(0.0, f32::from(r.size.height)) / k;
         let (w, h) = self.page_points(page);
-        let (x, y) = self.turn.unmap(w, h, tx, ty);
+        let (x, y) = self.page_turn(page).unmap(w, h, tx, ty);
         Some((page, x, y))
     }
 
@@ -760,7 +953,9 @@ impl PdfView {
         let (vw, _) = self.view_size();
         match dest.y {
             Some(y) => {
-                let (tx, ty) = self.turn.map(w, h, dest.x.unwrap_or(0.0), y);
+                let (tx, ty) = self
+                    .page_turn(dest.page)
+                    .map(w, h, dest.x.unwrap_or(0.0), y);
                 self.scroll.y = top + ty * k;
                 if dest.x.is_some() {
                     self.scroll.x = self.column.left(dest.page, vw) + tx * k - layout::MARGIN;
@@ -899,7 +1094,7 @@ impl PdfView {
         Some(out)
     }
 
-    pub fn copy_doc(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    fn copy_text(&mut self, cx: &mut Context<Self>) {
         if self.ordered_sel().is_none() {
             return;
         }
@@ -939,19 +1134,15 @@ impl PdfView {
     }
 
     fn ask_text(&mut self, pages: Range<usize>) {
-        let Some(w) = &self.worker else {
-            return;
-        };
-        let new: Vec<usize> = pages.filter(|p| self.asked_text.insert(*p)).collect();
-        if !new.is_empty() {
-            w.want_text(new);
-        }
+        self.ask_text_in_order(pages);
     }
 
     // ── mouse ─────────────────────────────────────────────────────────────
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+        // Page commands act on the current page again.
+        self.page_sel.clear();
         if let Some(link) = self.link_at(ev.position) {
             self.press = Some(Press::Link(link.target.clone(), ev.position));
             return;
@@ -1090,23 +1281,31 @@ impl PdfView {
         let mut jobs = Vec::new();
         let around = vis.clone().chain([vis.end, vis.start.wrapping_sub(1)]);
         for page in around {
-            if page >= self.column.len() {
+            let Some(p) = self.page_ref(page) else {
                 continue;
-            }
-            let wanted = PageJob {
-                page,
-                scale: device,
-                turn: self.turn,
             };
-            match self.pages.get(page, self.turn, device) {
+            let turn = self.page_turn(page);
+            let wanted = PageJob {
+                key: p.key(),
+                scale: device,
+                turn,
+            };
+            match self.pages.get(p.key(), turn, device) {
                 Some((_, true)) => {}
-                _ => jobs.push(wanted),
+                _ => {
+                    if !jobs.contains(&wanted) {
+                        jobs.push(wanted);
+                    }
+                }
             }
         }
         worker.want_pages(jobs);
         for page in vis.clone() {
-            if self.asked_text.insert(page) {
-                worker.text_first(page);
+            let Some(p) = self.page_ref(page) else {
+                continue;
+            };
+            if self.asked_text.insert(p.key()) {
+                worker.text_first(p.key());
             }
         }
     }
@@ -1128,7 +1327,11 @@ impl PdfView {
         let mut items = Vec::new();
         for page in self.visible_pages() {
             let rect = self.page_rect(page);
-            let image = self.pages.get(page, self.turn, device).map(|(i, _)| i);
+            let turn = self.page_turn(page);
+            let image = self
+                .page_ref(page)
+                .and_then(|p| self.pages.get(p.key(), turn, device))
+                .map(|(i, _)| i);
             let mut marks = Vec::new();
             for (hit, current) in self.find.hits_on(page, current_hit) {
                 if let Some(text) = self.texts.get(&page) {
@@ -1353,9 +1556,11 @@ pub struct PdfInfo {
     pub current: usize,
     /// File size, e.g. `2.4 MB`.
     pub size: String,
+    /// Changed since it was saved.
+    pub dirty: bool,
 }
 
-fn size_text(n: u64) -> String {
+pub(crate) fn size_text(n: u64) -> String {
     match n {
         0 => String::new(),
         n if n >= 1 << 20 => format!("{:.1} MB", n as f64 / (1 << 20) as f64),
@@ -1424,14 +1629,24 @@ impl Render for PdfView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = tokens(cx);
         let ready = matches!(self.state, State::Ready(_));
+        if !cx.has_active_drag() && self.drop_at.is_some() {
+            self.drop_at = None;
+        }
         let body = if ready {
-            let pages = self.render_pages(window, cx);
+            let pages = if self.organize {
+                grid::render(self, window, cx)
+            } else {
+                self.render_pages(window, cx)
+            };
             h_flex()
                 .flex_1()
                 .min_h_0()
                 .w_full()
                 .children({
-                    let panel = self.panel;
+                    // The grid shows the pages itself: no thumbnails beside it.
+                    let panel = self
+                        .panel
+                        .filter(|p| !(self.organize && *p == Panel::Thumbnails));
                     panel.map(|p| side::render(self, p, window, cx))
                 })
                 .child(pages)
@@ -1481,6 +1696,37 @@ impl Render for PdfView {
             ToggleSidebar => |v, _, cx| v.toggle_sidebar(cx),
             SelectAll => |v, _, cx| v.select_all(cx),
             Copy => |v, w, cx| v.copy_doc(w, cx),
+            Cut => |v, w, cx| v.cut_doc(w, cx),
+            Paste => |v, w, cx| v.paste_doc(w, cx),
+            Save => |v, w, cx| v.save_doc(w, cx),
+            SaveAs => |v, w, cx| v.save_doc_as(w, cx),
+            Undo => |v, w, cx| v.undo_doc(w, cx),
+            Redo => |v, w, cx| v.redo_doc(w, cx),
+            ToggleOrganize => |v, w, cx| v.toggle_organize(w, cx),
+            DeletePages => |v, _, cx| v.delete_pages(cx),
+            SelectAllPages => |v, _, cx| v.select_all_pages(cx),
+            PrevPageSel => |v, _, cx| v.step_page_sel(-1, false, cx),
+            NextPageSel => |v, _, cx| v.step_page_sel(1, false, cx),
+            PrevPageSelExtend => |v, _, cx| v.step_page_sel(-1, true, cx),
+            NextPageSelExtend => |v, _, cx| v.step_page_sel(1, true, cx),
+            RowUpSel => |v, _, cx| {
+                let step = if v.organize { v.grid_columns() as isize } else { 5 };
+                v.step_page_sel(-step, false, cx)
+            },
+            RowDownSel => |v, _, cx| {
+                let step = if v.organize { v.grid_columns() as isize } else { 5 };
+                v.step_page_sel(step, false, cx)
+            },
+            RotatePagesLeft => |v, _, cx| v.rotate_pages(false, cx),
+            RotatePagesRight => |v, _, cx| v.rotate_pages(true, cx),
+            LeavePages => |v, w, cx| {
+                if v.organize {
+                    v.toggle_organize(w, cx);
+                } else {
+                    v.page_sel.clear();
+                    v.focus(w, cx);
+                }
+            },
             Escape => |v, _, cx| {
                 v.sel = None;
                 cx.notify();
@@ -1490,8 +1736,11 @@ impl Render for PdfView {
             FindNext => |v, w, cx| v.find_next_doc(true, w, cx),
             FindPrev => |v, w, cx| v.find_next_doc(false, w, cx),
         );
-        root.when(ready, |d| d.child(toolbar::render(self, cx)))
+        let dialog = self.render_dialog(cx);
+        root.relative()
+            .when(ready, |d| d.child(toolbar::render(self, cx)))
             .child(body)
+            .children(dialog)
     }
 }
 

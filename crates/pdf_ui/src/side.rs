@@ -6,15 +6,11 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::{IconButtonExt as _, icon_button};
 use kantor_ui::i18n;
-use kantor_ui::tokens::Elevation;
 use kantor_ui::{metrics::*, tokens};
 use pdf_engine::{LinkTarget, OutlineItem};
 
-use crate::worker::PageJob;
-use crate::{Panel, PdfView, SIDEBAR_W, THUMB_H, THUMB_W};
-
-/// One thumbnail row: the box plus its page number, px.
-const THUMB_ROW: f32 = THUMB_H + 34.0;
+use crate::grid::{Cells, ListKind, page_list};
+use crate::{Panel, PdfView, SIDEBAR_W};
 
 pub(crate) fn render(
     view: &mut PdfView,
@@ -85,95 +81,22 @@ pub(crate) fn render(
 }
 
 fn thumbnails(view: &PdfView, window: &mut Window, cx: &mut Context<PdfView>) -> AnyElement {
-    let t = tokens(cx);
-    let n = view.page_count();
-    let sizes = view.doc().map(|d| d.sizes.clone()).unwrap_or_default();
-    let turn = view.turn;
+    let cells = Cells::new(view, ListKind::Sidebar, window, cx);
+    let n = cells.len();
     let current = view.current_page();
-    let weak = cx.entity().downgrade();
-    let thumbs = view.thumbs.clone();
-    let worker = view.worker.clone();
-    let sf = window.scale_factor();
     let scroll = view.thumb_scroll.clone();
-    if view.thumb_followed != Some(current) {
+    if view.thumb_followed != Some(current) && view.page_sel.len() <= 1 {
         scroll.scroll_to_item(current, ScrollStrategy::Center);
     }
-    uniform_list("pdf-thumb-list", n, move |range, _, _| {
+    let list = uniform_list("pdf-thumb-list", n, move |range, _, cx| {
         // Draw the thumbnails in view (replacing those asked before).
-        let mut jobs = Vec::new();
-        let boxes: Vec<(usize, f32, f32, f32)> = range
-            .clone()
-            .map(|i| {
-                let (w, h) = sizes.get(i).copied().unwrap_or((612.0, 792.0));
-                let (w, h) = turn.size(w, h);
-                let k = (THUMB_W / w).min(THUMB_H / h);
-                (i, w * k, h * k, k)
-            })
-            .collect();
-        for &(i, _, _, k) in &boxes {
-            if !thumbs.borrow().has(i, turn) {
-                jobs.push(PageJob {
-                    page: i,
-                    scale: k * sf,
-                    turn,
-                });
-            }
-        }
-        if let Some(w) = &worker {
-            w.want_thumbs(jobs);
-        }
-        boxes
-            .into_iter()
-            .map(|(i, w, h, k)| {
-                let image = thumbs.borrow_mut().get(i, turn, k * sf).map(|(i, _)| i);
-                let on = i == current;
-                let weak = weak.clone();
-                v_flex()
-                    .id(("pdf-thumb", i))
-                    .h(px(THUMB_ROW))
-                    .w_full()
-                    .items_center()
-                    .justify_center()
-                    .gap(SPACE_2)
-                    .cursor_pointer()
-                    .when(!on, |d| d.hover(|d| d.bg(t.hover)))
-                    .child(
-                        div()
-                            .w(px(w + 4.0))
-                            .h(px(h + 4.0))
-                            .rounded(RADIUS_SM)
-                            .border_2()
-                            .border_color(if on { t.accent } else { transparent_black() })
-                            .child(
-                                div()
-                                    .size_full()
-                                    .bg(t.paper)
-                                    .border_1()
-                                    .border_color(t.border_strong)
-                                    .shadow(t.shadow(Elevation::Raised))
-                                    .overflow_hidden()
-                                    .children(image.map(|i| img(i).size_full())),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_size(FONT_CAPTION)
-                            .text_color(if on { t.accent } else { t.fg_dim })
-                            .when(on, |d| d.font_weight(FontWeight::SEMIBOLD))
-                            .child(format!("{}", i + 1)),
-                    )
-                    .on_click(move |_, window, cx| {
-                        let _ = weak.update(cx, |v, cx| {
-                            v.go_to_page(i, cx);
-                            v.focus(window, cx);
-                        });
-                    })
-            })
-            .collect()
+        cells.request(range.clone());
+        range.map(|i| cells.cell(i, cx)).collect()
     })
     .track_scroll(&scroll)
     .size_full()
-    .into_any_element()
+    .into_any_element();
+    page_list(list, ListKind::Sidebar, view, cx).into_any_element()
 }
 
 /// A visible bookmark row.
@@ -187,14 +110,20 @@ struct Row {
 }
 
 fn rows(items: &[OutlineItem], view: &PdfView, path: &mut Vec<usize>, out: &mut Vec<Row>) {
+    let base = view.doc().map(|d| d.model.base().id);
     for (i, it) in items.iter().enumerate() {
         path.push(i);
         let open = view.expanded.contains(path);
+        // Where the bookmark's page is now (none when it was deleted).
+        let target = match (it.target.clone(), base) {
+            (Some(t), Some(b)) => view.map_target(b, t),
+            _ => None,
+        };
         out.push(Row {
             path: path.clone(),
             depth: path.len() - 1,
             title: it.title.clone(),
-            target: it.target.clone(),
+            target,
             has_children: !it.children.is_empty(),
             open,
         });
@@ -207,7 +136,7 @@ fn rows(items: &[OutlineItem], view: &PdfView, path: &mut Vec<usize>, out: &mut 
 
 fn bookmarks(view: &PdfView, cx: &mut Context<PdfView>) -> AnyElement {
     let t = tokens(cx);
-    let outline = view.doc().map(|d| d.outline.as_slice()).unwrap_or(&[]);
+    let outline = view.outline();
     if outline.is_empty() {
         return div()
             .p(SPACE_6)
@@ -275,7 +204,11 @@ fn bookmarks(view: &PdfView, cx: &mut Context<PdfView>) -> AnyElement {
                             .min_w_0()
                             .truncate()
                             .text_size(FONT_SMALL)
-                            .text_color(t.fg)
+                            .text_color(if r.target.is_some() || r.has_children {
+                                t.fg
+                            } else {
+                                t.fg_dim
+                            })
                             .child(r.title.clone()),
                     )
                     .on_click(move |_, window, cx| {

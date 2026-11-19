@@ -1,4 +1,5 @@
-//! The PDF toolbar: sidebar, page box, zoom, rotate, find and print.
+//! The PDF toolbar: sidebar, page box, zoom, rotate view, undo, Organize
+//! Pages, the Tools menu, find and print.
 
 use gpui_kit::assets::IconName as Lucide;
 use gpui_kit::component::input::Input;
@@ -11,7 +12,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::components::{IconButtonExt as _, icon_button};
-use kantor_ui::i18n::{self, tf};
+use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 
 use crate::{Panel, PdfView, Zoom, layout};
@@ -171,6 +172,42 @@ pub(crate) fn render(view: &PdfView, cx: &mut Context<PdfView>) -> Div {
             |v, _, cx| v.rotate(true, cx),
             cx,
         ))
+        .child(separator(cx))
+        .child(tool(
+            "pdf-undo",
+            Lucide::Undo,
+            (i18n::t("Undo"), Some("ctrl-z")),
+            false,
+            |v, w, cx| v.undo_doc(w, cx),
+            cx,
+        ))
+        .child(tool(
+            "pdf-redo",
+            Lucide::Redo,
+            (i18n::t("Redo"), Some("ctrl-y")),
+            false,
+            |v, w, cx| v.redo_doc(w, cx),
+            cx,
+        ))
+        .child(tool(
+            "pdf-organize",
+            Lucide::LayoutGrid,
+            (i18n::t("Organize Pages"), Some("ctrl-shift-o")),
+            view.is_organizing(),
+            |v, w, cx| v.toggle_organize(w, cx),
+            cx,
+        ))
+        .child({
+            let weak = cx.entity().downgrade();
+            Button::new("pdf-tools")
+                .ghost()
+                .xsmall()
+                .icon(Lucide::Wrench)
+                .label(i18n::t("Tools"))
+                .dropdown_caret(true)
+                .tooltip(i18n::t("Page tools"))
+                .dropdown_menu(move |menu, window, cx| tool_items(menu, &weak, window, cx))
+        })
         .child(div().flex_1())
         .child(tool(
             "pdf-find",
@@ -188,6 +225,51 @@ pub(crate) fn render(view: &PdfView, cx: &mut Context<PdfView>) -> Div {
             |v, w, cx| v.print_doc(w, cx),
             cx,
         ))
+}
+
+/// The Tools menu: page tools on the whole document or the selected pages.
+fn tool_items(
+    menu: PopupMenu,
+    view: &WeakEntity<PdfView>,
+    _: &mut Window,
+    _: &mut Context<PopupMenu>,
+) -> PopupMenu {
+    let item = |label: &'static str, run: Run| {
+        let v = view.clone();
+        PopupMenuItem::new(i18n::t(label)).on_click(move |_, window, cx| {
+            let _ = v.update(cx, |v, cx| run(v, window, cx));
+        })
+    };
+    menu.item(item(tk("Rotate Pages Left"), |v, _, cx| {
+        v.rotate_pages(false, cx)
+    }))
+    .item(item(tk("Rotate Pages Right"), |v, _, cx| {
+        v.rotate_pages(true, cx)
+    }))
+    .item(item(tk("Delete Pages"), |v, _, cx| v.delete_pages(cx)))
+    .item(item(tk("Extract Pages…"), |v, w, cx| {
+        v.extract_pages(w, cx)
+    }))
+    .separator()
+    .item(item(tk("Insert Pages from File…"), |v, w, cx| {
+        v.insert_from_file(true, w, cx)
+    }))
+    .item(item(tk("Insert Blank Page"), |v, _, cx| {
+        v.insert_blank_page(true, cx)
+    }))
+    .separator()
+    .item(item(tk("Combine Files…"), |v, w, cx| {
+        v.combine_files(w, cx)
+    }))
+    .item(item(tk("Split Document…"), |v, w, cx| v.split_doc(w, cx)))
+    .separator()
+    .item(item(tk("Add Page Numbers…"), |v, w, cx| {
+        v.add_page_numbers(w, cx)
+    }))
+    .item(item(tk("Watermark…"), |v, w, cx| v.add_watermark(w, cx)))
+    .item(item(tk("Reduce File Size…"), |v, w, cx| {
+        v.reduce_file_size(w, cx)
+    }))
 }
 
 fn zoom_items(menu: PopupMenu, view: &WeakEntity<PdfView>) -> PopupMenu {

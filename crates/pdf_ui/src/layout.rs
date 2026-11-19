@@ -7,6 +7,8 @@ use std::sync::Arc;
 use gpui_kit::RenderImage;
 use pdf_engine::Turn;
 
+use crate::model::PageKey;
+
 /// Space around the column of pages and between pages, px.
 pub(crate) const MARGIN: f32 = 16.0;
 pub(crate) const GAP: f32 = 12.0;
@@ -138,7 +140,7 @@ pub(crate) fn fit_page(pages: &[(f32, f32)], page: usize, turn: Turn, view: (f32
 
 /// A drawn page or thumbnail.
 struct Entry {
-    page: usize,
+    page: PageKey,
     turn: Turn,
     scale: f32,
     image: Arc<RenderImage>,
@@ -175,7 +177,12 @@ impl ImageCache {
 
     /// The best image of `page`: at `scale` if there is one (`true`), else
     /// the closest scale, to show stretched until the right one comes.
-    pub fn get(&mut self, page: usize, turn: Turn, scale: f32) -> Option<(Arc<RenderImage>, bool)> {
+    pub fn get(
+        &mut self,
+        page: PageKey,
+        turn: Turn,
+        scale: f32,
+    ) -> Option<(Arc<RenderImage>, bool)> {
         self.tick += 1;
         let tick = self.tick;
         let e = self
@@ -193,7 +200,7 @@ impl ImageCache {
     }
 
     /// Whether `page` has any image (thumbnails: any scale will do).
-    pub fn has(&self, page: usize, turn: Turn) -> bool {
+    pub fn has(&self, page: PageKey, turn: Turn) -> bool {
         self.entries
             .iter()
             .any(|e| e.page == page && e.turn == turn)
@@ -203,12 +210,12 @@ impl ImageCache {
     /// recently used ones outside `keep` until the cache fits its budget.
     pub fn insert(
         &mut self,
-        page: usize,
+        page: PageKey,
         turn: Turn,
         scale: f32,
         image: Arc<RenderImage>,
         bytes: usize,
-        keep: Range<usize>,
+        keep: &[PageKey],
     ) {
         self.tick += 1;
         let mut i = 0;
@@ -304,22 +311,25 @@ mod tests {
     #[std::prelude::v1::test]
     fn cache_stays_in_budget_but_keeps_visible_pages() {
         let mut c = ImageCache::new(250);
+        let k = |p: usize| (1, p);
         for p in 0..5 {
-            c.insert(p, Turn(0), 1.0, img(), 100, p..p + 1);
+            c.insert(k(p), Turn(0), 1.0, img(), 100, &[k(p)]);
         }
         assert!(c.bytes() <= 250);
-        assert!(c.has(4, Turn(0)) && c.has(3, Turn(0)));
-        assert!(!c.has(0, Turn(0)));
+        assert!(c.has(k(4), Turn(0)) && c.has(k(3), Turn(0)));
+        assert!(!c.has(k(0), Turn(0)));
         assert_eq!(c.take_evicted().len(), 3);
         // A page on screen is kept even over budget.
-        c.insert(9, Turn(0), 1.0, img(), 300, 3..10);
-        assert!(c.has(9, Turn(0)) && c.has(3, Turn(0)));
+        c.insert(k(9), Turn(0), 1.0, img(), 300, &[k(3), k(9)]);
+        assert!(c.has(k(9), Turn(0)) && c.has(k(3), Turn(0)));
         // A new scale replaces the old image of that page; the nearest
         // one is offered until then.
-        let (_, exact) = c.get(9, Turn(0), 2.0).unwrap();
+        let (_, exact) = c.get(k(9), Turn(0), 2.0).unwrap();
         assert!(!exact);
-        c.insert(9, Turn(0), 2.0, img(), 10, 9..10);
-        assert!(c.get(9, Turn(0), 2.0).unwrap().1);
+        c.insert(k(9), Turn(0), 2.0, img(), 10, &[k(9)]);
+        assert!(c.get(k(9), Turn(0), 2.0).unwrap().1);
+        // Another source's page with the same number is another page.
+        assert!(!c.has((2, 9), Turn(0)));
         c.clear();
         assert_eq!(c.bytes(), 0);
     }

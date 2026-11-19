@@ -359,7 +359,9 @@ impl Workspace {
             DocView::Sheets(e) => e.update(cx, |v, cx| v.agent_save(path.as_deref(), window, cx)),
             DocView::Docs(e) => e.update(cx, |v, cx| v.agent_save(path.as_deref(), window, cx)),
             DocView::Slides(e) => e.update(cx, |v, cx| v.agent_save(path.as_deref(), window, cx)),
-            DocView::Pdf(_) => bail!("PDFs open read-only in Kantor; they can't be saved"),
+            DocView::Pdf(_) => {
+                bail!("saving PDFs isn't available to the assistant yet; use Save in Kantor")
+            }
         }?;
         if let Some(p) = view.path(cx) {
             Session::touch_recent(&mut self.recent, &p);

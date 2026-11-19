@@ -137,6 +137,21 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Over a PDF's thumbnails or page grid: its pages are inserted there.
+        let pdfs: Vec<_> = self
+            .docs
+            .values()
+            .filter_map(|d| match &d.view {
+                DocView::Pdf(v) => Some(v.clone()),
+                _ => None,
+            })
+            .collect();
+        for v in pdfs {
+            if v.update(cx, |v, cx| v.drop_files(paths.paths(), cx)) {
+                window.activate_window();
+                return;
+            }
+        }
         let view = self.focused_view();
         let takes_pictures = matches!(view, Some(DocView::Docs(_) | DocView::Slides(_)));
         let plan = plan_drop(paths.paths(), takes_pictures);

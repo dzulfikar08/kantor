@@ -7,6 +7,7 @@
 //! Pages are numbered from 1 everywhere (see [`range`]).
 
 mod compress;
+mod edit;
 mod images;
 mod info;
 mod overlay;
@@ -23,6 +24,7 @@ use std::path::{Path, PathBuf};
 use lopdf::{Document, LoadOptions};
 
 pub use compress::{CompressReport, compress};
+pub use edit::{Pick, assemble, blank_page, page_size, write_atomic};
 pub use images::{ImageOptions, Orientation, PageSize, images_to_pdf};
 pub use info::{Info, PageInfo, info};
 pub use overlay::{PageNumberOptions, Position, WatermarkOptions, add_page_numbers, add_watermark};
@@ -49,6 +51,8 @@ pub enum Error {
     Invalid(String),
     /// lopdf failed while editing or writing.
     Pdf(String),
+    /// The PDF can't be encrypted again the way the original was.
+    Encryption(String),
 }
 
 impl fmt::Display for Error {
@@ -64,6 +68,7 @@ impl fmt::Display for Error {
             Error::Range(e) => e.fmt(f),
             Error::Invalid(e) => f.write_str(e),
             Error::Pdf(e) => write!(f, "PDF error: {e}"),
+            Error::Encryption(e) => write!(f, "can't keep the password protection ({e})"),
         }
     }
 }

@@ -18,8 +18,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   every hit; drag to select text (double-click a word, triple-click a line) and Ctrl+C copies it; links jump to
   their page, or ask before opening a web address; Rotate View (Ctrl+] / Ctrl+[) turns the pages on screen;
   Ctrl+P prints through your PDF viewer. Password-protected PDFs ask for the password, and a damaged file says
-  so. Long documents stay light: page images are kept in a cache of fixed size. Kantor doesn't change the file
-  (Save As writes a copy).
+  so. Long documents stay light: page images are kept in a cache of fixed size.
+- PDF page tools in the window: select pages in the thumbnails or the new Organize Pages grid (Ctrl+Shift+O),
+  drag them to reorder (or onto another open PDF), delete, rotate (saved in the file), duplicate, copy and paste
+  between PDFs, extract to a new PDF, insert pages from other PDFs, pictures or a blank page (right-click, or drop
+  files on the thumbnails). The Tools menu has Combine Files…, Split Document… (every N pages, at bookmarks or by
+  page ranges), Add Page Numbers…, Watermark… and Reduce File Size…. Undo/Redo for every change, Save (Ctrl+S)
+  writes the PDF in place safely and Save As to a new file; a password-protected PDF stays protected; bookmarks
+  and links to deleted pages are dropped; closing asks about unsaved changes, which also get recovery copies.
+- `kantor pdf delete` and the other page tools drop bookmarks and links that pointed at removed pages.
 
 ## [0.16.0] - 2026-11-19
 

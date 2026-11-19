@@ -98,7 +98,10 @@ icon_assets!(
         Lock,
         RotateCcw,
         Bookmark,
-        MoveHorizontal
+        MoveHorizontal,
+        // PDF page tools
+        LayoutGrid,
+        Wrench
     ]
 );
 

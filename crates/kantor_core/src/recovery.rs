@@ -52,6 +52,7 @@ pub enum App {
     Sheets,
     Docs,
     Slides,
+    Pdf,
 }
 
 impl App {
@@ -61,6 +62,7 @@ impl App {
             Self::Sheets => "xlsx",
             Self::Docs => "docx",
             Self::Slides => "pptx",
+            Self::Pdf => "pdf",
         }
     }
 }
