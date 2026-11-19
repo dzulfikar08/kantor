@@ -101,7 +101,7 @@ export const en = {
     ],
     [
       "AI assistants can edit open files",
-      'Assistants such as Claude can read and change the documents you have open, while you watch. Each change is one step you can undo. This uses <a href="https://modelcontextprotocol.io">MCP</a>; the setup is in the <a href="' + GH + '#ai-agents-mcp">README</a>.',
+      'Assistants such as Claude can read and change the documents you have open, while you watch. Each change is one step you can undo. They can also build whole presentations, with shapes, pictures, tables and backgrounds, from a description (also on the command line: <code>kantor slides build</code>). This uses <a href="https://modelcontextprotocol.io">MCP</a>; the setup is in the <a href="' + GH + '#ai-agents-mcp">README</a>.',
     ],
   ],
 
@@ -296,7 +296,7 @@ export const id = {
     ],
     [
       "Asisten AI bisa mengedit file yang terbuka",
-      'Asisten seperti Claude bisa membaca dan mengubah dokumen yang sedang Anda buka, sementara Anda melihatnya. Setiap perubahan bisa dibatalkan satu per satu. Fitur ini memakai <a href="https://modelcontextprotocol.io">MCP</a>; cara memasangnya ada di <a href="' + GH + '#ai-agents-mcp">README</a> (bahasa Inggris).',
+      'Asisten seperti Claude bisa membaca dan mengubah dokumen yang sedang Anda buka, sementara Anda melihatnya. Setiap perubahan bisa dibatalkan satu per satu. Asisten juga bisa membuat presentasi utuh, lengkap dengan bentuk, gambar, tabel, dan latar, dari sebuah deskripsi (juga lewat baris perintah: <code>kantor slides build</code>). Fitur ini memakai <a href="https://modelcontextprotocol.io">MCP</a>; cara memasangnya ada di <a href="' + GH + '#ai-agents-mcp">README</a> (bahasa Inggris).',
     ],
   ],
 

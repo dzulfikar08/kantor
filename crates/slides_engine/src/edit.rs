@@ -988,6 +988,7 @@ impl Presentation {
                 suffix: template::SLIDE_SUFFIX.to_owned(),
                 shapes: Vec::new(),
                 rels: Vec::new(),
+                edited: false,
             }),
             origin: None,
             notes: None,

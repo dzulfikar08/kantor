@@ -1,8 +1,11 @@
 //! A minimal, valid new presentation: 16:9, one master with the Office
-//! theme, two layouts ("Title Slide", "Title and Content") and one title
-//! slide. Built as a zip in memory and then opened like any file.
+//! theme, four layouts ("Title Slide", "Title and Content", "Title Only",
+//! "Blank") and one title slide. Built as a zip in memory and then opened
+//! like any file.
 
 use std::io::{Cursor, Write as _};
+
+use crate::model::SlideSize;
 
 const NS: &str = r#"xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main""#;
 const DECL: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n";
@@ -126,7 +129,73 @@ fn plain_levels() -> String {
 }
 
 pub(crate) fn theme() -> String {
+    theme_with(&DeckTheme::default())
+}
+
+/// Theme colours and fonts of a new presentation (`kantor slides build`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DeckTheme {
+    pub name: String,
+    /// Headings (`a:majorFont`) and body text (`a:minorFont`) typefaces.
+    pub major_font: String,
+    pub minor_font: String,
+    /// `dk1`, `lt1`, `dk2`, `lt2`, `accent1`–`accent6`, `hlink`, `folHlink`
+    /// as `RRGGBB` (`dk1`/`lt1` `None`: the system black and white).
+    pub colors: [Option<String>; 12],
+}
+
+/// The slots of a theme's colour scheme, in [`DeckTheme::colors`] order.
+pub const THEME_COLOR_NAMES: [&str; 12] = [
+    "dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6",
+    "hlink", "folHlink",
+];
+
+impl Default for DeckTheme {
+    fn default() -> Self {
+        let c = |s: &str| Some(s.to_owned());
+        Self {
+            name: "Office".into(),
+            major_font: "Calibri Light".into(),
+            minor_font: "Calibri".into(),
+            colors: [
+                None,
+                None,
+                c("44546A"),
+                c("E7E6E6"),
+                c("4472C4"),
+                c("ED7D31"),
+                c("A5A5A5"),
+                c("FFC000"),
+                c("5B9BD5"),
+                c("70AD47"),
+                c("0563C1"),
+                c("954F72"),
+            ],
+        }
+    }
+}
+
+/// The theme part for `t`.
+pub(crate) fn theme_with(t: &DeckTheme) -> String {
+    use crate::xml::esc_attr;
     let clr = |name: &str, v: &str| format!("<a:{name}><a:srgbClr val=\"{v}\"/></a:{name}>");
+    let slot = |i: usize| {
+        let name = THEME_COLOR_NAMES[i];
+        match (&t.colors[i], i) {
+            (Some(v), _) => clr(name, v),
+            (None, 0) => "<a:dk1><a:sysClr val=\"windowText\" lastClr=\"000000\"/></a:dk1>".into(),
+            (None, 1) => "<a:lt1><a:sysClr val=\"window\" lastClr=\"FFFFFF\"/></a:lt1>".into(),
+            (None, _) => clr(
+                name,
+                DeckTheme::default().colors[i]
+                    .as_deref()
+                    .unwrap_or("000000"),
+            ),
+        }
+    };
+    let scheme: String = (0..12).map(slot).collect();
+    let name = esc_attr(&t.name);
+    let (major, minor) = (esc_attr(&t.major_font), esc_attr(&t.minor_font));
     let fill = "<a:solidFill><a:schemeClr val=\"phClr\"/></a:solidFill>";
     let line = |w: u32| {
         format!(
@@ -136,32 +205,28 @@ pub(crate) fn theme() -> String {
     };
     let effect = "<a:effectStyle><a:effectLst/></a:effectStyle>";
     format!(
-        "{DECL}<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" name=\"Office Theme\"><a:themeElements>\
-         <a:clrScheme name=\"Office\"><a:dk1><a:sysClr val=\"windowText\" lastClr=\"000000\"/></a:dk1>\
-         <a:lt1><a:sysClr val=\"window\" lastClr=\"FFFFFF\"/></a:lt1>{}{}{}{}{}{}{}{}{}{}</a:clrScheme>\
-         <a:fontScheme name=\"Office\"><a:majorFont><a:latin typeface=\"Calibri Light\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:majorFont>\
-         <a:minorFont><a:latin typeface=\"Calibri\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:minorFont></a:fontScheme>\
+        "{DECL}<a:theme xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" name=\"{name} Theme\"><a:themeElements>\
+         <a:clrScheme name=\"{name}\">{scheme}</a:clrScheme>\
+         <a:fontScheme name=\"{name}\"><a:majorFont><a:latin typeface=\"{major}\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:majorFont>\
+         <a:minorFont><a:latin typeface=\"{minor}\"/><a:ea typeface=\"\"/><a:cs typeface=\"\"/></a:minorFont></a:fontScheme>\
          <a:fmtScheme name=\"Office\"><a:fillStyleLst>{fill}{fill}{fill}</a:fillStyleLst>\
          <a:lnStyleLst>{}{}{}</a:lnStyleLst><a:effectStyleLst>{effect}{effect}{effect}</a:effectStyleLst>\
          <a:bgFillStyleLst>{fill}{fill}{fill}</a:bgFillStyleLst></a:fmtScheme></a:themeElements>\
          <a:objectDefaults/><a:extraClrSchemeLst/></a:theme>",
-        clr("dk2", "44546A"),
-        clr("lt2", "E7E6E6"),
-        clr("accent1", "4472C4"),
-        clr("accent2", "ED7D31"),
-        clr("accent3", "A5A5A5"),
-        clr("accent4", "FFC000"),
-        clr("accent5", "5B9BD5"),
-        clr("accent6", "70AD47"),
-        clr("hlink", "0563C1"),
-        clr("folHlink", "954F72"),
         line(6350),
         line(12700),
         line(19050),
     )
 }
 
-fn master() -> String {
+/// A box `[x, y, cx, cy]` laid out for the 16:9 template, scaled to `size`.
+fn scaled(b: [i64; 4], size: SlideSize) -> [i64; 4] {
+    let sx = |v: i64| (v as i128 * size.cx as i128 / SlideSize::WIDE.cx as i128) as i64;
+    let sy = |v: i64| (v as i128 * size.cy as i128 / SlideSize::WIDE.cy as i128) as i64;
+    [sx(b[0]), sy(b[1]), sx(b[2]), sy(b[3])]
+}
+
+fn master(size: SlideSize, layouts: usize) -> String {
     let title_body = "<a:bodyPr vert=\"horz\" lIns=\"91440\" tIns=\"45720\" rIns=\"91440\" bIns=\"45720\" rtlCol=\"0\" anchor=\"ctr\"><a:normAutofit/></a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr lang=\"en-US\"/><a:t>Click to edit Master title style</a:t></a:r><a:endParaRPr lang=\"en-US\"/></a:p>";
     let body_body = "<a:bodyPr vert=\"horz\" lIns=\"91440\" tIns=\"45720\" rIns=\"91440\" bIns=\"45720\" rtlCol=\"0\"><a:normAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr lvl=\"0\"/><a:r><a:rPr lang=\"en-US\"/><a:t>Click to edit Master text styles</a:t></a:r></a:p>";
     let title = ph(
@@ -169,7 +234,7 @@ fn master() -> String {
         "Title Placeholder 1",
         "title",
         None,
-        Some([838200, 365125, 10515600, 1325563]),
+        Some(scaled([838200, 365125, 10515600, 1325563], size)),
         title_body,
     );
     let body = ph(
@@ -177,7 +242,7 @@ fn master() -> String {
         "Text Placeholder 2",
         "body",
         Some(1),
-        Some([838200, 1825625, 10515600, 4351338]),
+        Some(scaled([838200, 1825625, 10515600, 4351338], size)),
         body_body,
     );
     let title_style = "<a:lvl1pPr algn=\"l\" defTabSz=\"914400\" rtl=\"0\" eaLnBrk=\"1\" latinLnBrk=\"0\" hangingPunct=\"1\">\
@@ -188,11 +253,19 @@ fn master() -> String {
     let body_style: String = (1..=9u8)
         .map(|n| level(n, sizes[n as usize - 1], 228600 + (n as i64 - 1) * 457200))
         .collect();
+    let layout_ids: String = (1..=layouts)
+        .map(|i| {
+            format!(
+                "<p:sldLayoutId id=\"{}\" r:id=\"rId{i}\"/>",
+                2147483648u64 + i as u64
+            )
+        })
+        .collect();
     format!(
         "{DECL}<p:sldMaster {NS}><p:cSld><p:bg><p:bgRef idx=\"1001\"><a:schemeClr val=\"bg1\"/></p:bgRef></p:bg>\
          <p:spTree>{GRP}{title}{body}</p:spTree></p:cSld>\
          <p:clrMap bg1=\"lt1\" tx1=\"dk1\" bg2=\"lt2\" tx2=\"dk2\" accent1=\"accent1\" accent2=\"accent2\" accent3=\"accent3\" accent4=\"accent4\" accent5=\"accent5\" accent6=\"accent6\" hlink=\"hlink\" folHlink=\"folHlink\"/>\
-         <p:sldLayoutIdLst><p:sldLayoutId id=\"2147483649\" r:id=\"rId1\"/><p:sldLayoutId id=\"2147483650\" r:id=\"rId2\"/></p:sldLayoutIdLst>\
+         <p:sldLayoutIdLst>{layout_ids}</p:sldLayoutIdLst>\
          <p:txStyles><p:titleStyle>{title_style}</p:titleStyle><p:bodyStyle>{body_style}</p:bodyStyle>\
          <p:otherStyle><a:defPPr><a:defRPr lang=\"en-US\"/></a:defPPr>{}</p:otherStyle></p:txStyles></p:sldMaster>",
         plain_levels()
@@ -220,8 +293,48 @@ fn empty_body(anchor_bottom: bool, centered: bool, size: Option<u32>) -> String 
     format!("<a:bodyPr{anchor}/>{lst}<a:p><a:endParaRPr lang=\"en-US\"/></a:p>")
 }
 
+/// What a new package holds: [`new_package`] is the defaults.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PackageOptions {
+    pub size: SlideSize,
+    pub theme: DeckTheme,
+    /// Also the "Title Only" and "Blank" layouts (as PowerPoint's new
+    /// presentations have).
+    pub more_layouts: bool,
+    /// Start with one title slide (else no slides).
+    pub title_slide: bool,
+}
+
+impl Default for PackageOptions {
+    fn default() -> Self {
+        Self {
+            size: SlideSize::WIDE,
+            theme: DeckTheme::default(),
+            more_layouts: true,
+            title_slide: true,
+        }
+    }
+}
+
 /// The bytes of a new `.pptx`.
 pub(crate) fn new_package() -> Vec<u8> {
+    package(&PackageOptions::default())
+}
+
+/// `PresentationFormat` of `docProps/app.xml` for a slide size.
+fn format_name(size: SlideSize) -> &'static str {
+    match (size.cx, size.cy) {
+        (12_192_000, 6_858_000) => "Widescreen",
+        (9_144_000, 6_858_000) => "On-screen Show (4:3)",
+        (9_144_000, 5_143_500) => "On-screen Show (16:9)",
+        (9_144_000, 5_715_000) => "On-screen Show (16:10)",
+        _ => "Custom",
+    }
+}
+
+/// The bytes of a new `.pptx` as `o` says.
+pub(crate) fn package(o: &PackageOptions) -> Vec<u8> {
+    let size = o.size;
     let title_layout = layout(
         "Title Slide",
         "title",
@@ -232,7 +345,7 @@ pub(crate) fn new_package() -> Vec<u8> {
                 "Title 1",
                 "ctrTitle",
                 None,
-                Some([1524000, 1122363, 9144000, 2387600]),
+                Some(scaled([1524000, 1122363, 9144000, 2387600], size)),
                 &empty_body(true, true, Some(6000))
             ),
             ph(
@@ -240,24 +353,27 @@ pub(crate) fn new_package() -> Vec<u8> {
                 "Subtitle 2",
                 "subTitle",
                 Some(1),
-                Some([1524000, 3602038, 9144000, 1655762]),
+                Some(scaled([1524000, 3602038, 9144000, 1655762], size)),
                 &empty_body(false, true, Some(2400))
             )
         ),
     );
+    let title_ph = || {
+        ph(
+            2,
+            "Title 1",
+            "title",
+            None,
+            None,
+            &empty_body(false, false, None),
+        )
+    };
     let content_layout = layout(
         "Title and Content",
         "obj",
         &format!(
             "{}{}",
-            ph(
-                2,
-                "Title 1",
-                "title",
-                None,
-                None,
-                &empty_body(false, false, None)
-            ),
+            title_ph(),
             ph(
                 3,
                 "Content Placeholder 2",
@@ -268,6 +384,11 @@ pub(crate) fn new_package() -> Vec<u8> {
             )
         ),
     );
+    let mut layouts = vec![title_layout, content_layout];
+    if o.more_layouts {
+        layouts.push(layout("Title Only", "titleOnly", &title_ph()));
+        layouts.push(layout("Blank", "blank", ""));
+    }
     let slide = format!(
         "{}{}{}{SLIDE_SUFFIX}",
         slide_prefix(),
@@ -288,13 +409,32 @@ pub(crate) fn new_package() -> Vec<u8> {
             "<a:bodyPr/><a:lstStyle/><a:p><a:endParaRPr lang=\"en-US\"/></a:p>"
         )
     );
+    let sld_list = if o.title_slide {
+        "<p:sldIdLst><p:sldId id=\"256\" r:id=\"rId2\"/></p:sldIdLst>"
+    } else {
+        ""
+    };
     let presentation = format!(
         "{DECL}<p:presentation {NS} saveSubsetFonts=\"1\"><p:sldMasterIdLst><p:sldMasterId id=\"2147483648\" r:id=\"rId1\"/></p:sldMasterIdLst>\
-         <p:sldIdLst><p:sldId id=\"256\" r:id=\"rId2\"/></p:sldIdLst>\
-         <p:sldSz cx=\"12192000\" cy=\"6858000\"/><p:notesSz cx=\"6858000\" cy=\"9144000\"/>\
+         {sld_list}\
+         <p:sldSz cx=\"{}\" cy=\"{}\"/><p:notesSz cx=\"6858000\" cy=\"9144000\"/>\
          <p:defaultTextStyle><a:defPPr><a:defRPr lang=\"en-US\"/></a:defPPr>{}</p:defaultTextStyle></p:presentation>",
+        size.cx,
+        size.cy,
         plain_levels()
     );
+    let layout_overrides: String = (1..=layouts.len())
+        .map(|i| {
+            format!(
+                "<Override PartName=\"/ppt/slideLayouts/slideLayout{i}.xml\" ContentType=\"{CT}.slideLayout+xml\"/>"
+            )
+        })
+        .collect();
+    let slide_override = if o.title_slide {
+        format!("<Override PartName=\"/ppt/slides/slide1.xml\" ContentType=\"{CT}.slide+xml\"/>")
+    } else {
+        String::new()
+    };
     let content_types = format!(
         "{DECL}<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">\
          <Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/>\
@@ -303,9 +443,7 @@ pub(crate) fn new_package() -> Vec<u8> {
          <Default Extension=\"jpeg\" ContentType=\"image/jpeg\"/>\
          <Override PartName=\"/ppt/presentation.xml\" ContentType=\"{CT}.presentation.main+xml\"/>\
          <Override PartName=\"/ppt/slideMasters/slideMaster1.xml\" ContentType=\"{CT}.slideMaster+xml\"/>\
-         <Override PartName=\"/ppt/slideLayouts/slideLayout1.xml\" ContentType=\"{CT}.slideLayout+xml\"/>\
-         <Override PartName=\"/ppt/slideLayouts/slideLayout2.xml\" ContentType=\"{CT}.slideLayout+xml\"/>\
-         <Override PartName=\"/ppt/slides/slide1.xml\" ContentType=\"{CT}.slide+xml\"/>\
+         {layout_overrides}{slide_override}\
          <Override PartName=\"/ppt/theme/theme1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.theme+xml\"/>\
          <Override PartName=\"/ppt/presProps.xml\" ContentType=\"{CT}.presProps+xml\"/>\
          <Override PartName=\"/ppt/viewProps.xml\" ContentType=\"{CT}.viewProps+xml\"/>\
@@ -340,20 +478,26 @@ pub(crate) fn new_package() -> Vec<u8> {
             "docProps/app.xml",
             format!(
                 "{DECL}<Properties xmlns=\"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties\">\
-                 <Application>Kantor</Application><PresentationFormat>Widescreen</PresentationFormat></Properties>"
+                 <Application>Kantor</Application><PresentationFormat>{}</PresentationFormat></Properties>",
+                format_name(size)
             ),
         ),
         ("ppt/presentation.xml", presentation),
         (
             "ppt/_rels/presentation.xml.rels",
-            rels(&[
-                ("rId1", "slideMaster", "slideMasters/slideMaster1.xml"),
-                ("rId2", "slide", "slides/slide1.xml"),
-                ("rId3", "presProps", "presProps.xml"),
-                ("rId4", "viewProps", "viewProps.xml"),
-                ("rId5", "theme", "theme/theme1.xml"),
-                ("rId6", "tableStyles", "tableStyles.xml"),
-            ]),
+            rels(
+                &[
+                    ("rId1", "slideMaster", "slideMasters/slideMaster1.xml"),
+                    ("rId2", "slide", "slides/slide1.xml"),
+                    ("rId3", "presProps", "presProps.xml"),
+                    ("rId4", "viewProps", "viewProps.xml"),
+                    ("rId5", "theme", "theme/theme1.xml"),
+                    ("rId6", "tableStyles", "tableStyles.xml"),
+                ]
+                .into_iter()
+                .filter(|r| o.title_slide || r.1 != "slide")
+                .collect::<Vec<_>>(),
+            ),
         ),
         (
             "ppt/presProps.xml",
@@ -369,38 +513,59 @@ pub(crate) fn new_package() -> Vec<u8> {
                 "{DECL}<a:tblStyleLst xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" def=\"{{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}}\"/>"
             ),
         ),
-        ("ppt/theme/theme1.xml", theme()),
-        ("ppt/slideMasters/slideMaster1.xml", master()),
+        ("ppt/theme/theme1.xml", theme_with(&o.theme)),
         (
-            "ppt/slideMasters/_rels/slideMaster1.xml.rels",
-            rels(&[
-                ("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml"),
-                ("rId2", "slideLayout", "../slideLayouts/slideLayout2.xml"),
-                ("rId3", "theme", "../theme/theme1.xml"),
-            ]),
-        ),
-        ("ppt/slideLayouts/slideLayout1.xml", title_layout),
-        (
-            "ppt/slideLayouts/_rels/slideLayout1.xml.rels",
-            rels(&[("rId1", "slideMaster", "../slideMasters/slideMaster1.xml")]),
-        ),
-        ("ppt/slideLayouts/slideLayout2.xml", content_layout),
-        (
-            "ppt/slideLayouts/_rels/slideLayout2.xml.rels",
-            rels(&[("rId1", "slideMaster", "../slideMasters/slideMaster1.xml")]),
-        ),
-        ("ppt/slides/slide1.xml", slide),
-        (
-            "ppt/slides/_rels/slide1.xml.rels",
-            rels(&[("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml")]),
+            "ppt/slideMasters/slideMaster1.xml",
+            master(size, layouts.len()),
         ),
     ];
+    let mut master_rels: Vec<(String, &str, String)> = (1..=layouts.len())
+        .map(|i| {
+            (
+                format!("rId{i}"),
+                "slideLayout",
+                format!("../slideLayouts/slideLayout{i}.xml"),
+            )
+        })
+        .collect();
+    master_rels.push((
+        format!("rId{}", layouts.len() + 1),
+        "theme",
+        "../theme/theme1.xml".into(),
+    ));
+    let master_rels: Vec<(&str, &str, &str)> = master_rels
+        .iter()
+        .map(|(a, b, c)| (a.as_str(), *b, c.as_str()))
+        .collect();
+    let mut parts: Vec<(String, String)> =
+        parts.into_iter().map(|(n, c)| (n.to_owned(), c)).collect();
+    parts.push((
+        "ppt/slideMasters/_rels/slideMaster1.xml.rels".into(),
+        rels(&master_rels),
+    ));
+    for (i, l) in layouts.into_iter().enumerate() {
+        let n = i + 1;
+        parts.push((format!("ppt/slideLayouts/slideLayout{n}.xml"), l));
+        parts.push((
+            format!("ppt/slideLayouts/_rels/slideLayout{n}.xml.rels"),
+            rels(&[("rId1", "slideMaster", "../slideMasters/slideMaster1.xml")]),
+        ));
+    }
+    if o.title_slide {
+        parts.push(("ppt/slides/slide1.xml".into(), slide));
+        parts.push((
+            "ppt/slides/_rels/slide1.xml.rels".into(),
+            rels(&[("rId1", "slideLayout", "../slideLayouts/slideLayout1.xml")]),
+        ));
+    }
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    // A fixed time (as Office writes): the same options make the same bytes.
     let opts = zip::write::SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
+        .compression_method(zip::CompressionMethod::Deflated)
+        .last_modified_time(zip::DateTime::default());
     for (name, content) in parts {
         // Writing into memory can't fail short of allocation failure.
-        zip.start_file(name, opts).expect("zip entry");
+        zip.start_file(name.as_str(), opts).expect("zip entry");
         zip.write_all(content.as_bytes()).expect("zip write");
     }
     zip.finish().expect("zip finish").into_inner()

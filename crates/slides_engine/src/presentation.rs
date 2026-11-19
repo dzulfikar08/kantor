@@ -86,6 +86,9 @@ pub(crate) struct SlideSrc {
     /// The shapes as read (unchanged slides are copied raw).
     pub shapes: Vec<Shape>,
     pub rels: Vec<Rel>,
+    /// `prefix` was changed in Kantor (a new background): the slide is
+    /// written even when its shapes are as read.
+    pub edited: bool,
 }
 
 /// Where a slide was in the original file.
@@ -211,7 +214,10 @@ impl PartialEq for Slide {
 impl Slide {
     /// Whether the slide's part can be copied from the original file.
     fn unchanged(&self) -> bool {
-        self.origin.is_some() && self.shapes == self.src.shapes && *self.rels == self.src.rels
+        self.origin.is_some()
+            && !self.src.edited
+            && self.shapes == self.src.shapes
+            && *self.rels == self.src.rels
     }
 
     /// The slide's XML as it would be saved.
@@ -250,6 +256,7 @@ impl Slide {
             suffix: self.src.suffix.clone(),
             shapes: self.src.shapes.clone(),
             rels: self.src.rels.clone(),
+            edited: self.src.edited,
         });
     }
 
@@ -319,7 +326,7 @@ fn read_zip_text(
 }
 
 /// Background colour of a `p:cSld`.
-fn background(csld: Node, colors: &ColorCtx) -> Option<Rgb> {
+pub(crate) fn background(csld: Node, colors: &ColorCtx) -> Option<Rgb> {
     let bg = child(csld, NS_P, "bg")?;
     if let Some(pr) = child(bg, NS_P, "bgPr") {
         return pr
@@ -332,7 +339,12 @@ fn background(csld: Node, colors: &ColorCtx) -> Option<Rgb> {
 
 /// The background fill of a `p:cSld` (`p:bgPr` or a theme `p:bgRef`);
 /// pictures resolve against `rels` of `part`.
-fn background_fill(csld: Node, colors: &ColorCtx, part: &str, rels: &[Rel]) -> Option<Fill> {
+pub(crate) fn background_fill(
+    csld: Node,
+    colors: &ColorCtx,
+    part: &str,
+    rels: &[Rel],
+) -> Option<Fill> {
     let bg = child(csld, NS_P, "bg")?;
     if let Some(pr) = child(bg, NS_P, "bgPr") {
         let resolve = |id: &str| rels.iter().find(|r| r.id == id).and_then(|r| r.part(part));
@@ -1017,8 +1029,11 @@ impl Presentation {
 
         let mut src = zip::ZipArchive::new(Cursor::new(pkg.bytes.as_slice()))?;
         let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        // A fixed entry time, as Office writes: the same presentation saves
+        // to the same bytes.
         let opts = zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+            .compression_method(zip::CompressionMethod::Deflated)
+            .last_modified_time(zip::DateTime::default());
         let mut pending: HashMap<String, Vec<u8>> = out_parts.into_iter().collect();
         for i in 0..src.len() {
             let file = src.by_index_raw(i)?;
@@ -1305,6 +1320,7 @@ pub(crate) fn read_slide(
             suffix: String::new(),
             shapes: Vec::new(),
             rels: rels0.clone(),
+            edited: false,
         }),
         origin: origin0.clone(),
         notes: None,
@@ -1354,6 +1370,7 @@ pub(crate) fn read_slide(
             suffix: xml[range.end..].to_owned(),
             shapes: shapes.clone(),
             rels,
+            edited: false,
         }),
         shapes,
         origin,

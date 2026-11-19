@@ -11,6 +11,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Slides from JSON, for AI agents and scripts. `kantor slides build deck.json -o deck.pptx` writes a presentation
+  without a window: slide size, theme fonts and colours, and per slide its layout, title, bullets, background
+  (colour, gradient or picture), speaker notes and elements: shapes (any of PowerPoint's preset shapes, rounded
+  corners by radius, solid or gradient fills, outlines with dashes), text boxes, lines with arrowheads, pictures
+  (cropped, fitted, cut to a shape) and tables (header and banded rows, fills, borders, merged cells), with text in
+  runs of their own font, size, bold, italic and colour, alignment, vertical position, line spacing, margins and
+  autofit. The same deck always gives the same file. `kantor slides list` prints a file's shapes as JSON and
+  `kantor slides edit` adds, moves, deletes and restacks them. The MCP server does the same on the open presentation
+  (`slides_add_shape`, `slides_add_picture`, `slides_add_table`, `slides_add_elements`, `slides_set_background`,
+  `slides_update_shape`, `slides_delete_shape`, `slides_order_shape`, `slides_group_shapes`), and `slides_build`
+  writes a whole deck; `slides_list` now gives each shape's position, size and geometry. See docs/slides-json.md.
+- Slides: a new presentation has the *Title Only* and *Blank* layouts too, as PowerPoint's new presentations do.
 - PDF annotations, forms and Fill & Sign. *Comment* on the toolbar: highlight, underline or strike out selected
   text, sticky notes, text boxes (Helvetica or Courier, size, colour, border, background), the pen, rectangles,
   ellipses, lines, arrows and polygons; select an annotation to move, resize, recolour, change its width or
