@@ -1410,8 +1410,20 @@ fn inline_to_anchor(src: &str, at: &Placement) -> Option<String> {
         cell = at.in_cell as u8,
         overlap = at.allow_overlap as u8,
     );
-    s.push_str(&position_xml(&p, "positionH", at.h.0.as_str(), at.h.1, true));
-    s.push_str(&position_xml(&p, "positionV", at.v.0.as_str(), at.v.1, false));
+    s.push_str(&position_xml(
+        &p,
+        "positionH",
+        at.h.0.as_str(),
+        at.h.1,
+        true,
+    ));
+    s.push_str(&position_xml(
+        &p,
+        "positionV",
+        at.v.0.as_str(),
+        at.v.1,
+        false,
+    ));
     s.push_str(&format!(
         "<{p}extent cx=\"{}\" cy=\"{}\"/>{effect}",
         at.cx, at.cy

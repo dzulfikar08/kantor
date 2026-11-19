@@ -396,11 +396,10 @@ impl DocsView {
             self.open_text_box(sel, which, at, window, cx);
         } else {
             // Inline SmartArt moves in the text, as Word moves it.
-            self.start_float_drag(page, Grab::Move, rect, ev.position);
-            if let Some(d) = &mut self.float_drag
-                && self.sel_inline()
-            {
-                d.inline_from = Some(sel);
+            if self.sel_inline() {
+                self.start_inline_drag(page, sel, rect, ev.position);
+            } else {
+                self.start_float_drag(page, Grab::Move, rect, ev.position);
             }
         }
         cx.notify();

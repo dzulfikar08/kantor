@@ -308,7 +308,10 @@ fn inline_smartart_made_floating_and_back_as_word_writes_it() {
     // Each wrap Word offers.
     for (o, want) in [
         (LayoutOption::Tight, "<wp:wrapTight wrapText=\"bothSides\">"),
-        (LayoutOption::Through, "<wp:wrapThrough wrapText=\"bothSides\">"),
+        (
+            LayoutOption::Through,
+            "<wp:wrapThrough wrapText=\"bothSides\">",
+        ),
         (LayoutOption::TopAndBottom, "<wp:wrapTopAndBottom/>"),
         (LayoutOption::Behind, "<wp:wrapNone/>"),
         (LayoutOption::InFront, "<wp:wrapNone/>"),
@@ -352,7 +355,10 @@ fn inline_smartart_made_floating_and_back_as_word_writes_it() {
         xml.starts_with("<w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\""),
         "{xml}"
     );
-    assert!(xml.contains(&format!("<wp:extent cx=\"{}\" cy=\"{}\"/>", f.at.cx, f.at.cy)));
+    assert!(xml.contains(&format!(
+        "<wp:extent cx=\"{}\" cy=\"{}\"/>",
+        f.at.cx, f.at.cy
+    )));
     for gone in ["anchor", "wrap", "position", "simplePos", "relativeHeight"] {
         assert!(!xml.contains(gone), "{gone}: {xml}");
     }
@@ -361,7 +367,9 @@ fn inline_smartart_made_floating_and_back_as_word_writes_it() {
     let back = Document::open(&out2).unwrap();
     let (bp, bi) = find(&back, "Diagram 2");
     assert!(back.float_at(bp, bi).unwrap().inline);
-    assert!(document_xml(&out2).contains("<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\""));
+    assert!(
+        document_xml(&out2).contains("<wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\"")
+    );
     // Undo walks back through every step to the SmartArt as read.
     while doc.can_undo() {
         doc.undo();
@@ -412,7 +420,10 @@ fn inline_smartart_dragged_moves_in_the_text() {
     assert_eq!(sel.anchor, docs_engine::Position::new(pi, to - len));
     assert_eq!(find(&doc, "Diagram 2"), (pi, to - len));
     let now = doc.paragraph(pi).text.clone();
-    assert!(now.contains(&format!("sits{} in this line", docs_engine::OBJECT)), "{now}");
+    assert!(
+        now.contains(&format!("sits{} in this line", docs_engine::OBJECT)),
+        "{now}"
+    );
     assert!(now.contains("Accent List  sits") || now.contains("Accent List sits"));
     // Onto itself: nothing to do.
     assert!(
@@ -459,7 +470,11 @@ fn moving_with_track_changes_leaves_a_deletion_and_an_insertion() {
     let revs: Vec<_> = p
         .runs
         .iter()
-        .filter(|r| r.object.as_ref().is_some_and(|o| matches!(o, Object::Float(_))))
+        .filter(|r| {
+            r.object
+                .as_ref()
+                .is_some_and(|o| matches!(o, Object::Float(_)))
+        })
         .map(|r| r.rev.as_ref().map(|r| (r.kind, r.tag.clone())))
         .collect();
     assert_eq!(revs.len(), 2, "{revs:?}");

@@ -2497,7 +2497,10 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                 let mut d = 0.0;
                 while d < c.height {
                     let h = dash.min(c.height - d);
-                    window.paint_quad(fill(rect(page, [c.x - w / 2.0, c.top + d, w, h]), f.t.paper_ink));
+                    window.paint_quad(fill(
+                        rect(page, [c.x - w / 2.0, c.top + d, w, h]),
+                        f.t.paper_ink,
+                    ));
                     d += dash * 2.0;
                 }
             }
