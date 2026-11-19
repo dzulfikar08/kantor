@@ -3,13 +3,12 @@
 //! Kantor never bundles proprietary fonts. It uses SF Pro when the user has it
 //! installed, else the best free alternative.
 //!
-//! On Linux the automatic choice skips *variable* fonts (Inter's
-//! `Inter-var.ttf`, Adwaita Sans, ...) when a static family is installed:
-//! GPUI's Linux text system (cosmic-text) loads a variable font as one face
-//! and draws its default instance, so bold and medium text in such a family
-//! look regular (ADR 0001, "variable fonts"). A family is taken as variable
-//! when asking for its bold resolves to the same face as its regular. macOS
-//! (Core Text draws variable weights) is unaffected.
+//! On Linux the automatic choice prefers a family whose bold resolves to a
+//! face of its own. Kantor's patched GPUI text system loads a variable font
+//! (Inter's `Inter-var.ttf`, Adwaita Sans, ...) again at each requested
+//! weight, so variable families count as having a real bold too; the check
+//! still skips a family that only has a regular face (ADR 0001, "variable
+//! fonts"). macOS (Core Text) and Windows (DirectWrite) are unaffected.
 
 use gpui_kit::component::Theme;
 use gpui_kit::*;
@@ -129,7 +128,8 @@ mod tests {
     }
 
     /// Against the real fonts, where installed: Carlito ships static bold
-    /// faces; a single-file variable Inter (`Inter-var.ttf`) does not.
+    /// faces; a single-file variable Inter (`Inter-var.ttf`) is loaded again
+    /// at the bold weight by the patched text system, so it counts too.
     #[cfg(target_os = "linux")]
     #[std::prelude::v1::test]
     fn detects_variable_families() {
@@ -148,7 +148,7 @@ mod tests {
                 .exists()
         });
         if has("Inter") && inter_var {
-            assert!(!bold_is_own_face(&ts, "Inter"));
+            assert!(bold_is_own_face(&ts, "Inter"));
         }
     }
 }
