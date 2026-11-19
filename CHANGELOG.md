@@ -9,6 +9,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.16.0] - 2026-11-19
+
+Kantor now opens files from the system: Open With, double-click, the Dock icon and dragging files onto a window.
+Sheets keeps a workbook's own theme when saving (fonts, line and fill styles used to be replaced), draws picture-style
+borders and keeps the cell part of names on a deleted sheet. Docs SmartArt and pictures in the text can be made
+floating and dragged, and Square, Tight and Through objects move to the next page when they don't fit, as in Word 2013+.
+
 ### Changed
 
 - Docs: a picture or shape with Square, Tight or Through wrapping that moves with the text and
@@ -2078,7 +2085,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/dzulfikar08/kantor/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/dzulfikar08/kantor/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/dzulfikar08/kantor/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/dzulfikar08/kantor/compare/v0.12.0...v0.13.0
