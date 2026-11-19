@@ -590,6 +590,7 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
                     b = before;
                 }
             }
+            keep_theme_or_note(&mut b, original, notes);
             b.write()
         });
         match polished {
@@ -669,6 +670,7 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
                 polish_notes.push(format!("pictures of IMAGE formulas are not kept: {e}"));
                 merged = before;
             }
+            keep_theme_or_note(&mut merged, Some(original), &mut polish_notes);
             Ok(())
         }),
         Err(e) => Err(e),
@@ -1028,6 +1030,148 @@ fn polish(
         request_full_calc(pkg)?;
     }
     Ok(())
+}
+
+/// The part a package's workbook relationship of type `kind` points at,
+/// with the workbook part's name.
+fn workbook_target(
+    root_rels: Option<String>,
+    read_rels: &dyn Fn(&str) -> Result<Option<String>, String>,
+    kind: &str,
+) -> Result<Option<String>, String> {
+    let Some(root) = root_rels else {
+        return Ok(None);
+    };
+    let Some(wb) = parse_rels(&root)?
+        .iter()
+        .find(|r| r.short_kind() == "officeDocument" && !r.external)
+        .and_then(|r| resolve("", &r.target))
+    else {
+        return Ok(None);
+    };
+    let Some(wb_rels) = read_rels(&rels_part(&wb))? else {
+        return Ok(None);
+    };
+    Ok(parse_rels(&wb_rels)?
+        .iter()
+        .find(|r| r.short_kind() == kind && !r.external)
+        .and_then(|r| resolve(&wb, &r.target)))
+}
+
+/// Put the original's theme part back over IronCalc's, byte for byte, with
+/// the pictures its fill styles use. IronCalc writes its own theme with only
+/// the original's colours in it, so its fonts (Aptos), line, fill and effect
+/// styles would replace the workbook's: cells in the body font, borders and
+/// shapes taking their look from the theme would change in Excel, and in
+/// Kantor after reopening. Nothing changes when the original has no theme
+/// (new workbooks, `.xls`/`.ods`/`.xlsb` imports keep IronCalc's).
+fn keep_theme(pkg: &mut Package, original: &[u8]) -> Result<(), String> {
+    let orig = Original::new(original)?;
+    let Some(orig_theme) = workbook_target(orig.text("_rels/.rels")?, &|p| orig.text(p), "theme")?
+    else {
+        return Ok(());
+    };
+    let Some(theme) = orig.get(&orig_theme)? else {
+        return Ok(());
+    };
+    let new_root = pkg.text("_rels/.rels")?.map(str::to_owned);
+    let new_read = |p: &str| Ok(pkg.text(p)?.map(str::to_owned));
+    let Some(new_theme) = workbook_target(new_root, &new_read, "theme")? else {
+        return Ok(());
+    };
+    if pkg.get(&new_theme) == Some(theme.as_slice()) && !orig.has(&rels_part(&orig_theme)) {
+        return Ok(());
+    }
+    let text = std::str::from_utf8(strip_bom(&theme)).map_err(|_| "the theme is not UTF-8")?;
+    let doc = Document::parse(text).map_err(|e| format!("{orig_theme}: {e}"))?;
+    if doc.root_element().tag_name().name() != "theme" {
+        return Err(format!("{orig_theme} is not a theme"));
+    }
+    // The theme's own relationships (pictures of blip fills), every target
+    // copied first (renamed if the name is taken by something else).
+    let orig_ct = ContentTypes::parse(
+        &orig
+            .text(CONTENT_TYPES)?
+            .ok_or("original has no content types")?,
+    )?;
+    let new_ct = ContentTypes::parse(pkg.text(CONTENT_TYPES)?.ok_or("no content types")?)?;
+    let mut copies: Vec<(String, Vec<u8>, String)> = Vec::new();
+    let rels = match orig.text(&rels_part(&orig_theme))? {
+        None => None,
+        Some(xml) => {
+            let mut rels = parse_rels(&xml)?;
+            for r in rels.iter_mut().filter(|r| !r.external) {
+                let part = resolve(&orig_theme, &r.target)
+                    .ok_or_else(|| format!("can't follow the theme's {}", r.target))?;
+                let data = orig
+                    .get(&part)?
+                    .ok_or_else(|| format!("the theme's {part} is missing"))?;
+                if orig.has(&rels_part(&part)) {
+                    return Err(format!("the theme's {part} has relationships"));
+                }
+                let kind = orig_ct
+                    .of(&part)
+                    .ok_or_else(|| format!("{part} has no content type"))?
+                    .to_owned();
+                let name = match pkg.get(&part) {
+                    Some(have) if have != data.as_slice() => {
+                        let stem = part.rsplit_once('.').map_or(part.as_str(), |(s, _)| s);
+                        let stem = stem.trim_end_matches(|c: char| c.is_ascii_digit());
+                        let ext = extension(&part)
+                            .map(|e| format!(".{e}"))
+                            .unwrap_or_default();
+                        (1..)
+                            .map(|n| format!("{stem}{n}{ext}"))
+                            .find(|n| !pkg.has(n) && !copies.iter().any(|(c, ..)| c == n))
+                            .expect("a free name")
+                    }
+                    _ => part,
+                };
+                r.target = relative(&new_theme, &name);
+                copies.push((name, data, kind));
+            }
+            Some(rels)
+        }
+    };
+    let mut ct_entries = String::new();
+    for (name, data, kind) in copies {
+        if new_ct.of(&name) != Some(kind.as_str()) {
+            ct_entries.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{}\"/>",
+                esc_attr(&name),
+                esc_attr(&kind)
+            ));
+        }
+        pkg.set(&name, data);
+    }
+    if !ct_entries.is_empty() {
+        let mut xml = pkg
+            .text(CONTENT_TYPES)?
+            .ok_or("missing content types")?
+            .to_owned();
+        let at = xml.rfind("</Types>").ok_or("content types not closed")?;
+        xml.insert_str(at, &ct_entries);
+        pkg.set(CONTENT_TYPES, xml.into_bytes());
+    }
+    match rels {
+        Some(rels) => pkg.set(&rels_part(&new_theme), write_rels(&rels).into_bytes()),
+        None => pkg.remove(&rels_part(&new_theme)),
+    }
+    pkg.set(&new_theme, theme);
+    Ok(())
+}
+
+/// [`keep_theme`] as an optional step: on failure the package keeps
+/// IronCalc's theme and a note says so.
+fn keep_theme_or_note(pkg: &mut Package, original: Option<&[u8]>, notes: &mut Vec<String>) {
+    let Some(original) = original else {
+        return;
+    };
+    let before = pkg.clone();
+    if let Err(e) = keep_theme(pkg, original) {
+        notes.push(format!("the workbook's theme is not kept: {e}"));
+        *pkg = before;
+    }
 }
 
 /// Ask for a full recalculation when the workbook is opened.
@@ -7903,5 +8047,87 @@ mod tests {
                 "_rels/.rels: target missing.xml of rId1 is missing".to_owned(),
             ]
         );
+    }
+
+    /// A package from parts (for the theme tests).
+    fn zip_parts(parts: &std::collections::BTreeMap<String, Vec<u8>>) -> Vec<u8> {
+        let mut pkg = Package::default();
+        for (n, d) in parts {
+            pkg.set(n, d.clone());
+        }
+        pkg.write().unwrap()
+    }
+
+    /// With nothing else to carry (the merge adds nothing), the save is
+    /// IronCalc's package, still with the original's theme and its picture.
+    #[test]
+    fn theme_kept_when_nothing_else_is_carried() {
+        let mut parts = parts_of(&corpus_file("29_custom_theme.xlsx"));
+        parts.retain(|n, _| !n.contains("drawing") && !n.contains("chart"));
+        parts.remove("xl/media/image2.png");
+        parts.remove("xl/worksheets/_rels/sheet1.xml.rels");
+        let sheet =
+            text(&parts, "xl/worksheets/sheet1.xml").replace("<drawing r:id=\"rId1\"/>", "");
+        parts.insert("xl/worksheets/sheet1.xml".into(), sheet.into_bytes());
+        let ct = ["drawings/drawing1.xml", "charts/chart1.xml"].iter().fold(
+            text(&parts, CONTENT_TYPES),
+            |ct, part| {
+                let at = ct
+                    .find(&format!("<Override PartName=\"/xl/{part}\""))
+                    .unwrap();
+                let end = at + ct[at..].find("/>").unwrap() + 2;
+                format!("{}{}", &ct[..at], &ct[end..])
+            },
+        );
+        parts.insert(CONTENT_TYPES.into(), ct.into_bytes());
+        let original = zip_parts(&parts);
+        assert_eq!(package_problems(&original), Vec::<String>::new());
+
+        let done = save(&model(&original), Some(&original));
+        assert!(done.notes.is_empty(), "{:?}", done.notes);
+        let saved = parts_of(&done.bytes);
+        assert!(saved["xl/theme/theme1.xml"] == parts["xl/theme/theme1.xml"]);
+        assert_eq!(
+            text(&saved, "xl/theme/_rels/theme1.xml.rels"),
+            text(&parts, "xl/theme/_rels/theme1.xml.rels")
+        );
+        assert_eq!(saved["xl/media/image1.png"], parts["xl/media/image1.png"]);
+        // A new workbook (no original) keeps IronCalc's.
+        let fresh = parts_of(&save(&model(&original), None).bytes);
+        assert!(text(&fresh, "xl/theme/theme1.xml").contains("Aptos"));
+        assert!(!fresh.contains_key("xl/theme/_rels/theme1.xml.rels"));
+    }
+
+    /// The theme's picture takes a free name when the saved package already
+    /// has a different part by its name.
+    #[test]
+    fn theme_picture_renamed_on_a_clash() {
+        let original = corpus_file("29_custom_theme.xlsx");
+        let ironcalc = save_xlsx_to_writer(&model(&original), Cursor::new(Vec::new()))
+            .unwrap()
+            .into_inner();
+        let mut pkg = Package::read(&ironcalc).unwrap();
+        pkg.set("xl/media/image1.png", b"other".to_vec());
+        let ct = pkg.text(CONTENT_TYPES).unwrap().unwrap().replace(
+            "</Types>",
+            "<Override PartName=\"/xl/media/image1.png\" ContentType=\"image/png\"/></Types>",
+        );
+        pkg.set(CONTENT_TYPES, ct.into_bytes());
+        keep_theme(&mut pkg, &original).unwrap();
+        assert_eq!(pkg.get("xl/media/image1.png"), Some(&b"other"[..]));
+        let rels = pkg.text("xl/theme/_rels/theme1.xml.rels").unwrap().unwrap();
+        assert!(rels.contains("Target=\"../media/image2.png\""), "{rels}");
+        let orig = parts_of(&original);
+        assert_eq!(
+            pkg.get("xl/media/image2.png"),
+            Some(orig["xl/media/image1.png"].as_slice())
+        );
+        assert!(pkg.get("xl/theme/theme1.xml") == Some(orig["xl/theme/theme1.xml"].as_slice()));
+        assert_eq!(problems_of(&pkg), Vec::<String>::new());
+        // Twice in a row (an already kept theme): the same result.
+        let again = pkg.clone();
+        keep_theme(&mut pkg, &original).unwrap();
+        assert!(pkg.get("xl/media/image2.png") == again.get("xl/media/image2.png"));
+        assert_eq!(problems_of(&pkg), Vec::<String>::new());
     }
 }

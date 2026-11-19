@@ -560,6 +560,36 @@ fn main() -> Result<()> {
         names_saved(&path)?;
         Ok(Some(src))
     });
+    // A workbook with its own theme (fonts, line styles, a picture fill):
+    // edited and saved twice, the theme part and its picture stay byte for
+    // byte the file's.
+    run.scenario("sheets_custom_theme_kept.xlsx", |o| {
+        let src = corpus.join("xlsx/29_custom_theme.xlsx");
+        let theme_of = |path: &Path| -> Result<(Vec<u8>, Vec<u8>)> {
+            let mut z = zip::ZipArchive::new(std::fs::File::open(path)?)?;
+            let mut read = |name: &str| -> Result<Vec<u8>> {
+                let mut b = Vec::new();
+                std::io::Read::read_to_end(&mut z.by_name(name)?, &mut b)?;
+                Ok(b)
+            };
+            Ok((read("xl/theme/theme1.xml")?, read("xl/media/image1.png")?))
+        };
+        let want = theme_of(&src)?;
+        let mut wb = Workbook::open(&src)?;
+        wb.set_input(0, 5, 0, "Q4")?;
+        wb.set_input(0, 5, 1, "160")?;
+        let path = o.join("sheets_custom_theme_kept.xlsx");
+        wb.save_as(&path)?;
+        anyhow::ensure!(theme_of(&path)? == want, "the theme changed on save");
+        let mut again = Workbook::open(&path)?;
+        again.set_input(0, 6, 0, "again")?;
+        again.save_as(&path)?;
+        anyhow::ensure!(
+            theme_of(&path)? == want,
+            "the theme changed on the second save"
+        );
+        Ok(Some(src))
+    });
     run.scenario("sheets_sparklines_saved.xlsx", |o| {
         let src = corpus.join("xlsx/15_sparklines_cf_dv.xlsx");
         let mut wb = Workbook::open(&src)?;

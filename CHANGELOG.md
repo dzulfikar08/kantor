@@ -31,6 +31,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   screen and in PDF, as Excel draws it; a border that sets only its width takes its colour from the style.
 - Sheets: deleting a sheet keeps the cell part of names that pointed at it, as Excel saves them (`#REF!$B$3:$B$6`
   rather than `#REF!`), so they are easier to repair.
+- Sheets: saving a workbook keeps its own theme. Kantor used to write a theme of its own with only the file's colours,
+  so after a save Excel showed cells in the body and heading fonts as Aptos instead of the theme's fonts (Calibri,
+  for one), and borders, fills and effects of pictures, shapes and charts that come from the theme's styles changed
+  (a picture style's border could get wider, for one). New workbooks still get Kantor's theme.
 
 ## [0.15.0] - 2026-11-19
 
