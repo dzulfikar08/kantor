@@ -21,6 +21,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # Open With / double-click registration: macOS Info.plist UTIs, Linux
+      # .desktop MIME types, Windows OpenWithProgids.
+      - name: file types registered with each OS
+        run: python3 scripts/check-file-types.py
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

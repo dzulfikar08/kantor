@@ -1086,24 +1086,34 @@ impl DocsView {
                 return;
             };
             let _ = this.update_in(cx, |this, window, cx| {
-                let name = path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                let result = std::fs::read(&path)
-                    .map_err(anyhow::Error::from)
-                    .and_then(|bytes| this.doc.insert_image(this.sel, bytes, &name));
-                match result {
-                    Ok(sel) => this.edited(sel, window, cx),
-                    Err(err) => {
-                        this.status =
-                            tf("Can't insert {}: {}", &[&name, &format!("{err:#}")]).into();
-                        cx.notify();
-                    }
-                }
+                this.insert_image_file(&path, window, cx)
             });
         })
         .detach();
+    }
+
+    /// Insert the PNG or JPEG at `path` at the caret (Insert Picture, or a
+    /// picture file dropped on the window).
+    pub fn insert_image_file(
+        &mut self,
+        path: &std::path::Path,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let result = std::fs::read(path)
+            .map_err(anyhow::Error::from)
+            .and_then(|bytes| self.doc.insert_image(self.sel, bytes, &name));
+        match result {
+            Ok(sel) => self.edited(sel, window, cx),
+            Err(err) => {
+                self.status = tf("Can't insert {}: {}", &[&name, &format!("{err:#}")]).into();
+                cx.notify();
+            }
+        }
     }
 
     /// Tab: list level, next table cell, or a tab character.
