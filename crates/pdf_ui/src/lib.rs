@@ -113,6 +113,8 @@ actions!(
         Redo,
         DeletePages,
         DeleteMark,
+        NextField,
+        PrevField,
         CommentMode,
         FillSignMode,
         AddStamp,
@@ -134,7 +136,9 @@ actions!(
 /// Register the viewer's key bindings.
 pub fn init(cx: &mut App) {
     kantor_ui::find_bar::bind_app_keys(KEY_CONTEXT, cx);
-    let c = Some(KEY_CONTEXT);
+    // Plain keys scroll and delete only when no text field (a comment,
+    // a form field, the page box) has the focus.
+    let c = Some("PdfViewer && !Input");
     let mut keys = vec![
         KeyBinding::new("up", ScrollUp, c),
         KeyBinding::new("down", ScrollDown, c),
@@ -147,10 +151,11 @@ pub fn init(cx: &mut App) {
         KeyBinding::new("home", FirstPage, c),
         KeyBinding::new("end", LastPage, c),
         KeyBinding::new("f4", ToggleSidebar, c),
-        KeyBinding::new("escape", Escape, c),
+        KeyBinding::new("escape", Escape, Some(KEY_CONTEXT)),
         KeyBinding::new("delete", DeleteMark, c),
         KeyBinding::new("backspace", DeleteMark, c),
     ];
+    let c = Some(KEY_CONTEXT);
     keys.push(KeyBinding::new(
         kantor_ui::keys::primary("ctrl-home"),
         FirstPage,
@@ -214,6 +219,9 @@ pub fn init(cx: &mut App) {
     for k in ["ctrl-shift-]", "ctrl-}", "ctrl-shift-}"] {
         keys.extend(kantor_ui::keys::primary_pair(k, RotatePagesRight, p));
     }
+    let f = Some(markup::FIELD_CONTEXT);
+    keys.push(KeyBinding::new("tab", NextField, f));
+    keys.push(KeyBinding::new("shift-tab", PrevField, f));
     cx.bind_keys(keys);
 }
 
@@ -1176,6 +1184,11 @@ impl PdfView {
         self.page_sel.clear();
         if self.markup_mouse_down(ev, window, cx) {
             self.press = None;
+            if self.markup.editor.is_some() || self.markup.field.is_some() {
+                // Keep the focus in the editor just opened (the pane
+                // would take it back as the click bubbles up).
+                window.prevent_default();
+            }
             cx.notify();
             return;
         }

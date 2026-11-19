@@ -54,6 +54,13 @@ fn save(mut pdf: Pdf) -> Vec<u8> {
     pdf.to_bytes().unwrap()
 }
 
+/// KANTOR_PDF_DUMP=dir keeps a test's output for other viewers.
+fn dump(name: &str, bytes: &[u8]) {
+    if let Some(dir) = std::env::var_os("KANTOR_PDF_DUMP") {
+        std::fs::write(std::path::Path::new(&dir).join(name), bytes).unwrap();
+    }
+}
+
 fn every_kind() -> Vec<Annot> {
     let mut v = Vec::new();
     let mut hl = Annot::new(
@@ -192,6 +199,7 @@ fn every_kind_writes_and_reads_back() {
     let marks = every_kind();
     annot::apply_page(&mut pdf, 0, &marks).unwrap();
     let bytes = save(pdf);
+    dump("every-kind.pdf", &bytes);
     assert!(qpdf_ok(&bytes));
     let back = annot::read_page(&Pdf::from_bytes(&bytes, None).unwrap(), 0);
     assert_eq!(back.len(), marks.len(), "pop-ups aren't listed");
@@ -337,6 +345,7 @@ fn flatten_draws_stamps_into_the_page() {
     let n = annot::flatten(&mut pdf, annot::FlattenWhat::StampsAndSignatures).unwrap();
     assert_eq!(n, 1);
     let bytes = save(pdf);
+    dump("flattened.pdf", &bytes);
     assert!(qpdf_ok(&bytes));
     let back = annot::read_page(&Pdf::from_bytes(&bytes, None).unwrap(), 0);
     assert_eq!(back.len(), marks.len() - 1);
@@ -389,6 +398,7 @@ fn forms_fill_save_and_read_back() {
     values.insert("fruit".to_owned(), FieldValue::Choice(vec!["pear".into()]));
     form::set_values(&mut pdf, &values).unwrap();
     let out = save(pdf);
+    dump("form-filled.pdf", &out);
     assert!(qpdf_ok(&out));
     let back = form::read_form(&Pdf::from_bytes(&out, None).unwrap()).unwrap();
     for (k, v) in &values {
@@ -533,4 +543,18 @@ fn signed_files_get_incremental_updates() {
         crate::sig::signatures(&Pdf::from_bytes(&sample_pdf(1), None).unwrap()),
         None
     );
+}
+
+#[test]
+fn layers_show_check_boxes_without_appearances() {
+    let pdf = Pdf::from_bytes(&sample_form_pdf(), None).unwrap();
+    let marks = annot::read_page(&pdf, 0);
+    let mut values = HashMap::new();
+    values.insert("agree".to_owned(), FieldValue::State("Yes".into()));
+    let layer = annot::layer(&pdf, 0, &marks, &values).unwrap();
+    if let Some(img) = poppler(&layer) {
+        let checked =
+            (74..88).any(|x| (462..476).any(|y| at(&img, x as f32, y as f32, 800.0)[0] < 100));
+        assert!(checked, "the check shows in the layer");
+    }
 }

@@ -214,6 +214,9 @@ impl Markup {
     }
 }
 
+/// Key context of a form field being filled (Tab goes to the next).
+pub(crate) const FIELD_CONTEXT: &str = "PdfField";
+
 pub(crate) const YELLOW: [f32; 3] = [1.0, 0.85, 0.1];
 /// The colours offered (as Acrobat's comment colours).
 pub(crate) const COLORS: &[([f32; 3], &str)] = &[
@@ -1081,7 +1084,7 @@ impl PdfView {
     }
 
     /// Put a picture or signature at `pt`, centred, at its natural size
-    /// (images 72 dpi, signatures 150 pt wide), no bigger than the page.
+    /// (images at 96 dpi, signatures 150 pt wide), at most half the page.
     pub(crate) fn place_item(
         &mut self,
         place: usize,
@@ -1097,7 +1100,7 @@ impl PdfView {
                 (150.0, 150.0 / aspect.max(0.05))
             }
         };
-        let k = (pw * 0.9 / w).min(ph * 0.9 / h).min(1.0);
+        let k = (pw * 0.5 / w).min(ph * 0.5 / h).min(1.0);
         let (w, h) = (w * k, h * k);
         let rect = [
             pt[0] - w / 2.0,
@@ -1907,12 +1910,15 @@ impl PdfView {
                     .top(b.origin.y)
                     .w(b.size.width.max(px(80.)))
                     .occlude()
-                    .capture_key_down(move |e, window, cx| {
-                        if e.keystroke.key == "tab" {
-                            cx.stop_propagation();
-                            let back = e.keystroke.modifiers.shift;
-                            let _ = weak.update(cx, |v, cx| v.tab_field(back, window, cx));
+                    .key_context(FIELD_CONTEXT)
+                    .on_action({
+                        let weak = weak.clone();
+                        move |_: &crate::NextField, window, cx| {
+                            let _ = weak.update(cx, |v, cx| v.tab_field(false, window, cx));
                         }
+                    })
+                    .on_action(move |_: &crate::PrevField, window, cx| {
+                        let _ = weak.update(cx, |v, cx| v.tab_field(true, window, cx));
                     })
                     .child(gpui_kit::component::input::Input::new(&input).cleanable(false))
                     .into_any_element(),

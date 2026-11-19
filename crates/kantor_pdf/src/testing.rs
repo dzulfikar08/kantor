@@ -299,15 +299,19 @@ pub fn sample_form_pdf() -> Vec<u8> {
                 b"Off".to_vec()
             }),
         );
+        let form = |content: &[u8]| {
+            let mut d = Dictionary::new();
+            d.set("Type", "XObject");
+            d.set("Subtype", "Form");
+            d.set("BBox", vec![0.into(), 0.into(), 18.into(), 18.into()]);
+            Stream::new(d, content.to_vec())
+        };
         let mut n = Dictionary::new();
         n.set(
             *st,
-            doc.add_object(Stream::new(Dictionary::new(), Vec::new())),
+            doc.add_object(form(b"0 g 5 5 m 13 5 l 13 13 l 5 13 l h f")),
         );
-        n.set(
-            "Off",
-            doc.add_object(Stream::new(Dictionary::new(), Vec::new())),
-        );
+        n.set("Off", doc.add_object(form(b"")));
         let mut ap = Dictionary::new();
         ap.set("N", n);
         k.set("AP", ap);
