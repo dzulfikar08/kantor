@@ -20,6 +20,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   `Password` column of the fill step's table or `kantor pdf batch --passwords TABLE`; never saved. Steps the owner's
   restrictions don't allow with the open password are skipped and say so.
 - PDF: the signature checker and `kantor pdf verify --password` check password-protected PDFs.
+- Docs mail merge: *Address Block…* and *Greeting Line…* on the Mailings bar insert Word's `ADDRESSBLOCK` and `GREETINGLINE` fields, with a preview of each recipient as in Word's dialogs, and merging fills them in as Word does: the name format, company, country only when it isn't your own, and addresses laid out by the destination country (United States, United Kingdom, Indonesia, Germany, France, Japan, Australia and more). Greeting lines fall back to "Dear Sir or Madam," (or your choice) when a recipient has no name. Templates made in Word with these fields now merge completely, in the app and with `kantor docs merge`.
+- Docs mail merge: *Match Fields…* says which columns of your list are the title, first and last name, company, address, city, postal code and country. Kantor guesses them from the column names, in English and Indonesian too (Nama, Alamat, Kota, Kode Pos, Provinsi, Negara), and saves your choice in the document as Word does.
 
 ### Fixed
 

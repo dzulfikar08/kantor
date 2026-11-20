@@ -97,6 +97,10 @@ pub(crate) struct Mailings {
     filter_value: Entity<InputState>,
     header_row: Entity<InputState>,
     name_pattern: Entity<InputState>,
+    /// Address Block…, Greeting Line… or Match Fields…, when open.
+    pub dialog: Option<crate::mailings_address::AddrDialog>,
+    /// The recipient its preview shows (index into `records`).
+    pub dialog_at: usize,
     _subs: Vec<Subscription>,
 }
 
@@ -140,6 +144,8 @@ impl Mailings {
             filter_value,
             header_row,
             name_pattern,
+            dialog: None,
+            dialog_at: 0,
             _subs: subs,
         }
     }
@@ -742,6 +748,34 @@ impl DocsView {
                     menu
                 })
         };
+        let block_buttons = [
+            (
+                "mm-address",
+                tk("Address Block…"),
+                tk("The recipient's name and address, laid out as letters are addressed"),
+                0u8,
+            ),
+            (
+                "mm-greeting",
+                tk("Greeting Line…"),
+                tk("A greeting such as Dear Mr. Randall, from each recipient's name"),
+                1,
+            ),
+            (
+                "mm-match",
+                tk("Match Fields…"),
+                tk("Which columns of the list are the name and address fields"),
+                2,
+            ),
+        ]
+        .map(|(id, label, tip, which)| {
+            let v = view.clone();
+            button(id, label, tip, true).on_click(move |_, window, cx| {
+                let _ = v.update(cx, |this, cx| {
+                    this.open_address_dialog_doc(which, window, cx)
+                });
+            })
+        });
         let highlight = {
             let v = view.clone();
             check(
@@ -907,6 +941,7 @@ impl DocsView {
                             .child(source),
                     )
                 })
+                .children(block_buttons)
                 .child(insert)
                 .child(highlight)
                 .child(preview)
@@ -1359,7 +1394,7 @@ impl DocsView {
     }
 }
 
-fn check_box(on: bool, tok: &kantor_ui::Tokens) -> Div {
+pub(crate) fn check_box(on: bool, tok: &kantor_ui::Tokens) -> Div {
     div()
         .flex_none()
         .size(ICON_MD)

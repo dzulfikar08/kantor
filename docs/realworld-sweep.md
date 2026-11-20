@@ -771,8 +771,8 @@ pictures, a table cell's only paragraph). Fixed:
 - `\# "$#,##0.00"` gave `$150.00` where Word writes `$ 150.00`: a `#`
   place with no digit is a space.
 
-Not done: Word's Address Block and Greeting Line (`kantor docs merge` now
-says when a template has them); Word matches `MERGEFIELD "First Name"` only
+Address Block and Greeting Line were done afterwards (2026-11-20, see
+docs/mail-merge.md: checked against `address-probe-r1-merged.docx`). Word matches `MERGEFIELD "First Name"` only
 to a column named `First_Name` in a Word-table data source, where Kantor
 matches both spellings.
 

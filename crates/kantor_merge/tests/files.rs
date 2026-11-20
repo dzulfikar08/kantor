@@ -82,27 +82,27 @@ fn text(path: &Path) -> String {
         .join("\n")
 }
 
-/// Word's Address Block and Greeting Line aren't filled in yet: the merge
-/// says so instead of leaving their template text without a word.
+/// Address Block and Greeting Line are filled in from the columns Word
+/// would match; the merge names the address fields no column matches.
 #[test]
-fn address_block_and_greeting_line_are_reported() {
+fn address_block_and_greeting_line_are_filled() {
     let dir = tempfile::tempdir().unwrap();
     let extra = format!(
-        "<w:p>{}</w:p><w:p>{}</w:p><w:p>{}</w:p>",
+        "<w:p>{}</w:p><w:p>{}</w:p>",
         field("ADDRESSBLOCK"),
         field(
-            r#"GREETINGLINE \f "&lt;&lt;_BEFORE_ Dear &gt;&gt;&lt;&lt;_FIRST0_&gt;&gt;" \l 1033"#
+            r#"GREETINGLINE \f "&lt;&lt;_BEFORE_ Dear &gt;&gt;&lt;&lt;_TITLE0_ &gt;&gt;&lt;&lt;_LAST0_&gt;&gt;&lt;&lt;_AFTER_ ,&gt;&gt;" \l 1033 \e "Dear Sir or Madam,""#
         ),
-        field("GREETINGLINE")
     );
     let doc = Document::open(&template_with(dir.path(), &extra)).unwrap();
     let rec = Recipients::open(&people(dir.path()), None, None).unwrap();
+    let single = dir.path().join("all.docx");
     let out = DocsOut {
         dir: None,
         docx: false,
         pdf: false,
         name: None,
-        single: Some(dir.path().join("all.docx")),
+        single: Some(single.clone()),
         overwrite: Overwrite::Refuse,
     };
     let mut engine = None;
@@ -112,12 +112,14 @@ fn address_block_and_greeting_line_are_reported() {
     assert_eq!(
         report.notes,
         vec![
-            "Address Block (ADDRESSBLOCK) fields aren't filled in yet: they keep the template's text"
-                .to_owned(),
-            "Greeting Line (GREETINGLINE) fields aren't filled in yet: they keep the template's text"
+            "Address Block / Greeting Line: no column matched for Company, Last Name, Address 1, Address 2, City, State, Postal Code, Country or Region, Courtesy Title (name the columns as Word's address fields, or use Match Fields)"
                 .to_owned()
         ]
     );
+    let t = text(&single);
+    // "Name" is taken as the first name; with no title or last name the
+    // greeting falls back to the name, as Word 365 does.
+    assert!(t.contains("\nSiti Aminah\nDear Siti Aminah,"), "{t}");
 }
 
 #[test]

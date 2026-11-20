@@ -12,6 +12,7 @@
 //!   and opaque elements.
 //! - [`rtf`]: importing `.rtf` files (read-only; Save writes `.docx`).
 
+pub mod address;
 pub mod agent;
 mod code_track;
 pub mod columns;

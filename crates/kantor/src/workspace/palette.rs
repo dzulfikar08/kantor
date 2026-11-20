@@ -1497,6 +1497,30 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.select_recipients_doc(w, cx)),
     },
     Command {
+        title: tk("Address Block…"),
+        detail: tk("Docs · mail merge: each recipient's name and address, laid out by country"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.open_address_dialog_doc(0, w, cx))
+        },
+    },
+    Command {
+        title: tk("Greeting Line…"),
+        detail: tk("Docs · mail merge: Dear Mr. Randall, from each recipient's name"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.open_address_dialog_doc(1, w, cx))
+        },
+    },
+    Command {
+        title: tk("Match Fields…"),
+        detail: tk("Docs · mail merge: which columns are the name and address fields"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.open_address_dialog_doc(2, w, cx))
+        },
+    },
+    Command {
         title: tk("Preview Results"),
         detail: tk(
             "Docs · mail merge: show a recipient's values in the merge fields, or the field names",

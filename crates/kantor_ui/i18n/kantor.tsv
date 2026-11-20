@@ -638,6 +638,9 @@ Signature checks use only what the file contains	Pemeriksaan tanda tangan hanya 
 # Mail merge (palette)
 Mailings (Mail Merge)	Surat Massal (Mail Merge)
 Docs · letters, certificates and labels filled in from a workbook or CSV file	Docs · surat, sertifikat, dan label yang diisi dari buku kerja atau file CSV
+Docs · mail merge: each recipient's name and address, laid out by country	Docs · surat massal: nama dan alamat setiap penerima, ditata menurut negara
+Docs · mail merge: Dear Mr. Randall, from each recipient's name	Docs · surat massal: Yth. Bapak Randall, dari nama setiap penerima
+Docs · mail merge: which columns are the name and address fields	Docs · surat massal: kolom mana yang menjadi bidang nama dan alamat
 Select Recipients…	Pilih Penerima…
 Docs · mail merge: the workbook or CSV file with the recipients	Docs · surat massal: buku kerja atau file CSV berisi penerima
 Preview Results	Pratinjau Hasil

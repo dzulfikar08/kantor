@@ -158,6 +158,9 @@ pub fn escape(s: &str) -> String {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
+            // Kept through a reader's line-end normalisation (Address
+            // Block's format lines in a field code).
+            '\r' => out.push_str("&#13;"),
             c => out.push(c),
         }
     }

@@ -984,6 +984,8 @@ impl<'a> Eval<'a> {
                 Some(name) => Outcome::Text(format!("«{name}»")),
                 None => Outcome::Keep,
             },
+            "ADDRESSBLOCK" => Outcome::Text("«AddressBlock»".into()),
+            "GREETINGLINE" => Outcome::Text("«GreetingLine»".into()),
             "SEQ" => match self.seq.get(&span.id()) {
                 Some(Some(n)) if !i.has("h") => Outcome::Text(i.number(*n)),
                 Some(_) => Outcome::Text(String::new()),
@@ -2152,6 +2154,8 @@ fn keeps_result(kind: &str) -> bool {
             | "NUMWORDS"
             | "NUMCHARS"
             | "MERGEFIELD"
+            | "ADDRESSBLOCK"
+            | "GREETINGLINE"
             | "SEQ"
             | "REF"
             | "NOTEREF"
@@ -2509,9 +2513,13 @@ impl Document {
 /// (Word's display without a data source).
 pub fn empty_result_label(instr: &str) -> Option<String> {
     let i = Instr::parse(instr);
-    (i.kind == "MERGEFIELD")
-        .then(|| i.args.first().map(|n| format!("«{n}»")))
-        .flatten()
+    match i.kind.as_str() {
+        "ADDRESSBLOCK" => Some("«AddressBlock»".into()),
+        "GREETINGLINE" => Some("«GreetingLine»".into()),
+        _ => (i.kind == "MERGEFIELD")
+            .then(|| i.args.first().map(|n| format!("«{n}»")))
+            .flatten(),
+    }
 }
 
 #[cfg(test)]
