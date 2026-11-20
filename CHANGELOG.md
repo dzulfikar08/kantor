@@ -14,6 +14,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - PDF: *Sign with Certificate…* signs a PDF digitally with your own certificate, as Acrobat's "Use a certificate" does: a `.p12`/`.pfx` file, a USB token or smart card (PKCS #11), or the macOS keychain / Windows certificate store. The signature can be visible (in a box you draw or an empty signature field, with your name, date, reason, location and optionally your signature picture) or invisible, can certify the document, and can carry a time stamp and long-term validation data (PAdES B-T, B-LT). The signed copy is saved as a new file and earlier signatures stay valid. Your password or PIN is never saved.
 - `kantor pdf sign` signs one or many PDFs from the command line (PAdES B-B to B-LTA, `--certify`, `--field` or `--page`/`--rect`, `--image`, `--tsa`, `--lt`, `--lta`).
 - The signature checker now also trusts BSrE's OSD LU Kelas 2 root, so the certificate chain of Indonesian government documents signed through BSrE (the Ministry of Finance's regulations, for example) ends at a trusted root. Older ones can still show "Validity unknown": that root and its time-stamp authority expired in August 2026 and the files carry no long-term validation data.
+- PDF: *Tools ▸ Batch…* runs the same steps on many PDFs at once: place a company stamp or a signature picture
+  (on all, the first, the last or chosen pages; at a corner, the centre or the same spot as a stamp in the open
+  document), fill in form fields from a CSV, Excel or JSON table with a row per file, add page numbers or a
+  watermark, flatten annotations. Results go next to the originals with a suffix or into a folder, never over the
+  originals; progress, Cancel and a result for every file (done, skipped and why, failed and why). Digitally
+  signed files stay valid: their changes are added as an incremental update, and steps that would break the
+  signature or that the certification doesn't allow are skipped. Password-protected files stay protected. A batch
+  can be saved and opened again as a JSON file.
+- `kantor pdf stamp` places a picture on many PDFs, `kantor pdf fill` fills their forms from a table (and
+  `--list` shows a form's fields), and `kantor pdf batch steps.json` runs a saved batch on files and folders.
 
 ## [0.18.0] - 2026-11-20
 

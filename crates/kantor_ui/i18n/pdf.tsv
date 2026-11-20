@@ -453,3 +453,89 @@ Don't Certify	Jangan Sertifikasi
 No Changes Allowed	Tidak Boleh Ada Perubahan
 Form Filling and Signing	Pengisian Formulir dan Penandatanganan
 Also Comments	Juga Komentar
+Batch…	Batch…
+Batch	Batch
+Add Folder…	Tambah Folder…
+Add PDFs	Tambahkan PDF
+Add Step	Tambah Langkah
+Add a step	Tambahkan langkah
+Add a watermark	Tambahkan tanda air
+Add folders of PDFs	Tambahkan folder berisi PDF
+Add page numbers	Tambahkan nomor halaman
+Add the PDFs to process	Tambahkan PDF yang akan diproses
+Add the steps to run on every file.	Tambahkan langkah yang dijalankan pada setiap berkas.
+All	Semua
+Back to Steps	Kembali ke Langkah
+Batch: {} of {} files done	Batch: {} dari {} berkas selesai
+Cancelled	Dibatalkan
+Choose a Picture File…	Pilih Berkas Gambar…
+Choose a folder for the results	Pilih folder untuk hasilnya
+Choose a table of values (CSV, Excel or JSON)	Pilih tabel nilai (CSV, Excel, atau JSON)
+Choose…	Pilih…
+Comments, stamps, signature pictures and drawings become part of the pages. Skipped on digitally signed files.	Komentar, stempel, gambar tanda tangan, dan coretan menjadi bagian dari halaman. Dilewati pada berkas bertanda tangan digital.
+Couldn't open {}: {}	Tidak dapat membuka {}: {}
+Couldn't save the batch: {}	Tidak dapat menyimpan batch: {}
+Failed: {}	Gagal: {}
+Fields not in this file: {}	Isian yang tidak ada di berkas ini: {}
+Files ({})	Berkas ({})
+Fill in form fields	Isi kolom formulir
+First	Pertama
+Flatten annotations	Ratakan anotasi
+For every file	Untuk setiap berkas
+In a folder	Di sebuah folder
+Kept as it is in the batch file.	Dibiarkan seperti di berkas batch.
+Last	Terakhir
+Name suffix	Akhiran nama
+Next to the originals	Di samping berkas asli
+No files yet: add PDFs or a folder, or drop them here.	Belum ada berkas: tambahkan PDF atau folder, atau seret ke sini.
+Nothing to flatten	Tidak ada yang perlu diratakan
+Open Batch…	Buka Batch…
+Open a saved batch	Buka batch yang tersimpan
+Opened the batch {}	Batch {} dibuka
+Originals are never replaced. Digitally signed files keep their signatures valid: steps that would break them are skipped.	Berkas asli tidak pernah ditimpa. Berkas bertanda tangan digital tetap sah: langkah yang akan merusak tanda tangannya dilewati.
+Page numbers	Nomor halaman
+Password-protected: open it in Kantor with its password	Dilindungi kata sandi: buka di Kantor dengan kata sandinya
+Place a signature picture	Bubuhkan gambar tanda tangan
+Place a stamp	Bubuhkan stempel
+Processing {} of {} files…	Memproses {} dari {} berkas…
+Remove Step	Hapus Langkah
+Replace the existing files?	Timpa berkas yang sudah ada?
+Results	Hasil
+Run	Jalankan
+Same Spot as the Selected Stamp	Posisi Sama dengan Stempel Terpilih
+Save Batch…	Simpan Batch…
+Saved as {}	Disimpan sebagai {}
+Saved as {} (signatures kept valid)	Disimpan sebagai {} (tanda tangan tetap sah)
+Saved the batch as {}	Batch disimpan sebagai {}
+Select a stamp or signature placed in this document first	Pilih dulu stempel atau tanda tangan yang sudah dibubuhkan di dokumen ini
+Skip Them	Lewati
+Skipped	Dilewati
+Skipped: digitally signed, and this would invalidate the signature	Dilewati: bertanda tangan digital, dan langkah ini akan membuat tanda tangannya tidak sah
+Skipped: no form fields to fill	Dilewati: tidak ada kolom formulir untuk diisi
+Skipped: no row for this file in the table	Dilewati: tidak ada baris untuk berkas ini di tabel
+Skipped: the certification allows no changes	Dilewati: sertifikasinya tidak mengizinkan perubahan apa pun
+Skipped: the certification allows only form filling and signing	Dilewati: sertifikasinya hanya mengizinkan pengisian formulir dan penandatanganan
+Skipped: the result file already exists	Dilewati: berkas hasilnya sudah ada
+Skipped: {}	Dilewati: {}
+Step	Langkah
+Step {}: choose a picture	Langkah {}: pilih gambar
+Step {}: choose a table of values or type name=value	Langkah {}: pilih tabel nilai atau ketik nama=nilai
+Step {}: type pages like 1-3, 5	Langkah {}: ketik halaman seperti 1-3, 5
+Step {}: type the watermark's text	Langkah {}: ketik teks tanda air
+Step {}: width: type points from 4 to 2000, or leave it empty	Langkah {}: lebar: ketik poin dari 4 sampai 2000, atau kosongkan
+Step “{}” (from the batch file)	Langkah “{}” (dari berkas batch)
+Steps, in order	Langkah, berurutan
+The table (CSV, Excel or JSON) has a “file” column with each PDF's name and a column per form field, headed with the field's name.	Tabel (CSV, Excel, atau JSON) memiliki kolom “file” berisi nama tiap PDF dan satu kolom per kolom formulir, berjudul nama kolom formulir itu.
+Type a suffix for the results' names, or choose a folder: the originals are never replaced	Ketik akhiran untuk nama hasilnya, atau pilih folder: berkas asli tidak pernah ditimpa
+Values not allowed: {}	Nilai yang tidak diizinkan: {}
+Width (pt)	Lebar (pt)
+e.g. 1-3, 5	mis. 1-3, 5
+e.g. Company=PT Maju; City=Surabaya	mis. Perusahaan=PT Maju; Kota=Surabaya
+{} ({} rows)	{} ({} baris)
+{} already exists.	{} sudah ada.
+{} done, {} skipped, {} failed	{} selesai, {} dilewati, {} gagal
+{} result files already exist, like {}.	{} berkas hasil sudah ada, misalnya {}.
+… and {} more	… dan {} lainnya
+PDF · stamp, sign, fill or number many PDFs at once	PDF · stempel, tanda tangani, isi, atau beri nomor banyak PDF sekaligus
+My signature {}	Tanda tangan saya {}
+My stamp {}	Stempel saya {}

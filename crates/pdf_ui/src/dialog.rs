@@ -31,14 +31,14 @@ pub(crate) enum SplitBy {
 }
 
 /// Page number styles (Acrobat's Header & Footer offers similar ones).
-const NUMBER_FORMATS: &[(&str, &str)] = &[
+pub(crate) const NUMBER_FORMATS: &[(&str, &str)] = &[
     ("{n}", "1"),
     ("Page {n}", tk("Page 1")),
     ("Page {n} of {total}", tk("Page 1 of N")),
     ("{n} / {total}", "1 / N"),
 ];
 
-const POSITIONS: &[(Position, &str)] = &[
+pub(crate) const POSITIONS: &[(Position, &str)] = &[
     (Position::TopLeft, tk("Top left")),
     (Position::TopCenter, tk("Top center")),
     (Position::TopRight, tk("Top right")),
@@ -77,6 +77,7 @@ pub(crate) enum Dialog {
         error: Option<String>,
     },
     Reduce,
+    Batch(Box<crate::batch::BatchState>),
 }
 
 fn input(
@@ -117,7 +118,7 @@ pub(crate) fn card(title: &str, width: f32, cx: &App) -> Stateful<Div> {
 }
 
 /// `label` on the left, the control filling the rest.
-fn row(label: &str, control: impl IntoElement, cx: &App) -> Div {
+pub(crate) fn row(label: &str, control: impl IntoElement, cx: &App) -> Div {
     let t = tokens(cx);
     h_flex()
         .gap(SPACE_4)
@@ -133,7 +134,7 @@ fn row(label: &str, control: impl IntoElement, cx: &App) -> Div {
         .child(div().flex_1().min_w_0().child(control))
 }
 
-fn note(text: impl Into<SharedString>, error: bool, cx: &App) -> Div {
+pub(crate) fn note(text: impl Into<SharedString>, error: bool, cx: &App) -> Div {
     let t = tokens(cx);
     div()
         .text_size(FONT_SMALL)
@@ -144,7 +145,7 @@ fn note(text: impl Into<SharedString>, error: bool, cx: &App) -> Div {
 type Set<T> = fn(&mut Dialog, T);
 
 /// A row of buttons, one per option, the current one filled.
-fn choices<T: Copy + PartialEq + 'static>(
+pub(crate) fn choices<T: Copy + PartialEq + 'static>(
     id: &'static str,
     options: &[(T, String)],
     current: T,
@@ -269,6 +270,10 @@ pub(crate) fn bookmark_groups(starts: &[(usize, String)], n: usize) -> Vec<Part>
 
 impl PdfView {
     pub(crate) fn close_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // A batch still running stops after the file it is on.
+        if let Some(Dialog::Batch(b)) = &self.dialog {
+            b.stop();
+        }
         self.dialog = None;
         self.focus(window, cx);
         cx.notify();
@@ -317,6 +322,7 @@ impl PdfView {
             Some(Dialog::PageNumbers { .. }) => self.page_numbers_ok(window, cx),
             Some(Dialog::Watermark { .. }) => self.watermark_ok(window, cx),
             Some(Dialog::Reduce) => self.reduce_ok(window, cx),
+            Some(Dialog::Batch(_)) => self.batch_ok(window, cx),
             None => {}
         }
     }
@@ -1060,6 +1066,7 @@ impl PdfView {
                     cx,
                 ))
                 .child(buttons(i18n::t("Save Smaller Copy…"), true, &view, Self::reduce_ok)),
+            Dialog::Batch(b) => self.render_batch(b, cx),
         };
         let close = view.clone();
         let focus = self.dialog_focus.clone();

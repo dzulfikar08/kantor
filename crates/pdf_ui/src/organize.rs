@@ -450,6 +450,10 @@ impl PdfView {
     /// Files dropped on the window (the workspace asks): taken when the
     /// pointer is over the thumbnails or the grid.
     pub fn drop_files(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) -> bool {
+        if self.batch_drop(paths, cx) {
+            self.drop_at = None;
+            return true;
+        }
         let Some(at) = self.drop_at.take() else {
             // Pictures dropped on a page become stamps there.
             return self.drop_stamps(paths, cx);

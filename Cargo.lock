@@ -4199,8 +4199,11 @@ dependencies = [
 name = "kantor_pdf"
 version = "0.18.0"
 dependencies = [
+ "calamine",
  "image",
  "lopdf",
+ "serde",
+ "serde_json",
  "tempfile",
 ]
 
