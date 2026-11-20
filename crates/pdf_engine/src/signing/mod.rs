@@ -15,6 +15,7 @@
 //! incremental update: earlier signatures stay valid.
 
 pub mod asn1;
+pub mod batch;
 pub mod cms;
 pub mod key;
 pub mod p12;
@@ -156,6 +157,9 @@ pub struct Options<'a> {
     pub trust: TrustStore,
     /// Signing time (Unix seconds).
     pub now: i64,
+    /// The page's `/Rotate` for a new visible signature (drawn upright as
+    /// the page is shown).
+    pub rotate: i64,
 }
 
 impl Options<'_> {
@@ -174,6 +178,7 @@ impl Options<'_> {
             fetch: None,
             trust: TrustStore::standard(),
             now: crate::signatures::now(),
+            rotate: 0,
         }
     }
 }
@@ -226,6 +231,7 @@ pub fn sign(pdf: &[u8], id: &Identity, opts: &Options<'_>) -> Result<Vec<u8>, Er
         req.location = opts.location.clone();
         req.contact = opts.contact.clone();
         req.app = Some(("Kantor".into(), env!("CARGO_PKG_VERSION").into()));
+        req.rotate = opts.rotate;
         let prepared = pdfsign::prepare(pdf, &req)?;
         let [a, b] = prepared.signed_parts();
         let mut h = crate::signatures::crypto::Hasher::new(hash.oid())

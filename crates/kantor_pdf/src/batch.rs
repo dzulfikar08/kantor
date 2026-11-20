@@ -477,14 +477,28 @@ pub trait Plugin: Send + Sync {
     fn check(&self, _options: &serde_json::Value) -> std::result::Result<(), String> {
         Ok(())
     }
-    /// Change the file: return its new bytes, `Ok(None)` to skip the step
-    /// for this file (with the reason in `notes`), or an error to fail it.
+    /// The step must be the batch's last (and only one of its kind): a
+    /// digital signature has to cover everything the batch did.
+    fn last(&self) -> bool {
+        false
+    }
+    /// Change the file: its new bytes, or skip the step for this file
+    /// (and why), or an error to fail the file.
     fn apply(
         &self,
         options: &serde_json::Value,
         file: &FileContext,
         bytes: &[u8],
-    ) -> std::result::Result<Option<Vec<u8>>, String>;
+    ) -> std::result::Result<Applied, String>;
+}
+
+/// What a [`Plugin`] step did to a file.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Applied {
+    /// The file's new bytes.
+    Changed(Vec<u8>),
+    /// The step doesn't apply to this file: why (shown in the results).
+    Skipped(String),
 }
 
 /// The plugins a batch may use.
@@ -768,6 +782,12 @@ impl Prepared {
                         ))
                     })?;
                     p.check(options).map_err(|e| ctx(Error::Invalid(e)))?;
+                    if p.last() && n != batch.steps.len() {
+                        return Err(Error::Invalid(format!(
+                            "step {n} ({kind}) must be the last step: it has to cover \
+                             everything the batch did"
+                        )));
+                    }
                     plugin_seen = true;
                     Ready::Plugin(p.clone(), options.clone())
                 }
@@ -1007,13 +1027,13 @@ pub fn run_file(p: &Prepared, name: &str, bytes: &[u8], password: Option<&str>) 
         };
         let current = out.as_deref().unwrap_or(bytes);
         match pl.apply(&opts, &ctx, current) {
-            Ok(Some(b)) => {
+            Ok(Applied::Changed(b)) => {
                 out = Some(b);
                 incremental = true;
             }
-            Ok(None) => notes.push(Note {
+            Ok(Applied::Skipped(why)) => notes.push(Note {
                 step: Some(i),
-                reason: Reason::Plugin("skipped".into()),
+                reason: Reason::Plugin(why),
             }),
             Err(e) => {
                 return fail(
@@ -1043,6 +1063,44 @@ fn resolve(pdf: &Pdf, pages: &str) -> std::result::Result<PageRanges, StepError>
     r.resolve(pdf.page_count())
         .map_err(|e| StepError::Skip(Reason::Pages(e.to_string())))?;
     Ok(r)
+}
+
+/// One page from `first`, `last` or a page number (from 1): its 0-based
+/// index in a document of `count` pages.
+pub fn one_page(spec: &str, count: u32) -> std::result::Result<u32, String> {
+    let n = match spec.trim().to_ascii_lowercase().as_str() {
+        "" | "first" => 1,
+        "last" => count,
+        other => other
+            .parse::<u32>()
+            .ok()
+            .filter(|n| *n >= 1)
+            .ok_or_else(|| format!("\"{spec}\" is not first, last or a page number"))?,
+    };
+    if n == 0 || n > count {
+        return Err(format!(
+            "page {n} is not in the file ({count} page{})",
+            if count == 1 { "" } else { "s" }
+        ));
+    }
+    Ok(n - 1)
+}
+
+/// A box placed on page `index` (0-based) as the stamp step places
+/// pictures: its rectangle in user space (`[x0 y0 x1 y1]`) and the page's
+/// `/Rotate`, for a `w` × `h` points box upright on the page as shown.
+pub fn place_box(pdf: &Pdf, index: u32, place: &Place, w: f32, h: f32) -> Option<([f32; 4], i64)> {
+    let pid = *page_ids(&pdf.doc).get(index as usize)?;
+    let (pw, ph, m) = display(pdf, pid);
+    let (x, y) = place_on(place, pw, ph, w, h);
+    // Display points from the bottom left, then user space.
+    let (dx0, dy0, dx1, dy1) = (x, ph - y - h, x + w, ph - y);
+    let map = |px: f32, py: f32| (m[0] * px + m[2] * py + m[4], m[1] * px + m[3] * py + m[5]);
+    let (a, b) = (map(dx0, dy0), map(dx1, dy1));
+    Some((
+        [a.0.min(b.0), a.1.min(b.1), a.0.max(b.0), a.1.max(b.1)],
+        rotation(&pdf.doc, pid),
+    ))
 }
 
 /// The page's display transform: (display width, height, matrix taking

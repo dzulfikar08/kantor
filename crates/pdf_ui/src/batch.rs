@@ -31,7 +31,10 @@ use kantor_pdf::batch::{
 use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 
+use pdf_engine::signing::batch::{self as sb, Certificate, LevelName, SignStep};
+
 use crate::PdfView;
+use crate::batch_sign::SignUi;
 use crate::dialog::{Dialog, NUMBER_FORMATS, POSITIONS, card, choices, note, row};
 
 // ── plugins ────────────────────────────────────────────────────────────────
@@ -94,6 +97,8 @@ pub(crate) enum StepUi {
         opacity: u8,
     },
     Flatten,
+    /// Sign with Certificate (always the last step).
+    Sign(Box<SignUi>),
     /// A step from a loaded batch file that this window doesn't edit.
     Other(Step),
 }
@@ -106,6 +111,14 @@ pub(crate) enum Where {
 
 pub(crate) enum Stage {
     Edit,
+    /// Asking for the sign step's password or PIN before the run.
+    Unlock {
+        batch: Box<Batch>,
+        certificate: Certificate,
+        secret: Entity<InputState>,
+        error: Option<String>,
+        working: bool,
+    },
     Running {
         done: usize,
         cancel: Arc<AtomicBool>,
@@ -117,7 +130,7 @@ pub(crate) enum Stage {
 
 pub(crate) struct BatchState {
     files: Vec<PathBuf>,
-    steps: Vec<StepUi>,
+    pub(crate) steps: Vec<StepUi>,
     place: Where,
     folder: Option<PathBuf>,
     suffix: Entity<InputState>,
@@ -218,6 +231,7 @@ fn step_title(s: &StepUi) -> String {
         StepUi::PageNumbers { .. } => i18n::t("Add page numbers").into(),
         StepUi::Watermark { .. } => i18n::t("Add a watermark").into(),
         StepUi::Flatten => i18n::t("Flatten annotations").into(),
+        StepUi::Sign(_) => i18n::t("Sign with Certificate").into(),
         StepUi::Other(s) => tf("Step “{}” (from the batch file)", &[&s.kind()]),
     }
 }
@@ -242,7 +256,7 @@ pub(crate) fn reason_text(r: &Reason) -> String {
         Reason::Pages(e) => tf("Skipped: {}", &[e]),
         Reason::NothingToFlatten => i18n::t("Nothing to flatten").into(),
         Reason::Exists => i18n::t("Skipped: the result file already exists").into(),
-        Reason::Plugin(s) => s.clone(),
+        Reason::Plugin(s) => crate::batch_sign::why_text(s),
     }
 }
 
@@ -348,6 +362,7 @@ impl BatchState {
                     })
                 }
                 StepUi::Flatten => Step::Flatten,
+                StepUi::Sign(s) => s.to_step(n, cx)?,
                 StepUi::Other(s) => s.clone(),
             });
         }
@@ -399,6 +414,13 @@ impl PdfView {
         self.dialog = Some(Dialog::Batch(Box::new(state)));
         window.focus(&self.dialog_focus, cx);
         cx.notify();
+    }
+
+    fn batch_ref(&self) -> Option<&BatchState> {
+        match self.dialog.as_ref() {
+            Some(Dialog::Batch(b)) => Some(b),
+            _ => None,
+        }
     }
 
     fn batch(&mut self) -> Option<&mut BatchState> {
@@ -493,10 +515,24 @@ impl PdfView {
                 text: input(window, cx, "", i18n::t("e.g. DRAFT or CONFIDENTIAL")),
                 opacity: 30,
             },
+            "sign" => {
+                if self
+                    .batch()
+                    .is_some_and(|b| b.steps.iter().any(|s| matches!(s, StepUi::Sign(_))))
+                {
+                    return;
+                }
+                self.batch_sign_step(window, cx)
+            }
             _ => StepUi::Flatten,
         };
         if let Some(b) = self.batch() {
-            b.steps.push(step);
+            // The signature stays last: other steps go before it.
+            let at = match b.steps.last() {
+                Some(StepUi::Sign(_)) if !matches!(step, StepUi::Sign(_)) => b.steps.len() - 1,
+                _ => b.steps.len(),
+            };
+            b.steps.insert(at, step);
             b.error = None;
         }
         cx.notify();
@@ -753,9 +789,21 @@ impl PdfView {
                     opacity: (w.opacity * 100.0).round().clamp(0.0, 100.0) as u8,
                 },
                 Step::Flatten => StepUi::Flatten,
+                Step::Plugin {
+                    ref kind,
+                    ref options,
+                } if kind == sb::KIND => match SignStep::from_value(options) {
+                    Ok(st) => StepUi::Sign(Box::new(SignUi::new(
+                        crate::batch_sign::absolute(st, &base),
+                        window,
+                        cx,
+                    ))),
+                    Err(_) => StepUi::Other(s.clone()),
+                },
                 other => StepUi::Other(other),
             });
         }
+        let has_sign = steps.iter().any(|s| matches!(s, StepUi::Sign(_)));
         let suffix = batch.output.suffix.clone();
         if let Some(b) = self.batch() {
             b.steps = steps;
@@ -770,6 +818,9 @@ impl PdfView {
                 .map(|f| if f.is_absolute() { f } else { base.join(f) });
             b.suffix.update(cx, |i, cx| i.set_value(suffix, window, cx));
             b.error = None;
+        }
+        if has_sign {
+            self.batch_list_certificates(cx);
         }
         self.status = tf("Opened the batch {}", &[&file_name(file)]).into();
     }
@@ -792,9 +843,160 @@ impl PdfView {
                 return;
             }
         };
+        // A sign step: its password or PIN is asked for now, once.
+        if let Some((_, step)) = sb::find(&batch) {
+            let step = match step {
+                Ok(s) => s,
+                Err(e) => {
+                    b.error = Some(e);
+                    cx.notify();
+                    return;
+                }
+            };
+            if step.level != LevelName::BB && !crate::online_signature_checks_enabled(cx) {
+                if let Some(b) = self.batch() {
+                    b.error = Some(i18n::t(
+                        "Time stamps and validation data need the internet. Turn on “Let Signature Checks Use the Internet” first.",
+                    ).into());
+                }
+                cx.notify();
+                return;
+            }
+            let secret = cx.new(|cx| {
+                InputState::new(window, cx)
+                    .masked(true)
+                    .placeholder(i18n::t("Password or PIN"))
+            });
+            self.submit_on_enter(&secret, window, cx);
+            secret.update(cx, |i, cx| i.focus(window, cx));
+            let asks = sb::secret_kind(&step.certificate).is_some();
+            if let Some(b) = self.batch() {
+                b.error = None;
+                b.stage = Stage::Unlock {
+                    batch: Box::new(batch),
+                    certificate: step.certificate,
+                    secret,
+                    error: None,
+                    working: false,
+                };
+            }
+            if !asks {
+                // The system store asks in its own window.
+                self.batch_unlock(window, cx);
+            }
+            cx.notify();
+            return;
+        }
+        self.batch_check_outputs(batch, None, window, cx);
+    }
+
+    /// Unlock the sign step's key with the password or PIN typed, then go
+    /// on with the run. The password is dropped once the key is unlocked.
+    fn batch_unlock(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let base = self.dir();
+        let Some(b) = self.batch() else {
+            return;
+        };
+        let Stage::Unlock {
+            batch,
+            certificate,
+            secret,
+            working,
+            error,
+        } = &mut b.stage
+        else {
+            return;
+        };
+        if *working {
+            return;
+        }
+        let typed = secret.read(cx).value().to_string();
+        secret.update(cx, |i, cx| i.set_value("", window, cx));
+        let pw = match (sb::secret_kind(certificate), typed.is_empty()) {
+            (None, _) => None,
+            // A token with a PIN pad asks on the reader.
+            (Some(_), true) if matches!(certificate, Certificate::Token { .. }) => None,
+            (Some(_), _) => Some(typed),
+        };
+        *working = true;
+        *error = None;
+        let cert = certificate.clone();
+        let batch = (**batch).clone();
+        let words = pdf_engine::signing::LookText {
+            signed_by: i18n::t("Digitally signed by {}").into(),
+            date: i18n::t("Date: {}").into(),
+            reason: i18n::t("Reason: {}").into(),
+            location: i18n::t("Location: {}").into(),
+        };
+        let stamps = crate::sign::stamps_dir();
+        let online = crate::online_signature_checks_enabled(cx);
+        let task = cx.background_spawn(async move {
+            let id = sb::unlock(&cert, &base, pw.as_deref())?;
+            drop(pw);
+            let mut p = sb::SignPlugin::new(id, &base, stamps.as_deref()).words(words);
+            if online {
+                p = p.online(Arc::new(pdf_engine::signatures::Http::new()));
+            }
+            Ok::<_, pdf_engine::signing::Error>(Arc::new(p) as Arc<dyn Plugin>)
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = task.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                match result {
+                    Ok(plugin) => {
+                        if let Some(b) = this.batch() {
+                            b.stage = Stage::Edit;
+                        }
+                        this.batch_check_outputs(batch, Some(plugin), window, cx);
+                    }
+                    Err(e) => {
+                        if let Some(b) = this.batch()
+                            && let Stage::Unlock { working, error, .. } = &mut b.stage
+                        {
+                            *working = false;
+                            *error = Some(match e {
+                                pdf_engine::signing::Error::WrongPassword => {
+                                    i18n::t("The password or PIN is wrong.").into()
+                                }
+                                pdf_engine::signing::Error::Locked => {
+                                    i18n::t("The token is locked after too many wrong PINs.").into()
+                                }
+                                e => tf("Not signed: {}", &[&e]),
+                            });
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Back from the password prompt to the steps.
+    fn batch_unlock_cancel(&mut self, cx: &mut Context<Self>) {
+        if let Some(b) = self.batch()
+            && matches!(b.stage, Stage::Unlock { .. })
+        {
+            b.stage = Stage::Edit;
+        }
+        cx.notify();
+    }
+
+    /// Run: ask first when results would replace files.
+    fn batch_check_outputs(
+        &mut self,
+        batch: Batch,
+        plugin: Option<Arc<dyn Plugin>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(b) = self.batch() else {
+            return;
+        };
         let exist = batch::existing_outputs(&batch.output, &b.files);
         if exist.is_empty() {
-            self.batch_start(batch, Existing::Skip, window, cx);
+            self.batch_start(batch, Existing::Skip, plugin, window, cx);
             return;
         }
         if window.has_active_dialog(cx) {
@@ -814,6 +1016,7 @@ impl PdfView {
         window.open_dialog(cx, move |dialog, _, _| {
             let (skip, replace) = (view.clone(), view.clone());
             let (b1, b2) = (batch.clone(), batch.clone());
+            let (p1, p2) = (plugin.clone(), plugin.clone());
             dialog
                 .w(px(460.))
                 .title(i18n::t("Replace the existing files?"))
@@ -834,7 +1037,7 @@ impl PdfView {
                                     window.close_dialog(cx);
                                     let b = (*b1).clone();
                                     let _ = skip.update(cx, |this, cx| {
-                                        this.batch_start(b, Existing::Skip, window, cx)
+                                        this.batch_start(b, Existing::Skip, p1.clone(), window, cx)
                                     });
                                 }),
                         )
@@ -846,7 +1049,13 @@ impl PdfView {
                                     window.close_dialog(cx);
                                     let b = (*b2).clone();
                                     let _ = replace.update(cx, |this, cx| {
-                                        this.batch_start(b, Existing::Replace, window, cx)
+                                        this.batch_start(
+                                            b,
+                                            Existing::Replace,
+                                            p2.clone(),
+                                            window,
+                                            cx,
+                                        )
                                     });
                                 }),
                         ),
@@ -858,25 +1067,26 @@ impl PdfView {
         &mut self,
         batch: Batch,
         existing: Existing,
+        plugin: Option<Arc<dyn Plugin>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let base = self.dir();
-        let prepared = match Prepared::new(
-            &batch,
-            &base,
-            crate::sign::stamps_dir().as_deref(),
-            &plugins(),
-        ) {
-            Ok(p) => p,
-            Err(e) => {
-                if let Some(b) = self.batch() {
-                    b.error = Some(e.to_string());
+        let mut all = plugins();
+        if let Some(p) = plugin {
+            all.add(p);
+        }
+        let prepared =
+            match Prepared::new(&batch, &base, crate::sign::stamps_dir().as_deref(), &all) {
+                Ok(p) => p,
+                Err(e) => {
+                    if let Some(b) = self.batch() {
+                        b.error = Some(e.to_string());
+                    }
+                    cx.notify();
+                    return;
                 }
-                cx.notify();
-                return;
-            }
-        };
+            };
         let Some(b) = self.batch() else {
             return;
         };
@@ -957,6 +1167,7 @@ impl PdfView {
     pub(crate) fn batch_ok(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.batch().map(|b| &b.stage) {
             Some(Stage::Edit) => self.batch_run(window, cx),
+            Some(Stage::Unlock { .. }) => self.batch_unlock(window, cx),
             Some(Stage::Finished { .. }) => self.close_dialog(window, cx),
             _ => {}
         }
@@ -970,6 +1181,54 @@ impl PdfView {
         let card = card(i18n::t("Batch"), 620.0, cx).max_h(px(700.));
         match &b.stage {
             Stage::Edit => {}
+            Stage::Unlock {
+                certificate,
+                secret,
+                error,
+                working,
+                ..
+            } => {
+                let (back, go) = (view.clone(), view.clone());
+                let asks = sb::secret_kind(certificate).is_some();
+                return card
+                    .child(note(
+                        i18n::t("The batch signs every file with this certificate. Its password or PIN is used for this run only and is never saved."),
+                        false,
+                        cx,
+                    ))
+                    .child(row(
+                        i18n::t("Certificate"),
+                        div().child(crate::batch_sign::unlock_label(certificate)),
+                        cx,
+                    ))
+                    .when(asks, |c| c.child(Input::new(secret)))
+                    .when(*working, |c| c.child(note(i18n::t("Opening the certificate…"), false, cx)))
+                    .when_some(error.clone(), |c, e| c.child(note(e, true, cx)))
+                    .child(
+                        h_flex()
+                            .justify_end()
+                            .gap(SPACE_3)
+                            .child(
+                                Button::new("pdf-batch-unlock-back")
+                                    .small()
+                                    .ghost()
+                                    .label(i18n::t("Back to Steps"))
+                                    .on_click(move |_, _, cx| {
+                                        let _ = back.update(cx, |this, cx| this.batch_unlock_cancel(cx));
+                                    }),
+                            )
+                            .child(
+                                Button::new("pdf-batch-unlock-run")
+                                    .small()
+                                    .primary()
+                                    .label(i18n::t("Run"))
+                                    .disabled(*working)
+                                    .on_click(move |_, w, cx| {
+                                        let _ = go.update(cx, |this, cx| this.batch_unlock(w, cx));
+                                    }),
+                            ),
+                    );
+            }
             Stage::Running { done, .. } => {
                 let total = b.files.len().max(1);
                 let frac = *done as f32 / total as f32;
@@ -1171,6 +1430,8 @@ impl PdfView {
                     .item(item(tk("Add page numbers"), "page-numbers"))
                     .item(item(tk("Add a watermark"), "watermark"))
                     .item(item(tk("Flatten annotations"), "flatten"))
+                    .separator()
+                    .item(item(tk("Sign with Certificate"), "sign"))
             });
         let steps_box = v_flex()
             .gap(SPACE_2)
@@ -1307,11 +1568,17 @@ impl PdfView {
         let t = tokens(cx);
         let mut list = v_flex().gap(SPACE_2);
         for r in &b.results {
+            // The sign step ran when it has no note.
+            let signed = b.ran.iter().enumerate().any(|(i, s)| {
+                matches!(s, Step::Plugin { kind, .. } if kind == sb::KIND)
+                    && !r.notes.iter().any(|n| n.step == Some(i))
+            });
             let (icon, color, status): (Lucide, Hsla, String) = match &r.status {
                 Status::Done { incremental } => (
                     Lucide::CircleCheck,
                     t.success,
                     match (&r.output, incremental) {
+                        (Some(o), _) if signed => tf("Signed and saved as {}", &[&file_name(o)]),
                         (Some(o), true) => {
                             tf("Saved as {} (signatures kept valid)", &[&file_name(o)])
                         }
@@ -1381,6 +1648,11 @@ impl PdfView {
             }
         };
         let remove = view.clone();
+        // The sign step stays last: it doesn't move, nor goes anything below it.
+        let is_sign = matches!(s, StepUi::Sign(_));
+        let sign_last = self
+            .batch_ref()
+            .is_some_and(|b| matches!(b.steps.last(), Some(StepUi::Sign(_))));
         let header = h_flex()
             .gap(SPACE_1)
             .child(
@@ -1395,7 +1667,7 @@ impl PdfView {
                     .ghost()
                     .icon(Lucide::ChevronUp)
                     .tooltip(i18n::t("Move Up"))
-                    .disabled(i == 0)
+                    .disabled(i == 0 || is_sign)
                     .on_click(mv(-1)),
             )
             .child(
@@ -1404,7 +1676,7 @@ impl PdfView {
                     .ghost()
                     .icon(Lucide::ChevronDown)
                     .tooltip(i18n::t("Move Down"))
-                    .disabled(i + 1 == n)
+                    .disabled(i + 1 == n || is_sign || (sign_last && i + 2 == n))
                     .on_click(mv(1)),
             )
             .child(
@@ -1669,6 +1941,7 @@ impl PdfView {
                 false,
                 cx,
             )),
+            StepUi::Sign(sg) => self.render_sign_step(i, sg, cx),
             StepUi::Other(_) => v_flex().child(note(
                 i18n::t("Kept as it is in the batch file."),
                 false,
@@ -1696,6 +1969,7 @@ fn step_kind_name(s: &Step) -> String {
         Step::PageNumbers(_) => i18n::t("Page numbers").into(),
         Step::Watermark(_) => i18n::t("Watermark").into(),
         Step::Flatten => i18n::t("Flatten").into(),
+        Step::Plugin { kind, .. } if kind == sb::KIND => i18n::t("Sign with Certificate").into(),
         Step::Plugin { kind, .. } => kind.clone(),
     }
 }

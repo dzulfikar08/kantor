@@ -885,7 +885,7 @@ impl PdfView {
     }
 }
 
-fn list_stores(modules: Vec<String>) -> Vec<stores::Candidate> {
+pub(crate) fn list_stores(modules: Vec<String>) -> Vec<stores::Candidate> {
     let mut out = Vec::new();
     if stores::SYSTEM_STORE {
         match stores::system_candidates() {
