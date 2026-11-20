@@ -1155,7 +1155,7 @@ pub(crate) fn sign_menu(menu: PopupMenu, view: &WeakEntity<PdfView>) -> PopupMen
             let _ = v.update(cx, |this, cx| this.use_placed(what, sig, None, cx));
         }));
     }
-    let (a, b) = (view.clone(), view.clone());
+    let (a, b, c) = (view.clone(), view.clone(), view.clone());
     menu.separator()
         .item(
             PopupMenuItem::new(i18n::t("Add Signature…")).on_click(move |_, window, cx| {
@@ -1165,6 +1165,12 @@ pub(crate) fn sign_menu(menu: PopupMenu, view: &WeakEntity<PdfView>) -> PopupMen
         .item(
             PopupMenuItem::new(i18n::t("Add Image / Stamp…")).on_click(move |_, window, cx| {
                 let _ = b.update(cx, |this, cx| this.add_image_stamp(None, window, cx));
+            }),
+        )
+        .separator()
+        .item(
+            PopupMenuItem::new(i18n::t("Sign with Certificate…")).on_click(move |_, window, cx| {
+                let _ = c.update(cx, |this, cx| this.sign_with_certificate(window, cx));
             }),
         )
 }

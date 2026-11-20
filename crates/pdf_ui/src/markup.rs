@@ -75,6 +75,8 @@ pub(crate) enum Tool {
     FsDate,
     FsCheck,
     FsCross,
+    /// Drag the box of a certificate signature (Sign with Certificate).
+    CertBox,
     /// Put this down where the user clicks (`signature`: from Fill & Sign).
     Place {
         what: Placed,
@@ -711,7 +713,12 @@ impl PdfView {
                 });
                 true
             }
-            Tool::TextBox | Tool::Rect | Tool::Ellipse | Tool::Line | Tool::Arrow => {
+            Tool::TextBox
+            | Tool::Rect
+            | Tool::Ellipse
+            | Tool::Line
+            | Tool::Arrow
+            | Tool::CertBox => {
                 self.markup.drag = Some(Drag::Create {
                     place,
                     start: pt,
@@ -973,6 +980,16 @@ impl PdfView {
                         self.add_mark(place, a, tk("Add Text Box"), cx);
                         self.markup.tool = Tool::Select;
                         self.open_text_edit(place, id, window, cx);
+                    }
+                    Tool::CertBox => {
+                        let r = rect(200.0, 60.0);
+                        let r = [
+                            r[0].min(r[2]),
+                            r[1].min(r[3]),
+                            r[0].max(r[2]),
+                            r[1].max(r[3]),
+                        ];
+                        self.cert_box_drawn(place, r, window, cx);
                     }
                     Tool::Rect | Tool::Ellipse => {
                         let kind = if tool == Tool::Rect {

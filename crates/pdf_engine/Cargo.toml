@@ -21,10 +21,18 @@ ring.workspace = true
 rustls-native-certs = "0.8"
 # Signatures: optional online issuer/revocation checks, only when allowed.
 ureq.workspace = true
+# Signing: the PDF side (fields, appearances, incremental updates, DSS).
+kantor_pdf.workspace = true
+# Signing: decrypting PKCS #12 files (AES/3DES/RC2 in CBC mode; RustCrypto,
+# MIT/Apache, pure Rust; aes and cbc are already in the tree).
+aes = "0.8"
+cbc = { version = "0.1", features = ["alloc"] }
+des = "0.8"
+rc2 = "0.8"
+# Signing: PKCS #11 tokens and the macOS/Windows certificate stores.
+kantor_keystore.workspace = true
 
 [dev-dependencies]
-# Tests: annotations saved after signing through Kantor's own incremental save.
-kantor_pdf.workspace = true
 
 [lints]
 workspace = true

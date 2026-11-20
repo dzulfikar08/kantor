@@ -2040,6 +2040,14 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.add_signature(w, cx)),
     },
     Command {
+        title: tk("Sign with Certificate…"),
+        detail: tk(
+            "PDF · digitally sign with your certificate (.p12/.pfx file, token or system store)",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.sign_with_certificate(w, cx)),
+    },
+    Command {
         title: tk("Place on Pages…"),
         detail: tk("PDF · copy the selected stamp to every page or the pages you type"),
         keys: "",
