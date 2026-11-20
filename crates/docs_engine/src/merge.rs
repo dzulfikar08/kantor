@@ -691,7 +691,10 @@ impl MailMergeLink {
             data_type: val("dataType"),
             connect: val("connectString"),
             query: val("query"),
-            source: source_rel.as_ref().and_then(|id| rels.get(id).cloned()),
+            source: source_rel
+                .as_ref()
+                .and_then(|id| rels.get(id))
+                .map(|t| percent_decode(t)),
             source_rel,
             preview: el.child("viewMergedData").is_some_and(xml::El::on),
             active_record: el.child("activeRecord").and_then(|c| c.num("val")),
@@ -773,6 +776,21 @@ impl MailMergeLink {
             element_name(o) == "doNotSuppressBlankLines" && xml::parse(o).is_some_and(|e| e.on())
         })
     }
+}
+
+/// A path as a relationship target: `%`, spaces and `#` escaped, as Word
+/// writes them (`My%20Data.xlsx`).
+pub(crate) fn uri_path(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '%' => out.push_str("%25"),
+            ' ' => out.push_str("%20"),
+            '#' => out.push_str("%23"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn percent_decode(s: &str) -> String {

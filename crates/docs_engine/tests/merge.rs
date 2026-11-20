@@ -332,6 +332,9 @@ fn one_document_with_a_section_per_record() {
     let path = dir.path().join("merged.docx");
     let mut one = one;
     one.save_as(&path).unwrap();
+    if let Some(keep) = std::env::var_os("KANTOR_KEEP_OUT") {
+        std::fs::copy(&path, Path::new(&keep).join("merged.docx")).unwrap();
+    }
     let bytes = std::fs::read(&path).unwrap();
     let xml = entry(&bytes, "word/document.xml").unwrap();
     assert_eq!(xml.matches("<w:tbl>").count(), 2);
@@ -402,9 +405,17 @@ fn the_data_source_link_is_kept_and_written_like_word() {
     let r = entry(&saved, "word/_rels/settings.xml.rels").unwrap();
     assert!(!r.contains("people.csv"));
     assert!(
-        r.contains(r#"Target="data/staff list.xlsx" TargetMode="External""#),
+        r.contains(r#"Target="data/staff%20list.xlsx" TargetMode="External""#),
         "{r}"
     );
+    // For checking with Office's validator: KANTOR_KEEP_OUT=dir.
+    if let Some(keep) = std::env::var_os("KANTOR_KEEP_OUT") {
+        std::fs::copy(
+            dir.path().join("word.docx"),
+            Path::new(&keep).join("linked.docx"),
+        )
+        .unwrap();
+    }
     let back = Document::open(&dir.path().join("word.docx")).unwrap();
     let l = back.mail_merge().unwrap();
     assert_eq!(l.parsed_query().table, "Staff");

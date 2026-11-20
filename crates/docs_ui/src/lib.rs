@@ -2341,7 +2341,8 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             floats::paint_floats(f, &g, page, true, window, &mut text_box);
             // Merge fields: Word's grey shading.
             for (a, b) in &f.merge_marks {
-                for (p, r) in paged.selection_rects((a.para, a.offset), (b.para, b.offset)) {
+                let rects = paged.selection_rects((a.para, a.offset), (b.para, b.offset));
+                for (p, r) in rects {
                     if p == page {
                         window.paint_quad(fill(rect(page, r), hsla(0.0, 0.0, 0.5, 0.25)));
                     }

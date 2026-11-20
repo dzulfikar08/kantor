@@ -67,8 +67,18 @@ pub fn merge(
     if records.is_empty() {
         bail!("no records to merge (check the filter)");
     }
+    if let Some(dir) = &out.dir
+        && !dir.is_dir()
+    {
+        std::fs::create_dir_all(dir)?;
+    }
     if let Some(single) = &out.single {
         check_new(single, out.overwrite)?;
+        if let Some(parent) = single.parent().filter(|p| !p.as_os_str().is_empty())
+            && !parent.is_dir()
+        {
+            bail!("folder {} doesn't exist", parent.display());
+        }
         let Some(mut one) = doc.merge_into_one(data, records) else {
             bail!("every record was skipped (SKIPIF)");
         };

@@ -13,7 +13,7 @@ const W: &str = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/20
 
 fn field(instr: &str) -> String {
     format!(
-        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> {instr} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>«x»</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+        r#"<w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:rPr><w:b/></w:rPr><w:instrText xml:space="preserve"> {instr} </w:instrText></w:r><w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>«x»</w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:fldChar w:fldCharType="end"/></w:r>"#
     )
 }
 
@@ -132,7 +132,8 @@ fn docs_files_per_record_and_one_document() {
     let all = text(&dir.path().join("all.docx"));
     assert!(all.starts_with("Dear Zoë 张,"), "{all}");
     assert!(all.contains("Dear Siti Aminah,"));
-    // The merged text keeps the field result's formatting (bold).
+    // The merged text keeps the field's formatting (bold, as Word: the
+    // formatting of the field's first character).
     let mut zip = zip::ZipArchive::new(Cursor::new(
         std::fs::read(out_dir.join("Siti Aminah - Offer.docx")).unwrap(),
     ))

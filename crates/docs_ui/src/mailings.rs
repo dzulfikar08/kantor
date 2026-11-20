@@ -243,7 +243,15 @@ impl DocsView {
         let sheet = (!link.is_text_file() && !query.table.is_empty()).then(|| query.table.clone());
         let preview = link.preview;
         let active = link.active_record.unwrap_or(1).max(1) as usize - 1;
-        self.load_recipients(&path, sheet.as_deref(), None, Some(query), window, cx);
+        self.load_recipients(
+            &path,
+            sheet.as_deref(),
+            None,
+            Some(query),
+            false,
+            window,
+            cx,
+        );
         if let Some(m) = &mut self.mailings
             && m.recipients.is_some()
         {
@@ -251,6 +259,7 @@ impl DocsView {
             m.at = active.min(m.records.len().saturating_sub(1));
         }
         self.refresh_merge_view();
+        self.relayout();
     }
 
     /// Select Recipients: ask for a workbook or CSV file.
@@ -270,7 +279,7 @@ impl DocsView {
                 return;
             };
             let _ = this.update_in(cx, |this, window, cx| {
-                this.load_recipients(&path, None, None, None, window, cx);
+                this.load_recipients(&path, None, None, None, true, window, cx);
                 if let Some(m) = &mut this.mailings
                     && m.recipients.is_some()
                 {
@@ -282,15 +291,17 @@ impl DocsView {
         .detach();
     }
 
-    /// Read `path` (sheet, header row) as the recipients and link the
-    /// document to it. `query`: the filter and sort to keep (default
-    /// none).
+    /// Read `path` (sheet, header row) as the recipients and (`relink`)
+    /// link the document to it; the document's own link is left as it is
+    /// otherwise. `query`: the filter and sort to keep (default none).
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn load_recipients(
         &mut self,
         path: &Path,
         sheet: Option<&str>,
         header_row: Option<u32>,
         query: Option<Query>,
+        relink: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -318,7 +329,9 @@ impl DocsView {
                 m.at = 0;
                 m.reselect();
                 let n = m.records.len();
-                self.doc.set_mail_merge(Some(link));
+                if relink {
+                    self.doc.set_mail_merge(Some(link));
+                }
                 self.status = tf("{} recipients from {}", &[&n, &crate::display_name(path)]).into();
             }
             Err(e) => {
@@ -336,7 +349,7 @@ impl DocsView {
         let Some(r) = self.mailings.as_ref().and_then(|m| m.recipients.clone()) else {
             return;
         };
-        self.load_recipients(&r.path, Some(&sheet), None, None, window, cx);
+        self.load_recipients(&r.path, Some(&sheet), None, None, true, window, cx);
     }
 
     fn apply_header_row(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -351,7 +364,7 @@ impl DocsView {
             return;
         };
         let sheet = r.sheet_name().to_owned();
-        self.load_recipients(&r.path, Some(&sheet), Some(row), None, window, cx);
+        self.load_recipients(&r.path, Some(&sheet), Some(row), None, true, window, cx);
     }
 
     /// The filter or sort changed: records, preview and the saved query.
@@ -823,18 +836,6 @@ impl DocsView {
                     ))
                 })
         };
-        let names = h_flex()
-            .id("mm-names")
-            .flex_none()
-            .gap(SPACE_2)
-            .child(div().text_color(tok.fg_muted).child(t("File names")))
-            .child(div().w(REM * 11.).child(Input::new(&m.name_pattern).small()))
-            .tooltip(|window, cx| {
-                Tooltip::new(t(
-                    "{Field} is the recipient's value, {#} the record number; empty: the document's name",
-                ))
-                .build(window, cx)
-            });
         let close = {
             let v = view.clone();
             div()
@@ -945,7 +946,6 @@ impl DocsView {
                         )),
                 )
                 .child(div().flex_1())
-                .child(names)
                 .child(finish)
                 .child(close),
         )
@@ -1229,6 +1229,18 @@ impl DocsView {
                     .child(tf("{} more recipients", &[&(shown_rows.len() - LIST_ROWS)])),
             );
         }
+        let names = h_flex()
+            .id("mm-names")
+            .flex_none()
+            .gap(SPACE_2)
+            .child(div().text_color(tok.fg_muted).child(t("File names")))
+            .child(div().w(REM * 11.).child(Input::new(&m.name_pattern).small()))
+            .tooltip(|window, cx| {
+                Tooltip::new(t(
+                    "{Field} is the recipient's value, {#} the record number; empty: the document's name",
+                ))
+                .build(window, cx)
+            });
         let summary = tf(
             "{} of {} recipients will merge",
             &[&m.records.len(), &data.rows.len()],
@@ -1326,6 +1338,7 @@ impl DocsView {
                     .child(head)
                     .child(body),
             )
+            .child(names)
             .child(
                 h_flex()
                     .items_center()

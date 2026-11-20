@@ -382,10 +382,22 @@ fn show_merge_values(
         if codes.is_some_and(|c| c.shows(s.mark_id())) {
             continue;
         }
-        if let Some(o) = out[s.begin.para]
+        // The value goes at the end mark: a box at a line's start would
+        // sit before the caret position of the field's start, so the
+        // field's range (Highlight Merge Fields) would miss it.
+        let at = if out[s.end.para]
+            .objects
+            .iter()
+            .any(|o| o.index == s.end.offset)
+        {
+            s.end
+        } else {
+            s.begin
+        };
+        if let Some(o) = out[at.para]
             .objects
             .iter_mut()
-            .find(|o| o.index == s.begin.offset)
+            .find(|o| o.index == at.offset)
         {
             o.kind = ObjectKind::Text;
             o.label = value.clone();

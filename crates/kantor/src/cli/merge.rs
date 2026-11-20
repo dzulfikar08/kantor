@@ -68,8 +68,9 @@ pub fn usage(app: App) -> String {
         ),
     };
     let native = app.native();
+    let data = if app == App::Docs { "[DATA]" } else { "DATA" };
     format!(
-        "usage: kantor {} merge {template} [DATA] -o DIR [options]\n\
+        "usage: kantor {} merge {template} {data} -o DIR [options]\n\
          \n\
          Fill a template in once per record of DATA (.xlsx .xlsm .xls .xlsb\n\
          .ods .csv .tsv; the first row names the fields) and write one file\n\

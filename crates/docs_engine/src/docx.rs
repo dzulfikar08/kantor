@@ -3366,7 +3366,7 @@ fn mail_merge_settings(
         added = format!(
             "<Relationship Id=\"{}\" Type=\"{REL_MAIL_MERGE_SOURCE}\" Target=\"{}\" TargetMode=\"External\"/>",
             escape(&id),
-            escape(target)
+            escape(&crate::merge::uri_path(target))
         );
         rel_id = Some(id);
     }

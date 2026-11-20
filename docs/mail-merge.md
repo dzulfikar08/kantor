@@ -19,12 +19,11 @@ The toolbar's envelope button (or *Ctrl K → Mailings*) shows the bar:
 | Button | What it does |
 |---|---|
 | Select Recipients… | Choose the workbook or CSV file. The document is linked to it. |
-| Edit Recipient List… | Sheet, header row, *Sort by*, *Filter* (equal to, contains, is blank…, joined with And) and a tick per recipient. |
+| Edit Recipient List… | Sheet, header row, *Sort by*, *Filter* (equal to, contains, is blank…, joined with And), a tick per recipient, and the *File names* for one file per recipient. |
 | Insert Merge Field | A `MERGEFIELD` for one of the list's fields at the caret (shown as «Name»). |
 | Highlight Merge Fields | Shades the merge fields grey. |
 | Preview Results, ◀ ▶ | Shows a recipient's values in place of the field names; the arrows go to the first, previous, next and last recipient. |
-| File names | The pattern for one file per recipient: `{Name} - Offer` (`{#}` is the record number; empty: the template's name and the number). |
-| Finish & Merge | *Edit Individual Documents* (one new document, each recipient in its own section starting on a new page), *Save as Documents (.docx)* or *Save as PDF*, one per recipient in a folder, or *Print Documents*. |
+| Finish & Merge | *Edit Individual Documents* (one new document, each recipient in its own section starting on a new page), *Save as Documents (.docx)* or *Save as PDF*, one per recipient in a folder, or *Print Documents*. File names follow the pattern set in the recipient list: `{Name} - Offer` (`{#}` is the record number; empty: the template's name and the number). |
 
 The link to the list is saved in the document as Word saves it (`w:mailMerge`
 in `settings.xml`, the path relative to the document, and the filter and sort
