@@ -35,17 +35,22 @@ pub fn missing_fields(doc: &Document, data: &MergeData) -> Vec<String> {
         .collect()
 }
 
-/// Mail merge fields of Word's that Kantor doesn't fill in yet, found in
-/// the body: (field type, Word's name for it).
-pub fn unfilled_fields(doc: &Document) -> Vec<(&'static str, &'static str)> {
-    let kinds: HashSet<String> = doc.fields().iter().map(|f| f.kind()).collect();
-    [
-        ("ADDRESSBLOCK", "Address Block"),
-        ("GREETINGLINE", "Greeting Line"),
-    ]
-    .into_iter()
-    .filter(|(k, _)| kinds.contains(*k))
-    .collect()
+/// Address fields the document's Address Block and Greeting Line fields
+/// use that no column of `data` is matched to (Match Fields, or Word's
+/// guesses from the column names).
+pub fn unmatched_address_fields(doc: &Document, data: &MergeData) -> Vec<&'static str> {
+    let cols = doc.address_columns(data);
+    let mut used: Vec<&'static str> = Vec::new();
+    for f in doc.fields() {
+        if matches!(f.kind().as_str(), "ADDRESSBLOCK" | "GREETINGLINE") {
+            for name in docs_engine::address::fields_used(&f.instr) {
+                if !used.contains(&name) {
+                    used.push(name);
+                }
+            }
+        }
+    }
+    used.into_iter().filter(|f| !cols.has(f)).collect()
 }
 
 /// The default file name pattern: the template's name and the record's
@@ -77,9 +82,11 @@ pub fn merge(
             "the document's field {f:?} is not in the data source (it shows Word's error text)"
         ));
     }
-    for (kind, name) in unfilled_fields(doc) {
+    let unmatched = unmatched_address_fields(doc, data);
+    if !unmatched.is_empty() {
         report.notes.push(format!(
-            "{name} ({kind}) fields aren't filled in yet: they keep the template's text"
+            "Address Block / Greeting Line: no column matched for {} (name the columns as Word's address fields, or use Match Fields)",
+            unmatched.join(", ")
         ));
     }
     if records.is_empty() {

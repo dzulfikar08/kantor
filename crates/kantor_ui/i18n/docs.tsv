@@ -385,6 +385,48 @@ Or	Atau
 {} more recipients	{} penerima lagi
 {} of {} recipients will merge	{} dari {} penerima akan digabungkan
 Mail Merge Recipients	Penerima Surat Massal
+Address Block…	Blok Alamat…
+Greeting Line…	Baris Salam…
+Match Fields…	Cocokkan Bidang…
+The recipient's name and address, laid out as letters are addressed	Nama dan alamat penerima, ditata seperti alamat surat
+A greeting such as Dear Mr. Randall, from each recipient's name	Salam seperti Yth. Bapak Randall, dari nama setiap penerima
+Which columns of the list are the name and address fields	Kolom daftar mana yang menjadi bidang nama dan alamat
+Insert Address Block	Sisipkan Blok Alamat
+Insert Greeting Line	Sisipkan Baris Salam
+Recipient's name	Nama penerima
+Insert company name	Sisipkan nama perusahaan
+Insert postal address	Sisipkan alamat pos
+Never include the country/region in the address	Jangan pernah sertakan negara/wilayah di alamat
+Always include the country/region in the address	Selalu sertakan negara/wilayah di alamat
+Only include the country/region if different than:	Sertakan negara/wilayah hanya jika berbeda dari:
+Format address according to the destination country/region	Format alamat sesuai negara/wilayah tujuan
+Greeting line format	Format baris salam
+Greeting line for invalid recipient names	Baris salam untuk nama penerima yang tidak valid
+Address Block and Greeting Line take these fields from the columns of your list.	Blok Alamat dan Baris Salam mengambil bidang ini dari kolom daftar Anda.
+(not matched)	(tidak dicocokkan)
+Not matched: {}	Tidak dicocokkan: {}
+Courtesy Title	Sapaan
+First Name	Nama Depan
+Middle Name	Nama Tengah
+Last Name	Nama Belakang
+Suffix	Akhiran
+Nickname	Nama Panggilan
+Company	Perusahaan
+Address 1	Alamat 1
+Address 2	Alamat 2
+City	Kota
+Postal Code	Kode Pos
+Country or Region	Negara atau Wilayah
+Spouse/Partner Courtesy Title	Sapaan Pasangan
+Spouse/Partner First Name	Nama Depan Pasangan
+United States of America	Amerika Serikat
+United Kingdom	Inggris
+Indonesia	Indonesia
+Germany	Jerman
+France	Prancis
+Japan	Jepang
+Australia	Australia
+Netherlands	Belanda
 Equal to	Sama dengan
 Not equal to	Tidak sama dengan
 Less than or equal	Kurang dari atau sama dengan

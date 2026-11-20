@@ -31,6 +31,7 @@ pub mod font_bridge;
 mod hf_menu;
 mod input;
 mod mailings;
+mod mailings_address;
 mod note_menu;
 mod page_menu;
 mod part;
@@ -2952,6 +2953,7 @@ impl Render for DocsView {
             .children(self.render_text_box_menu(cx))
             .children(self.render_field_menu(cx))
             .children(self.render_recipients(cx))
+            .children(self.render_address_dialog(cx))
     }
 }
 

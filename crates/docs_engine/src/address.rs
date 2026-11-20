@@ -392,6 +392,19 @@ impl AddressColumns {
         }
     }
 
+    /// Whether a column is matched to address field `field`.
+    pub fn has(&self, field: &str) -> bool {
+        self.cols.iter().any(|(f, c)| *f == field && c.is_some())
+    }
+
+    /// The column matched to address field `field`.
+    pub fn column(&self, field: &str) -> Option<usize> {
+        self.cols
+            .iter()
+            .find(|(f, _)| *f == field)
+            .and_then(|(_, c)| *c)
+    }
+
     /// The value of address field `field` (Word's mapped name) in `row`.
     pub fn value(&self, data: &MergeData, row: Option<usize>, field: &str) -> String {
         let Some(row) = row else {

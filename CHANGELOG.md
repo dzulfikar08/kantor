@@ -9,6 +9,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Docs mail merge: *Address Block…* and *Greeting Line…* on the Mailings bar insert Word's `ADDRESSBLOCK` and `GREETINGLINE` fields, with a preview of each recipient as in Word's dialogs, and merging fills them in as Word does: the name format, company, country only when it isn't your own, and addresses laid out by the destination country (United States, United Kingdom, Indonesia, Germany, France, Japan, Australia and more). Greeting lines fall back to "Dear Sir or Madam," (or your choice) when a recipient has no name. Templates made in Word with these fields now merge completely, in the app and with `kantor docs merge`.
+- Docs mail merge: *Match Fields…* says which columns of your list are the title, first and last name, company, address, city, postal code and country. Kantor guesses them from the column names, in English and Indonesian too (Nama, Alamat, Kota, Kode Pos, Provinsi, Negara), and saves your choice in the document as Word does.
+
 ## [0.19.0] - 2026-11-20
 
 Kantor signs PDFs with your own certificate (a .p12/.pfx file, a USB token or the system's store), as Acrobat does:
