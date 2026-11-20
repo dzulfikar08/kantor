@@ -553,8 +553,6 @@ Signature Field	Bidang Tanda Tangan
 Field name	Nama bidang
 Reason	Alasan
 Always the last step, so the signature covers everything the batch did. The password or PIN is asked for when the batch runs; it is never saved.	Selalu langkah terakhir, agar tanda tangan mencakup semua yang dilakukan batch. Kata sandi atau PIN ditanyakan saat batch dijalankan; tidak pernah disimpan.
-Password for {}	Kata sandi untuk {}
-PIN for {}	PIN untuk {}
 The batch signs every file with this certificate. Its password or PIN is used for this run only and is never saved.	Batch menandatangani setiap berkas dengan sertifikat ini. Kata sandi atau PIN-nya hanya dipakai untuk proses ini dan tidak pernah disimpan.
 Opening the certificate…	Membuka sertifikat…
 Not signed: password-protected PDFs can't be signed yet	Tidak ditandatangani: PDF yang dilindungi kata sandi belum dapat ditandatangani

@@ -3,7 +3,7 @@
 //! batch files as `pdf_engine::signing::batch::SignStep` (no password).
 //! The password or PIN is asked for once when the batch starts.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{
@@ -320,7 +320,21 @@ impl PdfView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> StepUi {
-        let ui = SignUi::new(SignStep::default(), window, cx);
+        // Visible or not as the Sign with Certificate dialog was last used.
+        let step = SignStep {
+            appearance: if Settings::load().pdf.signing_visible {
+                Appearance::Box {
+                    page: "last".into(),
+                    place: Place::default(),
+                    width: 180.0,
+                    height: 60.0,
+                }
+            } else {
+                Appearance::Invisible
+            },
+            ..SignStep::default()
+        };
+        let ui = SignUi::new(step, window, cx);
         self.batch_list_certificates(cx);
         StepUi::Sign(Box::new(ui))
     }
@@ -674,15 +688,9 @@ pub(crate) fn absolute(mut s: SignStep, base: &Path) -> SignStep {
     s
 }
 
-/// For the unlock prompt: what is being unlocked.
+/// For the unlock prompt: the certificate being unlocked.
 pub(crate) fn unlock_label(c: &Certificate) -> String {
-    match c {
-        Certificate::File(p) => tf("Password for {}", &[&file_name(&PathBuf::from(p))]),
-        Certificate::Token { name, module } => {
-            tf("PIN for {}", &[if name.is_empty() { module } else { name }])
-        }
-        Certificate::System { name } => name.clone(),
-    }
+    shown(c)
 }
 
 #[cfg(test)]
