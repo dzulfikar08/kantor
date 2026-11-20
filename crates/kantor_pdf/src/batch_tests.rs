@@ -479,13 +479,13 @@ fn batch_files_round_trip_and_plugins_run_last() {
             options: &serde_json::Value,
             file: &FileContext,
             bytes: &[u8],
-        ) -> Result<Option<Vec<u8>>, String> {
+        ) -> Result<Applied, String> {
             if file.name == "skip.pdf" {
-                return Ok(None);
+                return Ok(Applied::Skipped("skipped: not this one".into()));
             }
             let mut v = bytes.to_vec();
             v.extend_from_slice(options["text"].as_str().unwrap_or("").as_bytes());
-            Ok(Some(v))
+            Ok(Applied::Changed(v))
         }
     }
     let s = Setup::new();

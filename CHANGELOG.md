@@ -21,7 +21,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   originals; progress, Cancel and a result for every file (done, skipped and why, failed and why). Digitally
   signed files stay valid: their changes are added as an incremental update, and steps that would break the
   signature or that the certification doesn't allow are skipped. Password-protected files stay protected. A batch
-  can be saved and opened again as a JSON file.
+  can be saved and opened again as a JSON file. Its last step can sign every file with your certificate (*Sign with
+  Certificate*, the same choices as the dialog: visible on the first, last or a chosen page, in an empty signature
+  field, or invisible; time stamp and LTV; certify): the password or PIN is asked for once when the batch starts and
+  is never saved, and each file says whether it was signed or why not (a certified file that allows no more
+  signatures, for example).
 - `kantor pdf stamp` places a picture on many PDFs, `kantor pdf fill` fills their forms from a table (and
   `--list` shows a form's fields), and `kantor pdf batch steps.json` runs a saved batch on files and folders.
 - Mail merge in Docs, as Word's Mailings tab: the toolbar's envelope button shows a Mailings bar. *Select
@@ -39,6 +43,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   presentation (certificates, name cards) and `kantor sheets merge` in a workbook's cells (a cell holding just a
   number field keeps the number), one file per row, `.pptx`/`.xlsx` and/or PDF. The MCP server's `mail_merge` tool
   does the same for AI agents.
+  `--list` shows a form's fields), and `kantor pdf batch steps.json` runs a saved batch on files and folders, signing
+  steps too (`--password-file` or `--pin-file`, like `kantor pdf sign`).
 
 ## [0.18.0] - 2026-11-20
 

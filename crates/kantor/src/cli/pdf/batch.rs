@@ -68,6 +68,10 @@ suffix, or a folder), or into -o FOLDER.\n\
 \x20 -f, --force       replace results that exist\n\
 \x20 --skip-existing   leave results that exist alone and go on\n\
 \x20 --password PW     for encrypted inputs\n\
+\x20 --password-file F the sign step's certificate password (.p12): the first\n\
+\x20                   line of F (- reads standard input), or KANTOR_P12_PASSWORD\n\
+\x20 --pin-file F      the sign step's token PIN, or KANTOR_PIN\n\
+\x20 --trust FILE      extra roots for building the chain (sign step, B-LT)\n\
 \n\
 A batch file:\n\
 \x20 {\"version\": 1, \"output\": {\"suffix\": \"-stamped\"}, \"steps\": [\n\
@@ -76,9 +80,15 @@ A batch file:\n\
 \x20   {\"type\": \"fill\", \"data\": \"values.csv\"},\n\
 \x20   {\"type\": \"page-numbers\", \"format\": \"Page {n} of {total}\"},\n\
 \x20   {\"type\": \"watermark\", \"text\": \"COPY\"},\n\
-\x20   {\"type\": \"flatten\"}]}\n\
+\x20   {\"type\": \"flatten\"},\n\
+\x20   {\"type\": \"sign\", \"certificate\": {\"file\": \"me.p12\"}, \"level\": \"B-T\",\n\
+\x20    \"tsa\": \"https://tsa.example.com/\", \"reason\": \"Approved\",\n\
+\x20    \"appearance\": {\"kind\": \"box\", \"page\": \"last\",\n\
+\x20      \"place\": {\"anchor\": \"bottom-right\", \"dx\": 36, \"dy\": 36}}}]}\n\
 Step types: stamp, signature (a signature picture; image may be\n\
-my-stamps/NAME for one of My Stamps), fill, page-numbers, watermark, flatten.\n\
+my-stamps/NAME for one of My Stamps), fill, page-numbers, watermark, flatten,\n\
+sign (a digital signature with your certificate, as kantor pdf sign; always\n\
+the last step; its password or PIN is never in the batch file).\n\
 Relative paths are from the batch file's folder. On digitally signed files,\n\
 page numbers, watermarks and flatten are skipped (they would invalidate the\n\
 signature), as are steps the certification doesn't allow.\n\
@@ -438,10 +448,65 @@ fn list_fields(path: &Path, args: &Args) -> Outcome {
     Ok(out)
 }
 
+/// The sign step's plugin, its key unlocked once for every file: the
+/// password or PIN from a file, standard input or the environment (never
+/// from the batch file or an argument).
+fn sign_plugins(b: &Batch, base: &Path, args: &Args) -> Result<Plugins, Failure> {
+    use pdf_engine::signatures as sigs;
+    use pdf_engine::signing::batch::{self as sb, Certificate, LevelName};
+    let mut plugins = Plugins::default();
+    let Some((i, step)) = sb::find(b) else {
+        return Ok(plugins);
+    };
+    let step = step.map_err(|e| Failure::usage(format!("step {} (sign): {e}", i + 1)))?;
+    let secret = match &step.certificate {
+        Certificate::File(_) => Some(
+            super::read_secret(args.value("password-file"), "KANTOR_P12_PASSWORD")?
+                .unwrap_or_default(),
+        ),
+        Certificate::Token { .. } => super::read_secret(args.value("pin-file"), "KANTOR_PIN")?,
+        Certificate::System { .. } => None,
+    };
+    let id = sb::unlock(&step.certificate, base, secret.as_deref()).map_err(|e| Failure {
+        message: match e {
+            pdf_engine::signing::Error::WrongPassword
+                if matches!(step.certificate, Certificate::Token { .. }) && secret.is_none() =>
+            {
+                "give the token PIN with --pin-file (or KANTOR_PIN)".into()
+            }
+            e => format!("step {} (sign): {e}", i + 1),
+        },
+        code: 1,
+    })?;
+    drop(secret);
+    let mut trust = sigs::TrustStore::standard();
+    if let Some(path) = args.value("trust") {
+        let data =
+            std::fs::read(path).map_err(|e| Failure::usage(format!("--trust: {path}: {e}")))?;
+        for c in sigs::x509::parse_pem_or_der(&data) {
+            trust.add(c);
+        }
+    }
+    let mut p = sb::SignPlugin::new(id, base, my_stamps().as_deref()).trust(trust);
+    // The batch file asked for a time stamp: the network, as with --tsa.
+    if step.level != LevelName::BB {
+        p = p.online(std::sync::Arc::new(sigs::Http::new()));
+    }
+    plugins.add(std::sync::Arc::new(p));
+    Ok(plugins)
+}
+
 pub fn run_batch(rest: &[String], usage: &str) -> Outcome {
     let args = Args::parse(
         rest,
-        &["output", "password", "suffix"],
+        &[
+            "output",
+            "password",
+            "suffix",
+            "password-file",
+            "pin-file",
+            "trust",
+        ],
         &["force", "help", "skip-existing"],
         usage,
     )?;
@@ -461,7 +526,8 @@ pub fn run_batch(rest: &[String], usage: &str) -> Outcome {
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let files = inputs(files)?;
-    let prepared = Prepared::new(&b, base, my_stamps().as_deref(), &Plugins::default())
+    let plugins = sign_plugins(&b, base, &args).map_err(|f| f.prefixed(&steps_path))?;
+    let prepared = Prepared::new(&b, base, my_stamps().as_deref(), &plugins)
         .map_err(|e| Failure::from(e).prefixed(&steps_path))?;
     let target = match args.value("output") {
         Some(o) => Target::Output(Output {
@@ -639,5 +705,98 @@ mod tests {
                 .unwrap()
                 .starts_with(&original)
         );
+    }
+
+    #[test]
+    fn batch_stamps_and_signs_with_one_password() {
+        let engine = concat!(env!("CARGO_MANIFEST_DIR"), "/../pdf_engine/tests/fixtures");
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::write(d.join("logo.png"), sample_png(40, 40, true)).unwrap();
+        let src = d.join("src");
+        std::fs::create_dir(&src).unwrap();
+        std::fs::write(src.join("a.pdf"), sample_pdf(2)).unwrap();
+        std::fs::write(src.join("b.pdf"), sample_pdf(3)).unwrap();
+        std::fs::copy(
+            format!("{engine}/signatures/valid.pdf"),
+            src.join("signed.pdf"),
+        )
+        .unwrap();
+        std::fs::write(d.join("pw.txt"), "kantor-test\n").unwrap();
+        let steps = format!(
+            r#"{{"steps": [
+                {{"type": "stamp", "image": "logo.png", "pages": "first"}},
+                {{"type": "sign", "certificate": {{"file": "{engine}/signing/rsa.p12"}},
+                  "reason": "Approved",
+                  "appearance": {{"kind": "box", "page": "last",
+                                  "place": {{"anchor": "bottom-left", "dx": 36, "dy": 36}}}}}}]}}"#
+        );
+        std::fs::write(d.join("steps.json"), &steps).unwrap();
+        let out = d.join("out");
+        let args = s(&[
+            &p(&d.join("steps.json")),
+            &p(&src),
+            "-o",
+            &p(&out),
+            "--password-file",
+            &p(&d.join("pw.txt")),
+        ]);
+        let r = run_batch(&args, BATCH).unwrap();
+        assert!(r.starts_with("3 done"), "{r}");
+        // Every result verifies (intact, chain to the test roots; the test
+        // PKI's revocation servers are offline here); the signed file keeps
+        // its first signature.
+        use pdf_engine::signatures as sigs;
+        let mut trust = sigs::TrustStore::empty();
+        for f in ["signing/root.pem", "signatures/test-root.pem"] {
+            let pem = std::fs::read(format!("{engine}/{f}")).unwrap();
+            sigs::x509::parse_pem_or_der(&pem)
+                .into_iter()
+                .for_each(|c| trust.add(c));
+        }
+        for (f, count) in [("a", 1), ("b", 1), ("signed", 2)] {
+            let bytes = std::fs::read(out.join(format!("{f}-batch.pdf"))).unwrap();
+            let r = sigs::verify(
+                &bytes,
+                &sigs::Options {
+                    trust: trust.clone(),
+                    fetch: None,
+                    now: sigs::now(),
+                },
+            );
+            let text = sigs::text_report(&r);
+            assert_eq!(r.signatures.len(), count, "{f}: {text}");
+            for s in &r.signatures {
+                assert_eq!(s.integrity, sigs::Integrity::Intact, "{f}: {text}");
+                assert_ne!(s.status, sigs::Status::Invalid, "{f}: {text}");
+            }
+            assert_eq!(
+                r.signatures.last().unwrap().reason.as_deref(),
+                Some("Approved")
+            );
+        }
+        let original = std::fs::read(src.join("signed.pdf")).unwrap();
+        assert!(
+            std::fs::read(out.join("signed-batch.pdf"))
+                .unwrap()
+                .starts_with(&original)
+        );
+        // A wrong password stops the batch before any file.
+        std::fs::write(d.join("bad.txt"), "nope\n").unwrap();
+        let mut bad = args.clone();
+        *bad.last_mut().unwrap() = p(&d.join("bad.txt"));
+        bad.push("-f".into());
+        let e = run_batch(&bad, BATCH).unwrap_err();
+        assert!(e.message.contains("password"), "{}", e.message);
+        // A password in the batch file is refused.
+        std::fs::write(
+            d.join("leak.json"),
+            steps.replace("\"reason\"", "\"password\": \"kantor-test\", \"reason\""),
+        )
+        .unwrap();
+        let mut leak = args.clone();
+        leak[0] = p(&d.join("leak.json"));
+        let e = run_batch(&leak, BATCH).unwrap_err();
+        assert!(e.message.contains("doesn't belong"), "{}", e.message);
     }
 }

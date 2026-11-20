@@ -301,7 +301,7 @@ impl PdfView {
     }
 
     /// Enter in a dialog's field: OK.
-    fn submit_on_enter(
+    pub(crate) fn submit_on_enter(
         &mut self,
         i: &Entity<InputState>,
         window: &mut Window,

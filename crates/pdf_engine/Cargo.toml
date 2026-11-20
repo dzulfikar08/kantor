@@ -31,8 +31,12 @@ des = "0.8"
 rc2 = "0.8"
 # Signing: PKCS #11 tokens and the macOS/Windows certificate stores.
 kantor_keystore.workspace = true
+# Signing as a batch step: the step's options in batch files.
+serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

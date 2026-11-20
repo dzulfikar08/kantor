@@ -81,6 +81,59 @@ Several input files and `-o DIR` sign them all with one password prompt
 signed (exit status 1 if any failed). Passwords are never accepted as
 arguments, where other users could see them in the process list.
 
+## In a batch
+
+*Tools ▸ Batch…* has a **Sign with Certificate** step (*Add Step ▸ Sign
+with Certificate*) with the same choices as the dialog: the certificate (a
+`.p12`/`.pfx` file, a token, or the system store), a time stamp (B-T), also
+validation data (B-LT), certify or not, and where the signature shows: a
+box on the first, the last or a given page at one of nine places (as the
+stamp step places pictures, upright on turned pages), an empty signature
+field by name, or invisible; reason, location and a signature picture
+(PNG or JPEG from *My Signatures & Stamps*, or a file).
+
+- It is always the **last** step, and a batch has at most one: the
+  signature covers everything the batch did. The dialog keeps it last; a
+  batch file with steps after it is refused.
+- When the batch runs, Kantor asks **once** for the certificate's password
+  or the token's PIN, unlocks the key and signs every file with it. The
+  password is used for that run only: it is never written to the batch
+  file, the settings or a log, and a batch file that holds a `password` or
+  `pin` is refused.
+- Each file gets its result: signed, or not signed and why. A file is not
+  signed when it is password-protected, when its certification allows no
+  changes, when the step certifies but the file is already signed, when a
+  new visible box would change a certified file's pages (sign an empty
+  field or invisibly instead), when the named field is missing or already
+  signed, or when the page isn't in the file. Earlier signatures stay
+  valid: everything is added as incremental updates.
+
+`kantor pdf batch steps.json FILES -o DIR` runs the same step; the
+password comes from `--password-file F` (`-` for standard input) or
+`KANTOR_P12_PASSWORD`, a token PIN from `--pin-file F` or `KANTOR_PIN`, and
+`--trust FILE` adds roots for B-LT. In the batch file:
+
+```json
+{"type": "sign",
+ "certificate": {"file": "certs/me.p12"},
+ "level": "B-T",
+ "tsa": "https://tsa.example.com/",
+ "certify": 2,
+ "appearance": {"kind": "box", "page": "last",
+                "place": {"anchor": "bottom-right", "dx": 36, "dy": 36},
+                "width": 180, "height": 60},
+ "reason": "Approved", "location": "Jakarta",
+ "image": "my-stamps/signature.sig.png"}
+```
+
+| Key | |
+|---|---|
+| `certificate` | `{"file": PATH}` (relative to the batch file), `{"token": {"module": PATH, "name": TEXT}}` or `{"system": {"name": TEXT}}`; `name` picks the certificate whose name contains it |
+| `level` | `B-B` (default), `B-T`, `B-LT`, `B-LTA`; all but B-B need `tsa` |
+| `certify` | 1, 2 or 3 (left out: an approval signature) |
+| `appearance` | `{"kind": "invisible"}` (default), `{"kind": "field", "name": NAME}`, or `{"kind": "box", "page": "first"\|"last"\|N, "place": …, "width": 180, "height": 60}`; `place` as in the stamp step (an `anchor` with `dx`/`dy`, an `x`/`y` point, or an `example`) |
+| `reason`, `location`, `contact`, `image`, `pss` | as for `kantor pdf sign` |
+
 ## What is written
 
 - `/Filter /Adobe.PPKLite /SubFilter /ETSI.CAdES.detached`, `/M`, `/Name`,

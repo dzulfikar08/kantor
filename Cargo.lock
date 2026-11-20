@@ -5683,6 +5683,9 @@ dependencies = [
  "rc2",
  "ring",
  "rustls-native-certs",
+ "serde",
+ "serde_json",
+ "tempfile",
  "unicode-normalization",
  "ureq",
 ]

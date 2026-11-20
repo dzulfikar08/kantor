@@ -539,3 +539,26 @@ e.g. Company=PT Maju; City=Surabaya	mis. Perusahaan=PT Maju; Kota=Surabaya
 PDF · stamp, sign, fill or number many PDFs at once	PDF · stempel, tanda tangani, isi, atau beri nomor banyak PDF sekaligus
 My signature {}	Tanda tangan saya {}
 My stamp {}	Stempel saya {}
+Signature field name	Nama bidang tanda tangan
+Step {}: choose a certificate	Langkah {}: pilih sertifikat
+Step {}: type the address of a time-stamp server	Langkah {}: ketik alamat server cap waktu
+Step {}: type the signature field's name	Langkah {}: ketik nama bidang tanda tangan
+Step {}: type a page number	Langkah {}: ketik nomor halaman
+Step {}: {}	Langkah {}: {}
+Signature only	Tanda tangan saja
+Time stamp	Cap waktu
+Time stamp and LTV	Cap waktu dan LTV
+Box on a Page	Kotak di Halaman
+Signature Field	Bidang Tanda Tangan
+Field name	Nama bidang
+Reason	Alasan
+Always the last step, so the signature covers everything the batch did. The password or PIN is asked for when the batch runs; it is never saved.	Selalu langkah terakhir, agar tanda tangan mencakup semua yang dilakukan batch. Kata sandi atau PIN ditanyakan saat batch dijalankan; tidak pernah disimpan.
+The batch signs every file with this certificate. Its password or PIN is used for this run only and is never saved.	Batch menandatangani setiap berkas dengan sertifikat ini. Kata sandi atau PIN-nya hanya dipakai untuk proses ini dan tidak pernah disimpan.
+Opening the certificate…	Membuka sertifikat…
+Not signed: password-protected PDFs can't be signed yet	Tidak ditandatangani: PDF yang dilindungi kata sandi belum dapat ditandatangani
+Not signed: the file is certified and allows no changes, not even another signature	Tidak ditandatangani: berkas tersertifikasi dan tidak mengizinkan perubahan apa pun, termasuk tanda tangan lain
+Not signed: the file is already signed, and only the first signature can certify a document	Tidak ditandatangani: berkas sudah ditandatangani, dan hanya tanda tangan pertama yang dapat menyertifikasi dokumen
+Not signed: the file has no signature field with the step's name	Tidak ditandatangani: berkas tidak memiliki bidang tanda tangan dengan nama pada langkah ini
+Not signed: the step's signature field is already signed	Tidak ditandatangani: bidang tanda tangan pada langkah ini sudah ditandatangani
+Not signed: the file is certified, and a new visible signature would change its pages (sign an empty signature field, or invisibly)	Tidak ditandatangani: berkas tersertifikasi, dan tanda tangan terlihat yang baru akan mengubah halamannya (tanda tangani bidang tanda tangan kosong, atau secara tidak terlihat)
+Not signed: the file doesn't have the step's page	Tidak ditandatangani: berkas tidak memiliki halaman pada langkah ini

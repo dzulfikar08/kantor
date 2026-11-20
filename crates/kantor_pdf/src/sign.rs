@@ -79,6 +79,9 @@ pub struct Request {
     pub reserve: usize,
     /// Program name and version for `/Prop_Build`.
     pub app: Option<(String, String)>,
+    /// The page's `/Rotate` (0, 90, 180, 270): a new visible signature is
+    /// drawn turned against it, so it stands upright as the page is shown.
+    pub rotate: i64,
 }
 
 impl Request {
@@ -95,6 +98,7 @@ impl Request {
             time,
             reserve,
             app: None,
+            rotate: 0,
         }
     }
 }
@@ -516,7 +520,13 @@ fn add_signature(doc: &mut Document, req: &Request) -> Result<()> {
             w.set("F", 4 | 128);
             w.set("P", page);
             if r[2] > r[0] && r[3] > r[1] {
-                let ap = appearance(doc, req.look.as_ref(), r)?;
+                let rotate = req.rotate.rem_euclid(360);
+                let ap = appearance_turned(doc, req.look.as_ref(), r, rotate)?;
+                if rotate != 0 {
+                    let mut mk = Dictionary::new();
+                    mk.set("R", rotate);
+                    w.set("MK", mk);
+                }
                 let ap_id = doc.add_object(ap);
                 let mut apd = Dictionary::new();
                 apd.set("N", ap_id);
@@ -630,7 +640,24 @@ fn set_sig_flags(doc: &mut Document) -> Result<()> {
 /// The widget's normal appearance: the picture on the left (or alone),
 /// the lines of text on the right, sized to fit the box.
 fn appearance(doc: &mut Document, look: Option<&Look>, r: [f32; 4]) -> Result<Stream> {
+    appearance_turned(doc, look, r, 0)
+}
+
+/// The appearance for box `r` (user space) on a page turned by `rotate`
+/// degrees: drawn upright in the box as shown, with a `/Matrix` turning
+/// it back into user space (the viewer fits the turned box to `/Rect`).
+fn appearance_turned(
+    doc: &mut Document,
+    look: Option<&Look>,
+    r: [f32; 4],
+    rotate: i64,
+) -> Result<Stream> {
     let (w, h) = ((r[2] - r[0]).abs().max(1.0), (r[3] - r[1]).abs().max(1.0));
+    let (w, h) = if rotate == 90 || rotate == 270 {
+        (h, w)
+    } else {
+        (w, h)
+    };
     let mut res = Dictionary::new();
     let mut s = String::new();
     let empty = Look::default();
@@ -758,6 +785,25 @@ fn appearance(doc: &mut Document, look: Option<&Look>, r: [f32; 4]) -> Result<St
         Object::Array(vec![0.into(), 0.into(), Object::Real(w), Object::Real(h)]),
     );
     d.set("Resources", res);
+    // Turn the upright drawing against the page's /Rotate (anticlockwise
+    // by the page's clockwise turn).
+    let m: Option<[f32; 4]> = match rotate {
+        90 => Some([0.0, 1.0, -1.0, 0.0]),
+        180 => Some([-1.0, 0.0, 0.0, -1.0]),
+        270 => Some([0.0, -1.0, 1.0, 0.0]),
+        _ => None,
+    };
+    if let Some(m) = m {
+        d.set(
+            "Matrix",
+            Object::Array(
+                m.iter()
+                    .map(|v| Object::Real(*v))
+                    .chain([Object::Real(0.0), Object::Real(0.0)])
+                    .collect(),
+            ),
+        );
+    }
     let mut st = Stream::new(d, s.into_bytes());
     let _ = st.compress();
     Ok(st)
