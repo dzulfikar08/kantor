@@ -9,6 +9,19 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- PDF: *Tools ▸ Batch…* runs the same steps on many PDFs at once: place a company stamp or a signature picture
+  (on all, the first, the last or chosen pages; at a corner, the centre or the same spot as a stamp in the open
+  document), fill in form fields from a CSV, Excel or JSON table with a row per file, add page numbers or a
+  watermark, flatten annotations. Results go next to the originals with a suffix or into a folder, never over the
+  originals; progress, Cancel and a result for every file (done, skipped and why, failed and why). Digitally
+  signed files stay valid: their changes are added as an incremental update, and steps that would break the
+  signature or that the certification doesn't allow are skipped. Password-protected files stay protected. A batch
+  can be saved and opened again as a JSON file.
+- `kantor pdf stamp` places a picture on many PDFs, `kantor pdf fill` fills their forms from a table (and
+  `--list` shows a form's fields), and `kantor pdf batch steps.json` runs a saved batch on files and folders.
+
 ## [0.18.0] - 2026-11-20
 
 The PDF app gets comments, forms, Fill & Sign and image stamps such as a company stamp with a transparent

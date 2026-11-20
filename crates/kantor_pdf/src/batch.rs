@@ -391,7 +391,7 @@ pub struct Fill {
     /// file's folder): one row per file, matched by file name.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<String>,
-    /// The table's file name column (default: `file`, else the first).
+    /// The table's file name column (default: `file`, `filename`…).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
     /// The same values for every file (a table row wins).

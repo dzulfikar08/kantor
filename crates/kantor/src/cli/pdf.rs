@@ -6,6 +6,8 @@ use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+mod batch;
+
 use kantor_pdf::{
     ImageOptions, Orientation, PageNumberOptions, PageRanges, PageSize, Pdf, Position,
     WatermarkOptions,
@@ -64,6 +66,9 @@ tools:\n\
 \x20 page-numbers  number the pages\n\
 \x20 compress      make the file smaller without losing quality\n\
 \x20 verify        check the digital signatures (exit 0 = all valid)\n\
+\x20 stamp         place a picture (company stamp, signature) on many PDFs\n\
+\x20 fill          fill in forms of many PDFs from a table (CSV, JSON, xlsx)\n\
+\x20 batch         run a saved batch of steps on many PDFs\n\
 \n\
 Run `kantor pdf <tool> --help` for a tool's options.\n\
 \n\
@@ -422,6 +427,9 @@ pub fn run(args: &[String]) -> Outcome {
         "watermark" => (WATERMARK, watermark),
         "page-numbers" | "number" | "numbers" => (PAGE_NUMBERS, page_numbers),
         "compress" => (COMPRESS, compress),
+        "stamp" => (batch::STAMP, batch::stamp),
+        "fill" => (batch::FILL, batch::fill),
+        "batch" => (batch::BATCH, batch::run_batch),
         other => {
             return Err(Failure::usage(format!(
                 "unknown tool \"{other}\"\n\n{USAGE}"

@@ -3,8 +3,9 @@
 //! per file, matched by its file name, or the same values for every file.
 //!
 //! The first row holds the column names: the file name column (`file`,
-//! `filename`, `file name` or `name`, any case; otherwise the first
-//! column) and one column per form field, named as the field.
+//! `filename`, `file name`, `nama file` or `pdf`, any case) and one column
+//! per form field, named as the field. A table without a file name column
+//! has one row: the values for every file.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -30,8 +31,8 @@ const FILE_COLUMNS: &[&str] = &[
     "filename",
     "file name",
     "file_name",
-    "name",
     "nama file",
+    "pdf",
 ];
 
 impl Table {
@@ -57,7 +58,7 @@ impl Table {
 
     /// Rows of cells (the first row the column names) as a table. `key`:
     /// the file name column's name; by default the first column called
-    /// like one, else the first column.
+    /// like one (without one, the single row is for every file).
     pub fn from_rows(rows: Vec<Vec<String>>, key: Option<&str>) -> Result<Table> {
         let mut it = rows.into_iter();
         let Some(header) = it.next() else {

@@ -24,6 +24,7 @@
 
 extern crate gpui_kit as gpui;
 
+mod batch;
 mod comments;
 mod dialog;
 mod find;
@@ -63,6 +64,7 @@ use pdf_engine::{Dest, Link, LinkTarget, OpenError, OutlineItem, PageText, Turn}
 
 use model::{Model, PageKey, PageRef};
 
+pub use batch::register_plugin as register_batch_plugin;
 pub use dialog::PdfEvent;
 pub use layout::Zoom;
 use layout::{Column, ImageCache, PX_PER_PT};

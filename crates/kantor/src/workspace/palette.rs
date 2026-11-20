@@ -2140,6 +2140,12 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.reduce_file_size(w, cx)),
     },
     Command {
+        title: tk("Batch…"),
+        detail: tk("PDF · stamp, sign, fill or number many PDFs at once"),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.open_batch(w, cx)),
+    },
+    Command {
         title: tk("New Presentation"),
         detail: "Slides",
         keys: "Ctrl Alt N",

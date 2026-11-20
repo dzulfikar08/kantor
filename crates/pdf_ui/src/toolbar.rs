@@ -310,6 +310,8 @@ fn tool_items(
     .item(item(tk("Reduce File Size…"), |v, w, cx| {
         v.reduce_file_size(w, cx)
     }))
+    .separator()
+    .item(item(tk("Batch…"), |v, w, cx| v.open_batch(w, cx)))
 }
 
 fn zoom_items(menu: PopupMenu, view: &WeakEntity<PdfView>) -> PopupMenu {
