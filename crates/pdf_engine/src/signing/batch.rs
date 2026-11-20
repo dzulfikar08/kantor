@@ -86,10 +86,11 @@ impl LevelName {
 }
 
 /// Where the signature shows.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum Appearance {
     /// No box (listed in the signature panel only).
+    #[default]
     Invisible,
     /// An existing empty signature field, by name.
     Field { name: String },
@@ -117,12 +118,6 @@ fn box_width() -> f32 {
 
 fn box_height() -> f32 {
     60.0
-}
-
-impl Default for Appearance {
-    fn default() -> Self {
-        Appearance::Invisible
-    }
 }
 
 /// The sign step's options.
