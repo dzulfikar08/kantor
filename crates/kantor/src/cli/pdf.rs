@@ -64,6 +64,7 @@ tools:\n\
 \x20 page-numbers  number the pages\n\
 \x20 compress      make the file smaller without losing quality\n\
 \x20 verify        check the digital signatures (exit 0 = all valid)\n\
+\x20 sign          sign with a certificate (PAdES; .p12/.pfx, token or system store)\n\
 \n\
 Run `kantor pdf <tool> --help` for a tool's options.\n\
 \n\
@@ -169,6 +170,311 @@ after signing.\n\
 \n\
 Exit status: 0 signed and all signatures valid, 1 a signature has problems,\n\
 3 not signed, 2 usage error.";
+
+const SIGN: &str = "usage: kantor pdf sign FILE... (--p12 FILE | --pkcs11 MODULE | --system) [options]\n\
+\n\
+Sign PDFs with your certificate (PAdES, like Acrobat's \"Use a certificate\").\n\
+The signature is added as an incremental update: earlier signatures stay valid.\n\
+\n\
+Where the key is:\n\
+\x20 --p12 FILE           a PKCS #12 file (.p12/.pfx)\n\
+\x20 --password-file F    its password: the first line of F (- reads standard\n\
+\x20                      input); or set KANTOR_P12_PASSWORD. Never pass it as an argument\n\
+\x20 --pkcs11 MODULE      a USB token or smart card through its PKCS #11 module\n\
+\x20                      (.so/.dylib/.dll); the PIN comes from --pin-file or KANTOR_PIN\n\
+\x20 --pin-file F         the token PIN (first line of F; - for standard input)\n\
+\x20 --system             the macOS keychain or the Windows certificate store\n\
+\x20 --cert TEXT          pick the certificate whose name contains TEXT (tokens, system)\n\
+\n\
+The signature:\n\
+\x20 --field NAME         sign this empty signature field\n\
+\x20 --page N --rect X,Y,W,H   draw a new visible signature (points from the\n\
+\x20                      page's bottom left); without these it is invisible\n\
+\x20 --image PNG          a picture (your handwritten signature) beside the text\n\
+\x20 --reason TEXT, --location TEXT, --contact TEXT\n\
+\x20 --certify N          certify the document: 1 no changes, 2 form filling and\n\
+\x20                      signing, 3 also comments\n\
+\x20 --pss                RSASSA-PSS instead of PKCS #1 v1.5 (RSA keys)\n\
+\n\
+Time stamps and long-term validation (these go online):\n\
+\x20 --tsa URL            RFC 3161 time-stamp server: PAdES B-T\n\
+\x20 --lt                 also embed the certificates, OCSP and CRLs: B-LT\n\
+\x20 --lta                also add a document time stamp: B-LTA (needs --tsa)\n\
+\x20 --trust FILE         extra root certificates for building the chain (--lt)\n\
+\n\
+Output: -o OUT.pdf for one file, -o DIR for several (default: FILE-signed.pdf).";
+
+fn read_secret(file: Option<&str>, env: &str) -> Result<Option<String>, Failure> {
+    let Some(f) = file else {
+        return Ok(std::env::var(env).ok());
+    };
+    let text = if f == "-" {
+        let mut s = String::new();
+        std::io::stdin()
+            .read_line(&mut s)
+            .map_err(|e| Failure::usage(format!("can't read standard input: {e}")))?;
+        s
+    } else {
+        std::fs::read_to_string(f).map_err(|e| Failure::usage(format!("{f}: {e}")))?
+    };
+    Ok(Some(
+        text.lines()
+            .next()
+            .unwrap_or("")
+            .trim_end_matches('\r')
+            .to_string(),
+    ))
+}
+
+fn sign_failure(e: pdf_engine::signing::Error) -> Failure {
+    Failure {
+        message: e.to_string(),
+        code: 1,
+    }
+}
+
+fn sign(rest: &[String], usage: &str) -> Outcome {
+    use pdf_engine::signatures as sigs;
+    use pdf_engine::signing::{self, Identity, Level, stores};
+    let args = Args::parse(
+        rest,
+        &[
+            "output",
+            "password",
+            "p12",
+            "password-file",
+            "pkcs11",
+            "pin-file",
+            "cert",
+            "field",
+            "page",
+            "rect",
+            "image",
+            "reason",
+            "location",
+            "contact",
+            "certify",
+            "tsa",
+            "trust",
+        ],
+        &["force", "help", "system", "lt", "lta", "pss"],
+        usage,
+    )?;
+    if args.positional.is_empty() {
+        return Err(Failure::usage(format!("missing FILE\n\n{usage}")));
+    }
+    let pick = |c: &stores::Candidate| {
+        args.value("cert").is_none_or(|t| {
+            c.cert
+                .subject_name()
+                .display_name()
+                .to_lowercase()
+                .contains(&t.to_lowercase())
+        })
+    };
+    let choose =
+        |found: Vec<stores::Candidate>, from: &str| -> Result<stores::Candidate, Failure> {
+            let mut found: Vec<_> = found.into_iter().filter(pick).collect();
+            match found.len() {
+                0 => Err(Failure {
+                    message: format!("no signing certificate found in {from}"),
+                    code: 1,
+                }),
+                1 => Ok(found.remove(0)),
+                _ => Err(Failure::usage(format!(
+                    "several certificates in {from}; pick one with --cert: {}",
+                    found
+                        .iter()
+                        .map(|c| format!("\"{}\"", c.cert.subject_name().display_name()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))),
+            }
+        };
+    let id: Identity = match (args.value("p12"), args.value("pkcs11"), args.flag("system")) {
+        (Some(p), None, false) => {
+            let data = std::fs::read(p).map_err(|e| Failure {
+                message: format!("{p}: {e}"),
+                code: 1,
+            })?;
+            let pw = read_secret(args.value("password-file"), "KANTOR_P12_PASSWORD")?
+                .unwrap_or_default();
+            Identity::from_p12(&data, &pw, Path::new(p)).map_err(|e| Failure {
+                message: format!("{p}: {e}"),
+                code: 1,
+            })?
+        }
+        (None, Some(m), false) => {
+            let c = choose(stores::token_candidates(m).map_err(sign_failure)?, m)?;
+            let pin = read_secret(args.value("pin-file"), "KANTOR_PIN")?;
+            if pin.is_none() && !c.pin_pad() {
+                return Err(Failure::usage(
+                    "give the token PIN with --pin-file (or KANTOR_PIN)",
+                ));
+            }
+            c.unlock(pin.as_deref()).map_err(sign_failure)?
+        }
+        (None, None, true) => {
+            if !stores::SYSTEM_STORE {
+                return Err(Failure::usage(
+                    "--system works on macOS and Windows; on Linux use --p12 or --pkcs11",
+                ));
+            }
+            let c = choose(
+                stores::system_candidates().map_err(sign_failure)?,
+                "the system store",
+            )?;
+            c.unlock(None).map_err(sign_failure)?
+        }
+        _ => {
+            return Err(Failure::usage(format!(
+                "give exactly one of --p12, --pkcs11 or --system\n\n{usage}"
+            )));
+        }
+    };
+
+    let place = match (args.value("field"), args.value("page"), args.value("rect")) {
+        (Some(f), None, None) => kantor_pdf::sign::Place::Field(f.to_string()),
+        (None, Some(_), Some(r)) => {
+            let page: u32 = args.parse_value("page", "a page number")?.unwrap_or(1);
+            if page == 0 {
+                return Err(Failure::usage("--page counts from 1"));
+            }
+            let v: Vec<f32> = r
+                .split(',')
+                .map(|x| x.trim().parse::<f32>())
+                .collect::<Result<_, _>>()
+                .map_err(|_| Failure::usage(format!("--rect: \"{r}\" is not X,Y,W,H")))?;
+            if v.len() != 4 || v[2] <= 0.0 || v[3] <= 0.0 {
+                return Err(Failure::usage(format!("--rect: \"{r}\" is not X,Y,W,H")));
+            }
+            kantor_pdf::sign::Place::New {
+                page: page - 1,
+                rect: [v[0], v[1], v[0] + v[2], v[1] + v[3]],
+            }
+        }
+        (None, None, None) => kantor_pdf::sign::Place::Invisible,
+        _ => {
+            return Err(Failure::usage(format!(
+                "use either --field NAME or --page N --rect X,Y,W,H\n\n{usage}"
+            )));
+        }
+    };
+    let certify: Option<u8> = args.parse_value("certify", "1, 2 or 3")?;
+    if certify.is_some_and(|c| !(1..=3).contains(&c)) {
+        return Err(Failure::usage("--certify must be 1, 2 or 3"));
+    }
+    let level = if args.flag("lta") {
+        Level::Lta
+    } else if args.flag("lt") {
+        Level::Lt
+    } else if args.value("tsa").is_some() {
+        Level::T
+    } else {
+        Level::B
+    };
+    if level == Level::Lta && args.value("tsa").is_none() {
+        return Err(Failure::usage(
+            "--lta needs a time-stamp server (--tsa URL)",
+        ));
+    }
+    let image = match args.value("image") {
+        Some(p) => {
+            Some(std::fs::read(p).map_err(|e| Failure::usage(format!("--image: {p}: {e}")))?)
+        }
+        None => None,
+    };
+    let mut trust = sigs::TrustStore::standard();
+    if let Some(path) = args.value("trust") {
+        let data =
+            std::fs::read(path).map_err(|e| Failure::usage(format!("--trust: {path}: {e}")))?;
+        for c in sigs::x509::parse_pem_or_der(&data) {
+            trust.add(c);
+        }
+    }
+    let http = sigs::Http::new();
+    let now = sigs::now();
+    let mut opts = signing::Options::new(place.clone());
+    opts.reason = args.value("reason").map(str::to_owned);
+    opts.location = args.value("location").map(str::to_owned);
+    opts.contact = args.value("contact").map(str::to_owned);
+    opts.certify = certify;
+    opts.tsa = args.value("tsa").map(str::to_owned);
+    opts.level = level;
+    opts.pss = args.flag("pss");
+    // The command line asked for the network explicitly (--tsa/--lt).
+    opts.fetch = (level > Level::B).then_some(&http as &dyn sigs::Fetch);
+    opts.trust = trust;
+    opts.now = now;
+    if !matches!(place, kantor_pdf::sign::Place::Invisible) {
+        opts.look = Some(kantor_pdf::sign::Look {
+            lines: signing::look_lines(
+                &id.name(),
+                now,
+                opts.reason.as_deref(),
+                opts.location.as_deref(),
+                &signing::LookText::default(),
+            ),
+            art: image.map(|b| kantor_pdf::annot::Art::Image(std::sync::Arc::new(b))),
+        });
+    }
+
+    let inputs: Vec<PathBuf> = args.positional.iter().map(PathBuf::from).collect();
+    let many = inputs.len() > 1;
+    let out_dir = match args.value("output") {
+        Some(o) if many || Path::new(o).is_dir() => {
+            std::fs::create_dir_all(o).map_err(|e| Failure {
+                message: format!("{o}: {e}"),
+                code: 1,
+            })?;
+            Some(PathBuf::from(o))
+        }
+        _ => None,
+    };
+    let mut report = String::new();
+    let mut failed = 0;
+    for input in &inputs {
+        let output = match &out_dir {
+            Some(d) => d.join(input.file_name().unwrap_or_default()),
+            None => output_path(&args, input, "signed"),
+        };
+        let result = (|| -> Result<usize, Failure> {
+            check_overwrite(&output, args.flag("force"))?;
+            if output == *input {
+                return Err(Failure::usage("the output would replace the input"));
+            }
+            let bytes = kantor_pdf::read(input)?;
+            let signed = signing::sign(&bytes, &id, &opts).map_err(sign_failure)?;
+            write_file(&output, &signed)?;
+            Ok(signed.len())
+        })();
+        match result {
+            Ok(n) => {
+                let _ = writeln!(
+                    report,
+                    "{}: signed by {} ({}) → {}",
+                    input.display(),
+                    id.name(),
+                    human_size(n),
+                    output.display()
+                );
+            }
+            Err(f) if !many => return Err(f.prefixed(input)),
+            Err(f) => {
+                failed += 1;
+                let _ = writeln!(report, "{}: {}", input.display(), f.message);
+            }
+        }
+    }
+    if failed > 0 {
+        eprint!("{report}");
+        return Err(Failure {
+            message: format!("{failed} of {} files could not be signed", inputs.len()),
+            code: 1,
+        });
+    }
+    Ok(report.trim_end().to_string())
+}
 
 /// `kantor pdf verify`: the report and the exit code.
 pub fn verify(rest: &[String]) -> (String, i32) {
@@ -422,6 +728,7 @@ pub fn run(args: &[String]) -> Outcome {
         "watermark" => (WATERMARK, watermark),
         "page-numbers" | "number" | "numbers" => (PAGE_NUMBERS, page_numbers),
         "compress" => (COMPRESS, compress),
+        "sign" => (SIGN, sign),
         other => {
             return Err(Failure::usage(format!(
                 "unknown tool \"{other}\"\n\n{USAGE}"
@@ -1083,6 +1390,84 @@ mod tests {
 
     fn s(v: &[&str]) -> Vec<String> {
         v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn sign_then_verify() {
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pdf_engine/tests/fixtures/signing"
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let input = tmp.path().join("in.pdf");
+        std::fs::write(&input, kantor_pdf::testing::sample_pdf(1)).unwrap();
+        let pw = tmp.path().join("pw");
+        std::fs::write(&pw, "kantor-test\n").unwrap();
+        let out = tmp.path().join("out.pdf");
+        let p12 = format!("{dir}/rsa.p12");
+        let msg = run(&s(&[
+            "sign",
+            input.to_str().unwrap(),
+            "-o",
+            out.to_str().unwrap(),
+            "--p12",
+            &p12,
+            "--password-file",
+            pw.to_str().unwrap(),
+            "--page",
+            "1",
+            "--rect",
+            "72,72,200,50",
+            "--reason",
+            "Approved",
+            "--certify",
+            "2",
+        ]))
+        .unwrap();
+        assert!(msg.contains("signed by Budi Santoso"), "{msg}");
+        let root = format!("{dir}/root.pem");
+        let (text, code) = verify(&s(&[
+            out.to_str().unwrap(),
+            "--trust",
+            &root,
+            "--no-system-roots",
+        ]));
+        // Intact and trusted; revocation can't be checked offline.
+        assert!(text.contains("Budi Santoso"), "{text}");
+        assert!(code == 0 || code == 1, "{text}");
+        assert!(!text.contains("altered"), "{text}");
+        // Several files into a folder.
+        let many = tmp.path().join("many");
+        let second = tmp.path().join("second.pdf");
+        std::fs::copy(&input, &second).unwrap();
+        let msg = run(&s(&[
+            "sign",
+            input.to_str().unwrap(),
+            second.to_str().unwrap(),
+            "-o",
+            many.to_str().unwrap(),
+            "--p12",
+            &p12,
+            "--password-file",
+            pw.to_str().unwrap(),
+        ]))
+        .unwrap();
+        assert_eq!(msg.lines().count(), 2, "{msg}");
+        assert!(many.join("second.pdf").exists());
+        // A wrong password is an error, not a crash.
+        std::fs::write(&pw, "nope").unwrap();
+        let err = run(&s(&[
+            "sign",
+            input.to_str().unwrap(),
+            "-o",
+            tmp.path().join("x.pdf").to_str().unwrap(),
+            "--p12",
+            &p12,
+            "--password-file",
+            pw.to_str().unwrap(),
+        ]))
+        .unwrap_err();
+        assert!(err.message.contains("password"), "{}", err.message);
     }
 
     #[test]

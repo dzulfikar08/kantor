@@ -306,6 +306,15 @@ pub fn prepare(bytes: &[u8], req: &Request) -> Result<Prepared> {
             ));
         }
     }
+    // After a certification, a new visible field changes the page: only
+    // existing empty fields or invisible signatures are allowed changes
+    // (as Acrobat and pyHanko judge DocMDP).
+    if existing.is_some_and(|s| s.docmdp.is_some()) && matches!(req.place, Place::New { .. }) {
+        return Err(Error::Invalid(
+            "the document is certified: sign one of its empty signature fields, or sign invisibly"
+                .into(),
+        ));
+    }
     if req.reserve == 0 || req.reserve > 1 << 20 {
         return Err(Error::Invalid("bad signature size".into()));
     }

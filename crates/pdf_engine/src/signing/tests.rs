@@ -256,6 +256,9 @@ fn certification_then_approval_signature() {
         lines: vec!["Agus Wijaya".into()],
         art: None,
     });
+    // A new visible field would change the certified page: refused.
+    assert!(sign(&once, &other, &o2).is_err());
+    let o2 = opts(Place::Invisible, None);
     let twice = sign(&once, &other, &o2).unwrap();
     assert!(twice.starts_with(&once));
     let r = check(&twice);

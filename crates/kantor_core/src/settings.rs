@@ -291,12 +291,38 @@ pub struct PdfSettings {
     /// on, nothing is fetched until the user clicks Check Online for a
     /// document. Off, signatures are checked only with what the file holds.
     pub online_signature_checks: bool,
+    /// Sign with Certificate: the RFC 3161 time-stamp server (empty: none).
+    /// Used only when the user ticks "Add a time stamp" and online
+    /// signature checks are allowed.
+    pub signing_tsa_url: String,
+    /// Sign with Certificate: tick "Add a time stamp" by default.
+    pub signing_timestamp: bool,
+    /// Sign with Certificate: tick "Add validation data (LTV)" by default.
+    pub signing_ltv: bool,
+    /// Sign with Certificate: the last reason and location.
+    pub signing_reason: String,
+    pub signing_location: String,
+    /// Sign with Certificate: show the signature on the page (else invisible).
+    pub signing_visible: bool,
+    /// PKCS #11 modules (USB tokens, smart cards) to look for certificates
+    /// in, besides the usual places.
+    pub pkcs11_modules: Vec<String>,
+    /// Certificate files (.p12/.pfx) used before. Never their passwords.
+    pub certificate_files: Vec<String>,
 }
 
 impl Default for PdfSettings {
     fn default() -> Self {
         Self {
             online_signature_checks: true,
+            signing_tsa_url: String::new(),
+            signing_timestamp: false,
+            signing_ltv: false,
+            signing_reason: String::new(),
+            signing_location: String::new(),
+            signing_visible: true,
+            pkcs11_modules: Vec::new(),
+            certificate_files: Vec::new(),
         }
     }
 }
@@ -461,6 +487,9 @@ mod tests {
             },
             pdf: PdfSettings {
                 online_signature_checks: false,
+                signing_tsa_url: "http://timestamp.example.com".into(),
+                certificate_files: vec!["/home/x/me.p12".into()],
+                ..Default::default()
             },
             language: Some("id".into()),
             number_format: Some("en".into()),

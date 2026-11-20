@@ -398,3 +398,52 @@ fn validation_data(cms: &[u8], trust: &TrustStore, fetch: &dyn Fetch, now: i64, 
         }
     }
 }
+
+/// Wording of a visible signature's text, with `{}` for the value (the
+/// UI passes translations).
+#[derive(Clone, Debug)]
+pub struct LookText {
+    pub signed_by: String,
+    pub date: String,
+    pub reason: String,
+    pub location: String,
+}
+
+impl Default for LookText {
+    fn default() -> Self {
+        LookText {
+            signed_by: "Digitally signed by {}".into(),
+            date: "Date: {}".into(),
+            reason: "Reason: {}".into(),
+            location: "Location: {}".into(),
+        }
+    }
+}
+
+/// `2026.11.20 07:30:12 UTC`, as Acrobat shows signing dates.
+pub fn look_date(t: i64) -> String {
+    let (y, mo, d, h, mi, s) = crate::signatures::der::civil(t);
+    format!("{y:04}.{mo:02}.{d:02} {h:02}:{mi:02}:{s:02} UTC")
+}
+
+/// The usual lines of a visible signature: who, when, why and where.
+pub fn look_lines(
+    name: &str,
+    time: i64,
+    reason: Option<&str>,
+    location: Option<&str>,
+    words: &LookText,
+) -> Vec<String> {
+    let fill = |t: &str, v: &str| t.replacen("{}", v, 1);
+    let mut lines = vec![
+        fill(&words.signed_by, name),
+        fill(&words.date, &look_date(time)),
+    ];
+    if let Some(r) = reason.filter(|r| !r.trim().is_empty()) {
+        lines.push(fill(&words.reason, r));
+    }
+    if let Some(l) = location.filter(|l| !l.trim().is_empty()) {
+        lines.push(fill(&words.location, l));
+    }
+    lines
+}

@@ -24,6 +24,7 @@
 
 extern crate gpui_kit as gpui;
 
+mod certsign;
 mod comments;
 mod dialog;
 mod find;
@@ -340,6 +341,8 @@ pub struct PdfView {
     pub(crate) markup: markup::Markup,
     /// The signature / stamp dialog.
     pub(crate) sign: Option<sign::SignDialog>,
+    /// Sign with Certificate.
+    pub(crate) cert_sign: Option<certsign::CertSign>,
     /// Told once that page changes invalidate the signature.
     signed_warned: bool,
     /// Where the page's right-click menu was opened (page, user point).
@@ -463,6 +466,7 @@ impl PdfView {
             context_at: None,
             markup: markup::Markup::new(),
             sign: None,
+            cert_sign: None,
             signed_warned: false,
             recovered: None,
             opened_dirty: None,
@@ -1892,6 +1896,7 @@ impl Render for PdfView {
         );
         let dialog = self.render_dialog(cx);
         let sign = self.render_sign(cx);
+        let cert_sign = self.render_cert_sign(cx);
         let cert_dialog = signatures::cert_dialog(self, cx);
         let banner = if ready {
             signatures::banner(self, cx)
@@ -1908,6 +1913,7 @@ impl Render for PdfView {
             .child(body)
             .children(dialog)
             .children(sign)
+            .children(cert_sign)
             .children(cert_dialog)
     }
 }

@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- PDF: *Sign with Certificate…* signs a PDF digitally with your own certificate, as Acrobat's "Use a certificate" does: a `.p12`/`.pfx` file, a USB token or smart card (PKCS #11), or the macOS keychain / Windows certificate store. The signature can be visible (in a box you draw or an empty signature field, with your name, date, reason, location and optionally your signature picture) or invisible, can certify the document, and can carry a time stamp and long-term validation data (PAdES B-T, B-LT). The signed copy is saved as a new file and earlier signatures stay valid. Your password or PIN is never saved.
+- `kantor pdf sign` signs one or many PDFs from the command line (PAdES B-B to B-LTA, `--certify`, `--field` or `--page`/`--rect`, `--image`, `--tsa`, `--lt`, `--lta`).
+- The signature checker now also trusts BSrE's OSD LU Kelas 2 root, so the certificate chain of Indonesian government documents signed through BSrE (the Ministry of Finance's regulations, for example) ends at a trusted root. Older ones can still show "Validity unknown": that root and its time-stamp authority expired in August 2026 and the files carry no long-term validation data.
+
 ## [0.18.0] - 2026-11-20
 
 The PDF app gets comments, forms, Fill & Sign and image stamps such as a company stamp with a transparent

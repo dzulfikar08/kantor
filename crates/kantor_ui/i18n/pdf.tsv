@@ -404,3 +404,52 @@ Type your name	Ketik nama Anda
 Underline Text	Garis Bawahi Teks
 Write a reply	Tulis balasan
 p. {}	hlm. {}
+Sign with Certificate…	Tanda Tangani dengan Sertifikat…
+Sign with Certificate	Tanda Tangani dengan Sertifikat
+PDF · digitally sign with your certificate (.p12/.pfx file, token or system store)	PDF · tanda tangani secara digital dengan sertifikat Anda (berkas .p12/.pfx, token, atau penyimpanan sistem)
+A digital signature with your certificate: it shows who signed and that the document hasn't changed since. The signed document is saved as a new file.	Tanda tangan digital dengan sertifikat Anda: menunjukkan siapa yang menandatangani dan bahwa dokumen tidak berubah sejak itu. Dokumen yang ditandatangani disimpan sebagai berkas baru.
+Add Token Module…	Tambah Modul Token…
+Add a time stamp	Tambahkan cap waktu
+Add validation data (LTV)	Tambahkan data validasi (LTV)
+Appearance	Tampilan
+Certificate	Sertifikat
+Certify	Sertifikasi
+Choose a certificate file (.p12 or .pfx)	Pilih berkas sertifikat (.p12 atau .pfx)
+Choose a certificate first.	Pilih sertifikat terlebih dahulu.
+Choose the token's PKCS #11 module	Pilih modul PKCS #11 token
+Date: {}	Tanggal: {}
+Digitally signed by {}	Ditandatangani secara digital oleh {}
+Drag a box on the page where the signature goes.	Seret kotak di halaman tempat tanda tangan diletakkan.
+Draw a Box	Gambar Kotak
+Field “{}”	Bidang “{}”
+File: {}	Berkas: {}
+Invisible	Tidak terlihat
+Location: {}	Lokasi: {}
+Reason: {}	Alasan: {}
+Looking for certificates…	Mencari sertifikat…
+No Picture	Tanpa Gambar
+No certificates found. Open your certificate file (.p12 or .pfx), or add your token's module.	Sertifikat tidak ditemukan. Buka berkas sertifikat Anda (.p12 atau .pfx), atau tambahkan modul token Anda.
+No signing certificates on the tokens this module sees. Is the token plugged in?	Tidak ada sertifikat penandatanganan pada token yang terlihat oleh modul ini. Apakah token sudah terpasang?
+Not signed	Tidak ditandatangani
+Not signed: {}	Tidak ditandatangani: {}
+Open Certificate File…	Buka Berkas Sertifikat…
+Save your changes first, then sign the saved document.	Simpan perubahan Anda terlebih dahulu, lalu tanda tangani dokumen yang tersimpan.
+Signed and saved as {}	Ditandatangani dan disimpan sebagai {}
+Signing…	Menandatangani…
+Sign…	Tanda Tangani…
+System certificate store	Penyimpanan sertifikat sistem
+The password or PIN is wrong.	Kata sandi atau PIN salah.
+The token is locked after too many wrong PINs.	Token terkunci karena terlalu banyak PIN yang salah.
+Time stamps and validation data need the internet. Turn on “Let Signature Checks Use the Internet” first.	Cap waktu dan data validasi memerlukan internet. Aktifkan “Izinkan Pemeriksaan Tanda Tangan Memakai Internet” terlebih dahulu.
+Time stamps go online: turn on “Let Signature Checks Use the Internet” in the command palette.	Cap waktu memerlukan internet: aktifkan “Izinkan Pemeriksaan Tanda Tangan Memakai Internet” di palet perintah.
+Token: {}	Token: {}
+Type the address of a time-stamp server.	Ketik alamat server cap waktu.
+Type the token's PIN.	Ketik PIN token.
+Password or PIN	Kata sandi atau PIN
+Reason (optional)	Alasan (opsional)
+Location (optional)	Lokasi (opsional)
+Time-stamp server address (https://…)	Alamat server cap waktu (https://…)
+Don't Certify	Jangan Sertifikasi
+No Changes Allowed	Tidak Boleh Ada Perubahan
+Form Filling and Signing	Pengisian Formulir dan Penandatanganan
+Also Comments	Juga Komentar

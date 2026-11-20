@@ -29,6 +29,7 @@ pub fn certificates() -> Result<Vec<SystemCert>, Error> {
 }
 
 #[cfg(target_os = "macos")]
+#[allow(unsafe_code)]
 mod imp {
     use security_framework::identity::SecIdentity;
     use security_framework::item::{ItemClass, ItemSearchOptions, Limit, Reference, SearchResult};
@@ -39,7 +40,11 @@ mod imp {
 
     pub struct Handle(SecIdentity);
 
-    // SecIdentity is a CoreFoundation reference, safe to move between threads.
+    // SAFETY: SecIdentity is an immutable, reference-counted CoreFoundation
+    // object; Security.framework allows using it from any thread.
+    unsafe impl Send for Handle {}
+    unsafe impl Sync for Handle {}
+
     pub fn list() -> Result<Vec<SystemCert>, Error> {
         let found = ItemSearchOptions::new()
             .class(ItemClass::identity())
