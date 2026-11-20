@@ -634,3 +634,17 @@ Let Signature Checks Use the Internet	Izinkan Pemeriksaan Tanda Tangan Memakai I
 PDF · fetch missing certificates and revocation status when you ask (turn on or off)	PDF · ambil sertifikat yang hilang dan status pencabutan saat Anda minta (aktifkan atau nonaktifkan)
 Signature checks may use the internet when you click Check Online	Pemeriksaan tanda tangan boleh memakai internet saat Anda mengeklik Periksa Daring
 Signature checks use only what the file contains	Pemeriksaan tanda tangan hanya memakai isi berkas
+
+# Mail merge (palette)
+Mailings (Mail Merge)	Surat Massal (Mail Merge)
+Docs · letters, certificates and labels filled in from a workbook or CSV file	Docs · surat, sertifikat, dan label yang diisi dari buku kerja atau file CSV
+Select Recipients…	Pilih Penerima…
+Docs · mail merge: the workbook or CSV file with the recipients	Docs · surat massal: buku kerja atau file CSV berisi penerima
+Preview Results	Pratinjau Hasil
+Docs · mail merge: show a recipient's values in the merge fields, or the field names	Docs · surat massal: tampilkan data penerima di bidang gabungan, atau nama bidangnya
+Highlight Merge Fields	Sorot Bidang Gabungan
+Docs · mail merge: shade the merge fields	Docs · surat massal: beri arsiran pada bidang gabungan
+Finish & Merge: Edit Individual Documents	Selesai & Gabungkan: Edit Dokumen Individual
+Docs · mail merge: every recipient in one new document, a section each	Docs · surat massal: semua penerima dalam satu dokumen baru, masing-masing satu bagian
+Finish & Merge: Save as PDF, One per Recipient…	Selesai & Gabungkan: Simpan sebagai PDF, Satu per Penerima…
+Docs · mail merge: a PDF for each recipient, named from a field	Docs · surat massal: satu PDF untuk setiap penerima, dinamai dari sebuah bidang

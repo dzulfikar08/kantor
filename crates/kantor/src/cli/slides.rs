@@ -26,6 +26,7 @@ pub const USAGE: &str = "usage: kantor slides build DECK.json -o OUT.pptx [-f]\n
     \x20      kantor slides edit FILE.pptx [-o OUT.pptx] [-f] TOOL ARGS\n\
     \x20      kantor slides edit FILE.pptx [-o OUT.pptx] [-f] --ops OPS.json\n\
     \x20      kantor slides schema\n\
+    \x20      kantor slides merge TEMPLATE.pptx DATA -o DIR [options]\n\
     \n\
     Build and change presentations without opening a window, with the JSON\n\
     of Kantor's MCP slides tools (docs/slides-json.md).\n\
@@ -47,6 +48,9 @@ pub const USAGE: &str = "usage: kantor slides build DECK.json -o OUT.pptx [-f]\n
     \x20          {\"tool\": ..., \"args\": {...}}. Relative picture paths start\n\
     \x20          from the current folder.\n\
     \x20 schema   print the JSON Schema of decks and elements\n\
+    \x20 merge    one presentation per record of a workbook or CSV file,\n\
+    \x20          {{Field}} in the slides' text filled in (kantor slides\n\
+    \x20          merge --help)\n\
     \n\
     Options:\n\
     \x20 -o, --output FILE   the .pptx to write\n\
@@ -145,6 +149,9 @@ pub fn main(args: &[OsString]) -> i32 {
         eprintln!("{USAGE}");
         return 2;
     };
+    if cmd == "merge" {
+        return super::merge::main(super::merge::App::Slides, &args[1..]);
+    }
     if matches!(cmd, "-h" | "--help" | "help") || args.iter().any(|a| a == "-h" || a == "--help") {
         println!("{USAGE}");
         return 0;

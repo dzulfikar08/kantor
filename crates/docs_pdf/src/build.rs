@@ -75,6 +75,9 @@ pub struct Marks {
     pub pages: Option<[String; 3]>,
     /// Fields showing their codes (Alt+F9 / Shift+F9).
     pub codes: Option<Arc<docs_engine::CodeView>>,
+    /// Merge fields showing a record's values (Preview Results), by
+    /// field start mark.
+    pub merge: Option<Arc<HashMap<usize, String>>>,
 }
 
 impl Marks {
@@ -91,6 +94,7 @@ impl Marks {
             no_floats: false,
             pages: None,
             codes: doc.field_codes().cloned(),
+            merge: doc.merge_view().cloned(),
         }
     }
 
@@ -360,6 +364,54 @@ pub fn layout_paragraph(
     // Empty paragraphs take their height from the paragraph defaults above.
     lp.spans.retain(|s| !s.range.is_empty());
     lp
+}
+
+/// Merge fields showing a record's value (Preview Results) in place of
+/// their results: the value at the start mark, the result hidden.
+fn show_merge_values(
+    paras: &[docs_engine::Paragraph],
+    out: &mut [docs_layout::Paragraph],
+    values: &HashMap<usize, String>,
+    codes: Option<&docs_engine::CodeView>,
+) {
+    let spans = docs_engine::fields::spans(paras);
+    for s in &spans {
+        let Some(value) = values.get(&s.mark_id()) else {
+            continue;
+        };
+        if codes.is_some_and(|c| c.shows(s.mark_id())) {
+            continue;
+        }
+        if let Some(o) = out[s.begin.para]
+            .objects
+            .iter_mut()
+            .find(|o| o.index == s.begin.offset)
+        {
+            o.kind = ObjectKind::Text;
+            o.label = value.clone();
+            o.width = 0.0;
+            o.height = 0.0;
+        }
+        let (a, b) = s.result();
+        for k in a.para..=b.para.min(out.len().saturating_sub(1)) {
+            let from = if k == a.para { a.offset } else { 0 };
+            let to = if k == b.para {
+                b.offset
+            } else {
+                paras[k].text.len()
+            };
+            if from >= to {
+                continue;
+            }
+            out[k].hidden.push(from..to);
+            for o in &mut out[k].objects {
+                if (from..to).contains(&o.index) {
+                    o.kind = ObjectKind::Hidden;
+                    o.label.clear();
+                }
+            }
+        }
+    }
 }
 
 /// Fields showing their codes: `{ PAGEREF _Toc1 \h }` at the start mark,
@@ -760,6 +812,9 @@ pub fn build_with(
             layout_paragraph(doc, p, marker, widths[k], marks)
         })
         .collect();
+    if let Some(values) = &marks.merge {
+        show_merge_values(paras, &mut out, values, marks.codes.as_deref());
+    }
     if let Some(view) = &marks.codes {
         show_codes(paras, &mut out, view);
     }

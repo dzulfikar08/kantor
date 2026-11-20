@@ -1471,6 +1471,8 @@ impl Document {
         }
         merge_boxes(self, &mut paras, &start, keep_blank);
         let mut doc = self.snapshot(paras);
+        // A new, untitled document (saving it never touches the template).
+        doc.set_path_none();
         doc.mail_merge = None;
         doc.field_codes = None;
         doc.merge_view = None;

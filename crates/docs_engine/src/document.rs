@@ -502,6 +502,12 @@ impl Document {
         self.history.changes
     }
 
+    /// Forget the file (and any import source): the document is untitled.
+    pub(crate) fn set_path_none(&mut self) {
+        self.path = None;
+        self.imported = None;
+    }
+
     /// Unsaved, whatever the undo history says (a restored recovery copy).
     pub fn mark_modified(&mut self) {
         self.history.saved = Some(u64::MAX);

@@ -1,0 +1,25 @@
+[package]
+name = "kantor_merge"
+description = "Mail merge: recipients from a workbook or CSV file, and Docs, Slides and Sheets templates filled in per record (one file each, or one document)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+docs_engine.workspace = true
+docs_pdf.workspace = true
+sheets_engine.workspace = true
+sheets_pdf.workspace = true
+slides_engine.workspace = true
+slides_pdf.workspace = true
+tempfile.workspace = true
+zip.workspace = true
+
+[dev-dependencies]

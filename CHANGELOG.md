@@ -9,6 +9,24 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Mail merge in Docs, as Word's Mailings tab: the toolbar's envelope button shows a Mailings bar. *Select
+  Recipients* takes a workbook or CSV file (`.xlsx`, `.xls`, `.xlsb`, `.ods`, `.csv`); *Edit Recipient List* picks
+  the sheet and header row, filters and sorts the rows and ticks who gets one; *Insert Merge Field*, *Highlight Merge
+  Fields* and *Preview Results* (with the record arrows) work as in Word. *Finish & Merge* makes one new document
+  with a section per recipient, one `.docx` or PDF per recipient named from a field (`{Name} - Offer`), or prints
+  them all. Word's merge fields work: `MERGEFIELD` with its text and format switches, `IF` on merge fields, `NEXT`,
+  `NEXTIF`, `SKIPIF`, `MERGEREC` and `MERGESEQ`, in headers, footers and text boxes too, and blank lines from empty
+  fields are left out. The data source, filter and sort are saved in the document as Word saves them, so the
+  template opens in Word with its recipients.
+- `kantor docs merge offer.docx staff.xlsx -o out/ --pdf --name "{Name} - Offer"` merges without a window (or
+  `--single all.docx` for one document; without the data file the template's own data source is used), with
+  `--sheet`, `--header-row`, `--where "Dept=Sales"` and `--sort`. `kantor slides merge` fills `{{Field}}` in a
+  presentation (certificates, name cards) and `kantor sheets merge` in a workbook's cells (a cell holding just a
+  number field keeps the number), one file per row, `.pptx`/`.xlsx` and/or PDF. The MCP server's `mail_merge` tool
+  does the same for AI agents.
+
 ## [0.18.0] - 2026-11-20
 
 The PDF app gets comments, forms, Fill & Sign and image stamps such as a company stamp with a transparent

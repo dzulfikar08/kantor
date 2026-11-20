@@ -2,5 +2,6 @@
 //! `kantor pdf …`, `kantor slides …`).
 
 pub mod convert;
+pub mod merge;
 pub mod pdf;
 pub mod slides;

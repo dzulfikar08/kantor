@@ -111,6 +111,12 @@ icon_assets!(
         Pentagon,
         MousePointer2,
         MessageSquareText,
+        // Docs: Mailings
+        Mail,
+        ChevronsLeft,
+        ChevronsRight,
+        FilePlus,
+        FileText,
         // PDF signature checker
         ShieldCheck,
         ShieldX,

@@ -30,6 +30,7 @@ mod floats;
 pub mod font_bridge;
 mod hf_menu;
 mod input;
+mod mailings;
 mod note_menu;
 mod page_menu;
 mod part;
@@ -65,6 +66,7 @@ use kantor_ui::{Tokens, metrics::*, tokens};
 
 pub use docs_engine::{MarginPreset, Orientation, PageGeometry, PaperSize};
 pub use font_bridge::FontBridge;
+pub use mailings::{DocsEvent, Finish as MergeFinish};
 pub use ruler::{ruler_visible, set_ruler_visible, toggle_ruler};
 
 pub use docs_engine::Toggle as DocsToggle;
@@ -562,6 +564,8 @@ pub struct DocsView {
     part: Option<part::PartSession>,
     /// The field code, Insert Field, Bookmark or Cross-reference popover.
     field_menu: Option<field_menu::FieldMenu>,
+    /// The Mailings bar (mail merge), when shown.
+    mailings: Option<mailings::Mailings>,
 }
 
 /// Cache key: everything that affects shaping and line breaking.
@@ -678,6 +682,7 @@ impl DocsView {
             painter: Rc::new(docs_pdf::floats::Painter::new(&doc_for_painter)),
             part: None,
             field_menu: None,
+            mailings: None,
         };
         this.relayout();
         this.refresh_spelling(cx);
@@ -807,6 +812,9 @@ impl DocsView {
         let was_dirty_title = self.title(cx);
         self.sel = self.doc.clamp_selection(sel);
         self.goal_x = None;
+        if self.mailings.as_ref().is_some_and(|m| m.preview) {
+            self.refresh_merge_view();
+        }
         self.relayout();
         self.refresh_find(cx);
         self.refresh_spelling(cx);
@@ -2141,6 +2149,8 @@ struct Frame {
     /// Find matches to highlight and the current one.
     found: find::Found,
     found_current: Option<usize>,
+    /// Merge fields to shade (Highlight Merge Fields).
+    merge_marks: Vec<(Position, Position)>,
     /// Markup column width (screen px; 0 without comments), comment
     /// ranges to highlight (and whether each is the active one) and the
     /// cards' anchor → card lines (window coordinates).
@@ -2329,6 +2339,14 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
                     );
                 };
             floats::paint_floats(f, &g, page, true, window, &mut text_box);
+            // Merge fields: Word's grey shading.
+            for (a, b) in &f.merge_marks {
+                for (p, r) in paged.selection_rects((a.para, a.offset), (b.para, b.offset)) {
+                    if p == page {
+                        window.paint_quad(fill(rect(page, r), hsla(0.0, 0.0, 0.5, 0.25)));
+                    }
+                }
+            }
             for (_, r, current) in found.iter().filter(|(p, _, _)| *p == page) {
                 let color = if *current {
                     f.t.find_match_current
@@ -2713,6 +2731,7 @@ impl Render for DocsView {
             guide: self.ruler_drag.filter(|d| !d.off).map(|d| d.x),
             found: self.found.clone(),
             found_current: self.found_current,
+            merge_marks: self.merge_highlights(),
             markup: if self.markup_visible() {
                 review::MARKUP_W
             } else {
@@ -2920,6 +2939,7 @@ impl Render for DocsView {
             .child(toolbar::render(self, cx))
             .children(self.render_banner(&t))
             .children(self.render_hf_menu(cx))
+            .children(self.render_mailings_bar(cx))
             .children(self.render_ruler(cx))
             .child(area)
             .children(self.render_table_picker(cx))
@@ -2930,6 +2950,7 @@ impl Render for DocsView {
             .children(self.render_split_menu(cx))
             .children(self.render_text_box_menu(cx))
             .children(self.render_field_menu(cx))
+            .children(self.render_recipients(cx))
     }
 }
 

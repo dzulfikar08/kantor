@@ -164,8 +164,85 @@ pub fn build_deck(args: &Value) -> Result<Value, String> {
     run().map_err(|e| format!("{e:#}"))
 }
 
+/// `mail_merge`: run the merge here, without the app.
+pub fn mail_merge(args: &Value) -> Result<Value, String> {
+    use crate::cli::merge::{App, Request, run};
+    let go = || -> anyhow::Result<Value> {
+        use anyhow::bail;
+        let a = crate::agent::req_str(args, "template")?;
+        let template = crate::agent::path_arg(a)?;
+        let path = |k: &str| -> anyhow::Result<Option<std::path::PathBuf>> {
+            crate::agent::opt_str(args, k)?
+                .map(crate::agent::path_arg)
+                .transpose()
+        };
+        let app = match template
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "pptx" => App::Slides,
+            "xlsx" => App::Sheets,
+            "docx" | "docm" | "dotx" | "doc" | "dot" | "rtf" => App::Docs,
+            _ => bail!("the template must be a .docx, .pptx or .xlsx file"),
+        };
+        let strings = |k: &str| -> Vec<String> {
+            args.get(k)
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let formats = strings("formats");
+        let sheet = match args.get("sheet") {
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(Value::Number(n)) => Some(n.to_string()),
+            _ => None,
+        };
+        let req = Request {
+            template,
+            data: path("data")?,
+            sheet,
+            header_row: args
+                .get("header_row")
+                .and_then(Value::as_u64)
+                .map(|n| n.max(1) as u32),
+            filters: strings("where"),
+            sort: strings("sort"),
+            dir: path("output_dir")?,
+            native: formats.iter().any(|f| f != "pdf"),
+            pdf: formats.iter().any(|f| f == "pdf"),
+            name: crate::agent::opt_str(args, "name")?.map(str::to_owned),
+            single: path("single")?,
+            force: crate::agent::opt_bool(args, "overwrite")?.unwrap_or(false),
+        };
+        if req.dir.is_none() && req.single.is_none() {
+            bail!("give `output_dir` (or `single` for one merged .docx)");
+        }
+        if req.data.is_none() && app != App::Docs {
+            bail!("give `data`, the workbook or CSV file");
+        }
+        let mut engine = None;
+        let report = run(app, &req, &mut engine)?;
+        Ok(json!({
+            "records": report.records,
+            "files": report.files,
+            "notes": report.notes,
+        }))
+    };
+    go().map_err(|e| format!("{e:#}"))
+}
+
 impl Backend for AppClient {
     fn call(&mut self, tool: &str, args: Value) -> Result<Value, String> {
+        if tool == "mail_merge" {
+            return mail_merge(&args);
+        }
         if tool == "slides_build" {
             let mut out = build_deck(&args)?;
             if args.get("open").and_then(Value::as_bool) == Some(true) {

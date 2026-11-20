@@ -1485,6 +1485,56 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.open_field_dialog_doc(w, cx)),
     },
     Command {
+        title: tk("Mailings (Mail Merge)"),
+        detail: tk("Docs · letters, certificates and labels filled in from a workbook or CSV file"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.toggle_mailings_doc(w, cx)),
+    },
+    Command {
+        title: tk("Select Recipients…"),
+        detail: tk("Docs · mail merge: the workbook or CSV file with the recipients"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.select_recipients_doc(w, cx)),
+    },
+    Command {
+        title: tk("Preview Results"),
+        detail: tk(
+            "Docs · mail merge: show a recipient's values in the merge fields, or the field names",
+        ),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.toggle_merge_preview_doc(w, cx))
+        },
+    },
+    Command {
+        title: tk("Highlight Merge Fields"),
+        detail: tk("Docs · mail merge: shade the merge fields"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.toggle_merge_highlight_doc(w, cx))
+        },
+    },
+    Command {
+        title: tk("Finish & Merge: Edit Individual Documents"),
+        detail: tk("Docs · mail merge: every recipient in one new document, a section each"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.finish_merge_doc(docs_ui::MergeFinish::Edit, w, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Finish & Merge: Save as PDF, One per Recipient…"),
+        detail: tk("Docs · mail merge: a PDF for each recipient, named from a field"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| {
+                v.finish_merge_doc(docs_ui::MergeFinish::Pdf, w, cx)
+            })
+        },
+    },
+    Command {
         title: tk("Insert Bookmark…"),
         detail: tk("Docs · name the selection to go to it or refer to it"),
         keys: "",
