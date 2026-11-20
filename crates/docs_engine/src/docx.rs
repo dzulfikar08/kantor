@@ -3328,13 +3328,18 @@ fn body_xml_raw(doc: &Document) -> String {
 /// settings.xml (`out`, the text so far) with the document's mail merge
 /// link, and settings.xml's relationships to match: the old data source
 /// relationships go, the new one is added.
+/// Parts to replace (by name) and to add.
+type PartChanges<'a> = (
+    &'a mut HashMap<String, Vec<u8>>,
+    &'a mut Vec<(String, Vec<u8>)>,
+);
+
 fn mail_merge_settings(
     src: &mut zip::ZipArchive<Cursor<&[u8]>>,
-    pkg: &Package,
     name: &str,
     out: &str,
     doc: &Document,
-    (replace, add): (&mut HashMap<String, Vec<u8>>, &mut Vec<(String, Vec<u8>)>),
+    (replace, add): PartChanges,
 ) -> anyhow::Result<String> {
     use crate::merge::{REL_MAIL_MERGE_SOURCE, REL_RECIPIENT_DATA};
     let rels_part = rels_name(name);
@@ -3396,7 +3401,6 @@ fn mail_merge_settings(
             add.push((rels_part, new_rels.into_bytes()));
         }
     }
-    let _ = pkg;
     Ok(text)
 }
 
@@ -3834,7 +3838,7 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
     {
         let mut out = settings.clone();
         if merge_changed {
-            out = mail_merge_settings(&mut src, pkg, name, &out, doc, (&mut replace, &mut add))?;
+            out = mail_merge_settings(&mut src, name, &out, doc, (&mut replace, &mut add))?;
         }
         if doc.default_tab() != tab_was {
             out = crate::tabs::set_settings_default_tab(&out, doc.default_tab());

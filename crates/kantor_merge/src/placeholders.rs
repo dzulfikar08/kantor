@@ -269,13 +269,16 @@ pub struct FilesOut {
     pub overwrite: Overwrite,
 }
 
+/// A record and its output files (path, and whether it is a PDF).
+type Planned = (usize, Vec<(PathBuf, bool)>);
+
 fn names_for(
     template: &Path,
     data: &MergeData,
     records: &[usize],
     out: &FilesOut,
     native: &str,
-) -> Result<Vec<(usize, Vec<(PathBuf, bool)>)>> {
+) -> Result<Vec<Planned>> {
     if !(out.native || out.pdf) {
         bail!("nothing to write: ask for .{native} or .pdf files");
     }
