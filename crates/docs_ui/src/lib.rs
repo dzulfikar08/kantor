@@ -2831,6 +2831,23 @@ impl Render for DocsView {
                 cx.notify()
             },
             Collapse => |this, w, cx| {
+                // Address Block / Greeting Line / Match Fields: Cancel.
+                if let Some(m) = &mut this.mailings
+                    && let Some(d) = m.dialog.take()
+                {
+                    if let mailings_address::AddrDialog::Match { back, .. } = d {
+                        m.dialog = back.map(|b| *b);
+                    }
+                    cx.notify();
+                    return;
+                }
+                if let Some(m) = &mut this.mailings
+                    && m.list_open
+                {
+                    m.list_open = false;
+                    cx.notify();
+                    return;
+                }
                 if this.field_menu.take().is_some() {
                     this.focus(w, cx);
                     cx.notify();
