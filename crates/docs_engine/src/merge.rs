@@ -1347,7 +1347,17 @@ const LINE: char = '\u{E002}';
 /// Replace a field (marks and result) with plain text, keeping the
 /// result's formatting.
 fn unlink(paras: &mut Vec<Paragraph>, span: &FieldSpan, text: &str) {
-    let id = crate::fields::set_result(paras, span, text);
+    // A value written over several lines (Alt+Enter in Excel, a quoted
+    // CSV field) keeps its lines, as manual line breaks as in Word.
+    let text = if text.contains(['\n', '\r']) {
+        std::borrow::Cow::Owned(
+            text.replace("\r\n", "\n")
+                .replace(['\r', '\n'], &crate::document::LINE_BREAK.to_string()),
+        )
+    } else {
+        std::borrow::Cow::Borrowed(text)
+    };
+    let id = crate::fields::set_result(paras, span, &text);
     let Some(s) = spans(paras).into_iter().find(|s| s.mark_id() == id) else {
         return;
     };

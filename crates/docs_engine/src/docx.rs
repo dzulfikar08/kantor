@@ -1429,6 +1429,17 @@ impl BodyParser<'_> {
                 Skip
             }
             (R, "br" | "cr") => {
+                // A line break between a field's instrText runs is part of
+                // its code: Word keeps it in Address Block / Greeting Line
+                // formats ("<<_COMPANY_" ↵ ">><<_FIRST0_>>…").
+                if let Some(f) = self.fields.last_mut()
+                    && f.depth == 1
+                    && f.mode != FieldMode::Result
+                    && !f.in_result
+                    && attr(e, b"type").is_none_or(|t| t == "textWrapping")
+                {
+                    f.instr.push('\r');
+                }
                 match attr(e, b"type").as_deref() {
                     None | Some("textWrapping") => self.push_char(LINE_BREAK),
                     Some("page") => self.push_char(PAGE_BREAK),
@@ -3289,7 +3300,103 @@ fn used_images(paras: &[Paragraph]) -> HashSet<&str> {
 }
 
 pub(crate) fn body_xml(doc: &Document) -> String {
-    unique_rev_ids(body_xml_raw(doc))
+    unique_drawing_ids(unique_rev_ids(body_xml_raw(doc)))
+}
+
+/// Drawings copied within a document (the one-document mail merge copies
+/// the template once per record) must not share ids: `wp:docPr` ids get
+/// fresh numbers, VML shapes fresh `id`s and `o:spid`s, and a repeated
+/// `v:shapetype` (same id, same definition) is dropped, its first copy
+/// serving every shape that names it.
+fn unique_drawing_ids(xml: String) -> String {
+    if !xml.contains("<wp:docPr ") && !xml.contains("<v:") {
+        return xml;
+    }
+    // (start, end) of the value of ` {attr}="` in the tag starting at `s`.
+    fn value_at(s: &str, attr: &str) -> Option<(usize, usize)> {
+        let end = s.find('>')?;
+        let key = format!(" {attr}=\"");
+        let i = s[..end].find(&key)? + key.len();
+        let e = s[i..end].find('"')? + i;
+        Some((i, e))
+    }
+    let max_num = |prefix: &str, attr: &str| -> u64 {
+        xml.match_indices(prefix)
+            .filter_map(|(at, _)| {
+                let (i, e) = value_at(&xml[at..], attr)?;
+                let v = &xml[at + i..at + e];
+                v.trim_start_matches("_x0000_s").parse().ok()
+            })
+            .max()
+            .unwrap_or(0)
+    };
+    let mut next_doc_pr = max_num("<wp:docPr ", "id");
+    let mut next_spid = max_num("<v:", "o:spid").max(1024);
+    let (mut doc_prs, mut shape_ids, mut spids, mut types) = (
+        HashSet::new(),
+        HashSet::new(),
+        HashSet::new(),
+        HashSet::new(),
+    );
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml.as_str();
+    while let Some(at) = rest.find('<') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at..];
+        let tag_end = rest.find('>').map_or(rest.len(), |e| e + 1);
+        let tag = &rest[..tag_end];
+        if tag.starts_with("<v:shapetype ")
+            && let Some((i, e)) = value_at(tag, "id")
+            && !types.insert(tag[i..e].to_owned())
+        {
+            // Skip the repeated definition.
+            let skip = if tag.ends_with("/>") {
+                tag_end
+            } else {
+                rest.find("</v:shapetype>")
+                    .map_or(tag_end, |k| k + "</v:shapetype>".len())
+            };
+            rest = &rest[skip..];
+            continue;
+        }
+        let mut t = tag.to_owned();
+        if tag.starts_with("<wp:docPr ")
+            && let Some((i, e)) = value_at(tag, "id")
+            && let Ok(v) = tag[i..e].parse::<u64>()
+            && !doc_prs.insert(v)
+        {
+            next_doc_pr += 1;
+            doc_prs.insert(next_doc_pr);
+            t = format!("{}{}{}", &tag[..i], next_doc_pr, &tag[e..]);
+        }
+        if t.starts_with("<v:") {
+            if let Some((i, e)) = value_at(&t, "o:spid")
+                && !spids.insert(t[i..e].to_owned())
+            {
+                next_spid += 1;
+                let v = format!("_x0000_s{next_spid}");
+                spids.insert(v.clone());
+                t = format!("{}{}{}", &t[..i], v, &t[e..]);
+            }
+            if !t.starts_with("<v:shapetype ")
+                && let Some((i, e)) = value_at(&t, "id")
+                && !shape_ids.insert(t[i..e].to_owned())
+            {
+                let base = t[i..e].to_owned();
+                let mut k = 2;
+                while shape_ids.contains(&format!("{base} {k}")) {
+                    k += 1;
+                }
+                let v = format!("{base} {k}");
+                shape_ids.insert(v.clone());
+                t = format!("{}{}{}", &t[..i], v, &t[e..]);
+            }
+        }
+        out.push_str(&t);
+        rest = &rest[tag_end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn body_xml_raw(doc: &Document) -> String {
@@ -4038,6 +4145,39 @@ pub fn write(doc: &Document, package: Option<&Package>) -> anyhow::Result<Vec<u8
 mod tests {
     use super::*;
     use crate::style::Proofing;
+
+    #[test]
+    fn copied_drawings_get_their_own_ids() {
+        let one = r##"<w:p><w:r><w:pict><v:shapetype id="_x0000_t32" o:spt="32" path="m,l21600,21600e"><v:path o:connecttype="none"/></v:shapetype><v:shape id="AutoShape 2" o:spid="_x0000_s1026" type="#_x0000_t32"/></w:pict></w:r><w:r><w:drawing><wp:inline><wp:docPr id="4" name="Picture 4"/></wp:inline></w:drawing></w:r></w:p>"##;
+        let out = unique_drawing_ids(format!("{one}{one}"));
+        assert_eq!(out.matches("<v:shapetype ").count(), 1, "{out}");
+        assert_eq!(out.matches("type=\"#_x0000_t32\"").count(), 2);
+        assert!(out.contains("id=\"AutoShape 2\"") && out.contains("id=\"AutoShape 2 2\""));
+        assert!(out.contains("o:spid=\"_x0000_s1026\"") && out.contains("o:spid=\"_x0000_s1027\""));
+        assert!(out.contains("<wp:docPr id=\"4\"") && out.contains("<wp:docPr id=\"5\""));
+        // Nothing to do: unchanged.
+        assert_eq!(unique_drawing_ids(one.to_string()), one);
+    }
+
+    /// Line breaks between a field's code runs are part of the code (an
+    /// Address Block format written by Russian Word keeps one per line).
+    #[test]
+    fn line_breaks_in_field_codes_are_kept() {
+        let src = r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> ADDRESSBLOCK \f "&lt;&lt;_COMPANY_</w:instrText></w:r><w:r><w:cr/><w:instrText>&gt;&gt;&lt;&lt;_FIRST0_&gt;&gt;</w:instrText></w:r><w:r><w:br/><w:instrText>&lt;&lt;_CITY_&gt;&gt;" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>ACME</w:t></w:r><w:r><w:br/><w:t>Ann</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:body></w:document>"#;
+        let body = parse_body(src, &HashMap::new(), "word/document.xml").unwrap();
+        let instr: Vec<String> = body.paragraphs[0]
+            .runs
+            .iter()
+            .filter_map(|r| match &r.object {
+                Some(Object::Field(f)) => f.instr().map(str::to_owned),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            instr,
+            vec![" ADDRESSBLOCK \\f \"<<_COMPANY_\r>><<_FIRST0_>>\r<<_CITY_>>\" ".to_string()]
+        );
+    }
 
     #[test]
     fn styles_keep_proofing_properties() {

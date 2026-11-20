@@ -374,6 +374,76 @@ fn xignature_signs_hashes_and_kantor_builds_a_valid_pades() {
     assert!(signer::sign(&x, &pdf, &req, &who, false).is_err());
 }
 
+/// Password-protected files: hash signing keeps them protected (the
+/// provider only sees a hash); e-meterai refuses them before sending
+/// anything, including files that open without a password.
+#[test]
+fn password_protected_files_hash_signed_but_not_stamped() {
+    use kantor_pdf::testing::{Permissions, Protect, sample_pdf_protected};
+    let server = xignature_server(false);
+    let x = xignature_client(&server.url);
+    let who = Signer {
+        id: "mocksigner01".into(),
+        otp: None,
+    };
+    let pdf = sample_pdf_protected(1, Protect::Aes256, "owner4", "user4", Permissions::all());
+    let mut req = SignRequest::new("a.pdf", Place::Invisible);
+    // No password: a clear refusal, nothing sent.
+    let e = signer::sign(&x, &pdf, &req, &who, false).unwrap_err();
+    assert!(e.to_string().contains("password"), "{e}");
+    assert!(server.calls("/v3/sign/hash").is_empty());
+    req.password = Some("user4".into());
+    let (out, _) = signer::sign(&x, &pdf, &req, &who, false).unwrap();
+    keep("xignature-protected.pdf", &out);
+    assert!(out.starts_with(&pdf), "an incremental update");
+    let reopened = kantor_pdf::Pdf::from_bytes(&out, Some("user4")).unwrap();
+    assert!(reopened.was_encrypted(), "still password-protected");
+    let mut o = sigs::Options::standard();
+    o.trust = trust();
+    o.password = Some("user4".into());
+    let r = sigs::verify(&out, &o);
+    assert_eq!(r.signatures.len(), 1);
+    assert_eq!(r.signatures[0].integrity, Integrity::Intact);
+    assert_eq!(
+        r.signatures[0].status,
+        Status::Valid,
+        "{:?}",
+        r.signatures[0].notes
+    );
+
+    // e-meterai: the provider would get the encrypted file.
+    let vs = vida_server(0);
+    let v = vida_client(&vs.url, "s3cret");
+    let owner_only = sample_pdf_protected(1, Protect::Aes128, "owner", "", Permissions::all());
+    for (bytes, pw) in [(&pdf, Some("user4")), (&pdf, None), (&owner_only, None)] {
+        let mut sr = StampRequest::new("a.pdf", 0, emeterai::box_at(300.0, 200.0), "VD010");
+        sr.password = pw.map(str::to_string);
+        let e = emeterai::stamp_checked(&v, bytes, &sr, false).unwrap_err();
+        assert_eq!(e, Error::Encrypted);
+        assert!(e.to_string().contains("remove the password"), "{e}");
+    }
+    assert!(vs.calls("/api/v1/emeterai/upload").is_empty());
+}
+
+/// A document certified with no changes allowed is refused before it is
+/// sent (an e-meterai would be spent on a stamp that can't be kept).
+#[test]
+fn certified_no_changes_is_refused_before_sending() {
+    let mut o = pdf_engine::signing::Options::new(Place::Invisible);
+    o.certify = Some(1);
+    let pdf =
+        pdf_engine::signing::sign(&kantor_pdf::testing::sample_pdf(1), &meterai_id(), &o).unwrap();
+    let vs = vida_server(0);
+    let v = vida_client(&vs.url, "s3cret");
+    let req = StampRequest::new("a.pdf", 0, emeterai::box_at(300.0, 200.0), "VD010");
+    let e = emeterai::stamp_checked(&v, &pdf, &req, true).unwrap_err();
+    assert!(
+        e.to_string().contains("certified with no changes allowed"),
+        "{e}"
+    );
+    assert!(vs.calls("/api/v1/emeterai/upload").is_empty());
+}
+
 #[test]
 fn a_signature_that_does_not_match_the_certificate_is_refused() {
     let server = xignature_server(true);

@@ -54,6 +54,44 @@ pub const ADDRESS_FIELDS: &[&str] = &[
     "Department",
 ];
 
+/// The address fields in the order Word stores its matching
+/// (`w:fieldMapData`, one per field, every one present; [MS-DOC]
+/// ODSOPropertyBase, Word's `WdMappedDataFields`). Localized Word writes
+/// `w:mappedName` in its own language, so the position says which field an
+/// entry is.
+pub const ODSO_ORDER: &[&str] = &[
+    "Unique Identifier",
+    "Courtesy Title",
+    "First Name",
+    "Middle Name",
+    "Last Name",
+    "Suffix",
+    "Nickname",
+    "Job Title",
+    "Company",
+    "Address 1",
+    "Address 2",
+    "City",
+    "State",
+    "Postal Code",
+    "Country or Region",
+    "Business Phone",
+    "Business Fax",
+    "Home Phone",
+    "Home Fax",
+    "E-mail Address",
+    "Web Page",
+    "Spouse/Partner Courtesy Title",
+    "Spouse/Partner First Name",
+    "Spouse/Partner Middle Name",
+    "Spouse/Partner Last Name",
+    "Spouse/Partner Nickname",
+    "Phonetic Guide for First Name",
+    "Phonetic Guide for Last Name",
+    "Address 3",
+    "Department",
+];
+
 /// The address fields Address Block and Greeting Line use (the ones the
 /// Match Fields dialog lists first, as Word's "Required information").
 pub const BLOCK_FIELDS: &[&str] = &[
@@ -293,10 +331,14 @@ impl FieldMap {
             .collect()
     }
 
-    /// Read the matching saved in `w:odso`; `None` when it has none.
+    /// Read the matching saved in `w:odso`; `None` when it has none. An
+    /// entry's field is its English `w:mappedName` when it is one, else its
+    /// position in [`ODSO_ORDER`] (Word in other languages writes the names
+    /// translated: "Achternaam", "姓氏", "Почтовый индекс").
     pub fn from_odso(odso: &str) -> Option<Self> {
         let mut matched = Vec::new();
         let mut any = false;
+        let mut index = 0usize;
         let mut rest = odso;
         while let Some(k) = rest.find("<w:fieldMapData") {
             let tail = &rest[k..];
@@ -312,10 +354,21 @@ impl FieldMap {
                 let ty = val("type");
                 let name = val("name");
                 let mapped = val("mappedName");
-                if ty != "null" && !name.is_empty() && !mapped.is_empty() {
-                    matched.push((mapped, name));
+                if ty != "null" && !name.is_empty() {
+                    let m = norm(&mapped);
+                    let field = ODSO_ORDER
+                        .iter()
+                        .chain(ADDRESS_FIELDS)
+                        .find(|f| !m.is_empty() && norm(f) == m)
+                        .map(|f| f.to_string())
+                        .or_else(|| ODSO_ORDER.get(index).map(|f| f.to_string()))
+                        .unwrap_or(mapped);
+                    if !field.is_empty() {
+                        matched.push((field, name));
+                    }
                 }
             }
+            index += 1;
             rest = &tail[end..];
         }
         any.then_some(Self {
@@ -325,11 +378,12 @@ impl FieldMap {
     }
 
     /// `odso` (or a new `w:odso`) with this matching as its
-    /// `w:fieldMapData`, every address field listed as Word writes them.
+    /// `w:fieldMapData`, every address field listed as Word writes them
+    /// (in [`ODSO_ORDER`]).
     pub fn to_odso(&self, odso: Option<&str>, columns: &[String], lid: &str) -> String {
         let esc = xml::escape;
         let mut maps = String::new();
-        for f in ADDRESS_FIELDS {
+        for f in ODSO_ORDER {
             match self.column(f, columns) {
                 Some(k) => maps.push_str(&format!(
                     "<w:fieldMapData><w:type w:val=\"dbColumn\"/><w:name w:val=\"{}\"/><w:mappedName w:val=\"{}\"/><w:column w:val=\"{k}\"/><w:lid w:val=\"{}\"/></w:fieldMapData>",
@@ -1212,11 +1266,71 @@ mod tests {
         assert_eq!(back.column("City", &cols), None, "saved as not matched");
         // Rewriting replaces the old matching.
         let again = back.to_odso(Some(&odso), &cols, "id-ID");
-        assert_eq!(
-            again.matches("<w:fieldMapData>").count(),
-            ADDRESS_FIELDS.len()
-        );
+        assert_eq!(again.matches("<w:fieldMapData>").count(), ODSO_ORDER.len());
         assert_eq!(FieldMap::from_odso("<w:odso/>"), None);
+        // Written in Word's order: Middle Name before Last Name.
+        let both = FieldMap {
+            matched: vec![
+                ("Last Name".into(), "Nama".into()),
+                ("Middle Name".into(), "Kota".into()),
+            ],
+            saved: true,
+        };
+        let o = both.to_odso(None, &cols, "id-ID");
+        assert!(o.find("Middle Name").unwrap() < o.find("Last Name").unwrap());
+    }
+
+    /// Word in other languages writes `w:mappedName` translated: the
+    /// entry's position says which field it is (as in public Dutch, Chinese
+    /// and Russian templates).
+    #[test]
+    fn localized_odso_matching_goes_by_position() {
+        let entry = |name: &str, mapped: &str| {
+            if name.is_empty() {
+                "<w:fieldMapData><w:column w:val=\"0\"/><w:lid w:val=\"ru-RU\"/></w:fieldMapData>"
+                    .to_string()
+            } else {
+                format!(
+                    "<w:fieldMapData><w:type w:val=\"dbColumn\"/><w:name w:val=\"{name}\"/><w:mappedName w:val=\"{mapped}\"/><w:column w:val=\"0\"/><w:lid w:val=\"ru-RU\"/></w:fieldMapData>"
+                )
+            }
+        };
+        let mut odso = String::from("<w:odso>");
+        for (i, _) in ODSO_ORDER.iter().enumerate() {
+            odso.push_str(&match i {
+                1 => entry("Обращение", "Обращение"),
+                2 => entry("Имя ", "Имя"),
+                4 => entry("Фамилия", "Фамилия"),
+                8 => entry("Организация", "Организация"),
+                13 => entry("Индекс", "Почтовый индекс"),
+                _ => entry("", ""),
+            });
+        }
+        odso.push_str("</w:odso>");
+        let map = FieldMap::from_odso(&odso).unwrap();
+        let cols: Vec<String> = ["Организация", "Индекс", "Имя ", "Фамилия", "Обращение"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(map.column("Company", &cols), Some(0));
+        assert_eq!(map.column("Postal Code", &cols), Some(1));
+        assert_eq!(map.column("First Name", &cols), Some(2));
+        assert_eq!(map.column("Last Name", &cols), Some(3));
+        assert_eq!(map.column("Courtesy Title", &cols), Some(4));
+        assert_eq!(map.column("Middle Name", &cols), None);
+        // English names win over the position (files Kantor 0.19 wrote put
+        // Last Name before Middle Name).
+        let old = format!(
+            "<w:odso>{}{}{}{}</w:odso>",
+            entry("", ""),
+            entry("", ""),
+            entry("", ""),
+            entry("Fam", "Last Name")
+        );
+        let m = FieldMap::from_odso(&old).unwrap();
+        assert_eq!(
+            m.matched,
+            vec![("Last Name".to_string(), "Fam".to_string())]
+        );
     }
 
     #[test]

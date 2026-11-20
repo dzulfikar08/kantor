@@ -18,7 +18,7 @@ mod chart_style;
 mod chartex_edit;
 mod cond_format;
 mod content_text;
-mod csv;
+pub mod csv;
 pub mod drawing;
 mod edits;
 mod file_chart;
