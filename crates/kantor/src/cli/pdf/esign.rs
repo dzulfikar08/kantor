@@ -784,6 +784,6 @@ mod tests {
             "x",
         ]))
         .unwrap_err();
-        assert!(e.message.contains("confidential"), "{}", e.message);
+        assert!(e.message.contains("isn't public"), "{}", e.message);
     }
 }
