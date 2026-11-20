@@ -9,6 +9,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-11-21
+
+Kantor signs password-protected PDFs too, keeping their passwords and encryption, in the app, the command line and
+Batch. Mail merge fills Word's Address Block and Greeting Line, with each country's address layout and Match Fields
+that recognise Indonesian column names. And PDFs can get an e-Meterai or a certified signature through a licensed
+provider's API (VIDA or Mekari Sign for e-Meterai, Xignature for signing) once you have an account with them; this
+has been tested against the providers' documented APIs, not yet their live services.
+
 ### Added
 
 - PDF: password-protected PDFs can be signed with your certificate (Sign with Certificate…, `kantor pdf sign
@@ -2282,7 +2290,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/dzulfikar08/kantor/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/dzulfikar08/kantor/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/dzulfikar08/kantor/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/dzulfikar08/kantor/compare/v0.16.0...v0.17.0
