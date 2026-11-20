@@ -199,15 +199,202 @@ pub fn incremental(
 /// update holding the objects `after` changed or added.
 pub fn incremental_diff(bytes: &[u8], before: &Pdf, after: &Pdf) -> Result<Vec<u8>> {
     let mut inc = IncrementalDocument::create_from(bytes.to_vec(), before.doc.clone());
+    // A damaged file whose cross-reference data couldn't be read (lopdf
+    // rebuilt it by scanning) has no section an update could point back
+    // to: the update gets no `/Prev`, so its own table must list every
+    // object, or readers that follow it find only the new ones.
+    let whole = before.doc.xref_start == 0
+        || before.doc.xref_recovery == Some(lopdf::xref::XrefRecovery::Reconstructed);
+    let mut spelling = RealSpelling::default();
     let new = &mut inc.new_document;
     for (id, obj) in &after.doc.objects {
-        if before.doc.objects.get(id) != Some(obj) {
-            new.objects.insert(*id, obj.clone());
+        if whole || before.doc.objects.get(id) != Some(obj) {
+            let mut obj = obj.clone();
+            if before.doc.objects.contains_key(id) {
+                spelling.keep(bytes, &before.doc, *id, &mut obj);
+            }
+            new.objects.insert(*id, obj);
         }
     }
     new.max_id = new.max_id.max(after.doc.max_id);
     let mut out = Vec::with_capacity(bytes.len() + 4096);
     inc.save_to(&mut out)
         .map_err(|e| Error::Pdf(e.to_string()))?;
+    spelling.restore(&mut out[bytes.len()..]);
     Ok(out)
+}
+
+/// lopdf keeps real numbers as `f32`, so a rewritten object loses digits
+/// the file had (`/MediaBox [0 0 595.32001 841.91998]` comes back as
+/// `595.32 841.92`), and checkers that compare the signed revision exactly
+/// (pyHanko) call that a suspicious change. Reals of a rewritten object
+/// that `f32` can't spell are swapped for placeholder names before writing
+/// and replaced by the file's own text afterwards, byte for byte, so no
+/// offset moves.
+#[derive(Default)]
+struct RealSpelling {
+    /// Placeholder name (without `/`) → the file's spelling.
+    names: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+impl RealSpelling {
+    fn keep(&mut self, bytes: &[u8], doc: &Document, id: lopdf::ObjectId, obj: &mut Object) {
+        let Some(lopdf::xref::XrefEntry::Normal { offset, .. }) = doc.reference_table.get(id.0)
+        else {
+            return;
+        };
+        let Some(raw) = bytes.get(*offset as usize..) else {
+            return;
+        };
+        let mut found: Vec<(f32, Option<Vec<u8>>)> = Vec::new();
+        for lexeme in object_reals(raw) {
+            let Some(v) = std::str::from_utf8(&lexeme)
+                .ok()
+                .and_then(|s| s.parse::<f64>().ok())
+            else {
+                continue;
+            };
+            let f = v as f32;
+            // Only spellings f32 loses; equal values spelled alike stay.
+            if f.to_string().parse::<f64>().ok() == Some(v) || lexeme.len() < 6 {
+                continue;
+            }
+            match found.iter_mut().find(|(x, _)| *x == f) {
+                Some((_, l)) => {
+                    if l.as_deref() != Some(&lexeme[..]) {
+                        *l = None;
+                    }
+                }
+                None => found.push((f, Some(lexeme))),
+            }
+        }
+        if found.iter().all(|(_, l)| l.is_none()) {
+            return;
+        }
+        self.swap(obj, &found);
+    }
+
+    fn swap(&mut self, obj: &mut Object, found: &[(f32, Option<Vec<u8>>)]) {
+        match obj {
+            Object::Real(v) => {
+                let Some((_, Some(lexeme))) = found.iter().find(|(x, _)| x == v) else {
+                    return;
+                };
+                if let Some(name) = self.name_for(lexeme) {
+                    *obj = Object::Name(name);
+                }
+            }
+            Object::Array(a) => a.iter_mut().for_each(|o| self.swap(o, found)),
+            Object::Dictionary(d) => d.iter_mut().for_each(|(_, o)| self.swap(o, found)),
+            Object::Stream(s) => s.dict.iter_mut().for_each(|(_, o)| self.swap(o, found)),
+            _ => {}
+        }
+    }
+
+    /// `Kr` + a zero-padded counter, as long as `lexeme`: written as
+    /// `/Kr…`, which becomes a blank (lopdf writes none before a name, as it
+    /// would before a number) and the lexeme.
+    fn name_for(&mut self, lexeme: &[u8]) -> Option<Vec<u8>> {
+        if let Some((n, _)) = self.names.iter().find(|(_, l)| l == lexeme) {
+            return Some(n.clone());
+        }
+        let width = lexeme.len().checked_sub(2)?;
+        let digits = format!("{:0width$}", self.names.len());
+        if digits.len() > width {
+            return None;
+        }
+        let name = [b"Kr".as_slice(), digits.as_bytes()].concat();
+        self.names.push((name.clone(), lexeme.to_vec()));
+        Some(name)
+    }
+
+    fn restore(&self, update: &mut [u8]) {
+        for (name, lexeme) in &self.names {
+            let needle = [b"/".as_slice(), name].concat();
+            let mut i = 0;
+            while let Some(p) = find(&update[i..], &needle) {
+                let at = i + p;
+                let end = at + needle.len();
+                if update.get(end).is_none_or(|&c| !is_regular(c)) {
+                    update[at] = b' ';
+                    update[at + 1..end].copy_from_slice(lexeme);
+                }
+                i = end;
+            }
+        }
+    }
+}
+
+fn find(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    hay.windows(needle.len()).position(|w| w == needle)
+}
+
+fn is_regular(c: u8) -> bool {
+    !c.is_ascii_whitespace() && c != 0 && !b"()<>[]{}/%".contains(&c)
+}
+
+/// The spellings of the real numbers (with a `.`) of the indirect object
+/// at the start of `raw`, up to its `stream` or `endobj` keyword. Strings
+/// and comments are skipped.
+fn object_reals(raw: &[u8]) -> Vec<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < raw.len() {
+        let c = raw[i];
+        match c {
+            b'%' => {
+                while i < raw.len() && raw[i] != b'\n' && raw[i] != b'\r' {
+                    i += 1;
+                }
+            }
+            b'(' => {
+                let mut depth = 0usize;
+                while i < raw.len() {
+                    match raw[i] {
+                        b'\\' => i += 1,
+                        b'(' => depth += 1,
+                        b')' => {
+                            depth -= 1;
+                            if depth == 0 {
+                                break;
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                i += 1;
+            }
+            b'<' if raw.get(i + 1) == Some(&b'<') => i += 2,
+            b'<' => {
+                while i < raw.len() && raw[i] != b'>' {
+                    i += 1;
+                }
+                i += 1;
+            }
+            _ if is_regular(c) => {
+                let start = i;
+                while i < raw.len() && is_regular(raw[i]) {
+                    i += 1;
+                }
+                let tok = &raw[start..i];
+                if tok == b"stream" || tok == b"endobj" {
+                    break;
+                }
+                let digits = tok
+                    .strip_prefix(b"-")
+                    .or(tok.strip_prefix(b"+"))
+                    .unwrap_or(tok);
+                if digits.contains(&b'.')
+                    && !digits.is_empty()
+                    && digits.iter().all(|&d| d.is_ascii_digit() || d == b'.')
+                    && digits.iter().filter(|&&d| d == b'.').count() == 1
+                {
+                    out.push(tok.to_vec());
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    out
 }

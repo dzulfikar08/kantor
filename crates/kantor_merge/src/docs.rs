@@ -35,6 +35,19 @@ pub fn missing_fields(doc: &Document, data: &MergeData) -> Vec<String> {
         .collect()
 }
 
+/// Mail merge fields of Word's that Kantor doesn't fill in yet, found in
+/// the body: (field type, Word's name for it).
+pub fn unfilled_fields(doc: &Document) -> Vec<(&'static str, &'static str)> {
+    let kinds: HashSet<String> = doc.fields().iter().map(|f| f.kind()).collect();
+    [
+        ("ADDRESSBLOCK", "Address Block"),
+        ("GREETINGLINE", "Greeting Line"),
+    ]
+    .into_iter()
+    .filter(|(k, _)| kinds.contains(*k))
+    .collect()
+}
+
 /// The default file name pattern: the template's name and the record's
 /// number in the merge.
 pub fn default_pattern(template: Option<&Path>) -> String {
@@ -62,6 +75,11 @@ pub fn merge(
     for f in missing_fields(doc, data) {
         report.notes.push(format!(
             "the document's field {f:?} is not in the data source (it shows Word's error text)"
+        ));
+    }
+    for (kind, name) in unfilled_fields(doc) {
+        report.notes.push(format!(
+            "{name} ({kind}) fields aren't filled in yet: they keep the template's text"
         ));
     }
     if records.is_empty() {

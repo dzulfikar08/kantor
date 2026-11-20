@@ -695,6 +695,87 @@ as a digital signature. The remaining differences from pyHanko are pyHanko's
 has no rule for comments and stamps). The Indonesian TTE signatures chain to
 BSrE's own "OSD LU Kelas 2" root, which neither checker trusts.
 
+## Signing, Batch and mail merge (2026-11-20, before v0.19.0)
+
+Thirteenth run, on main `b5c326a` (PDF certificate signing, PDF Batch and
+mail merge since v0.18.0). The 424 Office files come out file by file as in
+the twelfth run (418 ok, the same 6 refused; kinds, counts, pages, import
+notes and validator results), and Docs open/save/PDF and Sheets open take
+the same time as with a v0.18.0 probe (0.95–1.04×, min of 5–10 interleaved
+runs). The 63 PDFs and the annotate-and-fill sweeps over them and the 29
+signed PDFs give the twelfth run's results. Office check: 233 files, 0 new
+errors.
+
+**Signing.** `kantor pdf sign` with a synthetic test PKI
+(`scripts/pdf/gen_signing_fixtures.py`, served by
+`scripts/pdf/signing_test_server.py`) on all 92 files, at B-B and at B-LT:
+
+| | B-B | B-LT |
+|---|---:|---:|
+| signed | 83 | 83 |
+| refused: encrypted | 4 | 4 |
+| refused: certified with no changes allowed | 3 | 3 |
+| refused: not a readable PDF | 2 | 2 |
+| original bytes kept as the start of the file | 83 | 83 |
+| new signature Valid in Kantor | 83 online (offline: revocation not checked) | 83 |
+| new signature intact, valid and trusted in pyHanko | 83 | 79 (4: pyHanko can't read the original) |
+| new signature Valid and Trusted in pdfsig | 83 | 83 |
+| earlier signatures keep their status (Kantor) and stay intact (pyHanko) | all | all |
+
+The four B-LT files pyHanko fails on (an xref entry pointing at the wrong
+object, an unescaped byte in a name, a broken `/Length`) fail the same way
+when pyHanko adds an update of its own: their B-B signature is read because
+pyHanko then never looks past it. Fixed:
+
+- An update of a damaged file whose cross-reference table lopdf had to
+  rebuild (startxref past the end of the file) had no `/Prev` and listed
+  only its new objects; pyHanko then saw one revision and couldn't find the
+  signature after the DSS update. The update now lists every object.
+- A page rewritten to add the signature's widget lost the digits of reals
+  `f32` can't hold (`/MediaBox [0 0 595.32001 841.91998]` became
+  `595.32 841.92`), which pyHanko counts as a suspicious change to DE_CRY-2's
+  earlier signature (modification level OTHER, now FORM_FILLING like the
+  rest). Rewritten objects keep the file's spelling.
+- `kantor pdf sign` on an encrypted file asked for `--password`, which it
+  doesn't take.
+
+**Batch** (`kantor pdf batch`: a PNG stamp on the last page, every form field
+filled from a JSON table, a B-LT signature) over both folders: public PDFs
+59 done (55 with all three steps; 3 owner-password files stamped but not
+signed: signing encrypted files isn't supported; the DocMDP P=2 form signed
+but not stamped), 2 skipped (a user password, a P=1 certification), 2 failed
+(unreadable); signed set 27 done, 2 skipped (P=1). Every output: stamp
+present, all 1,623 values read back, original bytes kept on signed files,
+earlier signatures unchanged (the PAdES-LT document time stamp becomes
+"Valid, with allowed changes" after the stamp, as before), encrypted files
+stay encrypted.
+
+**Mail merge** on 15 public templates (docx4j's CR-067 probes with Word
+365's own merged output, docx-mailmerge's Word 2010 and Mac Word 2011 test
+files, LibreOffice's tdf35798 and grabbag tests, the Open XML SDK's
+mailmerge.docx; manifest with URLs, licences and SHA-256 in
+`~/.cache/realworld/merge/`, not committed) and synthetic CSV data:
+`kantor docs merge` per record (.docx and PDF) and as one document. Every
+output passes the Open XML SDK and opens in LibreOffice with the same page
+count; the PDFs hold every word of the documents. Against Word 365's merge
+of the CR-067 probe the letters are identical except a field the tester
+mapped to another column in Word's dialog. Against a plain field
+substitution, 11 of the 12 simple templates are identical record by record
+(the twelfth differs only where the script is simpler than Word: `\* FirstCap`,
+pictures, a table cell's only paragraph). Fixed:
+
+- Formulas and `COMPARE` fed by merge fields, `SET`, `ASK`, `FILLIN` and
+  `REF`s to them kept the template's stale text (`={ MERGEFIELD Amount }*2`
+  showed its old result); they're worked out per record, `ASK` and `FILLIN`
+  taking their `\d` defaults.
+- `\# "$#,##0.00"` gave `$150.00` where Word writes `$ 150.00`: a `#`
+  place with no digit is a space.
+
+Not done: Word's Address Block and Greeting Line (`kantor docs merge` now
+says when a template has them); Word matches `MERGEFIELD "First Name"` only
+to a column named `First_Name` in a Word-table data source, where Kantor
+matches both spellings.
+
 ## Left
 
 Refused (6):

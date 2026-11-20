@@ -285,12 +285,7 @@ const PLACEHOLDER: &str = "[0 1111111111 2222222222 3333333333]";
 /// Add a signature (or document time stamp) with an empty `/Contents` of
 /// `req.reserve` bytes as an incremental update of `bytes`.
 pub fn prepare(bytes: &[u8], req: &Request) -> Result<Prepared> {
-    let pdf = Pdf::from_bytes(bytes, None)?;
-    if pdf.was_encrypted() {
-        return Err(Error::Invalid(
-            "signing password-protected PDFs isn't supported yet".into(),
-        ));
-    }
+    let pdf = open_unencrypted(bytes)?;
     let existing = crate::sig::signatures(&pdf);
     if existing.is_some_and(|s| s.docmdp == Some(1)) {
         return Err(Error::Invalid(
@@ -832,13 +827,21 @@ pub struct Vri {
 /// Add (or extend) the document's DSS as an incremental update. Data
 /// already in the DSS isn't added twice.
 pub fn add_dss(bytes: &[u8], dss: &Dss) -> Result<Vec<u8>> {
-    let pdf = Pdf::from_bytes(bytes, None)?;
-    if pdf.was_encrypted() {
-        return Err(Error::Invalid(
-            "signing password-protected PDFs isn't supported yet".into(),
-        ));
-    }
+    open_unencrypted(bytes)?;
     crate::sig::incremental(bytes, None, |pdf| write_dss(&mut pdf.doc, dss))
+}
+
+/// Open a PDF to sign. Encrypted files are refused whether or not they
+/// need a password to open (`Error::Encrypted` would ask for one, which
+/// doesn't help).
+fn open_unencrypted(bytes: &[u8]) -> Result<Pdf> {
+    let refuse = || Error::Invalid("signing password-protected PDFs isn't supported yet".into());
+    match Pdf::from_bytes(bytes, None) {
+        Ok(pdf) if pdf.was_encrypted() => Err(refuse()),
+        Ok(pdf) => Ok(pdf),
+        Err(Error::Encrypted | Error::WrongPassword) => Err(refuse()),
+        Err(e) => Err(e),
+    }
 }
 
 fn stream_bytes(doc: &Document, o: &Object) -> Option<Vec<u8>> {
@@ -1026,5 +1029,138 @@ mod tests {
         assert_eq!(certs.len(), 1);
         let vri = d.get(b"VRI").unwrap().as_dict().unwrap();
         assert!(vri.has(b"AB12"));
+    }
+
+    /// A page rewritten by the update (its `/Annots` gets the signature's
+    /// widget) keeps the file's spelling of numbers `f32` can't hold
+    /// (DSS's DE_CRY-2: pyHanko saw `/MediaBox` change from 595.32001 to
+    /// 595.32 and called it a suspicious modification).
+    #[test]
+    fn rewritten_page_keeps_long_reals() {
+        let mut doc = lopdf::Document::load_mem(&one_page()).unwrap();
+        let page = *doc.get_pages().values().next().unwrap();
+        // Placeholders as long as " 595.32001" / " 841.91998" (the blank
+        // lopdf leaves out before a name): spelled out after saving.
+        doc.get_dictionary_mut(page).unwrap().set(
+            "MediaBox",
+            vec![
+                0.into(),
+                0.into(),
+                Object::Name(b"Pw0000000".to_vec()),
+                Object::Name(b"Ph0000000".to_vec()),
+                Object::Name(b"Pz0000000".to_vec()),
+            ],
+        );
+        let mut src = Vec::new();
+        doc.save_to(&mut src).unwrap();
+        for (from, to) in [
+            (b"/Pw0000000", b" 595.32001"),
+            (b"/Ph0000000", b" 841.91998"),
+            (b"/Pz0000000", b" 0.1234567"),
+        ] {
+            let at = src.windows(10).position(|w| w == from).unwrap();
+            src[at..at + 10].copy_from_slice(to);
+        }
+        let req = Request::new(
+            SigType::Signature { certify: None },
+            Place::New {
+                page: 0,
+                rect: [50.0, 50.0, 250.0, 110.0],
+            },
+            1_790_000_000,
+            1000,
+        );
+        let signed = prepare(&src, &req)
+            .unwrap()
+            .finish(&[0x30, 0x03, 0x02, 0x01, 0x05])
+            .unwrap();
+        let update = &signed[src.len()..];
+        let has = |s: &[u8]| update.windows(s.len()).any(|w| w == s);
+        // The page was rewritten (it now lists the widget) with the file's
+        // numbers, and no placeholder is left.
+        assert!(has(b"/Annots"));
+        assert!(has(b" 595.32001 841.91998 0.1234567]"));
+        assert!(!has(b"/Kr"));
+        let pdf = Pdf::from_bytes(&signed, None).unwrap();
+        let page = *pdf.doc.get_pages().values().next().unwrap();
+        let mb = pdf
+            .doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"MediaBox")
+            .unwrap();
+        let mb = mb.as_array().unwrap();
+        assert_eq!(mb.len(), 5);
+        assert!((mb[2].as_float().unwrap() - 595.32).abs() < 1e-3);
+        assert!((mb[4].as_float().unwrap() - 0.1234567).abs() < 1e-6);
+    }
+
+    /// Encrypted files can't be signed yet: the message says so instead of
+    /// asking for a password (`kantor pdf sign` takes none).
+    #[test]
+    fn encrypted_files_are_refused_without_asking_for_a_password() {
+        let req = Request::new(
+            SigType::Signature { certify: None },
+            Place::Invisible,
+            1_790_000_000,
+            1000,
+        );
+        for src in [
+            crate::testing::sample_pdf_encrypted(1, "owner", ""),
+            crate::testing::sample_pdf_encrypted(1, "owner", "user"),
+        ] {
+            let Err(e) = prepare(&src, &req) else {
+                panic!("signed an encrypted file");
+            };
+            assert_eq!(
+                e.to_string(),
+                "signing password-protected PDFs isn't supported yet"
+            );
+            assert!(add_dss(&src, &Dss::default()).is_err());
+        }
+    }
+
+    /// A damaged file whose `startxref` points past its end (pdf.js
+    /// issue9252): the signature's update can't point back to a table, so
+    /// it must list every object itself; the DSS update after it then
+    /// chains to it with `/Prev` (pyHanko saw one revision without it).
+    #[test]
+    fn update_of_a_file_with_a_broken_xref_lists_every_object() {
+        let good = one_page();
+        let at = good.windows(9).rposition(|w| w == b"startxref").unwrap();
+        let mut src = good[..at].to_vec();
+        src.extend_from_slice(b"startxref\n999999\n%%EOF\n");
+        let before = Pdf::from_bytes(&src, None).unwrap();
+        assert_eq!(
+            before.doc.xref_recovery,
+            Some(lopdf::xref::XrefRecovery::Reconstructed)
+        );
+        let req = Request::new(
+            SigType::Signature { certify: None },
+            Place::Invisible,
+            1_790_000_000,
+            1000,
+        );
+        let signed = prepare(&src, &req)
+            .unwrap()
+            .finish(&[0x30, 0x03, 0x02, 0x01, 0x05])
+            .unwrap();
+        assert!(signed.starts_with(&src));
+        // Read as written: the newest table finds the catalog and pages.
+        let pdf = Pdf::from_bytes(&signed, None).unwrap();
+        assert_eq!(pdf.doc.xref_recovery, None);
+        assert_eq!(pdf.page_count(), 1);
+        assert_eq!(crate::sig::signatures(&pdf).unwrap().count, 1);
+        let dss = Dss {
+            certs: vec![b"cert".to_vec()],
+            ..Dss::default()
+        };
+        let lt = add_dss(&signed, &dss).unwrap();
+        assert!(lt.starts_with(&signed));
+        let tail = &lt[signed.len()..];
+        assert!(tail.windows(5).any(|w| w == b"/Prev"));
+        let pdf = Pdf::from_bytes(&lt, None).unwrap();
+        assert_eq!(pdf.doc.xref_recovery, None);
+        assert_eq!(pdf.page_count(), 1);
     }
 }

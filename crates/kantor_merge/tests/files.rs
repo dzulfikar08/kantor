@@ -19,8 +19,13 @@ fn field(instr: &str) -> String {
 
 /// An offer letter template.
 fn template(dir: &Path) -> PathBuf {
+    template_with(dir, "")
+}
+
+/// The offer letter with `extra` paragraphs after it.
+fn template_with(dir: &Path, extra: &str) -> PathBuf {
     let body = format!(
-        "<w:p><w:r><w:t xml:space=\"preserve\">Dear </w:t></w:r>{}<w:r><w:t>,</w:t></w:r></w:p><w:p><w:r><w:t xml:space=\"preserve\">Salary: </w:t></w:r>{}</w:p><w:p>{}</w:p>",
+        "<w:p><w:r><w:t xml:space=\"preserve\">Dear </w:t></w:r>{}<w:r><w:t>,</w:t></w:r></w:p><w:p><w:r><w:t xml:space=\"preserve\">Salary: </w:t></w:r>{}</w:p><w:p>{}</w:p>{extra}",
         field("MERGEFIELD Name"),
         field(r##"MERGEFIELD Salary \# "#,##0""##),
         field(r#"MERGEFIELD Joined \@ "d MMMM yyyy" \b "Joined " "#)
@@ -75,6 +80,44 @@ fn text(path: &Path) -> String {
         .map(|p| p.text.replace(OBJECT, ""))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Word's Address Block and Greeting Line aren't filled in yet: the merge
+/// says so instead of leaving their template text without a word.
+#[test]
+fn address_block_and_greeting_line_are_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let extra = format!(
+        "<w:p>{}</w:p><w:p>{}</w:p><w:p>{}</w:p>",
+        field("ADDRESSBLOCK"),
+        field(
+            r#"GREETINGLINE \f "&lt;&lt;_BEFORE_ Dear &gt;&gt;&lt;&lt;_FIRST0_&gt;&gt;" \l 1033"#
+        ),
+        field("GREETINGLINE")
+    );
+    let doc = Document::open(&template_with(dir.path(), &extra)).unwrap();
+    let rec = Recipients::open(&people(dir.path()), None, None).unwrap();
+    let out = DocsOut {
+        dir: None,
+        docx: false,
+        pdf: false,
+        name: None,
+        single: Some(dir.path().join("all.docx")),
+        overwrite: Overwrite::Refuse,
+    };
+    let mut engine = None;
+    let report =
+        kantor_merge::docs::merge(&doc, &rec.data, &[0], &out, &mut pdf_writer(&mut engine))
+            .unwrap();
+    assert_eq!(
+        report.notes,
+        vec![
+            "Address Block (ADDRESSBLOCK) fields aren't filled in yet: they keep the template's text"
+                .to_owned(),
+            "Greeting Line (GREETINGLINE) fields aren't filled in yet: they keep the template's text"
+                .to_owned()
+        ]
+    );
 }
 
 #[test]

@@ -869,7 +869,8 @@ pub struct Note {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Outcome {
     /// Changed: the new file's bytes; `incremental` when saved as an
-    /// incremental update (signed files).
+    /// incremental update of a signed file (or one with usage rights),
+    /// keeping its signatures.
     Done {
         bytes: Vec<u8>,
         incremental: bool,
@@ -1029,7 +1030,10 @@ pub fn run_file(p: &Prepared, name: &str, bytes: &[u8], password: Option<&str>) 
         match pl.apply(&opts, &ctx, current) {
             Ok(Applied::Changed(b)) => {
                 out = Some(b);
-                incremental = true;
+                // A plugin (the sign step) appends to whatever it gets:
+                // "incremental" still means the original's signatures were
+                // kept, so an unsigned file stays a plain save.
+                incremental = keep_prefix;
             }
             Ok(Applied::Skipped(why)) => notes.push(Note {
                 step: Some(i),

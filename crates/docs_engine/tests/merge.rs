@@ -312,6 +312,80 @@ fn next_skipif_and_nextif_move_through_records() {
     );
 }
 
+/// A field whose code holds other fields: `pre { inner } post`, with
+/// `result` (the template's stale text).
+fn nested(pre: &str, inner: &str, post: &str, result: &str) -> String {
+    format!(
+        r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> {pre} </w:instrText></w:r>{inner}<w:r><w:instrText xml:space="preserve"> {post} </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>{result}</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#
+    )
+}
+
+/// Formulas and COMPARE fed by merge fields, SET/ASK with REF and FILLIN
+/// are worked out per record, as Word 365 merges docx4j's CR-067 probe
+/// (its merged letters show 300 for `={ MERGEFIELD Amount }*2`, 151 for
+/// `REF total` after `SET total { ={ MERGEFIELD Amount }+1 }`, Hello and
+/// World for the ASK and FILLIN defaults, nothing for SET and ASK).
+#[test]
+fn formulas_set_ask_and_fillin_are_worked_out_per_record() {
+    let dir = tempfile::tempdir().unwrap();
+    let salary = || field("MERGEFIELD Salary", "OLD");
+    let body = [
+        p(&format!(
+            "{}{}",
+            t("Double: "),
+            nested("=", &salary(), "*2 \\# \"#,##0\"", "OLDOLD")
+        )),
+        p(&format!(
+            "{}{}",
+            t("Compare: "),
+            nested(
+                "COMPARE",
+                &field("MERGEFIELD City", "OLD"),
+                "= \"Band*\"",
+                "OLD"
+            )
+        )),
+        p(&format!(
+            "{}{}{}",
+            t("Set: "),
+            nested(
+                "SET total",
+                &nested("=", &salary(), "+1", "OLD"),
+                "",
+                "OLDOLDOLD"
+            ),
+            field("REF total", "OLD")
+        )),
+        p(&format!(
+            "{}{}",
+            field("ASK Greeting \"Greeting?\" \\d \"Hello\" \\o", "OLD"),
+            field("REF Greeting \\* Upper", "OLD")
+        )),
+        p(&field("FILLIN \"Your name?\" \\d \"World\"", "OLD")),
+        p(&field("= 2*3", "6")),
+    ]
+    .concat();
+    let doc = open(dir.path(), "probe.docx", &package(&body, "", "", None));
+    let data = data();
+    let copies = doc.merge_all(&data, &[1, 0]);
+    assert_eq!(
+        shown(&copies[0].1)[..6],
+        [
+            "Double: 18,000,000",
+            "Compare: 1",
+            "Set: 9000001",
+            "HELLO",
+            "World",
+            "6"
+        ]
+    );
+    // Budi is in Jakarta; his salary isn't a plain number to Word's
+    // formulas ("Rp 12.500.000").
+    assert_eq!(shown(&copies[1].1)[1], "Compare: 0");
+    // Only merge-fed fields became text: `= 2*3` is still a field.
+    assert_eq!(copies[0].1.fields().len(), 1);
+}
+
 #[test]
 fn one_document_with_a_section_per_record() {
     let dir = tempfile::tempdir().unwrap();

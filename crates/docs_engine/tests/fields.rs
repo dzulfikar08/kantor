@@ -878,7 +878,9 @@ fn formulas_conditions_and_more_fields_are_worked_out() {
     let total = (0..doc.len()).find(|&i| shown(&doc, i) == "Total").unwrap();
     assert_eq!(shown(&doc, total + 1), "17", "SUM(ABOVE) of the Qty column");
     assert_eq!(shown(&doc, total + 2), "17", "AVERAGE(LEFT): 17");
-    assert_eq!(shown(&doc, total + 3), "50.75");
+    // `\# "#,##0.00"`: the two `#` places 50 doesn't fill are spaces, as
+    // Word writes them (Word 365 merges 150 with "$#,##0.00" as "$ 150.00").
+    assert_eq!(shown(&doc, total + 3), "  50.75");
     // SEQ switches: \r restarts, \c repeats, \h hides.
     assert_eq!(
         line(&doc, "Seq "),
@@ -905,7 +907,10 @@ fn formulas_conditions_and_more_fields_are_worked_out() {
     // Saved and read back: the new results stay.
     let saved = doc.to_docx_bytes().unwrap();
     let xml = &parts(&saved)["word/document.xml"];
-    assert!(xml.contains(">1,000<") && xml.contains(">50.75<"), "{xml}");
+    assert!(
+        xml.contains(">1,000<") && xml.contains(">  50.75<"),
+        "{xml}"
+    );
     // Fields nested in the code are worked out first.
     let p = find(&doc, "Rate is");
     let end = Selection::caret(Position::new(p, doc.paragraph(p).text.len()));
