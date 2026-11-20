@@ -145,24 +145,32 @@ fn file_name(p: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// My Stamps pictures (and drawn signatures for signature steps).
-fn my_stamps(signature: bool) -> Vec<(String, PathBuf)> {
+/// My Stamps pictures (and drawn signatures for signature steps): file
+/// name and the name shown ("My stamp 2").
+fn my_stamps(signature: bool) -> Vec<(String, String)> {
     let Some(dir) = crate::sign::stamps_dir() else {
         return Vec::new();
     };
     let Ok(rd) = std::fs::read_dir(&dir) else {
         return Vec::new();
     };
-    let mut v: Vec<PathBuf> = rd.flatten().map(|e| e.path()).collect();
+    let mut v: Vec<String> = rd.flatten().map(|e| file_name(&e.path())).collect();
     v.sort();
     v.into_iter()
-        .filter_map(|p| {
-            let name = file_name(&p);
-            let is_sig = name.contains(".sig.");
+        .filter(|name| {
             let ok = name.ends_with(".png")
                 || name.ends_with(".jpg")
                 || (signature && name.ends_with(".ink"));
-            (ok && is_sig == signature).then_some((name, p))
+            ok && name.contains(".sig.") == signature
+        })
+        .enumerate()
+        .map(|(k, name)| {
+            let shown = if signature {
+                tf("My signature {}", &[&(k + 1)])
+            } else {
+                tf("My stamp {}", &[&(k + 1)])
+            };
+            (name, shown)
         })
         .collect()
 }
@@ -446,7 +454,7 @@ impl PdfView {
                 let picture = my_stamps(signature)
                     .into_iter()
                     .next_back()
-                    .map(|(name, _)| (format!("{}{name}", batch::MY_STAMPS), name));
+                    .map(|(file, name)| (format!("{}{file}", batch::MY_STAMPS), name));
                 StepUi::Stamp {
                     signature,
                     picture,
@@ -1237,6 +1245,7 @@ impl PdfView {
                 .id("pdf-batch-body")
                 .flex_1()
                 .min_h_0()
+                .max_h(px(470.))
                 .overflow_y_scroll()
                 .child(
                     v_flex()
@@ -1437,9 +1446,9 @@ impl PdfView {
                     .label(pic_label)
                     .dropdown_caret(true)
                     .dropdown_menu(move |mut menu, _, _| {
-                        for (name, _) in my_stamps(sig) {
+                        for (file, name) in my_stamps(sig) {
                             let v = weak.clone();
-                            let spec = format!("{}{name}", batch::MY_STAMPS);
+                            let spec = format!("{}{file}", batch::MY_STAMPS);
                             menu = menu.item(PopupMenuItem::new(name.clone()).on_click(move |_, _, cx| {
                                 let (spec, name) = (spec.clone(), name.clone());
                                 let _ = v.update(cx, |this, cx| {
@@ -1552,7 +1561,7 @@ impl PdfView {
                 };
                 v_flex()
                     .gap(SPACE_2)
-                    .child(row(i18n::t("Picture"), pic, cx))
+                    .child(row(i18n::t("Picture"), h_flex().child(pic), cx))
                     .child(row(i18n::t("Pages"), pages_row, cx))
                     .child(row(i18n::t("Position"), place_row, cx))
                     .child(row(
@@ -1579,13 +1588,15 @@ impl PdfView {
                     .gap(SPACE_2)
                     .child(row(
                         i18n::t("Table"),
-                        Button::new(("pdf-batch-table", i))
-                            .xsmall()
-                            .outline()
-                            .label(label)
-                            .on_click(move |_, w, cx| {
-                                let _ = pick.update(cx, |this, cx| this.batch_pick_table(i, w, cx));
-                            }),
+                        h_flex().child(
+                            Button::new(("pdf-batch-table", i))
+                                .xsmall()
+                                .outline()
+                                .label(label)
+                                .on_click(move |_, w, cx| {
+                                    let _ = pick.update(cx, |this, cx| this.batch_pick_table(i, w, cx));
+                                }),
+                        ),
                         cx,
                     ))
                     .child(row(i18n::t("For every file"), Input::new(values).small(), cx))
