@@ -204,23 +204,6 @@ fn label_document(doc: &Document) -> HashMap<ObjectId, Role> {
     if let Ok(e) = catalog.get(b"Extensions") {
         l.mark(e, &Role::Extensions);
     }
-    // The name dictionary: its /AP tree holds annotation appearances (the
-    // annotations themselves are reported); every other tree is a change.
-    if let Ok(n) = catalog.get(b"Names")
-        && let Some(names) = as_dict(doc, n).cloned()
-    {
-        if let Ok(ap) = names.get(b"AP") {
-            l.mark(ap, &Role::Extensions);
-        }
-        if let Object::Reference(id) = n {
-            l.labels.entry(*id).or_insert(Role::NamesRoot);
-        }
-        for (k, v) in names.iter() {
-            if k != b"AP" {
-                l.mark(v, &Role::Other("Names".into()));
-            }
-        }
-    }
     // The page tree.
     let pages = page_index(doc);
     if let Ok(p) = catalog.get(b"Pages") {
@@ -326,6 +309,25 @@ fn label_document(doc: &Document) -> HashMap<ObjectId, Role> {
                         sig: false,
                     },
                 );
+            }
+        }
+    }
+    // The name dictionary: its /AP tree holds annotation appearances (the
+    // annotations themselves are reported); every other tree is a change.
+    // Labelled after the pages, annotations and form: named destinations
+    // point at pages, which must keep their own roles.
+    if let Ok(n) = catalog.get(b"Names")
+        && let Some(names) = as_dict(doc, n).cloned()
+    {
+        if let Ok(ap) = names.get(b"AP") {
+            l.mark(ap, &Role::Extensions);
+        }
+        if let Object::Reference(id) = n {
+            l.labels.entry(*id).or_insert(Role::NamesRoot);
+        }
+        for (k, v) in names.iter() {
+            if k != b"AP" {
+                l.mark(v, &Role::Other("Names".into()));
             }
         }
     }

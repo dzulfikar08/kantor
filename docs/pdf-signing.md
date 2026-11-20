@@ -43,6 +43,35 @@ palette. Save your changes first: you sign the document as saved.
 and opens it. The signature is added as an incremental update: the original
 bytes stay as they were, so any earlier signatures remain valid.
 
+## Password-protected PDFs
+
+A password-protected PDF is signed as Acrobat signs it: with the password
+it was opened with, and it stays protected with the same passwords. The
+signature, and for B-LT/B-LTA the DSS and the document time stamp, are
+incremental updates encrypted with the file's own security handler (RC4
+40/128-bit, AES-128 or AES-256, `/V` 1, 2, 4 or 5) and file key, pointing at
+the file's original `/Encrypt` dictionary and keeping its `/ID`. Every new
+string and stream is encrypted with its object's key, except the signature
+dictionary's `/Contents` (ISO 32000-2 §7.6.2: it is never encrypted); the
+byte range and its digest cover the encrypted bytes as written. The owner's
+restrictions count, as in Acrobat's *Document Restrictions Summary*: with
+the open (user) password, signing needs the owner to allow commenting
+(`/P` bit 6) or filling in form fields (bit 9, security handlers of revision
+3 and later); otherwise Kantor says so and asks for the owner password,
+which always signs. Files protected with a certificate (`Adobe.PubSec`)
+rather than a password aren't supported, nor are files with an ISO/TS 32004
+integrity code (`/KDFSalt`), which Kantor can't extend.
+
+In the app the password is the one you typed when opening the file, and the
+signed copy opens without asking again. On the command line, give it with
+`--password PW`, `--pdf-password-file F` or `KANTOR_PDF_PASSWORD`. A batch
+takes one password for all its protected files (the dialog's *PDF password*,
+or `--password`), or each file's own from a `Password` column (also `PDF
+password`, `Kata sandi`) in the fill step's table or in a table given with
+`kantor pdf batch --passwords TABLE`; passwords are used for that run only
+and never saved. `kantor pdf verify --password PW` and the Signatures panel
+check protected files too.
+
 Kantor remembers the reason, location, time-stamp server, the boxes you
 ticked and the certificate files you used (their paths, never passwords) in
 `settings.toml` under `[pdf]`: `signing_reason`, `signing_location`,
@@ -75,6 +104,7 @@ kantor pdf sign contract.pdf -o contract-signed.pdf \
 | `--lt` | add validation data (B-LT) |
 | `--lta` | then a document time stamp (B-LTA; needs `--tsa`) |
 | `--trust FILE` | extra roots for building the chain for `--lt` |
+| `--password PW`, `--pdf-password-file F` | a password-protected PDF's password (or `KANTOR_PDF_PASSWORD`) |
 
 Several input files and `-o DIR` sign them all with one password prompt
 (bulk signing); a file that fails is reported and the others are still
@@ -101,7 +131,8 @@ field by name, or invisible; reason, location and a signature picture
   file, the settings or a log, and a batch file that holds a `password` or
   `pin` is refused.
 - Each file gets its result: signed, or not signed and why. A file is not
-  signed when it is password-protected, when its certification allows no
+  signed when its owner's restrictions don't allow signing with the
+  password the batch has for it, when its certification allows no
   changes, when the step certifies but the file is already signed, when a
   new visible box would change a certified file's pages (sign an empty
   field or invisibly instead), when the named field is missing or already
@@ -165,6 +196,17 @@ checker in `cargo test -p pdf_engine signing`, with a synthetic test PKI
 pyHanko and poppler's `pdfsig`, run `scripts/pdf/signing_test_server.py`
 (a local TSA, OCSP responder and CRL server for that PKI) and sign with
 `--tsa http://127.0.0.1:8977/tsa --lt --trust …/root.pem`.
+
+Password-protected files: `cargo test -p kantor_pdf sign` and `-p pdf_engine
+protected` sign each security handler (RC4 40/128, AES-128, AES-256) up to
+B-LTA, with the user and the owner password, and check the restrictions.
+End to end (2026-11-20), qpdf- and pyHanko-encrypted copies of a synthetic
+PDF (each handler, an empty user password, object streams, restricted
+permissions, one signed by pyHanko first), signed by `kantor pdf sign`
+B-B/B-T/B-LTA, were checked with pyHanko 0.38 (decrypted with the user and
+owner passwords: intact, valid and trusted, LTV hard-fail from the DSS),
+`qpdf --check --password`, poppler's `pdfsig -upw/-opw` and `pdftoppm`
+(opens only with the password).
 
 ## Bundled roots
 

@@ -363,6 +363,25 @@ pub struct PdfView {
     _subs: Vec<Subscription>,
 }
 
+/// Passwords of files Kantor just wrote protected (a signed copy of a
+/// password-protected PDF), so their new tab opens without asking again.
+/// Each is used once.
+static KNOWN_PASSWORDS: std::sync::Mutex<Vec<(PathBuf, String)>> =
+    std::sync::Mutex::new(Vec::new());
+
+pub(crate) fn remember_password(path: &std::path::Path, password: String) {
+    if let Ok(mut k) = KNOWN_PASSWORDS.lock() {
+        k.retain(|(p, _)| p != path);
+        k.push((path.to_path_buf(), password));
+    }
+}
+
+fn take_password(path: &std::path::Path) -> Option<String> {
+    let mut k = KNOWN_PASSWORDS.lock().ok()?;
+    let i = k.iter().position(|(p, _)| p == path)?;
+    Some(k.remove(i).1)
+}
+
 impl PdfView {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let password = cx.new(|cx| {
@@ -478,7 +497,8 @@ impl PdfView {
             sigs: signatures::Sigs::default(),
             _subs: subs,
         };
-        this.start(String::new(), cx);
+        let known = take_password(&this.path).unwrap_or_default();
+        this.start(known, cx);
         this
     }
 
@@ -540,6 +560,7 @@ impl PdfView {
                     self.panel = Some(Panel::Bookmarks);
                 }
                 self.title = source.title.clone();
+                self.sigs.password = source.password.clone();
                 self.check_signatures(source.bytes.clone(), false, cx);
                 let id = source.id;
                 let model = Model::new(source);

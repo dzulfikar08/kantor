@@ -131,7 +131,21 @@ impl PdfView {
             return;
         }
         let bytes = doc.model.base().bytes.clone();
-        let fields: Vec<String> = kantor_pdf::Pdf::from_bytes(&bytes, None)
+        let password = doc.model.base().password.clone();
+        // A password-protected file is signed with the password that opened
+        // it, if its owner allows that (always with the owner password).
+        let opened = kantor_pdf::sign::open_to_sign(&bytes, Some(&password));
+        if let Err(kantor_pdf::Error::Invalid(e)) = &opened
+            && e == kantor_pdf::sign::NOT_PERMITTED
+        {
+            self.status = i18n::t(
+                "The document's security settings don't allow signing it with the password that opened it. Open it with the owner password to sign it.",
+            )
+            .into();
+            cx.notify();
+            return;
+        }
+        let fields: Vec<String> = opened
             .map(|p| {
                 kantor_pdf::sign::signature_fields(&p)
                     .into_iter()
@@ -383,6 +397,7 @@ impl PdfView {
             return;
         };
         let bytes = doc.model.base().bytes.clone();
+        let base_password = doc.model.base().password.clone();
         let dir = self.dir();
         let stem = std::path::Path::new(&self.name)
             .file_stem()
@@ -462,6 +477,7 @@ impl PdfView {
                 location: i18n::t("Location: {}").into(),
             },
             bytes,
+            pdf_password: (!base_password.is_empty()).then(|| base_password.clone()),
         };
         if job.level > Level::B && job.tsa.is_empty() {
             d.error = Some(i18n::t("Type the address of a time-stamp server.").into());
@@ -529,6 +545,11 @@ impl PdfView {
                     Ok(()) => {
                         this.cert_sign = None;
                         this.status = tf("Signed and saved as {}", &[&path.display()]).into();
+                        // The signed copy is protected like the original:
+                        // it opens with the same password, without asking.
+                        if !base_password.is_empty() {
+                            crate::remember_password(&path, base_password.clone());
+                        }
                         cx.emit(PdfEvent::Open(path));
                         this.focus(window, cx);
                     }
@@ -919,6 +940,8 @@ struct Job {
     picture: Option<Art>,
     words: signing::LookText,
     bytes: Arc<Vec<u8>>,
+    /// The password that opened a password-protected document.
+    pdf_password: Option<String>,
 }
 
 impl Job {
@@ -943,6 +966,7 @@ impl Job {
         // Only reached with the user's consent (checked by the dialog).
         o.fetch = (self.level > Level::B).then_some(&http as &dyn sig::Fetch);
         o.now = now;
+        o.pdf_password = self.pdf_password.clone();
         if !matches!(self.place, Place::Invisible) {
             o.look = Some(Look {
                 lines: signing::look_lines(

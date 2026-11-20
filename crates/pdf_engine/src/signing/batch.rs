@@ -386,7 +386,7 @@ impl SignPlugin {
 /// Why a file wasn't signed (the results show them; the app translates
 /// them as they are, so they take no arguments).
 pub mod why {
-    pub const ENCRYPTED: &str = "Not signed: password-protected PDFs can't be signed yet";
+    pub const RESTRICTED: &str = "Not signed: the file's security settings don't allow signing with the password that opens it (give the owner password)";
     pub const NO_CHANGES: &str =
         "Not signed: the file is certified and allows no changes, not even another signature";
     pub const CERTIFY_SIGNED: &str = "Not signed: the file is already signed, and only the first signature can certify a document";
@@ -396,7 +396,7 @@ pub mod why {
     pub const NO_PAGE: &str = "Not signed: the file doesn't have the step's page";
     /// All of them.
     pub const ALL: [&str; 7] = [
-        ENCRYPTED,
+        RESTRICTED,
         NO_CHANGES,
         CERTIFY_SIGNED,
         NO_FIELD,
@@ -444,13 +444,16 @@ impl Plugin for SignPlugin {
         bytes: &[u8],
     ) -> Result<Applied, String> {
         let s = SignStep::from_value(options)?;
-        if file.password.is_some() {
-            return skip(why::ENCRYPTED);
-        }
-        let pdf = kantor_pdf::Pdf::from_bytes(bytes, None).map_err(|e| e.to_string())?;
-        if pdf.was_encrypted() {
-            return skip(why::ENCRYPTED);
-        }
+        // A password-protected file opens with the batch's password for it
+        // (the run already opened it with that) and stays protected: the
+        // signature is written encrypted like the file.
+        let pdf = match kantor_pdf::sign::open_to_sign(bytes, file.password) {
+            Ok(pdf) => pdf,
+            Err(kantor_pdf::Error::Invalid(e)) if e == kantor_pdf::sign::NOT_PERMITTED => {
+                return skip(why::RESTRICTED);
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         let sigs = kantor_pdf::sig::signatures(&pdf);
         let certified = sigs.and_then(|s| s.docmdp);
         if certified == Some(1) {
@@ -507,6 +510,7 @@ impl Plugin for SignPlugin {
         o.trust = self.trust.clone();
         o.now = now;
         o.rotate = rotate;
+        o.pdf_password = file.password.map(str::to_owned);
         if !matches!(place, Place::Invisible) {
             let art = match s.image.as_str() {
                 "" => None,

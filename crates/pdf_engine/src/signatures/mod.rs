@@ -327,6 +327,9 @@ pub struct Options<'a> {
     pub fetch: Option<&'a dyn Fetch>,
     /// "Now", Unix seconds.
     pub now: i64,
+    /// The password of a password-protected PDF (user or owner); `None`
+    /// tries an empty one.
+    pub password: Option<String>,
 }
 
 impl Options<'_> {
@@ -336,6 +339,7 @@ impl Options<'_> {
             trust: TrustStore::standard(),
             fetch: None,
             now: now(),
+            password: None,
         }
     }
 }
@@ -347,13 +351,33 @@ pub fn now() -> i64 {
         .unwrap_or(0)
 }
 
+/// Load a PDF for checking; a password-protected one is decrypted with
+/// `password` (lopdf tries an empty one first). Without the right password
+/// its objects can't be read: that's an error, not "not signed".
+pub fn load(bytes: &[u8], password: Option<&str>) -> Result<Document, String> {
+    let options = match password {
+        Some(p) => lopdf::LoadOptions::with_password(p),
+        None => lopdf::LoadOptions::default(),
+    };
+    let doc = Document::load_mem_with_options(bytes, options).map_err(|e| match e {
+        lopdf::Error::InvalidPassword => "the password does not open this PDF".to_string(),
+        e => e.to_string(),
+    })?;
+    if doc.trailer.has(b"Encrypt") {
+        return Err(
+            "the PDF is password-protected: give its password to check its signatures".into(),
+        );
+    }
+    Ok(doc)
+}
+
 /// Quick test whether a file has any signature field (no checking).
-pub fn has_signatures(bytes: &[u8]) -> bool {
+pub fn has_signatures(bytes: &[u8], password: Option<&str>) -> bool {
     let probe = |pat: &[u8]| bytes.windows(pat.len()).any(|w| w == pat);
     if !probe(b"/ByteRange") && !probe(b"/FT/Sig") && !probe(b"/FT /Sig") {
         return false;
     }
-    Document::load_mem(bytes)
+    load(bytes, password)
         .map(|d| !pdf::fields(&d).is_empty())
         .unwrap_or(false)
 }
@@ -364,7 +388,7 @@ pub fn verify(bytes: &[u8], opts: &Options<'_>) -> Report {
         checked_online: opts.fetch.is_some(),
         ..Report::default()
     };
-    let full = match Document::load_mem(bytes) {
+    let full = match load(bytes, opts.password.as_deref()) {
         Ok(d) => d,
         Err(e) => {
             report.error = Some(e.to_string());
@@ -447,7 +471,7 @@ pub fn verify(bytes: &[u8], opts: &Options<'_>) -> Report {
         if s.integrity == Integrity::Intact && !s.covers_whole_file {
             let doc = signed_docs
                 .entry(s.signed_len)
-                .or_insert_with(|| Document::load_mem(&bytes[..s.signed_len]).ok());
+                .or_insert_with(|| load(&bytes[..s.signed_len], opts.password.as_deref()).ok());
             match doc {
                 Some(d) => s.changes = diff::changes(d, &full),
                 None => s.changes.push(Change::Other {

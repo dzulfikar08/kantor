@@ -552,6 +552,8 @@ enum Ready {
 pub struct Prepared {
     pub batch: Batch,
     steps: Vec<Ready>,
+    /// A table of passwords by file name (for this run only; never saved).
+    passwords: Option<Arc<Table>>,
 }
 
 /// Read a stamp's picture: a PNG/JPEG file or a drawn `.ink` signature.
@@ -797,7 +799,26 @@ impl Prepared {
         Ok(Prepared {
             batch: batch.clone(),
             steps,
+            passwords: None,
         })
+    }
+
+    /// Open password-protected files with the passwords in `table`'s
+    /// password column, by file name (for this run only).
+    pub fn set_passwords(&mut self, table: Table) {
+        self.passwords = Some(Arc::new(table));
+    }
+
+    /// The password for the file `name` from a table: the passwords table,
+    /// else a password column of a fill step's table.
+    pub fn password_for(&self, name: &str) -> Option<&str> {
+        self.passwords
+            .iter()
+            .chain(self.steps.iter().filter_map(|s| match s {
+                Ready::Fill { table, .. } => table.as_ref(),
+                _ => None,
+            }))
+            .find_map(|t| t.password_for(name))
     }
 }
 
@@ -808,6 +829,9 @@ impl Prepared {
 pub enum Reason {
     /// The file is password-protected and the password doesn't open it.
     Password,
+    /// The file opened with its user password, and its owner doesn't allow
+    /// this change (commenting, filling in forms or changing the pages).
+    Restricted,
     /// The step changes the page content: it would invalidate the digital
     /// signature.
     Signed,
@@ -837,6 +861,10 @@ impl std::fmt::Display for Reason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Reason::Password => f.write_str("password-protected (give its password)"),
+            Reason::Restricted => f.write_str(
+                "skipped: the file's security settings don't allow this with the password \
+                 that opens it (give the owner password)",
+            ),
             Reason::Signed => f.write_str(
                 "skipped: the file is digitally signed and this would invalidate the signature",
             ),
@@ -888,8 +916,10 @@ pub struct FileRun {
 }
 
 /// Run the batch on one PDF (`name` matches it to a table row). Encrypted
-/// files open with `password`, else with an empty one.
+/// files open with the password in their table row, else `password`, else
+/// an empty one; they stay encrypted.
 pub fn run_file(p: &Prepared, name: &str, bytes: &[u8], password: Option<&str>) -> FileRun {
+    let password = p.password_for(name).or(password);
     let mut notes = Vec::new();
     let fail = |e: Error, notes: Vec<Note>| FileRun {
         outcome: Outcome::Failed(e.to_string()),
@@ -928,6 +958,9 @@ pub fn run_file(p: &Prepared, name: &str, bytes: &[u8], password: Option<&str>) 
         Err(e) => return fail(e, notes),
     };
     let sigs = crate::sig::signatures(&pdf);
+    // What the owner of a password-protected file allows with the password
+    // that opened it (everything with the owner password).
+    let protection = pdf.protection(used.as_deref().unwrap_or(""));
     let keep_prefix = sigs.is_some() || crate::sig::usage_rights(&pdf);
     let before = pdf.clone();
     let mut pdf = pdf;
@@ -940,6 +973,21 @@ pub fn run_file(p: &Prepared, name: &str, bytes: &[u8], password: Option<&str>) 
                 reason,
             })
         };
+        if let Some(pr) = protection.filter(|p| !p.owner) {
+            use lopdf::Permissions as P;
+            let allowed = match step {
+                Ready::Stamp { .. } => pr.permissions.contains(P::ANNOTABLE),
+                Ready::Fill { .. } => pr.permissions.intersects(P::ANNOTABLE | P::FILLABLE),
+                Ready::PageNumbers(..) | Ready::Watermark(..) | Ready::Flatten => {
+                    pr.permissions.contains(P::MODIFIABLE)
+                }
+                Ready::Plugin(..) => true,
+            };
+            if !allowed {
+                note(&mut notes, Reason::Restricted);
+                continue;
+            }
+        }
         // What a signed file allows.
         if let Some(s) = sigs {
             let refused = match step {
@@ -1275,6 +1323,9 @@ fn fill(
     let mut unknown = Vec::new();
     let mut bad = Vec::new();
     for (key, text) in &values {
+        if crate::table::is_password_column(key) {
+            continue;
+        }
         // Exact name first, then without case.
         let field = form.field(key).or_else(|| {
             form.fields

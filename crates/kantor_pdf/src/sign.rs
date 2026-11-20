@@ -82,6 +82,9 @@ pub struct Request {
     /// The page's `/Rotate` (0, 90, 180, 270): a new visible signature is
     /// drawn turned against it, so it stands upright as the page is shown.
     pub rotate: i64,
+    /// The password of a password-protected PDF (user or owner; `None`
+    /// tries an empty one). The update is encrypted like the file.
+    pub password: Option<String>,
 }
 
 impl Request {
@@ -99,6 +102,7 @@ impl Request {
             reserve,
             app: None,
             rotate: 0,
+            password: None,
         }
     }
 }
@@ -285,7 +289,7 @@ const PLACEHOLDER: &str = "[0 1111111111 2222222222 3333333333]";
 /// Add a signature (or document time stamp) with an empty `/Contents` of
 /// `req.reserve` bytes as an incremental update of `bytes`.
 pub fn prepare(bytes: &[u8], req: &Request) -> Result<Prepared> {
-    let pdf = open_unencrypted(bytes)?;
+    let pdf = open_to_sign(bytes, req.password.as_deref())?;
     let existing = crate::sig::signatures(&pdf);
     if existing.is_some_and(|s| s.docmdp == Some(1)) {
         return Err(Error::Invalid(
@@ -317,7 +321,9 @@ pub fn prepare(bytes: &[u8], req: &Request) -> Result<Prepared> {
     if req.reserve == 0 || req.reserve > 1 << 20 {
         return Err(Error::Invalid("bad signature size".into()));
     }
-    let out = crate::sig::incremental(bytes, None, |pdf| add_signature(&mut pdf.doc, req))?;
+    let out = crate::sig::incremental(bytes, req.password.as_deref(), |pdf| {
+        add_signature(&mut pdf.doc, req)
+    })?;
     locate(out, bytes.len(), req.reserve)
 }
 
@@ -825,23 +831,62 @@ pub struct Vri {
 }
 
 /// Add (or extend) the document's DSS as an incremental update. Data
-/// already in the DSS isn't added twice.
-pub fn add_dss(bytes: &[u8], dss: &Dss) -> Result<Vec<u8>> {
-    open_unencrypted(bytes)?;
-    crate::sig::incremental(bytes, None, |pdf| write_dss(&mut pdf.doc, dss))
+/// already in the DSS isn't added twice. `password` opens a
+/// password-protected file (its DSS streams are encrypted like the file).
+pub fn add_dss(bytes: &[u8], dss: &Dss, password: Option<&str>) -> Result<Vec<u8>> {
+    open_to_sign(bytes, password)?;
+    crate::sig::incremental(bytes, password, |pdf| write_dss(&mut pdf.doc, dss))
 }
 
-/// Open a PDF to sign. Encrypted files are refused whether or not they
-/// need a password to open (`Error::Encrypted` would ask for one, which
-/// doesn't help).
-fn open_unencrypted(bytes: &[u8]) -> Result<Pdf> {
-    let refuse = || Error::Invalid("signing password-protected PDFs isn't supported yet".into());
-    match Pdf::from_bytes(bytes, None) {
-        Ok(pdf) if pdf.was_encrypted() => Err(refuse()),
-        Ok(pdf) => Ok(pdf),
-        Err(Error::Encrypted | Error::WrongPassword) => Err(refuse()),
-        Err(e) => Err(e),
+/// Why a password-protected PDF can't be signed with the user password.
+pub const NOT_PERMITTED: &str = "the document's security settings don't allow signing it with \
+     the password that opens it; give the owner (permissions) password";
+
+/// Open a PDF to sign. A password-protected one opens with `password`
+/// (`None` tries an empty one) and must allow signing: always with the
+/// owner password, with the user password only when the owner allowed
+/// commenting or filling in fields (as Acrobat decides). Its updates are
+/// written encrypted with the file's own security handler and `/ID`.
+pub fn open_to_sign(bytes: &[u8], password: Option<&str>) -> Result<Pdf> {
+    let pdf = match Pdf::from_bytes(bytes, None) {
+        Err(Error::Encrypted) => {
+            Pdf::from_bytes(bytes, Some(password.unwrap_or(""))).map_err(|e| {
+                match (e, password) {
+                    (Error::WrongPassword | Error::Encrypted, None) => Error::Invalid(
+                        "the PDF is password-protected: give its password to sign it".into(),
+                    ),
+                    (e, _) => e,
+                }
+            })?
+        }
+        r => r?,
+    };
+    if let Some(p) = pdf.protection(password.unwrap_or("")) {
+        if !p.allows_signing() {
+            return Err(Error::Invalid(NOT_PERMITTED.into()));
+        }
+        // ISO/TS 32004 integrity protection (pyHanko's "PDF MAC"): every
+        // update must carry a new MAC token, which Kantor can't make.
+        if bytes.windows(8).any(|w| w == b"/KDFSalt") {
+            return Err(Error::Invalid(
+                "the file's protection includes an integrity code (ISO/TS 32004), which Kantor \
+                 can't update: it can't be signed yet"
+                    .into(),
+            ));
+        }
+        // The update reuses the original encryption dictionary.
+        let kept = pdf
+            .doc
+            .encryption_state
+            .as_ref()
+            .is_some_and(|s| s.encrypt_object_id().is_some());
+        if !kept {
+            return Err(Error::Encryption(
+                "the file's encryption dictionary can't be found".into(),
+            ));
+        }
     }
+    Ok(pdf)
 }
 
 fn stream_bytes(doc: &Document, o: &Object) -> Option<Vec<u8>> {
@@ -1009,9 +1054,9 @@ mod tests {
                 crls: vec![],
             }],
         };
-        let once = add_dss(&src, &dss).unwrap();
+        let once = add_dss(&src, &dss, None).unwrap();
         assert!(once.starts_with(&src));
-        let twice = add_dss(&once, &dss).unwrap();
+        let twice = add_dss(&once, &dss, None).unwrap();
         let pdf = Pdf::from_bytes(&twice, None).unwrap();
         let doc = &pdf.doc;
         let d = doc
@@ -1095,28 +1140,136 @@ mod tests {
         assert!((mb[4].as_float().unwrap() - 0.1234567).abs() < 1e-6);
     }
 
-    /// Encrypted files can't be signed yet: the message says so instead of
-    /// asking for a password (`kantor pdf sign` takes none).
+    fn has(hay: &[u8], needle: &[u8]) -> bool {
+        hay.windows(needle.len()).any(|w| w == needle)
+    }
+
+    /// Password-protected files of every standard security handler are
+    /// signed with their user password: the update is encrypted with the
+    /// file's own key and points at its `/Encrypt`, the signature's
+    /// `/Contents` stays in clear (ISO 32000-2 §7.6.2), and the file still
+    /// needs its password.
     #[test]
-    fn encrypted_files_are_refused_without_asking_for_a_password() {
-        let req = Request::new(
-            SigType::Signature { certify: None },
-            Place::Invisible,
-            1_790_000_000,
-            1000,
-        );
-        for src in [
-            crate::testing::sample_pdf_encrypted(1, "owner", ""),
-            crate::testing::sample_pdf_encrypted(1, "owner", "user"),
-        ] {
-            let Err(e) = prepare(&src, &req) else {
-                panic!("signed an encrypted file");
-            };
-            assert_eq!(
-                e.to_string(),
-                "signing password-protected PDFs isn't supported yet"
+    fn protected_files_are_signed_and_stay_protected() {
+        use crate::testing::{Protect, sample_pdf_protected};
+        for kind in Protect::ALL {
+            let src = sample_pdf_protected(1, kind, "owner", "user", lopdf::Permissions::all());
+            let mut req = Request::new(
+                SigType::Signature { certify: None },
+                Place::New {
+                    page: 0,
+                    rect: [50.0, 50.0, 250.0, 110.0],
+                },
+                1_790_000_000,
+                1000,
             );
-            assert!(add_dss(&src, &Dss::default()).is_err());
+            req.reason = Some("Disetujui".into());
+            req.look = Some(Look {
+                lines: vec!["Digitally signed by Test".into()],
+                art: None,
+            });
+            // Without the password: say so.
+            let e = prepare(&src, &req).unwrap_err().to_string();
+            assert!(e.contains("give its password"), "{kind:?}: {e}");
+            req.password = Some("wrong".into());
+            assert!(matches!(prepare(&src, &req), Err(Error::WrongPassword)));
+            req.password = Some("user".into());
+            let p = prepare(&src, &req).unwrap();
+            assert!(p.bytes.starts_with(&src));
+            let out = p.finish(&[0x30, 0x03, 0x02, 0x01, 0x05]).unwrap();
+            let update = &out[src.len()..];
+            assert!(has(update, b"/Encrypt"), "{kind:?}");
+            assert!(has(update, b"/ID"), "{kind:?}");
+            // The CMS in clear; the reason and the appearance encrypted.
+            assert!(has(update, b"<3003020105000000"), "{kind:?}");
+            assert!(!has(update, b"Disetujui"), "{kind:?}");
+            assert!(!has(update, b"Digitally signed"), "{kind:?}");
+            assert!(matches!(Pdf::from_bytes(&out, None), Err(Error::Encrypted)));
+            for pw in ["user", "owner"] {
+                let pdf = Pdf::from_bytes(&out, Some(pw)).unwrap();
+                assert!(pdf.was_encrypted());
+                assert_eq!(crate::sig::signatures(&pdf).unwrap().count, 1, "{kind:?}");
+                let f = signature_fields(&pdf);
+                assert_eq!(f[0].page, Some(0));
+                // The reason reads back decrypted.
+                let sig = pdf
+                    .doc
+                    .objects
+                    .values()
+                    .filter_map(|o| o.as_dict().ok())
+                    .find(|d| d.has(b"ByteRange"))
+                    .unwrap();
+                assert_eq!(
+                    get_text(&pdf.doc, sig, b"Reason").as_deref(),
+                    Some("Disetujui")
+                );
+                let contents = sig.get(b"Contents").unwrap().as_str().unwrap();
+                assert!(contents.starts_with(&[0x30, 0x03, 0x02, 0x01, 0x05, 0]));
+            }
+            // The DSS update is encrypted too.
+            let dss = Dss {
+                certs: vec![b"certificate bytes".to_vec()],
+                ..Dss::default()
+            };
+            let lt = add_dss(&out, &dss, Some("user")).unwrap();
+            assert!(lt.starts_with(&out));
+            assert!(has(&lt[out.len()..], b"/Encrypt"));
+            let pdf = Pdf::from_bytes(&lt, Some("user")).unwrap();
+            let d = pdf
+                .doc
+                .dereference(pdf.doc.catalog().unwrap().get(b"DSS").unwrap())
+                .unwrap()
+                .1
+                .as_dict()
+                .unwrap();
+            let certs = d.get(b"Certs").unwrap().as_array().unwrap();
+            let st = pdf
+                .doc
+                .get_object(certs[0].as_reference().unwrap())
+                .unwrap();
+            assert_eq!(
+                stream_bytes(&pdf.doc, st).unwrap(),
+                b"certificate bytes".to_vec()
+            );
+        }
+    }
+
+    /// The owner's restrictions: with the user password a file that allows
+    /// neither commenting nor filling in fields isn't signed (as Acrobat
+    /// says "Signing: Not Allowed"); the owner password signs it.
+    #[test]
+    fn restrictions_apply_to_the_user_password_only() {
+        use crate::testing::{Protect, sample_pdf_protected};
+        use lopdf::Permissions as P;
+        let req = |pw: &str| {
+            let mut r = Request::new(
+                SigType::Signature { certify: None },
+                Place::Invisible,
+                1_790_000_000,
+                1000,
+            );
+            r.password = Some(pw.into());
+            r
+        };
+        for kind in Protect::ALL {
+            let locked = sample_pdf_protected(1, kind, "owner", "user", P::PRINTABLE | P::COPYABLE);
+            let e = prepare(&locked, &req("user")).unwrap_err().to_string();
+            assert_eq!(e, NOT_PERMITTED, "{kind:?}");
+            assert!(prepare(&locked, &req("owner")).is_ok(), "{kind:?}");
+            // Empty user password: opening needs none, signing the owner's.
+            let open = sample_pdf_protected(1, kind, "owner", "", P::PRINTABLE);
+            let mut r = req("");
+            r.password = None;
+            assert_eq!(prepare(&open, &r).unwrap_err().to_string(), NOT_PERMITTED);
+            assert!(prepare(&open, &req("owner")).is_ok(), "{kind:?}");
+            // Filling in fields (revision 3 and later) or commenting is enough.
+            let fill = if kind == Protect::Rc4_40 {
+                P::ANNOTABLE
+            } else {
+                P::FILLABLE
+            };
+            let ok = sample_pdf_protected(1, kind, "owner", "user", fill);
+            assert!(prepare(&ok, &req("user")).is_ok(), "{kind:?}");
         }
     }
 
@@ -1155,7 +1308,7 @@ mod tests {
             certs: vec![b"cert".to_vec()],
             ..Dss::default()
         };
-        let lt = add_dss(&signed, &dss).unwrap();
+        let lt = add_dss(&signed, &dss, None).unwrap();
         assert!(lt.starts_with(&signed));
         let tail = &lt[signed.len()..];
         assert!(tail.windows(5).any(|w| w == b"/Prev"));

@@ -23,6 +23,7 @@ fn check_with(name: &str, trust: TrustStore) -> Report {
         trust,
         fetch: None,
         now: now(),
+        password: None,
     };
     let r = verify(&load(name), &opts);
     assert!(r.error.is_none(), "{name}: {:?}", r.error);
@@ -42,8 +43,8 @@ fn only(r: &Report) -> &Signature {
 fn unsigned_file_has_no_signatures() {
     let r = check("unsigned");
     assert!(!r.is_signed());
-    assert!(!has_signatures(&load("unsigned")));
-    assert!(has_signatures(&load("valid")));
+    assert!(!has_signatures(&load("unsigned"), None));
+    assert!(has_signatures(&load("valid"), None));
 }
 
 #[test]
@@ -206,6 +207,7 @@ fn developer_extensions_added_with_ltv_are_allowed() {
             trust: test_trust(),
             fetch: None,
             now: now(),
+            password: None,
         },
     );
     let s = only(&r);
@@ -242,6 +244,7 @@ fn with_pages_edited(edit: impl FnOnce(&mut lopdf::Dictionary)) -> Report {
             trust: test_trust(),
             fetch: None,
             now: now(),
+            password: None,
         },
     )
 }
@@ -288,6 +291,7 @@ fn with_catalog_edited(edit: impl FnOnce(&mut lopdf::Document, &mut lopdf::Dicti
             trust: test_trust(),
             fetch: None,
             now: now(),
+            password: None,
         },
     )
 }
@@ -441,6 +445,7 @@ fn unreachable_server_means_not_checked() {
         trust: test_trust(),
         fetch: Some(&Down),
         now: now(),
+        password: None,
     };
     let r = verify(&load("revocation_unknown"), &opts);
     let s = only(&r);
@@ -463,6 +468,7 @@ fn signed_version_is_the_signed_revision() {
             trust: test_trust(),
             fetch: None,
             now: now(),
+            password: None,
         },
     );
     assert_eq!(only(&again).status, Status::Valid);
@@ -509,6 +515,7 @@ fn kantor_incremental_annotations_keep_the_signature_valid() {
             trust: test_trust(),
             fetch: None,
             now: now(),
+            password: None,
         },
     );
     let s = only(&r);

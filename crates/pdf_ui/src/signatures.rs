@@ -38,6 +38,8 @@ pub(crate) struct Sigs {
     pub cert: Option<(usize, usize)>,
     /// The file's bytes as opened (what was checked).
     bytes: Option<Arc<Vec<u8>>>,
+    /// The password that opened a password-protected file (`""` for none).
+    pub password: String,
     _task: Option<Task<()>>,
 }
 
@@ -112,8 +114,9 @@ impl PdfView {
     ) {
         self.sigs.bytes = Some(bytes.clone());
         self.sigs.checking = true;
+        let password = (!self.sigs.password.is_empty()).then(|| self.sigs.password.clone());
         let work = cx.background_spawn(async move {
-            if !online && !sig::has_signatures(&bytes) {
+            if !online && !sig::has_signatures(&bytes, password.as_deref()) {
                 return None;
             }
             let http = sig::Http::new();
@@ -121,6 +124,7 @@ impl PdfView {
                 trust: trust_store(),
                 fetch: if online { Some(&http) } else { None },
                 now: sig::now(),
+                password,
             };
             Some(Arc::new(sig::verify(&bytes, &opts)))
         });
@@ -973,6 +977,7 @@ mod tests {
             trust,
             fetch: None,
             now: sig::now(),
+            password: None,
         };
         let mut msgs: Vec<Msg> = Vec::new();
         for e in std::fs::read_dir(dir).unwrap().flatten() {

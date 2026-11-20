@@ -134,6 +134,9 @@ pub(crate) struct BatchState {
     place: Where,
     folder: Option<PathBuf>,
     suffix: Entity<InputState>,
+    /// The password for password-protected PDFs (this run only, never
+    /// saved); a password column in a fill step's table wins.
+    pdf_password: Entity<InputState>,
     stage: Stage,
     results: Vec<FileResult>,
     error: Option<String>,
@@ -240,8 +243,12 @@ fn step_title(s: &StepUi) -> String {
 pub(crate) fn reason_text(r: &Reason) -> String {
     match r {
         Reason::Password => {
-            i18n::t("Password-protected: open it in Kantor with its password").into()
+            i18n::t("Password-protected: give its password (PDF password, or a Password column in the table)").into()
         }
+        Reason::Restricted => i18n::t(
+            "Skipped: the file's security settings don't allow this with the password that opens it (give the owner password)",
+        )
+        .into(),
         Reason::Signed => {
             i18n::t("Skipped: digitally signed, and this would invalidate the signature").into()
         }
@@ -400,12 +407,26 @@ impl PdfView {
             vec![self.path.clone()]
         };
         let suffix = input(window, cx, "-batch", "");
+        let pdf_password = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder(i18n::t("Password for protected PDFs (optional)"))
+        });
+        // This window's own file, if protected: its password is known.
+        let known = self
+            .doc()
+            .map(|d| d.model.base().password.clone())
+            .unwrap_or_default();
+        if !known.is_empty() {
+            pdf_password.update(cx, |i, cx| i.set_value(known, window, cx));
+        }
         let state = BatchState {
             files,
             steps: Vec::new(),
             place: Where::NextTo,
             folder: None,
             suffix,
+            pdf_password,
             stage: Stage::Edit,
             results: Vec::new(),
             error: None,
@@ -1100,12 +1121,22 @@ impl PdfView {
         b.ran = batch.steps.clone();
         let files = b.files.clone();
         let output = batch.output.clone();
+        let password = b.pdf_password.read(cx).value().to_string();
+        let password = (!password.is_empty()).then_some(password);
         let (tx, rx) = async_channel::unbounded::<FileResult>();
         let stop = cancel.clone();
         let work = cx.background_spawn(async move {
-            batch::run(&prepared, &files, &output, existing, None, &stop, |_, r| {
-                let _ = tx.send_blocking(r.clone());
-            });
+            batch::run(
+                &prepared,
+                &files,
+                &output,
+                existing,
+                password.as_deref(),
+                &stop,
+                |_, r| {
+                    let _ = tx.send_blocking(r.clone());
+                },
+            );
         });
         cx.spawn_in(window, async move |this, cx| {
             while let Ok(r) = rx.recv().await {
@@ -1492,6 +1523,16 @@ impl PdfView {
             .child(row(
                 i18n::t("Name suffix"),
                 Input::new(&b.suffix).small(),
+                cx,
+            ))
+            .child(row(
+                i18n::t("PDF password"),
+                Input::new(&b.pdf_password).small(),
+                cx,
+            ))
+            .child(note(
+                i18n::t("Password-protected PDFs stay protected. Give one password for all of them here, or a Password column in a fill step's table; it is used for this run only and never saved."),
+                false,
                 cx,
             ))
             .child(note(

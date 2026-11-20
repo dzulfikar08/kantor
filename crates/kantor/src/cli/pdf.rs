@@ -160,7 +160,7 @@ uncompressed streams and packs objects into object streams. Images are\n\
 not re-encoded. If that doesn't make the file smaller, the output is a copy.\n\
 Default output: FILE-compressed.pdf.";
 
-const VERIFY: &str = "usage: kantor pdf verify FILE [--online] [--trust CERTS.pem] [--no-system-roots]\n\
+const VERIFY: &str = "usage: kantor pdf verify FILE [--online] [--trust CERTS.pem] [--no-system-roots] [--password PW]\n\
 \n\
 Check every digital signature in FILE, as the Signatures panel does: who\n\
 signed and when, whether the signed bytes are intact, the certificate chain\n\
@@ -172,6 +172,8 @@ after signing.\n\
 \x20                    servers (otherwise only what the file holds is used)\n\
 \x20 --trust FILE       also trust the root certificates in FILE (PEM or DER)\n\
 \x20 --no-system-roots  don't trust the operating system's roots\n\
+\x20 --password PW      a password-protected PDF's password (or set\n\
+\x20                    KANTOR_PDF_PASSWORD)\n\
 \n\
 Exit status: 0 signed and all signatures valid, 1 a signature has problems,\n\
 3 not signed, 2 usage error.";
@@ -206,6 +208,13 @@ Time stamps and long-term validation (these go online):\n\
 \x20 --lt                 also embed the certificates, OCSP and CRLs: B-LT\n\
 \x20 --lta                also add a document time stamp: B-LTA (needs --tsa)\n\
 \x20 --trust FILE         extra root certificates for building the chain (--lt)\n\
+\n\
+Password-protected PDFs stay protected: the signature is written encrypted\n\
+like the file. With only the open (user) password the owner must allow\n\
+commenting or filling in fields; the owner password always signs.\n\
+\x20 --password PW        the PDF's password (or set KANTOR_PDF_PASSWORD)\n\
+\x20 --pdf-password-file F  the PDF's password from the first line of F\n\
+\x20                      (- reads standard input)\n\
 \n\
 Output: -o OUT.pdf for one file, -o DIR for several (default: FILE-signed.pdf).";
 
@@ -260,6 +269,8 @@ fn sign(rest: &[String], usage: &str) -> Outcome {
             "certify",
             "tsa",
             "trust",
+            "password",
+            "pdf-password-file",
         ],
         &["force", "help", "system", "lt", "lta", "pss"],
         usage,
@@ -410,6 +421,10 @@ fn sign(rest: &[String], usage: &str) -> Outcome {
     opts.fetch = (level > Level::B).then_some(&http as &dyn sigs::Fetch);
     opts.trust = trust;
     opts.now = now;
+    opts.pdf_password = match args.value("pdf-password-file") {
+        Some(f) => read_secret(Some(f), "KANTOR_PDF_PASSWORD")?,
+        None => args.password(),
+    };
     if !matches!(place, kantor_pdf::sign::Place::Invisible) {
         opts.look = Some(kantor_pdf::sign::Look {
             lines: signing::look_lines(
@@ -485,7 +500,7 @@ pub fn verify(rest: &[String]) -> (String, i32) {
     let failed = |f: Failure| (format!("kantor pdf: {}\n", f.message), f.code);
     let args = match Args::parse(
         rest,
-        &["trust"],
+        &["trust", "password"],
         &["online", "no-system-roots", "help"],
         VERIFY,
     ) {
@@ -539,6 +554,7 @@ pub fn verify(rest: &[String]) -> (String, i32) {
             None
         },
         now: sig::now(),
+        password: args.password(),
     };
     let report = sig::verify(&bytes, &opts);
     let code = if report.error.is_some() {
@@ -1475,6 +1491,77 @@ mod tests {
         ]))
         .unwrap_err();
         assert!(err.message.contains("password"), "{}", err.message);
+    }
+
+    /// A password-protected PDF: signed with `--pdf-password-file`, still
+    /// protected, and checked with `verify --password`.
+    #[test]
+    fn signs_and_verifies_a_protected_pdf() {
+        use kantor_pdf::testing::{Protect, sample_pdf_protected};
+        let dir = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../pdf_engine/tests/fixtures/signing"
+        );
+        let tmp = tempfile::tempdir().unwrap();
+        let input = tmp.path().join("in.pdf");
+        let src = sample_pdf_protected(
+            1,
+            Protect::Aes256,
+            "owner",
+            "user",
+            kantor_pdf::testing::Permissions::all(),
+        );
+        std::fs::write(&input, &src).unwrap();
+        let pw = tmp.path().join("pw");
+        std::fs::write(&pw, "kantor-test\n").unwrap();
+        let pdf_pw = tmp.path().join("pdfpw");
+        std::fs::write(&pdf_pw, "user\n").unwrap();
+        let out = tmp.path().join("out.pdf");
+        let p12 = format!("{dir}/rsa.p12");
+        let args = |extra: &[&str]| {
+            let mut a = vec![
+                "sign",
+                input.to_str().unwrap(),
+                "-o",
+                out.to_str().unwrap(),
+                "-f",
+                "--p12",
+                &p12,
+                "--password-file",
+                pw.to_str().unwrap(),
+            ];
+            a.extend_from_slice(extra);
+            s(&a)
+        };
+        let err = run(&args(&[])).unwrap_err();
+        assert!(
+            err.message.contains("password-protected"),
+            "{}",
+            err.message
+        );
+        let msg = run(&args(&["--pdf-password-file", pdf_pw.to_str().unwrap()])).unwrap();
+        assert!(msg.contains("signed by Budi Santoso"), "{msg}");
+        let signed = std::fs::read(&out).unwrap();
+        assert!(signed.starts_with(&src));
+        assert!(matches!(
+            kantor_pdf::Pdf::from_bytes(&signed, None),
+            Err(kantor_pdf::Error::Encrypted)
+        ));
+        let root = format!("{dir}/root.pem");
+        let (text, code) = verify(&s(&[
+            out.to_str().unwrap(),
+            "--trust",
+            &root,
+            "--no-system-roots",
+            "--password",
+            "owner",
+        ]));
+        assert!(text.contains("Budi Santoso"), "{text}");
+        assert!(code == 0 || code == 1, "{text}");
+        assert!(!text.contains("altered"), "{text}");
+        let (text, code) = verify(&s(&[out.to_str().unwrap()]));
+        assert_eq!(code, 1, "{text}");
+        assert!(text.contains("password"), "{text}");
     }
 
     #[test]

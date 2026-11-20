@@ -404,6 +404,107 @@ fn forms_fill_from_a_table_row_per_file() {
     assert_eq!(run.notes[0].reason, Reason::NoForm);
 }
 
+/// Passwords per file from a table's password column (used to open the
+/// file, never filled into the form), or from a passwords table for the
+/// run; the owner's restrictions hold for the user password.
+#[test]
+fn passwords_come_from_the_table() {
+    use crate::testing::{Protect, sample_pdf_protected};
+    use lopdf::Permissions as P;
+    let s = Setup::new();
+    std::fs::write(
+        s.path("values.csv"),
+        "file,name,Password\nalpha.pdf,Budi,alpha-pw\nbeta.pdf,Sari,\n",
+    )
+    .unwrap();
+    let p = s.prepare(vec![Step::Fill(Fill {
+        data: Some("values.csv".into()),
+        ..Fill::default()
+    })]);
+    let mut form = Pdf::from_bytes(&sample_form_pdf(), None).unwrap();
+    form.doc.trailer.set(
+        "ID",
+        vec![
+            lopdf::Object::String(b"form-id".to_vec(), lopdf::StringFormat::Hexadecimal),
+            lopdf::Object::String(b"form-id".to_vec(), lopdf::StringFormat::Hexadecimal),
+        ],
+    );
+    let encrypt = |pdf: &Pdf, user: &str, perms: P| {
+        let mut doc = pdf.doc.clone();
+        let state = lopdf::EncryptionState::try_from(lopdf::EncryptionVersion::V2 {
+            document: &doc,
+            owner_password: "owner",
+            user_password: user,
+            key_length: 128,
+            permissions: perms,
+        })
+        .unwrap();
+        doc.encrypt(&state).unwrap();
+        let mut out = Vec::new();
+        doc.save_to(&mut out).unwrap();
+        out
+    };
+    let alpha = encrypt(&form, "alpha-pw", P::all());
+    assert_eq!(p.password_for("Alpha.pdf"), Some("alpha-pw"));
+    let run = run_file(&p, "alpha.pdf", &alpha, None);
+    let (bytes, _) = done(&run);
+    assert!(
+        run.notes.is_empty(),
+        "the password column isn't a field: {:?}",
+        run.notes
+    );
+    let filled = Pdf::from_bytes(bytes, Some("alpha-pw")).unwrap();
+    assert_eq!(
+        form::read_form(&filled)
+            .unwrap()
+            .field("name")
+            .unwrap()
+            .value,
+        FieldValue::Text("Budi".into())
+    );
+    assert!(qpdf_ok(bytes, Some("alpha-pw")));
+    // An empty cell: the run's password.
+    let beta = encrypt(&form, "run-pw", P::all());
+    assert_eq!(
+        run_file(&p, "beta.pdf", &beta, None).outcome,
+        Outcome::Skipped
+    );
+    let run = run_file(&p, "beta.pdf", &beta, Some("run-pw"));
+    done(&run);
+    // Only the user password and no form filling allowed: skipped.
+    let ro = encrypt(&form, "run-pw", P::PRINTABLE);
+    let run = run_file(&p, "beta.pdf", &ro, Some("run-pw"));
+    assert_eq!(run.outcome, Outcome::Skipped);
+    assert_eq!(run.notes[0].reason, Reason::Restricted);
+    let run = run_file(&p, "beta.pdf", &ro, Some("owner"));
+    done(&run);
+
+    // A passwords table for a batch without one, and stamps restricted.
+    let mut p = s.prepare(vec![Step::Stamp(stamp(
+        "stamp.png",
+        "all",
+        Place::Point { x: 50.0, y: 50.0 },
+        60.0,
+    ))]);
+    p.set_passwords(crate::table::Table::from_csv("pdf,kata sandi\nc.pdf,c-pw\n", None).unwrap());
+    let c = sample_pdf_protected(1, Protect::Aes256, "owner", "c-pw", P::all());
+    let run = run_file(&p, "c.pdf", &c, None);
+    let (bytes, _) = done(&run);
+    assert_eq!(stamps_pw(bytes, 1, "c-pw"), 1);
+    assert!(qpdf_ok(bytes, Some("c-pw")));
+    let c = sample_pdf_protected(1, Protect::Aes128, "owner", "c-pw", P::FILLABLE);
+    let run = run_file(&p, "c.pdf", &c, None);
+    assert_eq!(run.notes[0].reason, Reason::Restricted);
+}
+
+fn stamps_pw(bytes: &[u8], page: u32, pw: &str) -> usize {
+    let pdf = Pdf::from_bytes(bytes, Some(pw)).unwrap();
+    annot::read_page(&pdf, page - 1)
+        .iter()
+        .filter(|a| matches!(a.kind, Kind::Stamp { .. }))
+        .count()
+}
+
 #[test]
 fn flatten_draws_every_annotation_with_its_popup() {
     let s = Setup::new();

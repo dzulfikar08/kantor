@@ -206,6 +206,66 @@ impl Pdf {
     }
 }
 
+/// How a password-protected PDF is protected, and what the password that
+/// opened it allows (ISO 32000-2 §7.6.4.2, Table 22).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Protection {
+    /// The owner password opened it (or the user password is the same):
+    /// everything is allowed.
+    pub owner: bool,
+    /// The `/P` permissions the owner set for people with the user password.
+    pub permissions: lopdf::Permissions,
+    /// The security handler's `/V` and `/R`.
+    pub version: i64,
+    pub revision: i64,
+}
+
+impl Protection {
+    /// Adding a signature is allowed: with the owner password always;
+    /// with the user password when the owner allowed commenting and form
+    /// filling, or (revision 3 and later) filling in existing fields,
+    /// signature fields included, as Acrobat's "Signing: Allowed".
+    pub fn allows_signing(&self) -> bool {
+        use lopdf::Permissions as P;
+        self.owner
+            || self.permissions.contains(P::ANNOTABLE)
+            || (self.revision >= 3 && self.permissions.contains(P::FILLABLE))
+    }
+
+    /// The security handler in words: "AES-256", "AES-128", "RC4 128-bit"…
+    pub fn method(&self) -> &'static str {
+        match (self.version, self.revision) {
+            (5, _) => "AES-256",
+            (4, _) => "AES-128",
+            (1, _) | (_, 2) => "RC4 40-bit",
+            _ => "RC4 128-bit",
+        }
+    }
+}
+
+impl Pdf {
+    /// For a PDF that was encrypted: how, and what `password` (the one
+    /// that opened it; `""` for none) allows. `None` for unencrypted files.
+    pub fn protection(&self, password: &str) -> Option<Protection> {
+        let state = self.doc.encryption_state.as_ref()?;
+        // Check the password against the encryption dictionary the way the
+        // file has it: a stand-in document with the trailer's /ID.
+        let owner = state.encode().ok().is_some_and(|dict| {
+            let mut probe = Document::with_version("1.7");
+            probe.trailer = self.doc.trailer.clone();
+            let id = probe.add_object(dict);
+            probe.trailer.set("Encrypt", id);
+            probe.authenticate_owner_password(password).is_ok()
+        });
+        Some(Protection {
+            owner,
+            permissions: state.permissions(),
+            version: state.version(),
+            revision: state.revision(),
+        })
+    }
+}
+
 /// Streams whose dictionary has no usable `/Length`: lopdf leaves them
 /// empty, so a save would drop their data (a page's whole content). Take the
 /// bytes up to `endstream`, as poppler and qpdf do.

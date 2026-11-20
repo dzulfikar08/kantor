@@ -97,12 +97,17 @@ impl Fetch for Net {
 }
 
 fn check(bytes: &[u8]) -> sig::Report {
+    check_with(bytes, None)
+}
+
+fn check_with(bytes: &[u8], password: Option<&str>) -> sig::Report {
     let r = sig::verify(
         bytes,
         &sig::Options {
             trust: trust(),
             fetch: None,
             now: sig::now(),
+            password: password.map(str::to_owned),
         },
     );
     assert!(r.error.is_none(), "{:?}", r.error);
@@ -232,6 +237,119 @@ fn long_term_validation_and_archive_time_stamp() {
     let pdf = kantor_pdf::Pdf::from_bytes(&out, None).unwrap();
     let doc = pdf.document();
     assert!(doc.catalog().unwrap().has(b"DSS"));
+}
+
+/// A password-protected file of each kind, signed B-LTA with its user
+/// password: the signature, the DSS and the document time stamp are all
+/// encrypted updates, every signature checks out, and the file still needs
+/// its password.
+#[test]
+fn protected_files_sign_to_b_lta() {
+    use kantor_pdf::testing::{Protect, sample_pdf_protected};
+    let net = Net::new();
+    let id = identity("rsa.p12", PW);
+    for kind in Protect::ALL {
+        let src = sample_pdf_protected(2, kind, "owner", "user", lopdf::Permissions::all());
+        let mut o = opts(
+            Place::New {
+                page: 0,
+                rect: [72.0, 72.0, 272.0, 132.0],
+            },
+            Some(&net),
+        );
+        o.look = Some(Look {
+            lines: vec!["Digitally signed by Budi Santoso".into()],
+            art: None,
+        });
+        o.level = Level::Lta;
+        o.tsa = Some(format!("{BASE}/tsa"));
+        assert!(sign(&src, &id, &o).is_err(), "no password given");
+        o.pdf_password = Some("user".into());
+        let out = sign(&src, &id, &o).unwrap();
+        assert!(out.starts_with(&src));
+        assert!(matches!(
+            kantor_pdf::Pdf::from_bytes(&out, None),
+            Err(kantor_pdf::Error::Encrypted)
+        ));
+        // Without the password the checker says what it needs.
+        let r = sig::verify(&out, &sig::Options::standard());
+        assert!(r.error.unwrap().contains("password"));
+        for pw in ["user", "owner"] {
+            let r = check_with(&out, Some(pw));
+            assert_eq!(r.signatures.len(), 2, "{kind:?} {}", sig::text_report(&r));
+            let s = &r.signatures[0];
+            assert_eq!(s.status, Status::Valid, "{kind:?} {}", sig::text_report(&r));
+            assert!(!s.path.as_ref().unwrap().revocation_unknown());
+            assert_eq!(s.reason.as_deref(), Some("I approve this document"));
+            assert_eq!(r.signatures[1].kind, sig::SigKind::DocTimestamp);
+            assert_eq!(r.signatures[1].integrity, sig::Integrity::Intact);
+        }
+        // A second signature keeps the first intact.
+        let other = identity("p384.p12", PW);
+        let mut o2 = opts(Place::Invisible, None);
+        o2.pdf_password = Some("owner".into());
+        let twice = sign(&out, &other, &o2).unwrap();
+        assert!(twice.starts_with(&out));
+        let r = check_with(&twice, Some("user"));
+        assert_eq!(r.signatures.len(), 3);
+        for s in &r.signatures {
+            assert_eq!(
+                s.integrity,
+                sig::Integrity::Intact,
+                "{}",
+                sig::text_report(&r)
+            );
+            assert_ne!(s.status, Status::Invalid, "{}", sig::text_report(&r));
+        }
+    }
+}
+
+/// A named destination points at the page the visible signature goes on:
+/// the page is still a page to the checker (its new widget is allowed), not
+/// a change to the name tree (the ISO 32000 PDF, signed with LTV, came out
+/// "Invalid: Other change (Names)").
+#[test]
+fn named_destinations_keep_pages_as_pages() {
+    use lopdf::{Dictionary, Object};
+    let mut doc = lopdf::Document::load_mem(&pdf()).unwrap();
+    let page = *doc.get_pages().get(&1).unwrap();
+    let mut tree = Dictionary::new();
+    tree.set(
+        "Names",
+        vec![
+            Object::string_literal("first"),
+            vec![page.into(), "Fit".into()].into(),
+        ],
+    );
+    let mut names = Dictionary::new();
+    names.set("Dests", doc.add_object(tree));
+    let names = doc.add_object(names);
+    doc.catalog_mut().unwrap().set("Names", names);
+    let mut src = Vec::new();
+    doc.save_to(&mut src).unwrap();
+    let net = Net::new();
+    let id = identity("rsa.p12", PW);
+    let mut o = opts(
+        Place::New {
+            page: 0,
+            rect: [72.0, 72.0, 272.0, 132.0],
+        },
+        Some(&net),
+    );
+    o.look = Some(Look {
+        lines: vec!["Budi Santoso".into()],
+        art: None,
+    });
+    o.level = Level::Lta;
+    o.tsa = Some(format!("{BASE}/tsa"));
+    let out = sign(&src, &id, &o).unwrap();
+    let r = check(&out);
+    assert_eq!(
+        r.signatures[0].status,
+        Status::Valid,
+        "{}",
+        sig::text_report(&r)
+    );
 }
 
 #[test]
@@ -467,15 +585,45 @@ mod batch_step {
             run.notes
         );
 
-        // Encrypted: stamped (kept encrypted) but not signed.
+        // Encrypted (no open password): stamped and signed, still
+        // encrypted.
         let run = kb::run_file(&p, "locked.pdf", &encrypted, None);
-        assert!(
-            run.notes
-                .iter()
-                .any(|n| n.reason.to_string() == why::ENCRYPTED),
-            "{:?}",
-            run.notes
+        assert!(run.notes.is_empty(), "{:?}", run.notes);
+        let out = signed_bytes(&run);
+        assert!(matches!(
+            kantor_pdf::Pdf::from_bytes(out, None),
+            Err(kantor_pdf::Error::Encrypted)
+        ));
+        all_good(out, 1);
+
+        // Only the user password, and the owner allows no changes: neither
+        // stamped nor signed; with the owner password both.
+        use kantor_pdf::testing::{Protect, sample_pdf_protected};
+        let restricted = sample_pdf_protected(
+            1,
+            Protect::Aes256,
+            "owner",
+            "user",
+            lopdf::Permissions::PRINTABLE,
         );
+        let run = kb::run_file(&p, "restricted.pdf", &restricted, Some("user"));
+        assert_eq!(run.outcome, Outcome::Skipped, "{:?}", run.notes);
+        let reasons: Vec<String> = run.notes.iter().map(|n| n.reason.to_string()).collect();
+        assert!(
+            reasons.contains(&why::RESTRICTED.to_string()),
+            "{reasons:?}"
+        );
+        assert!(
+            run.notes.iter().any(|n| n.reason == kb::Reason::Restricted),
+            "{reasons:?}"
+        );
+        let run = kb::run_file(&p, "restricted.pdf", &restricted, Some("owner"));
+        assert!(run.notes.is_empty(), "{:?}", run.notes);
+        let out = signed_bytes(&run);
+        let r = check_with(out, Some("user"));
+        assert_eq!(r.signatures.len(), 1);
+        assert_eq!(r.signatures[0].integrity, sig::Integrity::Intact);
+        assert!(r.signatures[0].covers_whole_file);
 
         // An invisible signature on the certified P=2 file is allowed.
         let invisible = sign_step(Appearance::Invisible);
