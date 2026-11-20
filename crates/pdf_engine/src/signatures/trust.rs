@@ -3,7 +3,8 @@
 //! A signer's chain is trusted when it ends at a root from the operating
 //! system's trust store or from Kantor's small bundled list of national
 //! signing roots the OS stores often lack (Root CA Indonesia DS G1, under
-//! which Indonesian e-meterai and certified e-signatures are issued).
+//! which Indonesian e-meterai and certified e-signatures are issued, and
+//! BSrE's older OSD LU Kelas 2, used by government agencies until 2026).
 //! Adobe's AATL and the EU trusted lists are not bundled (yet).
 
 use std::io::Read as _;
@@ -21,12 +22,31 @@ pub struct BundledRoot {
     pub source: &'static str,
 }
 
-pub const BUNDLED: &[BundledRoot] = &[BundledRoot {
-    name: "Root CA Indonesia DS G1",
-    pem: include_bytes!("../../assets/roots/RootCAIndonesiaDSG1.crt"),
-    sha256: "B5:F3:66:72:FD:7C:FD:40:1E:01:EF:64:0B:2F:E6:1F:81:6F:32:F4:47:B2:80:B7:6F:53:62:44:CF:42:FC:DF",
-    source: "https://www.rootca.id/repository/01.root/RootCAIndonesiaDSG1.crt",
-}];
+pub const BUNDLED: &[BundledRoot] = &[
+    BundledRoot {
+        name: "Root CA Indonesia DS G1",
+        pem: include_bytes!("../../assets/roots/RootCAIndonesiaDSG1.crt"),
+        sha256: "B5:F3:66:72:FD:7C:FD:40:1E:01:EF:64:0B:2F:E6:1F:81:6F:32:F4:47:B2:80:B7:6F:53:62:44:CF:42:FC:DF",
+        source: "https://www.rootca.id/repository/01.root/RootCAIndonesiaDSG1.crt",
+    },
+    // BSrE's (Balai Sertifikasi Elektronik, BSSN) older self-signed root, valid
+    // 2016-08-18 to 2026-08-18, under which ministries such as the Ministry of
+    // Finance (JDIH Kemenkeu) signed their documents. BSrE's current CA, "BSRE
+    // CA DS G1", chains to Root CA Indonesia DS G1 above. Checked 2026-11-20:
+    // - the SHA-256 below is the one listed on BSrE's certificate repository
+    //   https://bsre.bssn.go.id/repository/sertifikat/ (file /doc/sertifikat/osdlukelas2.crt);
+    // - the same DER is served at http://cvs-bsre.bssn.go.id/osdlukelas2.crt
+    //   (the issuer URL in the certificates it issued);
+    // - the Ministry of Finance's signed regulations embed the same DER, and a
+    //   regional government's PDFSign page shows the same serial
+    //   (6D23A5B861C67FA8) and SHA-1 (57:04:D8:81:…:95:59:48:A7).
+    BundledRoot {
+        name: "OSD LU Kelas 2",
+        pem: include_bytes!("../../assets/roots/OSDLUKelas2.crt"),
+        sha256: "21:78:09:5B:3C:C0:F6:FA:CB:9E:6F:07:FE:EC:EE:63:27:A8:9C:66:81:AF:43:BA:95:12:6B:68:86:7D:02:B2",
+        source: "https://bsre.bssn.go.id/doc/sertifikat/osdlukelas2.crt",
+    },
+];
 
 /// Where a trusted root came from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

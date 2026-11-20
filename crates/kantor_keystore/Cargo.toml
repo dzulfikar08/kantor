@@ -1,0 +1,33 @@
+[package]
+name = "kantor_keystore"
+description = "Kantor: signing keys outside Kantor (PKCS #11 tokens and smart cards, the macOS keychain, the Windows certificate store), no GPUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# PKCS #11 modules are loaded at run time, so building needs no C library.
+libloading = "0.8"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Keychain identities and signing with their keys (already in the tree
+# through rustls-native-certs on macOS).
+security-framework = "3"
+
+[target.'cfg(windows)'.dependencies]
+# CryptoAPI certificate store + CNG signing (already in the tree).
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Cryptography",
+] }
+
+# Not the workspace lints: those forbid unsafe code. Calling a PKCS #11
+# module or Windows CryptoAPI is foreign code by nature; `deny` lets exactly
+# those modules opt in, as kantor_mem does.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"

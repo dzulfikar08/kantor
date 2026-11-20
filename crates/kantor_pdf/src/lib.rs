@@ -19,6 +19,7 @@ mod pages;
 mod pdfstr;
 pub mod range;
 pub mod sig;
+pub mod sign;
 #[doc(hidden)]
 pub mod testing;
 #[cfg(test)]

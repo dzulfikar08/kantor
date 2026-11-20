@@ -1510,6 +1510,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "des"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
+dependencies = [
+ "cipher 0.4.4",
+]
+
+[[package]]
 name = "dhat"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4148,6 +4157,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "kantor_keystore"
+version = "0.18.0"
+dependencies = [
+ "libloading",
+ "security-framework",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "kantor_mem"
 version = "0.18.0"
 
@@ -5633,9 +5651,14 @@ dependencies = [
 name = "pdf_engine"
 version = "0.18.0"
 dependencies = [
+ "aes 0.8.4",
+ "cbc 0.1.2",
+ "des",
  "hayro",
+ "kantor_keystore",
  "kantor_pdf",
  "lopdf",
+ "rc2",
  "ring",
  "rustls-native-certs",
  "unicode-normalization",
@@ -6326,6 +6349,15 @@ checksum = "22e18b0f0062d30d4230b2e85ff77fdfe4326feb054b9783a3460d8435c8ab91"
 dependencies = [
  "crossbeam-deque",
  "crossbeam-utils",
+]
+
+[[package]]
+name = "rc2"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62c64daa8e9438b84aaae55010a93f396f8e60e3911590fcba770d04643fc1dd"
+dependencies = [
+ "cipher 0.4.4",
 ]
 
 [[package]]
