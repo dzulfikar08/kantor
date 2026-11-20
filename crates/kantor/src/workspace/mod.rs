@@ -309,11 +309,17 @@ impl Workspace {
                     sheets_ui::SheetsEvent::Notice(text) => ws.notice(text.clone(), cx),
                 }),
             ],
-            DocView::Docs(e) => {
-                vec![cx.observe_in(e, window, move |ws, _, window, cx| {
+            DocView::Docs(e) => vec![
+                cx.observe_in(e, window, move |ws, _, window, cx| {
                     on_change(ws, window, cx)
-                })]
-            }
+                }),
+                // Mail merge's Edit Individual Documents: a new tab.
+                cx.subscribe_in(e, window, |ws, _, event, window, cx| match event {
+                    docs_ui::DocsEvent::OpenMerged(doc) => {
+                        ws.open_merged((**doc).clone(), window, cx)
+                    }
+                }),
+            ],
             DocView::Slides(e) => {
                 vec![cx.observe_in(e, window, move |ws, _, window, cx| {
                     on_change(ws, window, cx)
@@ -389,6 +395,24 @@ impl Workspace {
             self.not_yet(app, cx);
             return;
         };
+        let id = self.alloc_id();
+        self.tabs.push(Tab {
+            id,
+            layout: Layout::Leaf(pane),
+            focused: pane,
+        });
+        self.activate(Some(self.tabs.len() - 1), window, cx);
+    }
+
+    /// A merged document (mail merge) in a new tab, untitled.
+    fn open_merged(
+        &mut self,
+        doc: docs_engine::Document,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let view = DocView::Docs(cx.new(|cx| docs_ui::DocsView::new_merged(doc, window, cx)));
+        let pane = self.insert_doc(view, window, cx);
         let id = self.alloc_id();
         self.tabs.push(Tab {
             id,

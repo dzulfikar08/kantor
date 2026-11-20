@@ -21,6 +21,7 @@ gpui-kit.workspace = true
 kantor_ai.workspace = true
 kantor_cloud.workspace = true
 kantor_core.workspace = true
+kantor_merge.workspace = true
 kantor_pdf.workspace = true
 kantor_theme.workspace = true
 kantor_ui.workspace = true

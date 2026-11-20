@@ -24,6 +24,7 @@ slides_scene.workspace = true
 slides_engine.workspace = true
 swash = "0.2.10"
 kantor_core.workspace = true
+kantor_merge.workspace = true
 kantor_spell.workspace = true
 # Fast hashing for the spell-check cache keys (already in the tree through spellbook).
 foldhash = "0.2"
@@ -35,6 +36,7 @@ skrifa = "0.44"
 [dev-dependencies]
 # Headless GPUI text system for the font-bridge test (as in docs_layout's gpui_compare).
 gpui_wgpu = { package = "gpui-pre-wgpu", version = "0.3.11" }
+tempfile.workspace = true
 
 [lints]
 workspace = true

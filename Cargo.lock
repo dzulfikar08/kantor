@@ -1702,6 +1702,7 @@ dependencies = [
  "gpui-pre-wgpu",
  "image",
  "kantor_core",
+ "kantor_merge",
  "kantor_spell",
  "kantor_ui",
  "log",
@@ -1709,6 +1710,7 @@ dependencies = [
  "slides_engine",
  "slides_scene",
  "swash",
+ "tempfile",
 ]
 
 [[package]]
@@ -4082,6 +4084,7 @@ dependencies = [
  "kantor_ai",
  "kantor_cloud",
  "kantor_core",
+ "kantor_merge",
  "kantor_pdf",
  "kantor_theme",
  "kantor_ui",
@@ -4168,6 +4171,22 @@ dependencies = [
 [[package]]
 name = "kantor_mem"
 version = "0.18.0"
+
+[[package]]
+name = "kantor_merge"
+version = "0.18.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "docs_engine",
+ "docs_pdf",
+ "sheets_engine",
+ "sheets_pdf",
+ "slides_engine",
+ "slides_pdf",
+ "tempfile",
+ "zip 9.4.1",
+]
 
 [[package]]
 name = "kantor_metafile"

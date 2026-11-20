@@ -426,6 +426,9 @@ pub struct Story {
     pub(crate) new: bool,
     /// Why Kantor won't edit it (it still shows and is kept as is).
     pub locked: Option<String>,
+    /// A new part copied from this one (a mail merge's header for one
+    /// record): its relationships (pictures) are copied too.
+    pub(crate) rels_from: Option<String>,
 }
 
 impl std::fmt::Debug for Story {
@@ -1135,6 +1138,7 @@ impl Document {
             modified: true,
             new: true,
             locked: None,
+            rels_from: None,
         }
     }
 

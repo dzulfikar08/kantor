@@ -341,3 +341,53 @@ Type a number of columns	Ketik jumlah kolom
 Whole document	Seluruh dokumen
 Width (cm)	Lebar (cm)
 Width and spacing	Lebar dan spasi
+
+# Mail merge (Mailings bar)
+Select Recipients (workbook or CSV file)	Pilih Penerima (buku kerja atau file CSV)
+{} recipients from {}	{} penerima dari {}
+Can't read the data source: {}	Sumber data tidak dapat dibaca: {}
+Select recipients first (Mailings ▸ Select Recipients)	Pilih penerima dulu (Surat Massal ▸ Pilih Penerima)
+No recipients are selected	Tidak ada penerima yang dipilih
+Every record was skipped	Semua rekaman dilewati
+Merged {} records into a new document	{} rekaman digabungkan ke dokumen baru
+Opened {} merged records in the PDF viewer to print	{} rekaman gabungan dibuka di penampil PDF untuk dicetak
+Save the merged documents in this folder	Simpan dokumen gabungan di folder ini
+Saved {} merged documents in {}	{} dokumen gabungan disimpan di {}
+Merge failed: {}	Penggabungan gagal: {}
+Use a workbook or CSV file: its first row names the fields	Gunakan buku kerja atau file CSV: baris pertamanya menamai bidang
+Edit Recipient List…	Edit Daftar Penerima…
+Sheet, header row, filter, sort and which recipients merge	Lembar, baris judul, filter, urutan, dan penerima yang digabungkan
+Insert Merge Field	Sisipkan Bidang Gabungan
+A field filled in from each recipient	Bidang yang diisi dari setiap penerima
+Record {} of {}	Rekaman {} dari {}
+No recipients	Tidak ada penerima
+No data source	Tidak ada sumber data
+Finish & Merge	Selesai & Gabungkan
+Edit Individual Documents	Edit Dokumen Individual
+Save as Documents (.docx), One per Recipient…	Simpan sebagai Dokumen (.docx), Satu per Penerima…
+Save as PDF, One per Recipient…	Simpan sebagai PDF, Satu per Penerima…
+Print Documents…	Cetak Dokumen…
+File names	Nama file
+{Field} is the recipient's value, {#} the record number; empty: the document's name	{Field} adalah nilai penerima, {#} nomor rekaman; kosong: nama dokumen
+Close Mailings	Tutup Surat Massal
+Mailings	Surat Massal
+First record	Rekaman pertama
+Previous record	Rekaman sebelumnya
+Next record	Rekaman berikutnya
+Last record	Rekaman terakhir
+Mailings: merge fields filled in from a list	Surat Massal: bidang gabungan diisi dari daftar
+Merged document: {} records, each in its own section	Dokumen gabungan: {} rekaman, masing-masing di bagiannya sendiri
+Header row	Baris judul
+Ascending	Naik
+Descending	Turun
+Add Filter	Tambah Filter
+Or	Atau
+{} more recipients	{} penerima lagi
+{} of {} recipients will merge	{} dari {} penerima akan digabungkan
+Mail Merge Recipients	Penerima Surat Massal
+Equal to	Sama dengan
+Not equal to	Tidak sama dengan
+Less than or equal	Kurang dari atau sama dengan
+Greater than or equal	Lebih dari atau sama dengan
+Is blank	Kosong
+Is not blank	Tidak kosong

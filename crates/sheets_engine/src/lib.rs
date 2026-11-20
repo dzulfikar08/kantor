@@ -1262,6 +1262,26 @@ impl Workbook {
         )
     }
 
+    /// The number a cell shows (a formula's numeric result counts) and
+    /// whether its number format shows a date or time (mail merge's `\#`
+    /// and `\@` pictures). `None` for text, booleans, errors and blanks.
+    pub fn number_at(&self, sheet: u32, row: u32, col: u32) -> Option<(f64, bool)> {
+        if self.value_kind(sheet, row, col) != ValueKind::Number {
+            return None;
+        }
+        let model = self.model.get_model();
+        let ironcalc_base::cell::CellValue::Number(n) = model
+            .get_cell_value_by_index(sheet, row as i32 + 1, col as i32 + 1)
+            .ok()?
+        else {
+            return None;
+        };
+        let date = self
+            .number_format_by_index(self.style_index(sheet, row, col))
+            .is_date();
+        Some((n, date))
+    }
+
     /// What the user typed: the formula (`=SUM(A1:A3)`) or the raw value.
     pub fn input(&self, sheet: u32, row: u32, col: u32) -> String {
         if let Some(text) = self.time_input(sheet, row as i32 + 1, col as i32 + 1) {

@@ -535,6 +535,28 @@ const SPECS: &[Spec] = &[
         false,
     ),
     (
+        "mail_merge",
+        "Mail merge",
+        "Fill a template in once per row of a workbook or CSV file and write the files, without opening them (as `kantor docs merge` / `kantor slides merge` / `kantor sheets merge`). A .docx template holds Word merge fields (MERGEFIELD, IF, NEXT, SKIPIF, MERGEREC… as Word's Mailings tab writes them; without `data` its own linked data source is used) and gives one .docx and/or .pdf per record, or one merged .docx with `single`. A .pptx or .xlsx template holds {{Field}} placeholders and gives one .pptx/.xlsx and/or .pdf per record. The data's first row (or `header_row`) names the fields. Returns the files written.",
+        || {
+            json!({
+                "template": {"type": "string", "description": "Absolute path of the .docx, .pptx or .xlsx template (~ allowed)."},
+                "data": {"type": "string", "description": "Absolute path of the data: .xlsx, .xls, .xlsb, .ods, .csv or .tsv. Optional for a .docx with its own data source."},
+                "sheet": {"type": ["string", "integer"], "description": "The data's sheet: name or number from 1. Default: the first."},
+                "header_row": {"type": "integer", "minimum": 1, "description": "The row naming the fields. Default 1."},
+                "where": {"type": "array", "items": {"type": "string"}, "description": "Only rows where every condition holds: \"Field=Value\", \"Field!=Value\", <, >, <=, >=, \"Field~Text\" (contains), \"Field=\" (blank), \"Field!=\" (not blank)."},
+                "sort": {"type": "array", "items": {"type": "string"}, "description": "Sort keys: \"Field\" or \"Field:desc\"."},
+                "output_dir": {"type": "string", "description": "Absolute path of the folder for one file per record (made when missing)."},
+                "formats": {"type": "array", "items": {"type": "string", "enum": ["docx", "pptx", "xlsx", "pdf"]}, "description": "What to write per record: the template's format and/or pdf. Default: the template's format."},
+                "name": {"type": "string", "description": "File name pattern: {Field} is the row's value, {#} its number; the extension is added. Default \"TEMPLATE {#}\"."},
+                "single": {"type": "string", "description": "Docs only: absolute path of one .docx (or .pdf) holding every record, a section each."},
+                "overwrite": {"type": "boolean", "default": false, "description": "Replace existing files."},
+            })
+        },
+        &["template"],
+        false,
+    ),
+    (
         "slides_go_to",
         "Show a slide",
         "Show a slide in the editor so the user sees it.",

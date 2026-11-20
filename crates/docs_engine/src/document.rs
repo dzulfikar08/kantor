@@ -240,6 +240,11 @@ pub struct Document {
     pub(crate) field_props: Option<Arc<crate::fields::Props>>,
     /// Fields showing their codes (a view setting: not saved, not undone).
     pub(crate) field_codes: Option<Arc<crate::fields::CodeView>>,
+    /// The mail merge data source link (`w:mailMerge` in settings.xml).
+    pub(crate) mail_merge: Option<crate::merge::MailMergeLink>,
+    /// Merge fields showing a record's values (Preview Results: a view
+    /// setting, not saved, not undone), by field start mark.
+    pub(crate) merge_view: Option<Arc<HashMap<usize, String>>>,
 }
 
 /// Where an imported document came from.
@@ -306,6 +311,8 @@ impl Document {
             doc_pr_floor: 0,
             field_props: None,
             field_codes: None,
+            mail_merge: None,
+            merge_view: None,
         }
     }
 
@@ -433,6 +440,8 @@ impl Document {
             doc_pr_floor: 0,
             field_props: None,
             field_codes: None,
+            mail_merge: read.mail_merge,
+            merge_view: None,
         };
         let mut paras = std::mem::take(&mut doc.paragraphs);
         crate::float::share_parts(&mut paras, &doc);
@@ -491,6 +500,12 @@ impl Document {
     /// callers can tell the document changed.
     pub fn revision(&self) -> u64 {
         self.history.changes
+    }
+
+    /// Forget the file (and any import source): the document is untitled.
+    pub(crate) fn set_path_none(&mut self) {
+        self.path = None;
+        self.imported = None;
     }
 
     /// Unsaved, whatever the undo history says (a restored recovery copy).
@@ -684,6 +699,8 @@ impl Document {
             doc_pr_floor: self.doc_pr_floor,
             field_props: self.field_props.clone(),
             field_codes: None,
+            mail_merge: self.mail_merge.clone(),
+            merge_view: None,
         }
     }
 

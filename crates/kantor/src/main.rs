@@ -46,7 +46,9 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
     \x20      kantor mcp [--no-launch] [--print-config]\n\
     \x20      kantor pdf <tool> [options]\n\
     \x20      kantor convert [options] INPUT OUTPUT\n\
-    \x20      kantor slides <build|list|edit|schema> ...\n\
+    \x20      kantor slides <build|list|edit|schema|merge> ...\n\
+    \x20      kantor docs merge TEMPLATE.docx [DATA] -o DIR [options]\n\
+    \x20      kantor sheets merge TEMPLATE.xlsx DATA -o DIR [options]\n\
     \n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
     Docs opens .docx (and imports .rtf and .doc), Sheets .xlsx/.csv/.ods, Slides .pptx/.ppt,\n\
@@ -55,7 +57,9 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
     `kantor pdf` merges, splits, rotates, watermarks and numbers PDFs (kantor pdf --help).\n\
     `kantor convert` converts .docx to .pdf and between spreadsheet formats\n\
     without opening a window (kantor convert --help).\n\
-    `kantor slides` builds and edits presentations from JSON (kantor slides --help).";
+    `kantor slides` builds and edits presentations from JSON (kantor slides --help).\n\
+    `kantor docs merge`, `kantor slides merge` and `kantor sheets merge` fill a template\n\
+    in once per row of a workbook or CSV file (mail merge; add --help).";
 
 fn parse_args() -> Result<Args> {
     let mut app = None;
@@ -100,6 +104,18 @@ fn main() {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
         let args: Vec<_> = std::env::args_os().skip(2).collect();
         std::process::exit(cli::slides::main(&args));
+    }
+    if matches!(raw.first().map(String::as_str), Some("docs" | "sheets"))
+        && raw.get(1).map(String::as_str) == Some("merge")
+    {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+        let app = if raw[0] == "docs" {
+            cli::merge::App::Docs
+        } else {
+            cli::merge::App::Sheets
+        };
+        let args: Vec<_> = std::env::args_os().skip(3).collect();
+        std::process::exit(cli::merge::main(app, &args));
     }
     if raw.first().map(String::as_str) == Some("convert") {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
