@@ -87,7 +87,18 @@ impl Recipients {
                 })?,
         };
         let header_row = header_row.unwrap_or(1).max(1);
-        let data = read_sheet(&book, index as u32, header_row - 1);
+        // A text file's fields are text as written (Word reads them so):
+        // "+62 22 555 0101" or "=1+1" aren't formulas there.
+        let raw = matches!(e.as_str(), "csv" | "tsv" | "txt").then(|| {
+            let text = sheets_engine::csv::decode(&std::fs::read(path).unwrap_or_default());
+            let delim = if e == "tsv" {
+                b'\t'
+            } else {
+                sheets_engine::csv::detect_delimiter(&text)
+            };
+            sheets_engine::csv::parse(&text, delim)
+        });
+        let data = read_sheet(&book, index as u32, header_row - 1, raw.as_deref());
         Ok(Self {
             path: path.to_path_buf(),
             sheets,
@@ -112,7 +123,12 @@ fn serial_date(n: f64) -> Option<chrono::NaiveDateTime> {
 
 /// The records of a sheet: names from row `header` (0-based), values from
 /// the rows below.
-fn read_sheet(book: &sheets_engine::Workbook, sheet: u32, header: u32) -> MergeData {
+fn read_sheet(
+    book: &sheets_engine::Workbook,
+    sheet: u32,
+    header: u32,
+    raw: Option<&[Vec<String>]>,
+) -> MergeData {
     let (rows, cols) = book.used_size(sheet);
     let mut fields: Vec<String> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
@@ -145,6 +161,13 @@ fn read_sheet(book: &sheets_engine::Workbook, sheet: u32, header: u32) -> MergeD
     for r in header + 1..rows {
         let row: Vec<MergeValue> = (0..fields.len() as u32)
             .map(|c| {
+                if let Some(field) = raw
+                    .and_then(|rows| rows.get(r as usize))
+                    .and_then(|row| row.get(c as usize))
+                    && book.input(sheet, r, c).starts_with('=')
+                {
+                    return MergeValue::text(field.clone());
+                }
                 let text = book.display_value(sheet, r, c);
                 match book.number_at(sheet, r, c) {
                     Some((n, true)) => MergeValue {
@@ -434,6 +457,14 @@ mod tests {
         assert_eq!(r.data.fields, vec!["Name", "City", "F3", "Joined"]);
         assert_eq!(r.data.rows.len(), 2, "the empty row goes");
         assert_eq!(r.data.rows[1][0].text, "Zoë, 张");
+        // Text files hold text: a phone number with + or a leading = isn't
+        // a formula (Word reads them as written).
+        let phones = dir.path().join("phones.csv");
+        std::fs::write(&phones, "Fax,Note,N\n+62 22 555 0101,=1+1,42\n").unwrap();
+        let r = Recipients::open(&phones, None, None).unwrap();
+        assert_eq!(r.data.rows[0][0].text, "+62 22 555 0101");
+        assert_eq!(r.data.rows[0][1].text, "=1+1");
+        assert_eq!(r.data.rows[0][2].number, Some(42.0), "numbers stay numbers");
 
         let xlsx = dir.path().join("staff.xlsx");
         let mut book = sheets_engine::Workbook::new_empty().unwrap();

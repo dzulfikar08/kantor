@@ -109,6 +109,10 @@ fn err_text(e: &Error) -> String {
         ),
         Error::Auth(m) => tf("The provider refused the credentials: {}", &[m]),
         Error::Quota(m) => tf("No e-meterai quota left: {}", &[m]),
+        Error::Encrypted => i18n::t(
+            "Password-protected PDFs can't be sent to a provider. Remove the password first.",
+        )
+        .into(),
         Error::OtpRequired(m) => tf("Type the one-time password (OTP): {}", &[m]),
         Error::BreaksSignatures(f) => tf(
             "The provider rebuilt the file, which breaks the earlier signatures ({}). Nothing was saved.",

@@ -826,3 +826,49 @@ fn match_fields_are_saved_and_guessed() {
     // Saved: only First Name is matched now.
     assert_eq!(shown(&merged[0].1), ["Yth. Bapak,", "Bapak"]);
 }
+
+/// A value on several lines (Alt+Enter in Excel, a quoted CSV field) keeps
+/// its lines; drawings copied per record in the one-document merge get
+/// their own ids (Open XML SDK: "should have unique value").
+#[test]
+fn multi_line_values_and_copied_drawings() {
+    let dir = tempfile::tempdir().unwrap();
+    let drawing = r#"<w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="914400" cy="914400"/><wp:docPr id="4" name="Shape 4"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"/></a:graphic></wp:inline></w:drawing></w:r>"#;
+    let body = [
+        p(&format!(
+            "{}{}",
+            t("Note: "),
+            field("MERGEFIELD Note", "«Note»")
+        )),
+        p(drawing),
+    ]
+    .concat();
+    let doc = open(dir.path(), "t.docx", &package(&body, "", "", None));
+    let data = MergeData {
+        fields: vec!["Note".into()],
+        rows: vec![
+            vec![MergeValue::text("See attached.\nThanks")],
+            vec![MergeValue::text("One\r\nTwo")],
+        ],
+    };
+    let copies = doc.merge_all(&data, &[0, 1]);
+    let first = shown(&copies[0].1);
+    assert_eq!(
+        first[0],
+        format!("Note: See attached.{}Thanks", docs_engine::LINE_BREAK)
+    );
+    let mut one = doc.merge_into_one(&data, &[0, 1]).unwrap();
+    let path = dir.path().join("one.docx");
+    one.save_as(&path).unwrap();
+    let xml = entry(&std::fs::read(&path).unwrap(), "word/document.xml").unwrap();
+    assert!(xml.contains("Two"));
+    let ids: Vec<&str> = xml
+        .match_indices("<wp:docPr id=\"")
+        .map(|(i, m)| {
+            let v = &xml[i + m.len()..];
+            &v[..v.find('"').unwrap()]
+        })
+        .collect();
+    assert_eq!(ids.len(), 2, "{xml}");
+    assert_ne!(ids[0], ids[1]);
+}

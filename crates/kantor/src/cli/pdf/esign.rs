@@ -32,6 +32,7 @@ Set the provider up first: kantor pdf providers set NAME ...\n\
 \x20 --number TEXT        the document number (nomor dokumen)\n\
 \x20 --reason TEXT, --location TEXT\n\
 \x20 --allow-breaking-signatures   save even if the provider broke earlier signatures\n\
+Password-protected PDFs can't be sent to the provider: remove the password first.\n\
 \n\
 For one run, instead of the saved setup:\n\
 \x20 --credentials-file F the provider's credentials (JSON or key=value lines)\n\
@@ -54,6 +55,10 @@ Kantor builds the PAdES signature and the provider signs its hash.\n\
 \x20 --field NAME         sign this empty signature field\n\
 \x20 --page N --rect X,Y,W,H   a new visible signature; without these it is invisible\n\
 \x20 --reason TEXT, --location TEXT\n\
+\x20 --password PW        a password-protected PDF's password (or set\n\
+\x20                      KANTOR_PDF_PASSWORD); --pdf-password-file F reads it from F.\n\
+\x20                      The result stays protected. Only hash-based providers can\n\
+\x20                      sign such files: the others would get the whole document\n\
 \x20 --credentials-file F, --server URL, --allow-network   as for kantor pdf emeterai\n\
 \n\
 Output: -o OUT.pdf for one file, -o DIR for several (default: FILE-signed.pdf).";
@@ -277,7 +282,10 @@ pub fn emeterai(rest: &[String], usage: &str) -> Outcome {
     };
     let allow_break = args.flag("allow-breaking-signatures");
     each(&args, "emeterai", "stamped", |input, bytes| {
-        let pdf = kantor_pdf::Pdf::from_bytes(bytes, None)?;
+        let pdf = match kantor_pdf::Pdf::from_bytes(bytes, None) {
+            Err(kantor_pdf::Error::Encrypted) => return Err(fail(kantor_esign::Error::Encrypted)),
+            r => r?,
+        };
         let page = batch::one_page(&page_spec, pdf.page_count()).map_err(Failure::usage)?;
         let rect = match rect {
             Some(r) => r,
@@ -330,6 +338,8 @@ pub fn provider_sign(rest: &[String], usage: &str) -> Outcome {
             "location",
             "credentials-file",
             "server",
+            "password",
+            "pdf-password-file",
         ],
         &[
             "force",
@@ -385,6 +395,10 @@ pub fn provider_sign(rest: &[String], usage: &str) -> Outcome {
         }
     };
     let allow_break = args.flag("allow-breaking-signatures");
+    let pdf_password = match args.value("pdf-password-file") {
+        Some(f) => super::read_secret(Some(f), "KANTOR_PDF_PASSWORD")?,
+        None => args.password(),
+    };
     each(&args, "signed", "signed", |input, bytes| {
         let name = input
             .file_name()
@@ -393,6 +407,7 @@ pub fn provider_sign(rest: &[String], usage: &str) -> Outcome {
         let mut req = SignRequest::new(&name, place.clone());
         req.reason = args.value("reason").unwrap_or("").to_string();
         req.location = args.value("location").unwrap_or("").to_string();
+        req.password = pdf_password.clone();
         let (out, kept) =
             kantor_esign::signer::sign(p.as_ref(), bytes, &req, &who, allow_break).map_err(fail)?;
         Ok((
@@ -773,6 +788,75 @@ mod tests {
         ]));
         assert!(text.contains("Mock Signer Xignature"), "{text}");
         assert!(text.contains("Mock e-Meterai Stamp"), "{text}");
+        assert!(!text.contains("altered"), "{text}");
+        // Password-protected: e-meterai refuses before sending (the
+        // provider would get the encrypted file); hash signing takes
+        // --password and the result stays protected.
+        let locked = tmp.path().join("locked.pdf");
+        std::fs::write(
+            &locked,
+            kantor_pdf::testing::sample_pdf_protected(
+                1,
+                kantor_pdf::testing::Protect::Aes256,
+                "owner4",
+                "",
+                kantor_pdf::testing::Permissions::all(),
+            ),
+        )
+        .unwrap();
+        let uploads = vs.calls("/api/v1/emeterai/upload").len();
+        let e = run(&s(&[
+            "emeterai",
+            locked.to_str().unwrap(),
+            "-o",
+            tmp.path().join("x.pdf").to_str().unwrap(),
+            "--provider",
+            "vida",
+            "--doc-type",
+            "VD010",
+            "--credentials-file",
+            vc.to_str().unwrap(),
+            "--server",
+            &vs.url,
+            "--allow-network",
+        ]))
+        .unwrap_err();
+        assert!(e.message.contains("remove the password"), "{}", e.message);
+        assert_eq!(vs.calls("/api/v1/emeterai/upload").len(), uploads);
+        let signed_locked = tmp.path().join("signed-locked.pdf");
+        run(&s(&[
+            "sign",
+            locked.to_str().unwrap(),
+            "-o",
+            signed_locked.to_str().unwrap(),
+            "--provider",
+            "xignature",
+            "--signer",
+            "me01",
+            "--credentials-file",
+            xc.to_str().unwrap(),
+            "--server",
+            &xurl,
+            "--allow-network",
+            "--password",
+            "owner4",
+        ]))
+        .unwrap();
+        let out = std::fs::read(&signed_locked).unwrap();
+        assert!(
+            kantor_pdf::Pdf::from_bytes(&out, Some("owner4"))
+                .unwrap()
+                .was_encrypted()
+        );
+        let (text, _) = verify(&s(&[
+            signed_locked.to_str().unwrap(),
+            "--trust",
+            &fixture("root.pem"),
+            "--no-system-roots",
+            "--password",
+            "owner4",
+        ]));
+        assert!(text.contains("Mock Signer Xignature"), "{text}");
         assert!(!text.contains("altered"), "{text}");
         // Stubs explain themselves.
         let e = run(&s(&[

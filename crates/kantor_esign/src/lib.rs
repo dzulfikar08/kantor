@@ -60,8 +60,11 @@ pub enum Error {
     /// The provider answered with an error, or something Kantor didn't
     /// expect.
     Provider(String),
-    /// The PDF can't be used (encrypted, damaged…).
+    /// The PDF can't be used (damaged…).
     Pdf(String),
+    /// The PDF is password-protected and would have to go to the provider
+    /// (e-meterai, providers that take the whole document).
+    Encrypted,
     /// The provider's result would break earlier signatures.
     BreaksSignatures(Vec<String>),
 }
@@ -82,6 +85,9 @@ impl fmt::Display for Error {
             Error::Quota(m) => write!(f, "no e-meterai quota left: {m}"),
             Error::OtpRequired(m) => write!(f, "a one-time password (OTP) is needed: {m}"),
             Error::Network(m) | Error::Provider(m) | Error::Pdf(m) => f.write_str(m),
+            Error::Encrypted => f.write_str(
+                "password-protected PDFs can't be sent to the provider: remove the password first",
+            ),
             Error::BreaksSignatures(f2) => write!(
                 f,
                 "the provider rebuilt the file, which breaks the earlier signature(s): {}",

@@ -218,7 +218,10 @@ def check(res, name, orig_pdf, out, page, added, before_pop, before_k, dpi, fill
         kind = "readback"
     elif row[f"{name}_fields_differ"]:
         kind = "fields_differ"
-    elif ("not encrypted" in orig_enc) != ("not encrypted" in row[f"{name}_enc"]):
+    elif not orig_enc.startswith("qpdf:") and (
+            ("not encrypted" in orig_enc) != ("not encrypted" in row[f"{name}_enc"])):
+        # qpdf can't read some damaged originals at all ("unable to find page tree"):
+        # their encryption is unknown, not "encrypted".
         kind = "encryption_changed"
     elif unseen_p or unseen_k:
         kind = "not_visible"

@@ -47,7 +47,8 @@ pub struct StampRequest {
     /// Shown in the stamp's signature (optional).
     pub reason: String,
     pub location: String,
-    /// The document's open password, when it has one.
+    /// The document's open password, when it has one. Password-protected
+    /// files are refused ([`Error::Encrypted`]): the provider gets the file.
     pub password: Option<String>,
 }
 
@@ -92,7 +93,22 @@ pub trait EMeteraiProvider: Send + Sync {
 
 /// Problems with the box, before anything is sent.
 pub fn check_box(pdf: &[u8], req: &StampRequest) -> Result<(), Error> {
-    let doc = kantor_pdf::Pdf::from_bytes(pdf, req.password.as_deref())?;
+    // Encrypted files (even ones that open without a password) would reach
+    // the provider encrypted, which it can't stamp.
+    let doc = match kantor_pdf::Pdf::from_bytes(pdf, req.password.as_deref()) {
+        Err(kantor_pdf::Error::Encrypted | kantor_pdf::Error::WrongPassword) => {
+            return Err(Error::Encrypted);
+        }
+        Ok(d) if d.was_encrypted() => return Err(Error::Encrypted),
+        r => r?,
+    };
+    // Found out before the document goes out (and a stamp is spent).
+    if kantor_pdf::sig::signatures(&doc).and_then(|s| s.docmdp) == Some(1) {
+        return Err(Error::Pdf(
+            "the document was certified with no changes allowed; an e-meterai can't be added"
+                .into(),
+        ));
+    }
     if req.page >= doc.page_count() {
         return Err(Error::Pdf(format!(
             "the document has {} pages; there is no page {}",

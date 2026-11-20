@@ -31,6 +31,19 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 - PDF signature checker: a visible signature added on a page that a named destination points to was reported as
   "Other change (Names)" and the earlier signature as invalid (seen on the ISO 32000 PDF).
+- Docs mail merge: templates made in Word in another language (Dutch, Chinese, Russian…) kept their Match Fields
+  only for columns whose name happened to be English; Word saves the matching by position with the field names
+  translated, and Kantor now reads it that way (and writes it in Word's order).
+- Docs mail merge: line breaks inside an Address Block's format (one line for the company, one for the name…) were
+  lost, so the whole address came out on one line.
+- Docs mail merge: a value on several lines (Alt+Enter in Excel, a quoted CSV field) lost its line breaks; values
+  from a CSV file that start with `+` or `=` (phone numbers such as `+62 22 555 0101`) came out as a formula's result
+  instead of as written.
+- Docs mail merge: merging into one document gave pictures and shapes repeated ids (the Open XML SDK reported them;
+  Word may repair the file).
+- PDF: *Add e-Meterai…* and `kantor pdf emeterai` sent a password-protected PDF or one certified with no changes
+  allowed to the provider before finding out it couldn't be stamped (which could use up an e-meterai); they now say
+  so first. `kantor pdf sign --provider` takes `--password` for protected files (hash signing keeps them protected).
 
 ## [0.19.0] - 2026-11-20
 

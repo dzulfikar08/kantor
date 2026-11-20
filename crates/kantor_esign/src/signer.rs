@@ -38,6 +38,10 @@ pub struct SignRequest {
     pub location: String,
     /// The page's `/Rotate` (for a new visible signature).
     pub rotate: i64,
+    /// The PDF's password, when it has one. Hash signing keeps the file
+    /// encrypted (the provider only sees a hash); providers that take the
+    /// whole document refuse password-protected files.
+    pub password: Option<String>,
 }
 
 impl SignRequest {
@@ -48,6 +52,7 @@ impl SignRequest {
             reason: String::new(),
             location: String::new(),
             rotate: 0,
+            password: None,
         }
     }
 }
@@ -94,6 +99,7 @@ pub fn sign(
     opts.reason = Some(req.reason.clone()).filter(|r| !r.is_empty());
     opts.location = Some(req.location.clone()).filter(|r| !r.is_empty());
     opts.rotate = req.rotate;
+    opts.pdf_password = req.password.clone();
     let look = |name: &str, opts: &signing::Options<'_>| {
         matches!(req.place, Place::New { .. }).then(|| kantor_pdf::sign::Look {
             lines: signing::look_lines(
@@ -121,7 +127,22 @@ pub fn sign(
                 opts.look = look(&name, &opts);
                 signing::sign_external(pdf, ext.as_ref(), &opts).map_err(map)?
             }
-            None => p.sign_document(pdf, req, signer)?,
+            None => {
+                // This kind of provider gets the whole file.
+                match kantor_pdf::Pdf::from_bytes(pdf, None) {
+                    Err(kantor_pdf::Error::Encrypted | kantor_pdf::Error::WrongPassword) => {
+                        return Err(Error::Encrypted);
+                    }
+                    Ok(d) if kantor_pdf::sig::signatures(&d).and_then(|s| s.docmdp) == Some(1) => {
+                        return Err(Error::Pdf(
+                            "the document was certified with no changes allowed; it can't be signed again"
+                                .into(),
+                        ));
+                    }
+                    _ => {}
+                }
+                p.sign_document(pdf, req, signer)?
+            }
         }
     };
     if !check::looks_like_pdf(&out) {
