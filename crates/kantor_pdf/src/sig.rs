@@ -381,7 +381,10 @@ fn object_reals(raw: &[u8]) -> Vec<Vec<u8>> {
                 if tok == b"stream" || tok == b"endobj" {
                     break;
                 }
-                let digits = tok.strip_prefix(b"-").or(tok.strip_prefix(b"+")).unwrap_or(tok);
+                let digits = tok
+                    .strip_prefix(b"-")
+                    .or(tok.strip_prefix(b"+"))
+                    .unwrap_or(tok);
                 if digits.contains(&b'.')
                     && !digits.is_empty()
                     && digits.iter().all(|&d| d.is_ascii_digit() || d == b'.')

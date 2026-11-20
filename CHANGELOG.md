@@ -34,7 +34,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   Fields* and *Preview Results* (with the record arrows) work as in Word. *Finish & Merge* makes one new document
   with a section per recipient, one `.docx` or PDF per recipient named from a field (`{Name} - Offer`), or prints
   them all. Word's merge fields work: `MERGEFIELD` with its text and format switches, `IF` on merge fields, `NEXT`,
-  `NEXTIF`, `SKIPIF`, `MERGEREC` and `MERGESEQ`, in headers, footers and text boxes too, and blank lines from empty
+  `NEXTIF`, `SKIPIF`, `MERGEREC` and `MERGESEQ`, formulas and `COMPARE` on merge fields, `SET`, `ASK` and `FILLIN`
+  (with their default answers) and `REF`s to them, in headers, footers and text boxes too, and blank lines from empty
   fields are left out. The data source, filter and sort are saved in the document as Word saves them, so the
   template opens in Word with its recipients.
 - `kantor docs merge offer.docx staff.xlsx -o out/ --pdf --name "{Name} - Offer"` merges without a window (or
@@ -45,6 +46,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   does the same for AI agents.
   `--list` shows a form's fields), and `kantor pdf batch steps.json` runs a saved batch on files and folders, signing
   steps too (`--password-file` or `--pin-file`, like `kantor pdf sign`).
+
+### Fixed
+
+- Docs: a number format's `#` places with no digit now show as spaces, as in Word (`{ = 9 + 6 \# $### }` is
+  `$ 15`, and `\# "$#,##0.00"` gives `$ 150.00`).
+- PDF: saving comments, a filled form or a signature onto a damaged PDF whose cross-reference table had to be
+  rebuilt wrote an update that other readers (pyHanko, qpdf) could not follow back to the original. The update now
+  lists every object, and signatures added after it chain to it.
+- PDF: numbers in a page Kantor rewrites when saving onto a signed PDF keep all their digits (`595.32001` became
+  `595.32`, which signature checkers such as pyHanko count as a suspicious change to the earlier signature).
 
 ## [0.18.0] - 2026-11-20
 

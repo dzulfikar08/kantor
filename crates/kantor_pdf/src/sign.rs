@@ -1083,7 +1083,12 @@ mod tests {
         assert!(!has(b"/Kr"));
         let pdf = Pdf::from_bytes(&signed, None).unwrap();
         let page = *pdf.doc.get_pages().values().next().unwrap();
-        let mb = pdf.doc.get_dictionary(page).unwrap().get(b"MediaBox").unwrap();
+        let mb = pdf
+            .doc
+            .get_dictionary(page)
+            .unwrap()
+            .get(b"MediaBox")
+            .unwrap();
         let mb = mb.as_array().unwrap();
         assert_eq!(mb.len(), 5);
         assert!((mb[2].as_float().unwrap() - 595.32).abs() < 1e-3);

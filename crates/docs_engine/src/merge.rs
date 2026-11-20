@@ -7,7 +7,9 @@
 //!   of `w:mailMerge/w:query`: `SELECT * FROM \`Sheet1$\` WHERE … ORDER BY …`).
 //! - [`Document::merge_record`]: one merged copy. `MERGEFIELD` (with its
 //!   `\b` / `\f` text and `\*`, `\#`, `\@` formats), `MERGEREC`,
-//!   `MERGESEQ`, `IF` fields comparing merge fields, and `NEXT`, `NEXTIF`,
+//!   `MERGESEQ`, `IF` fields comparing merge fields, formulas and `COMPARE`
+//!   fed by merge fields, `SET`, `ASK` (its `\d` default), `FILLIN` (its
+//!   `\d` default) and `REF`s to their values, and `NEXT`, `NEXTIF`,
 //!   `SKIPIF` become plain text, as in the document Word's Finish & Merge
 //!   makes; other fields (`PAGE`, `DATE`…) stay fields. Headers, footers
 //!   and text boxes are merged too. A paragraph that held only merge
@@ -1004,12 +1006,16 @@ pub(crate) fn set_settings_rels(rels: Option<&str>, drop: &HashSet<String>, add:
 
 // ── evaluating the fields of one record ──────────────────────────────────────
 
-/// Fields a merge works out (and leaves as text).
+/// Fields a merge works out (and leaves as text). `ASK`, `FILLIN` and
+/// `SET` are worked out once per record as Word's merge does (`ASK` and
+/// `FILLIN` take their `\d` default: a merge doesn't prompt), formulas and
+/// `COMPARE` when merge fields feed them.
 fn merge_kind(span: &FieldSpan) -> bool {
     let k = span.kind();
     match k.as_str() {
-        "MERGEFIELD" | "MERGEREC" | "MERGESEQ" | "NEXT" | "NEXTIF" | "SKIPIF" => true,
-        "IF" => {
+        "MERGEFIELD" | "MERGEREC" | "MERGESEQ" | "NEXT" | "NEXTIF" | "SKIPIF" | "SET" | "ASK"
+        | "FILLIN" => true,
+        "IF" | "=" | "COMPARE" => {
             let code = span.shown_code().to_ascii_uppercase();
             code.contains("MERGEFIELD") || code.contains("MERGEREC") || code.contains("MERGESEQ")
         }
@@ -1118,12 +1124,93 @@ impl Cursor<'_> {
         out
     }
 
+    /// A field's code as Word's field codes view shows it (nested fields
+    /// in braces) with the nested fields worked out, innermost first:
+    /// merge fields, formulas and `REF`s to `SET`/`ASK` values. With
+    /// `quote`, a value standing alone as an operand is quoted (`IF`,
+    /// `COMPARE`, `SET`); formulas take them bare.
+    fn resolve(
+        &self,
+        code: &str,
+        quote: bool,
+        sets: &HashMap<String, String>,
+        env: &FormulaCx,
+        indonesian: bool,
+    ) -> String {
+        let mut s = code.to_owned();
+        // The innermost `{ … }` each time (no brace inside it).
+        while let Some(open) = s[..s.find('}').unwrap_or(0)].rfind('{') {
+            let close = open + s[open..].find('}').unwrap_or(0);
+            let inner = s[open + 1..close].trim().to_owned();
+            let i = Instr::parse(&inner);
+            let v = match i.kind.as_str() {
+                "MERGEFIELD" | "MERGEREC" | "MERGESEQ" => {
+                    self.text(&i, indonesian).unwrap_or_default()
+                }
+                "=" => env.formula(&inner, &i, sets),
+                "REF" => i
+                    .args
+                    .first()
+                    .and_then(|n| sets.get(&n.to_lowercase()))
+                    .map(|v| i.cased(v))
+                    .unwrap_or_default(),
+                _ => String::new(),
+            };
+            let in_quotes = s[..open]
+                .char_indices()
+                .filter(|&(k, c)| c == '"' && (k == 0 || !s[..k].ends_with('\\')))
+                .count()
+                % 2
+                == 1;
+            // Only the outer field's operands: inside a nested formula
+            // values stay bare.
+            let depth = s[..open].matches('{').count() - s[..open].matches('}').count();
+            let v = if quote && !in_quotes && depth == 0 {
+                format!("\"{}\"", v.replace('"', "\\\""))
+            } else {
+                v
+            };
+            s.replace_range(open..=close, &v);
+        }
+        s
+    }
+
     /// `a op b` of `NEXTIF`, `SKIPIF` and `IF`.
     fn condition(&self, args: &[String]) -> Option<bool> {
         let [a, op, b, ..] = args else {
             return None;
         };
         crate::field_calc::compare(a, op, b, self.decimal)
+    }
+}
+
+/// What formulas in a merged story need: its paragraphs (for table
+/// cells) and the cell the field is in.
+struct FormulaCx<'a> {
+    paras: &'a [Paragraph],
+    cell: Option<crate::model::CellRef>,
+    decimal: char,
+}
+
+impl FormulaCx<'_> {
+    /// `= expr \# picture`, bookmarks being `SET`/`ASK` values.
+    fn formula(&self, code: &str, i: &Instr, sets: &HashMap<String, String>) -> String {
+        let body = code.trim_start().strip_prefix('=').unwrap_or(code);
+        let expr = body.find('\\').map_or(body, |k| &body[..k]);
+        let lookup = |n: &str| sets.get(&n.to_lowercase()).cloned();
+        let env = crate::field_calc::FormulaEnv {
+            paras: self.paras,
+            bookmark: &lookup,
+            cell: self.cell,
+            decimal: self.decimal,
+        };
+        match crate::field_calc::formula(expr, &env) {
+            Ok(v) => match i.arg("#") {
+                Some(pic) => crate::field_calc::number_picture(v, pic, self.decimal),
+                None => crate::field_calc::plain_number(v, self.decimal),
+            },
+            Err(e) => e,
+        }
     }
 }
 
@@ -1234,16 +1321,69 @@ struct Merged {
 /// `NEXT` and friends move the cursor.
 fn merge_story(doc: &Document, paras: &mut Vec<Paragraph>, cur: &mut Cursor) -> Merged {
     let mut out = Merged::default();
+    // `SET` and `ASK` values by bookmark name (lower case), for `REF`.
+    let mut sets: HashMap<String, String> = HashMap::new();
+    let refers = |s: &FieldSpan, sets: &HashMap<String, String>| {
+        let i = Instr::parse(&s.instr);
+        i.kind == "REF"
+            && i.args
+                .first()
+                .is_some_and(|n| sets.contains_key(&n.to_lowercase()))
+    };
     loop {
         if cur.skipped {
             break;
         }
-        let Some(span) = spans(paras).into_iter().find(merge_kind) else {
+        let Some(span) = spans(paras)
+            .into_iter()
+            .find(|s| merge_kind(s) || refers(s, &sets))
+        else {
             break;
         };
         let i = Instr::parse(&span.instr);
         let ind = indonesian_at(doc, paras, span.begin);
+        let env = FormulaCx {
+            paras,
+            cell: paras.get(span.begin.para).and_then(|p| p.cell),
+            decimal: cur.decimal,
+        };
         let text = match i.kind.as_str() {
+            "=" => {
+                let code = cur.resolve(&span.shown_code(), false, &sets, &env, ind);
+                env.formula(&code, &Instr::parse(&code), &sets)
+            }
+            "COMPARE" => {
+                let code = cur.resolve(&span.shown_code(), true, &sets, &env, ind);
+                let ci = Instr::parse(&code);
+                match cur.condition(&ci.args) {
+                    Some(r) => (r as u8).to_string(),
+                    None => "!Syntax Error".into(),
+                }
+            }
+            "SET" | "ASK" => {
+                let code = cur.resolve(&span.shown_code(), true, &sets, &env, ind);
+                let ci = Instr::parse(&code);
+                if let Some(name) = ci.args.first() {
+                    let v = if i.kind == "SET" {
+                        ci.args.get(1).cloned().unwrap_or_default()
+                    } else {
+                        ci.arg("d").unwrap_or_default().to_owned()
+                    };
+                    sets.insert(name.to_lowercase(), v);
+                }
+                String::new()
+            }
+            "FILLIN" => {
+                let code = cur.resolve(&span.shown_code(), true, &sets, &env, ind);
+                let ci = Instr::parse(&code);
+                ci.cased(ci.arg("d").unwrap_or_default())
+            }
+            "REF" => i
+                .args
+                .first()
+                .and_then(|n| sets.get(&n.to_lowercase()))
+                .map(|v| i.cased(v))
+                .unwrap_or_default(),
             "MERGEFIELD" | "MERGEREC" | "MERGESEQ" => {
                 let t = cur.text(&i, ind).unwrap_or_default();
                 if i.kind == "MERGEFIELD" {

@@ -519,6 +519,9 @@ pub(crate) fn plain_number(v: f64, decimal: char) -> String {
 /// (Word pads with spaces), `,` groups thousands, `.` is the decimal
 /// sign; up to three sections: positive; negative; zero. Quoted text
 /// (`'…'`) and other characters are written as they are.
+///
+/// `#` places with no digit are spaces in front of the number, as Word
+/// writes them (Word 365 merges `\# "$#,##0.00"` of 150 as `$ 150.00`).
 pub fn number_picture(v: f64, picture: &str, decimal: char) -> String {
     let sections: Vec<&str> = picture.split(';').collect();
     let (pic, value, sign) = if v < 0.0 && sections.len() > 1 {
@@ -591,6 +594,9 @@ pub fn number_picture(v: f64, picture: &str, decimal: char) -> String {
             int_s = int_s[int_s.len() - keep..].to_owned();
         }
     }
+    // A `#` with no digit shows a space (`{ = 9 + 6 \# $### }` is
+    // `$ 15`); separators between such places go.
+    let mut pad = int_digits.saturating_sub(int_s.len());
     let thousands = if decimal == ',' { '.' } else { ',' };
     if grouping {
         let mut g = String::new();
@@ -625,6 +631,7 @@ pub fn number_picture(v: f64, picture: &str, decimal: char) -> String {
     }
     if digits.is_empty() {
         digits.push('0');
+        pad = pad.saturating_sub(1);
     }
     let mut out = String::new();
     let mut quoted = false;
@@ -636,6 +643,7 @@ pub fn number_picture(v: f64, picture: &str, decimal: char) -> String {
         }
         if !quoted && i >= first && i <= last {
             if !placed {
+                out.extend(std::iter::repeat_n(' ', pad));
                 if sign {
                     out.push('-');
                 }
@@ -790,8 +798,16 @@ mod tests {
         assert_eq!(number_picture(1234.5, "#,##0.00", ','), "1.234,50");
         assert_eq!(
             number_picture(-12.0, "$#,##0.00;($#,##0.00)", '.'),
-            "($12.00)"
+            "($  12.00)"
         );
+        // Word's own examples, and Word 365's mail merge of 150.
+        assert_eq!(number_picture(15.0, "$###", '.'), "$ 15");
+        assert_eq!(number_picture(9.0, "00.00", '.'), "09.00");
+        assert_eq!(number_picture(150.0, "$#,##0.00", '.'), "$ 150.00");
+        assert_eq!(number_picture(1234567.0, "$#,###,###", '.'), "$1,234,567");
+        assert_eq!(number_picture(0.5, "#.00", '.'), " .50");
+        assert_eq!(number_picture(0.0, "$###", '.'), "$  0");
+        assert_eq!(number_picture(42.0, "$#,###,###", '.'), "$     42");
         assert_eq!(number_picture(0.0, "0;-0;'none'", '.'), "none");
         assert_eq!(number_picture(0.256, "0%", '.'), "26%");
         assert_eq!(number_picture(18.0, "0.00", '.'), "18.00");
