@@ -38,6 +38,9 @@ const INVALID: &[&str] = &[
     "",
 ];
 
+/// What picking a dropdown's item does to the dialog.
+type SetChoice = Rc<dyn Fn(&mut AddrDialog, usize)>;
+
 /// The dialog open over the Mailings bar.
 #[derive(Clone, Debug)]
 pub(crate) enum AddrDialog {
@@ -256,10 +259,7 @@ impl DocsView {
                 .child(t_dyn(s).to_owned())
         };
         // A dropdown: `items` shown, `set` called with the index picked.
-        let choice = |id: &'static str,
-                      current: String,
-                      items: Vec<String>,
-                      set: Rc<dyn Fn(&mut AddrDialog, usize)>| {
+        let choice = |id: &'static str, current: String, items: Vec<String>, set: SetChoice| {
             let v = view.clone();
             Button::new(id)
                 .outline()
