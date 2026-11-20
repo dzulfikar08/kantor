@@ -1723,9 +1723,7 @@ pub(crate) const ESIGN_KEYS: &[&str] = &[
     tk("HMAC client ID"),
     tk("HMAC client secret"),
     tk("API key"),
-    tk(
-        "Peruri's e-Meterai API isn't public: it needs a contract with Peruri or a distributor.",
-    ),
+    tk("Peruri's e-Meterai API isn't public: it needs a contract with Peruri or a distributor."),
     tk(
         "Pajakku shares its e-Meterai API documentation and sandbox only after a non-disclosure agreement.",
     ),
