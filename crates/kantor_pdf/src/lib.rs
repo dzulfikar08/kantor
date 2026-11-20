@@ -1,6 +1,7 @@
 //! PDF page tools for Kantor, without GPUI: merge, split, extract, delete,
 //! reorder, rotate, info, images to PDF, text watermark, page numbers and
-//! lossless compression. `kantor pdf <tool>` is the command-line front end.
+//! lossless compression, and batch actions on many files ([`batch`]).
+//! `kantor pdf <tool>` is the command-line front end.
 //!
 //! Built on [`lopdf`]'s object model. Every operation works on a loaded
 //! [`Pdf`] in memory; [`Pdf::to_bytes`] or [`Pdf::save`] writes the result.
@@ -9,6 +10,9 @@
 pub mod annot;
 #[cfg(test)]
 mod annot_tests;
+pub mod batch;
+#[cfg(test)]
+mod batch_tests;
 mod compress;
 mod edit;
 pub mod form;
@@ -19,6 +23,7 @@ mod pages;
 mod pdfstr;
 pub mod range;
 pub mod sig;
+pub mod table;
 #[doc(hidden)]
 pub mod testing;
 #[cfg(test)]

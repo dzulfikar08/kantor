@@ -12,6 +12,11 @@ lopdf = { version = "0.47", default-features = false }
 image = { workspace = true, features = ["png", "jpeg"] }
 # Saving over a file safely (temporary file, then rename).
 tempfile.workspace = true
+# Batch files (JSON) and form values from CSV/JSON tables.
+serde.workspace = true
+serde_json.workspace = true
+# Form values from a spreadsheet's first sheet (already in the tree through sheets_engine).
+calamine.workspace = true
 
 [lints]
 workspace = true

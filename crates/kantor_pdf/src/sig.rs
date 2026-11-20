@@ -192,6 +192,12 @@ pub fn incremental(
     }?;
     let mut after = before.clone();
     edit(&mut after)?;
+    incremental_diff(bytes, &before, &after)
+}
+
+/// The original `bytes` (opened as `before`) followed by an incremental
+/// update holding the objects `after` changed or added.
+pub fn incremental_diff(bytes: &[u8], before: &Pdf, after: &Pdf) -> Result<Vec<u8>> {
     let mut inc = IncrementalDocument::create_from(bytes.to_vec(), before.doc.clone());
     let new = &mut inc.new_document;
     for (id, obj) in &after.doc.objects {

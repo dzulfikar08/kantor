@@ -29,6 +29,19 @@ pub enum Position {
 impl Position {
     pub const NAMES: &'static str =
         "center, top-left, top-center, top-right, bottom-left, bottom-center, bottom-right";
+
+    /// Its name as written on the command line and in batch files.
+    pub fn name(self) -> &'static str {
+        match self {
+            Position::Center => "center",
+            Position::TopLeft => "top-left",
+            Position::TopCenter => "top-center",
+            Position::TopRight => "top-right",
+            Position::BottomLeft => "bottom-left",
+            Position::BottomCenter => "bottom-center",
+            Position::BottomRight => "bottom-right",
+        }
+    }
 }
 
 impl FromStr for Position {

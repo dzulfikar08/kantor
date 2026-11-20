@@ -1513,12 +1513,16 @@ pub fn layer(
 pub enum FlattenWhat {
     /// Image stamps and Fill & Sign signatures.
     StampsAndSignatures,
+    /// Every annotation with an appearance (comments, markup, drawings,
+    /// stamps, signatures), with their pop-ups; links, form fields and
+    /// media (attachments, sounds, movies, 3-D) stay.
+    Annotations,
 }
 
-/// Draw stamps and signatures into their pages' content (they can't be
-/// moved or deleted afterwards) and remove them as annotations. Returns how
-/// many were flattened.
-pub fn flatten(pdf: &mut Pdf, _what: FlattenWhat) -> Result<u32> {
+/// Draw stamps and signatures (or every annotation, as `what` says) into
+/// their pages' content (they can't be moved or deleted afterwards) and
+/// remove them as annotations. Returns how many were flattened.
+pub fn flatten(pdf: &mut Pdf, what: FlattenWhat) -> Result<u32> {
     let mut count = 0;
     let pages = page_ids(&pdf.doc);
     for pid in pages {
@@ -1526,11 +1530,28 @@ pub fn flatten(pdf: &mut Pdf, _what: FlattenWhat) -> Result<u32> {
         let mut keep = Vec::new();
         let mut draw = String::new();
         let mut xobjects = Dictionary::new();
+        let mut flat: Vec<ObjectId> = Vec::new();
         for (id, d) in &list {
             let sub = name(d, b"Subtype").unwrap_or(b"");
             let ink_sig =
                 sub == b"Ink" && get_text(&pdf.doc, d, b"Subj").is_some_and(|s| s == "Signature");
-            let is_target = sub == b"Stamp" || ink_sig;
+            let is_target = match what {
+                FlattenWhat::StampsAndSignatures => sub == b"Stamp" || ink_sig,
+                FlattenWhat::Annotations => !matches!(
+                    sub,
+                    b"Link"
+                        | b"Popup"
+                        | b"Widget"
+                        | b"FileAttachment"
+                        | b"Sound"
+                        | b"Movie"
+                        | b"Screen"
+                        | b"3D"
+                        | b"RichMedia"
+                        | b"PrinterMark"
+                        | b"TrapNet"
+                ),
+            };
             let ap_id = d
                 .get(b"AP")
                 .ok()
@@ -1582,6 +1603,9 @@ pub fn flatten(pdf: &mut Pdf, _what: FlattenWhat) -> Result<u32> {
             let sx = (r[2] - r[0]) / (tx1 - tx0).max(1e-3);
             let sy = (r[3] - r[1]) / (ty1 - ty0).max(1e-3);
             let a = [sx, 0.0, 0.0, sy, r[0] - sx * tx0, r[1] - sy * ty0];
+            if let Some(id) = id {
+                flat.push(*id);
+            }
             let key = format!("KFl{count}");
             xobjects.set(key.clone(), ap_id);
             draw.push_str(&format!(
@@ -1598,6 +1622,20 @@ pub fn flatten(pdf: &mut Pdf, _what: FlattenWhat) -> Result<u32> {
         if draw.is_empty() {
             continue;
         }
+        // Pop-ups of flattened annotations go with them.
+        keep.retain(|o| {
+            let d = match o {
+                Object::Reference(r) => pdf.doc.get_dictionary(*r).ok(),
+                Object::Dictionary(d) => Some(d),
+                _ => None,
+            };
+            !d.is_some_and(|d| {
+                name(d, b"Subtype") == Some(b"Popup")
+                    && d.get(b"Parent")
+                        .and_then(Object::as_reference)
+                        .is_ok_and(|p| flat.contains(&p))
+            })
+        });
         crate::pages::materialize(&mut pdf.doc, pid)?;
         // The form keeps its own matrix; Do applies it inside our cm.
         add_to_content(&mut pdf.doc, pid, draw, xobjects)?;
