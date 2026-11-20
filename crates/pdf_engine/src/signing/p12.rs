@@ -46,7 +46,7 @@ struct Bag {
 
 enum BagKind {
     Key(Vec<u8>),
-    Cert(Cert),
+    Cert(Box<Cert>),
 }
 
 /// Open a PKCS #12 file with `password`.
@@ -63,13 +63,13 @@ pub fn open(data: &[u8], password: &str) -> Result<P12, Error> {
     // Which password encoding the file uses: as given, or (OpenSSL's
     // quirk for empty passwords) none at all.
     let mut absent = false;
-    if let Some(mac) = mac {
-        if !check_mac(mac, &content, password, false)? {
-            if password.is_empty() && check_mac(mac, &content, password, true)? {
-                absent = true;
-            } else {
-                return Err(Error::WrongPassword);
-            }
+    if let Some(mac) = mac
+        && !check_mac(mac, &content, password, false)?
+    {
+        if password.is_empty() && check_mac(mac, &content, password, true)? {
+            absent = true;
+        } else {
+            return Err(Error::WrongPassword);
         }
     }
     let mut bags = Vec::new();
@@ -173,7 +173,7 @@ fn read_bags(safe: &[u8], password: &str, absent: bool, out: &mut Vec<Bag>) -> R
                     .and_then(|t| t.octets())
                     .map_err(|_| bad())?;
                 match Cert::parse(&der_cert) {
-                    Ok(cert) => BagKind::Cert(cert),
+                    Ok(cert) => BagKind::Cert(Box::new(cert)),
                     Err(_) => continue,
                 }
             }
@@ -195,7 +195,7 @@ fn pair(bags: Vec<Bag>) -> Result<P12, Error> {
     for b in bags {
         match b.kind {
             BagKind::Key(k) => keys.push((k, b.local_id, b.name)),
-            BagKind::Cert(c) => certs.push((c, b.local_id, b.name)),
+            BagKind::Cert(c) => certs.push((*c, b.local_id, b.name)),
         }
     }
     if keys.is_empty() {

@@ -26,7 +26,7 @@ impl Hash {
         }
     }
 
-    pub fn len(self) -> usize {
+    pub fn size(self) -> usize {
         match self {
             Hash::Sha256 => 32,
             Hash::Sha384 => 48,

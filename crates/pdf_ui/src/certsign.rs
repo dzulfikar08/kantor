@@ -26,7 +26,7 @@ use gpui_kit::*;
 use kantor_core::settings::Settings;
 use kantor_pdf::annot::Art;
 use kantor_pdf::sign::{Look, Place};
-use kantor_ui::i18n::{self, tf};
+use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 use pdf_engine::signatures::{self as sig, Cert};
 use pdf_engine::signing::{self, Identity, Level, stores};
@@ -151,24 +151,24 @@ impl PdfView {
             e.update(cx, |i, cx| i.set_value(text, window, cx));
             e
         };
-        let secret = input(String::new(), "Password or PIN", true, window, cx);
+        let secret = input(String::new(), tk("Password or PIN"), true, window, cx);
         let reason = input(
             s.signing_reason.clone(),
-            "Reason (optional)",
+            tk("Reason (optional)"),
             false,
             window,
             cx,
         );
         let location = input(
             s.signing_location.clone(),
-            "Location (optional)",
+            tk("Location (optional)"),
             false,
             window,
             cx,
         );
         let tsa = input(
             s.signing_tsa_url.clone(),
-            "Time-stamp server address (https://…)",
+            tk("Time-stamp server address (https://…)"),
             false,
             window,
             cx,
@@ -418,6 +418,9 @@ impl PdfView {
         if d.show == Show::Draw && d.drawn.is_none() {
             d.hidden = true;
             d.error = None;
+            if self.markup.mode == crate::Mode::View {
+                self.markup.mode = crate::Mode::FillSign;
+            }
             self.markup.tool = Tool::CertBox;
             self.status = i18n::t("Drag a box on the page where the signature goes.").into();
             cx.notify();
@@ -736,7 +739,7 @@ impl PdfView {
                     "A digital signature with your certificate: it shows who signed and that the document hasn't changed since. The signed document is saved as a new file.",
                 )),
             )
-            .child(label("Certificate"))
+            .child(label(tk("Certificate")))
             .child(list)
             .child(
                 h_flex()
@@ -762,24 +765,24 @@ impl PdfView {
             )
             .children(details)
             .when(needs_secret, |c| c.child(Input::new(&d.secret)))
-            .child(label("Appearance"))
+            .child(label(tk("Appearance")))
             .child(shows)
-            .when(d.show != Show::Invisible, |c| c.child(pics))
+            .when(d.show != Show::Invisible && !d.pictures.is_empty(), |c| c.child(pics))
             .child(
                 h_flex()
                     .gap(SPACE_2)
                     .child(div().flex_1().child(Input::new(&d.reason)))
                     .child(div().flex_1().child(Input::new(&d.location))),
             )
-            .child(label("Certify"))
+            .child(label(tk("Certify")))
             .child(
                 h_flex()
                     .gap(SPACE_2)
                     .flex_wrap()
-                    .child(certify_btn("pdf-cs-c0", "Don't Certify", None))
-                    .child(certify_btn("pdf-cs-c1", "No Changes Allowed", Some(1)))
-                    .child(certify_btn("pdf-cs-c2", "Form Filling and Signing", Some(2)))
-                    .child(certify_btn("pdf-cs-c3", "Also Comments", Some(3))),
+                    .child(certify_btn("pdf-cs-c0", tk("Don't Certify"), None))
+                    .child(certify_btn("pdf-cs-c1", tk("No Changes Allowed"), Some(1)))
+                    .child(certify_btn("pdf-cs-c2", tk("Form Filling and Signing"), Some(2)))
+                    .child(certify_btn("pdf-cs-c3", tk("Also Comments"), Some(3))),
             )
             .child(
                 h_flex()

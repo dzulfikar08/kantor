@@ -199,7 +199,7 @@ mod imp {
             };
             let pss = BCRYPT_PSS_PADDING_INFO {
                 pszAlgId: name.as_ptr(),
-                cbSalt: mech.hash().len() as u32,
+                cbSalt: mech.hash().size() as u32,
             };
             let (info, flags): (*const c_void, u32) = match mech {
                 Mech::RsaPkcs1(_) => (&pkcs1 as *const _ as *const c_void, BCRYPT_PAD_PKCS1),

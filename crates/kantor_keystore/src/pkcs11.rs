@@ -175,7 +175,7 @@ fn rv(code: CK_RV, what: &str) -> Result<(), Error> {
 #[derive(Clone)]
 pub struct TokenCert {
     pub token: String,
-    pub slot: u64,
+    pub slot: c_ulong,
     pub label: String,
     pub id: Vec<u8>,
     /// The certificate, DER.
@@ -302,7 +302,7 @@ impl Module {
                     .unwrap_or_default();
                 out.push(TokenCert {
                     token: token.clone(),
-                    slot: slot as u64,
+                    slot,
                     label,
                     id,
                     der,
@@ -317,7 +317,7 @@ impl Module {
     /// Log in to `tc`'s token with `pin` (`None` on a PIN pad) and return
     /// a key that signs with the private key matching the certificate.
     pub fn key(self: &Arc<Self>, tc: &TokenCert, pin: Option<&str>) -> Result<TokenKey, Error> {
-        let s = self.open(tc.slot as CK_SLOT_ID)?;
+        let s = self.open(tc.slot)?;
         let login: FnLogin = self.f(ix::LOGIN)?;
         let (p, n) = match pin {
             Some(p) => (p.as_ptr(), p.len() as CK_ULONG),
@@ -438,7 +438,7 @@ impl TokenKey {
         let mut pss_params = CK_RSA_PKCS_PSS_PARAMS {
             hashAlg: mech_hash,
             mgf,
-            sLen: hash.len() as CK_ULONG,
+            sLen: hash.size() as CK_ULONG,
         };
         let plain = |m| CK_MECHANISM {
             mechanism: m,

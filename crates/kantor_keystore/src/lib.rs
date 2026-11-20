@@ -46,7 +46,7 @@ pub enum HashAlg {
 }
 
 impl HashAlg {
-    pub fn len(self) -> usize {
+    pub fn size(self) -> usize {
         match self {
             HashAlg::Sha256 => 32,
             HashAlg::Sha384 => 48,

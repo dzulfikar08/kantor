@@ -40,7 +40,7 @@ pub fn signature_algorithm(kt: KeyType, hash: Hash, pss: bool) -> Vec<u8> {
             let params = seq(&[
                 &tagged(0, &h),
                 &tagged(1, &mgf),
-                &tagged(2, &int(hash.len() as u64)),
+                &tagged(2, &int(hash.size() as u64)),
             ]);
             seq(&[&oid("1.2.840.113549.1.1.10"), &params])
         }
