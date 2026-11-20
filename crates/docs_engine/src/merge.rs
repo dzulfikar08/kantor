@@ -772,6 +772,29 @@ impl MailMergeLink {
         x
     }
 
+    /// The address fields' columns as saved by Match Fields
+    /// (`w:odso/w:fieldMapData`); unsaved: Word's guesses.
+    pub fn field_map(&self) -> crate::address::FieldMap {
+        self.odso
+            .as_deref()
+            .and_then(crate::address::FieldMap::from_odso)
+            .unwrap_or_default()
+    }
+
+    /// The same link with `map` saved as its Match Fields (`columns`: the
+    /// data source's, `lid`: the language tag Word writes, `en-US`).
+    pub fn with_field_map(
+        &self,
+        map: &crate::address::FieldMap,
+        columns: &[String],
+        lid: &str,
+    ) -> Self {
+        Self {
+            odso: Some(map.to_odso(self.odso.as_deref(), columns, lid)),
+            ..self.clone()
+        }
+    }
+
     /// Whether blank lines from empty fields stay (`w:doNotSuppressBlankLines`).
     pub fn keeps_blank_lines(&self) -> bool {
         self.others.iter().any(|o| {
@@ -1014,7 +1037,7 @@ fn merge_kind(span: &FieldSpan) -> bool {
     let k = span.kind();
     match k.as_str() {
         "MERGEFIELD" | "MERGEREC" | "MERGESEQ" | "NEXT" | "NEXTIF" | "SKIPIF" | "SET" | "ASK"
-        | "FILLIN" => true,
+        | "FILLIN" | "ADDRESSBLOCK" | "GREETINGLINE" => true,
         "IF" | "=" | "COMPARE" => {
             let code = span.shown_code().to_ascii_uppercase();
             code.contains("MERGEFIELD") || code.contains("MERGEREC") || code.contains("MERGESEQ")
@@ -1034,9 +1057,27 @@ struct Cursor<'a> {
     seq: usize,
     skipped: bool,
     decimal: char,
+    /// The address fields' columns (Address Block, Greeting Line).
+    address: &'a crate::address::AddressColumns,
 }
 
 impl Cursor<'_> {
+    /// An address field's value (Word's name, "First Name") in the
+    /// current record.
+    fn address(&self, field: &str) -> String {
+        self.address.value(self.data, self.row(), field)
+    }
+
+    /// An `ADDRESSBLOCK`'s lines.
+    fn address_block(&self, i: &Instr) -> Vec<String> {
+        crate::address::address_block(i, &|f| self.address(f))
+    }
+
+    /// A `GREETINGLINE`'s text.
+    fn greeting_line(&self, i: &Instr) -> String {
+        crate::address::greeting_line(i, &|f| self.address(f))
+    }
+
     fn row(&self) -> Option<usize> {
         self.records.get(self.at).copied()
     }
@@ -1299,6 +1340,10 @@ fn indonesian_at(doc: &Document, paras: &[Paragraph], pos: Position) -> bool {
         .starts_with("id")
 }
 
+/// Stands for a paragraph break in an Address Block's text until the
+/// paragraph is split there.
+const LINE: char = '\u{E002}';
+
 /// Replace a field (marks and result) with plain text, keeping the
 /// result's formatting.
 fn unlink(paras: &mut Vec<Paragraph>, span: &FieldSpan, text: &str) {
@@ -1391,6 +1436,36 @@ fn merge_story(doc: &Document, paras: &mut Vec<Paragraph>, cur: &mut Cursor) -> 
                     *e |= !t.trim().is_empty();
                 }
                 t
+            }
+            "GREETINGLINE" => {
+                let t = cur.greeting_line(&i);
+                let e = out.filled.entry(span.begin.para).or_insert(false);
+                *e |= !t.trim().is_empty();
+                t
+            }
+            "ADDRESSBLOCK" => {
+                let lines = cur.address_block(&i);
+                let para = span.begin.para;
+                let e = out.filled.entry(para).or_insert(false);
+                *e |= !lines.is_empty();
+                unlink(paras, &span, &lines.join(&LINE.to_string()));
+                // A paragraph per line, as Word's merge makes them.
+                if let Some(p) = (para..paras.len()).find(|&k| paras[k].text.contains(LINE)) {
+                    while let Some(k) = paras[p].text.rfind(LINE) {
+                        let mut right = paras[p].split_off(k);
+                        right.delete(0..LINE.len_utf8());
+                        paras.insert(p + 1, right);
+                    }
+                }
+                let n = lines.len().saturating_sub(1);
+                if n > 0 {
+                    out.filled = out
+                        .filled
+                        .drain()
+                        .map(|(k, v)| (if k > para { k + n } else { k }, v))
+                        .collect();
+                }
+                continue;
             }
             "NEXT" => {
                 cur.at += 1;
@@ -1587,6 +1662,27 @@ impl Document {
         out
     }
 
+    /// The address fields' columns in `data`: as matched in the linked
+    /// data source's Match Fields, else guessed from the column names.
+    pub fn address_columns(&self, data: &MergeData) -> crate::address::AddressColumns {
+        let map = self
+            .mail_merge
+            .as_ref()
+            .map(MailMergeLink::field_map)
+            .unwrap_or_default();
+        crate::address::AddressColumns::new(&map, data)
+    }
+
+    /// Whether the document has Address Block or Greeting Line fields.
+    pub fn has_address_fields(&self) -> bool {
+        let any = |d: &Document| {
+            spans(&d.paragraphs)
+                .iter()
+                .any(|s| matches!(s.kind().as_str(), "ADDRESSBLOCK" | "GREETINGLINE"))
+        };
+        any(self) || self.stories.iter().any(|s| any(&s.doc))
+    }
+
     /// Whether the document has merge fields of any kind.
     pub fn has_merge_fields(&self) -> bool {
         let any = |d: &Document| spans(&d.paragraphs).iter().any(merge_kind);
@@ -1609,6 +1705,7 @@ impl Document {
             .mail_merge
             .as_ref()
             .is_some_and(MailMergeLink::keeps_blank_lines);
+        let address = self.address_columns(data);
         let start = Cursor {
             data,
             records,
@@ -1616,6 +1713,7 @@ impl Document {
             seq,
             skipped: false,
             decimal: self.decimal,
+            address: &address,
         };
         let mut cur = start;
         let mut paras = self.paragraphs.clone();
@@ -1781,6 +1879,7 @@ impl Document {
         records: &[usize],
         at: usize,
     ) -> HashMap<usize, String> {
+        let address = self.address_columns(data);
         let mut cur = Cursor {
             data,
             records,
@@ -1788,6 +1887,7 @@ impl Document {
             seq: at + 1,
             skipped: false,
             decimal: self.decimal,
+            address: &address,
         };
         let mut out = HashMap::new();
         for span in spans(&self.paragraphs) {
@@ -1798,6 +1898,9 @@ impl Document {
             let ind = indonesian_at(self, &self.paragraphs, span.begin);
             let text = match i.kind.as_str() {
                 "MERGEFIELD" | "MERGEREC" | "MERGESEQ" => cur.text(&i, ind).unwrap_or_default(),
+                // One line here; the merged document gets a paragraph each.
+                "ADDRESSBLOCK" => cur.address_block(&i).join(", "),
+                "GREETINGLINE" => cur.greeting_line(&i),
                 "NEXT" => {
                     cur.at += 1;
                     String::new()

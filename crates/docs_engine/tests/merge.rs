@@ -530,3 +530,299 @@ fn the_data_source_link_is_kept_and_written_like_word() {
             .contains("mailMergeSource")
     );
 }
+
+// ── Address Block and Greeting Line ──────────────────────────────────────
+
+/// docx4j CR-067 phase 3's address probe (`address-probe-r1.docx`): the
+/// same codes and the same four (made-up) recipients, with what Word 365
+/// wrote when it merged them. Word left Postal Code unmatched in that run
+/// (no postcode shows anywhere), so the saved matching here does too.
+fn address_probe() -> (Vec<u8>, MergeData) {
+    let lt = |s: &str| s.replace('<', "&lt;").replace('>', "&gt;");
+    let full = r#"<<_TITLE0_ >><<_FIRST0_>><< _LAST0_>><< _SUFFIX0_>>\n<<_COMPANY_\n>><<_STREET1_\n>><<_STREET2_\n>><<_CITY_>><<, _STATE_>><< _POSTAL_>><<\n_COUNTRY_>>"#;
+    let cases = [
+        (
+            "A01",
+            format!(r#"ADDRESSBLOCK \f "{full}" \l 1033 \c 2 \e "Australia" \d"#),
+        ),
+        (
+            "A02",
+            format!(r#"ADDRESSBLOCK \f "{full}" \l 1033 \c 1 \e "Australia""#),
+        ),
+        (
+            "A03",
+            format!(r#"ADDRESSBLOCK \f "{full}" \l 1033 \c 0 \e "Australia""#),
+        ),
+        (
+            "A04",
+            r#"ADDRESSBLOCK \f "<<_FIRST0_>><< _LAST0_>>\n<<_STREET1_\n>><<_CITY_>>" \l 1033"#.into(),
+        ),
+        ("A05", "ADDRESSBLOCK".into()),
+        (
+            "G01",
+            r#"GREETINGLINE \f "<<_BEFORE_ Dear >><<_TITLE0_ >><<_LAST0_>><<_AFTER_ ,>>" \l 1033 \e "Dear Sir or Madam,""#.into(),
+        ),
+        (
+            "G02",
+            r#"GREETINGLINE \f "<<_BEFORE_ Dear >><<_FIRST0_>><<_AFTER_ ,>>" \l 1033 \e "Dear friend,""#.into(),
+        ),
+        (
+            "G03",
+            r#"GREETINGLINE \f "<<_BEFORE_ To >><<_TITLE0_ >><<_FIRST0_>><< _LAST0_>><<_AFTER_ :>>" \l 1033 \e "To whom it may concern:""#.into(),
+        ),
+        ("G04", "GREETINGLINE".into()),
+    ];
+    let body: String = cases
+        .iter()
+        .map(|(k, code)| {
+            p(&format!(
+                "{}{}",
+                t(&format!("{k} = ")),
+                field(&lt(code), "x")
+            ))
+        })
+        .collect();
+    let columns = [
+        "Title",
+        "First Name",
+        "Last Name",
+        "Suffix",
+        "Company",
+        "Address 1",
+        "Address 2",
+        "City",
+        "State",
+        "Postal Code",
+        "Country",
+    ];
+    let mapped = [
+        ("Courtesy Title", 0),
+        ("First Name", 1),
+        ("Last Name", 2),
+        ("Suffix", 3),
+        ("Company", 4),
+        ("Address 1", 5),
+        ("Address 2", 6),
+        ("City", 7),
+        ("State", 8),
+        ("Country or Region", 10),
+    ];
+    let maps: String = mapped
+        .iter()
+        .map(|(f, k)| {
+            format!(
+                r#"<w:fieldMapData><w:type w:val="dbColumn"/><w:name w:val="{}"/><w:mappedName w:val="{f}"/><w:column w:val="{k}"/><w:lid w:val="en-US"/></w:fieldMapData>"#,
+                columns[*k]
+            )
+        })
+        .collect();
+    let settings = format!(
+        r#"<w:mailMerge><w:mainDocumentType w:val="formLetters"/><w:dataType w:val="textFile"/><w:query w:val="SELECT * FROM x.csv"/><w:odso>{maps}<w:fieldMapData><w:column w:val="0"/><w:lid w:val="en-US"/></w:fieldMapData></w:odso></w:mailMerge>"#
+    );
+    let rows = [
+        [
+            "Mr",
+            "John",
+            "Smith",
+            "Jr",
+            "Acme Pty Ltd",
+            "1 Main St",
+            "Suite 2",
+            "Sydney",
+            "NSW",
+            "2000",
+            "Australia",
+        ],
+        [
+            "Ms",
+            "Jane",
+            "Doe",
+            "",
+            "",
+            "2 High St",
+            "",
+            "Auckland",
+            "",
+            "1010",
+            "New Zealand",
+        ],
+        [
+            "",
+            "Pat",
+            "Lee",
+            "",
+            "Beta Inc",
+            "3 Low Rd",
+            "",
+            "Perth",
+            "WA",
+            "6000",
+            "Australia",
+        ],
+        [
+            "",
+            "Sam",
+            "",
+            "",
+            "",
+            "4 Side Ln",
+            "",
+            "Hobart",
+            "TAS",
+            "7000",
+            "Australia",
+        ],
+    ];
+    let data = MergeData {
+        fields: columns.iter().map(|c| c.to_string()).collect(),
+        rows: rows
+            .iter()
+            .map(|r| r.iter().map(|v| MergeValue::text(*v)).collect())
+            .collect(),
+    };
+    (package(&body, "", &settings, None), data)
+}
+
+#[test]
+fn address_block_and_greeting_line_match_word_365() {
+    let dir = tempfile::tempdir().unwrap();
+    let (bytes, data) = address_probe();
+    let doc = open(dir.path(), "probe.docx", &bytes);
+    assert!(doc.has_address_fields());
+    let copies = doc.merge_all(&data, &[0, 1, 2, 3]);
+    assert_eq!(copies.len(), 4);
+    // Word's output, paragraph by paragraph. The probe wrote `\n` in the
+    // formats, which Word reads as a plain "n"; Word 365 also broke the
+    // line after the name in A01–A03 (only there, for a reason the probe
+    // doesn't show), which Kantor doesn't: those two paragraphs are one
+    // here.
+    let word: [&[&str]; 4] = [
+        &[
+            "A01 = Mr John Smith JrnAcme Pty Ltdn1 Main StnSuite 2nSydney, NSW",
+            "A02 = Mr John Smith JrnAcme Pty Ltdn1 Main StnSuite 2nSydney, NSWnAustralia",
+            "A03 = Mr John Smith JrnAcme Pty Ltdn1 Main StnSuite 2nSydney, NSWnAustralia",
+            "A04 = John Smithn1 Main StnSydney",
+            "A05 = Acme Pty Ltd",
+            "John Smith",
+            "1 Main St",
+            "Suite 2",
+            "Sydney NSW",
+            "Australia",
+            "G01 = Dear Mr Smith,",
+            "G02 = Dear John,",
+            "G03 = To whom it may concern:",
+            "G04 = ",
+        ],
+        &[
+            // \d: New Zealand isn't the \e country, so its layout.
+            "A01 = Ms Jane Doe",
+            "2 High St",
+            "Auckland",
+            "New Zealand",
+            "A02 = Ms Jane Doen2 High StnAucklandnNew Zealand",
+            "A03 = Ms Jane Doen2 High StnAucklandnNew Zealand",
+            "A04 = Jane Doen2 High StnAuckland",
+            "A05 = Jane Doe",
+            "2 High St",
+            "Auckland",
+            "New Zealand",
+            "G01 = Dear Ms Doe,",
+            "G02 = Dear Jane,",
+            "G03 = To whom it may concern:",
+            "G04 = ",
+        ],
+        &[
+            "A01 = Pat LeenBeta Incn3 Low RdnPerth, WA",
+            "A02 = Pat LeenBeta Incn3 Low RdnPerth, WAnAustralia",
+            "A03 = Pat LeenBeta Incn3 Low RdnPerth, WAnAustralia",
+            "A04 = Pat Leen3 Low RdnPerth",
+            "A05 = Beta Inc",
+            "Pat Lee",
+            "3 Low Rd",
+            "Perth WA",
+            "Australia",
+            "G01 = Dear Pat Lee,",
+            "G02 = Dear Pat,",
+            "G03 = To whom it may concern:",
+            "G04 = ",
+        ],
+        &[
+            "A01 = Samn4 Side LnnHobart, TAS",
+            "A02 = Samn4 Side LnnHobart, TASnAustralia",
+            "A03 = Samn4 Side LnnHobart, TASnAustralia",
+            "A04 = Samn4 Side LnnHobart",
+            "A05 = Sam",
+            "4 Side Ln",
+            "Hobart TAS",
+            "Australia",
+            "G01 = Dear Sam,",
+            "G02 = Dear Sam,",
+            "G03 = To whom it may concern:",
+            "G04 = ",
+        ],
+    ];
+    for (k, (_, copy)) in copies.iter().enumerate() {
+        assert_eq!(shown(copy), word[k], "record {}", k + 1);
+    }
+    // Preview Results: the block on one line.
+    let view = doc.merge_preview(&data, &[0, 1, 2, 3], 1);
+    assert!(
+        view.values()
+            .any(|v| v == "Ms Jane Doe, 2 High St, Auckland, New Zealand")
+    );
+    assert!(view.values().any(|v| v == "Dear Ms Doe,"));
+}
+
+/// Match Fields is saved in `w:odso` and read back; without it the
+/// columns are guessed from their names (Indonesian ones too).
+#[test]
+fn match_fields_are_saved_and_guessed() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = p(&field(
+        r#"GREETINGLINE \f "&lt;&lt;_BEFORE_ Yth. &gt;&gt;&lt;&lt;_FIRST0_&gt;&gt;&lt;&lt;_AFTER_ ,&gt;&gt;" \l 1057 \e "Dengan hormat,""#,
+        "«GreetingLine»",
+    )) + &p(&field("ADDRESSBLOCK", "«AddressBlock»"));
+    let doc = open(dir.path(), "surat.docx", &package(&body, "", "", None));
+    let data = MergeData {
+        fields: vec![
+            "Nama".into(),
+            "Alamat".into(),
+            "Kota".into(),
+            "Kode Pos".into(),
+            "Sapaan".into(),
+        ],
+        rows: vec![vec![
+            MergeValue::text("Budi Santoso"),
+            MergeValue::text("Jl. Merdeka 1"),
+            MergeValue::text("Bandung"),
+            MergeValue::text("40115"),
+            MergeValue::text("Bapak"),
+        ]],
+    };
+    let merged = doc.merge_all(&data, &[0]);
+    assert_eq!(
+        shown(&merged[0].1),
+        [
+            "Yth. Budi Santoso,",
+            "Budi Santoso",
+            "Jl. Merdeka 1",
+            "Bandung 40115"
+        ]
+    );
+    // Match "First Name" to Sapaan instead and save.
+    let mut doc = doc;
+    let link = MailMergeLink::new("data.csv", None, &Query::default());
+    let map = docs_engine::address::FieldMap {
+        matched: vec![("First Name".into(), "Sapaan".into())],
+        saved: true,
+    };
+    doc.set_mail_merge(Some(link.with_field_map(&map, &data.fields, "id-ID")));
+    let path = dir.path().join("saved.docx");
+    doc.save_as(&path).unwrap();
+    let settings = entry(&std::fs::read(&path).unwrap(), "word/settings.xml").unwrap();
+    assert!(settings.contains(r#"<w:name w:val="Sapaan"/><w:mappedName w:val="First Name"/>"#));
+    let back = Document::open(&path).unwrap();
+    let merged = back.merge_all(&data, &[0]);
+    // Saved: only First Name is matched now.
+    assert_eq!(shown(&merged[0].1), ["Yth. Bapak,", "Bapak"]);
+}
