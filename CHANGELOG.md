@@ -22,6 +22,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - PDF: the signature checker and `kantor pdf verify --password` check password-protected PDFs.
 - Docs mail merge: *Address Block…* and *Greeting Line…* on the Mailings bar insert Word's `ADDRESSBLOCK` and `GREETINGLINE` fields, with a preview of each recipient as in Word's dialogs, and merging fills them in as Word does: the name format, company, country only when it isn't your own, and addresses laid out by the destination country (United States, United Kingdom, Indonesia, Germany, France, Japan, Australia and more). Greeting lines fall back to "Dear Sir or Madam," (or your choice) when a recipient has no name. Templates made in Word with these fields now merge completely, in the app and with `kantor docs merge`.
 - Docs mail merge: *Match Fields…* says which columns of your list are the title, first and last name, company, address, city, postal code and country. Kantor guesses them from the column names, in English and Indonesian too (Nama, Alamat, Kota, Kode Pos, Provinsi, Negara), and saves your choice in the document as Word does.
+- PDF: *Add e-Meterai…* stamps an Indonesian e-meterai (Rp 10.000) through your account at a provider: choose the document type, click where the meterai goes, and the stamped copy comes back from the provider and is saved as a new file. Works with VIDA's e-Meterai API and Mekari Sign.
+- PDF: *Sign with Provider…* makes a certified electronic signature from your account at a licensed provider (Xignature): Kantor builds the signature and sends only the document's hash, so the document stays on your computer.
+- PDF: *e-Sign Providers…* sets up those accounts. Credentials are kept in the system keychain, and nothing is sent to a provider until you allow it for that provider. Kantor checks every stamped or signed file before saving it: signatures already in the document must stay valid, or you're asked first.
+- Batch: *Add e-Meterai* and *Sign with Provider* steps; `kantor pdf emeterai`, `kantor pdf sign --provider` and `kantor pdf providers` do the same from the command line.
 
 ### Fixed
 

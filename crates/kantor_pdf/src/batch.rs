@@ -1155,6 +1155,14 @@ pub fn place_box(pdf: &Pdf, index: u32, place: &Place, w: f32, h: f32) -> Option
     ))
 }
 
+/// Page `index`'s (0-based) size as displayed (its `/Rotate` applied) and
+/// the matrix taking display points (origin bottom-left, y up) to user
+/// space.
+pub fn page_display(pdf: &Pdf, index: u32) -> Option<(f32, f32, [f32; 6])> {
+    let pid = *page_ids(&pdf.doc).get(index as usize)?;
+    Some(display(pdf, pid))
+}
+
 /// The page's display transform: (display width, height, matrix taking
 /// display points (origin bottom-left, y up) to user space).
 fn display(pdf: &Pdf, pid: lopdf::ObjectId) -> (f32, f32, [f32; 6]) {

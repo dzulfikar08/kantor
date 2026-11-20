@@ -1,7 +1,8 @@
 //! Secrets: in the OS keychain (macOS Keychain, Secret Service on Linux,
 //! Windows Credential Manager), never in `settings.toml`, never logged.
-//! Two [`Vault`]s share the code: AI provider keys ([`AI`]) and cloud drive
-//! app passwords ([`CLOUD`]).
+//! Three [`Vault`]s share the code: AI provider keys ([`AI`]), cloud drive
+//! app passwords ([`CLOUD`]) and e-meterai / e-signature provider
+//! credentials ([`ESIGN`]).
 //!
 //! When no keychain is available (no Secret Service running, e.g. a bare
 //! window manager without gnome-keyring/KWallet), secrets fall back to a
@@ -38,6 +39,13 @@ pub const AI: Vault = Vault {
 pub const CLOUD: Vault = Vault {
     service: "Kantor Cloud",
     file: "cloud-keys.toml",
+};
+
+/// e-meterai and certified-signature provider credentials (kantor_esign),
+/// keyed by provider id; each value is the provider's fields as JSON.
+pub const ESIGN: Vault = Vault {
+    service: "Kantor e-Sign",
+    file: "esign-keys.toml",
 };
 
 /// Where a key ended up.

@@ -2122,6 +2122,26 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.sign_with_certificate(w, cx)),
     },
     Command {
+        title: tk("Add e-Meterai…"),
+        detail: tk("PDF · stamp an e-meterai through your provider account (VIDA, Mekari Sign)"),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.add_emeterai(w, cx)),
+    },
+    Command {
+        title: tk("Sign with Provider…"),
+        detail: tk(
+            "PDF · certified electronic signature from your account at a licensed provider (PSrE)",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.sign_with_provider(w, cx)),
+    },
+    Command {
+        title: tk("e-Sign Providers…"),
+        detail: tk("PDF · set up e-meterai and certified-signature provider accounts"),
+        keys: "",
+        run: |ws, window, cx| ws.with_pdf(window, cx, |v, w, cx| v.open_esign_providers(w, cx)),
+    },
+    Command {
         title: tk("Place on Pages…"),
         detail: tk("PDF · copy the selected stamp to every page or the pages you type"),
         keys: "",

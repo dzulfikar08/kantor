@@ -1156,7 +1156,11 @@ pub(crate) fn sign_menu(menu: PopupMenu, view: &WeakEntity<PdfView>) -> PopupMen
         }));
     }
     let (a, b, c) = (view.clone(), view.clone(), view.clone());
-    menu.separator()
+    let (e1, e2, e3) = (view.clone(), view.clone(), view.clone());
+    let stamp_ok = !PdfView::esign_configured(kantor_esign::Kind::EMeterai).is_empty();
+    let sign_ok = !PdfView::esign_configured(kantor_esign::Kind::Signing).is_empty();
+    let menu = menu
+        .separator()
         .item(
             PopupMenuItem::new(i18n::t("Add Signature…")).on_click(move |_, window, cx| {
                 let _ = a.update(cx, |this, cx| this.add_signature(window, cx));
@@ -1173,6 +1177,31 @@ pub(crate) fn sign_menu(menu: PopupMenu, view: &WeakEntity<PdfView>) -> PopupMen
                 let _ = c.update(cx, |this, cx| this.sign_with_certificate(window, cx));
             }),
         )
+        .separator()
+        .item(
+            PopupMenuItem::new(i18n::t("Add e-Meterai…"))
+                .disabled(!stamp_ok)
+                .on_click(move |_, window, cx| {
+                    let _ = e1.update(cx, |this, cx| this.add_emeterai(window, cx));
+                }),
+        )
+        .item(
+            PopupMenuItem::new(i18n::t("Sign with Provider…"))
+                .disabled(!sign_ok)
+                .on_click(move |_, window, cx| {
+                    let _ = e2.update(cx, |this, cx| this.sign_with_provider(window, cx));
+                }),
+        );
+    let menu = if stamp_ok && sign_ok {
+        menu
+    } else {
+        menu.item(PopupMenuItem::label(i18n::t(crate::esign::SET_UP)))
+    };
+    menu.item(
+        PopupMenuItem::new(i18n::t("e-Sign Providers…")).on_click(move |_, window, cx| {
+            let _ = e3.update(cx, |this, cx| this.open_esign_providers(window, cx));
+        }),
+    )
 }
 
 /// The pages' right-click menu.

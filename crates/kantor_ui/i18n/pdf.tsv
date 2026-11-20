@@ -567,3 +567,101 @@ Skipped: the file's security settings don't allow this with the password that op
 Password for protected PDFs (optional)	Kata sandi untuk PDF yang dilindungi (opsional)
 PDF password	Kata sandi PDF
 Password-protected PDFs stay protected. Give one password for all of them here, or a Password column in a fill step's table; it is used for this run only and never saved.	PDF yang dilindungi kata sandi tetap terlindungi. Berikan satu kata sandi untuk semuanya di sini, atau kolom Password di tabel langkah isian; kata sandi hanya dipakai untuk proses ini dan tidak pernah disimpan.
+Set up a provider in e-Sign Providers first.	Siapkan penyedia di Penyedia e-Sign terlebih dahulu.
+{} isn't set up: add your provider account in e-Sign Providers.	{} belum disiapkan: tambahkan akun penyedia Anda di Penyedia e-Sign.
+Kantor isn't allowed to send documents to {}. Turn it on in e-Sign Providers.	Kantor tidak diizinkan mengirim dokumen ke {}. Aktifkan di Penyedia e-Sign.
+The provider refused the credentials: {}	Penyedia menolak kredensial: {}
+No e-meterai quota left: {}	Kuota e-meterai habis: {}
+Type the one-time password (OTP): {}	Ketik kata sandi sekali pakai (OTP): {}
+The provider rebuilt the file, which breaks the earlier signatures ({}). Nothing was saved.	Penyedia menyusun ulang berkas, sehingga tanda tangan sebelumnya rusak ({}). Tidak ada yang disimpan.
+Server address (optional)	Alamat server (opsional)
+Saved. No system keychain was found, so the credentials are in a file only you can read.	Tersimpan. Keychain sistem tidak ditemukan, jadi kredensial disimpan di berkas yang hanya bisa dibaca oleh Anda.
+Saved.	Tersimpan.
+Saved. Still missing: {}.	Tersimpan. Masih kurang: {}.
+Connected: the provider accepted the credentials.	Terhubung: penyedia menerima kredensial.
+Test failed: {}	Uji gagal: {}
+Removed.	Dihapus.
+Save your changes first, then use the saved document.	Simpan perubahan Anda terlebih dahulu, lalu gunakan dokumen yang tersimpan.
+Password-protected PDFs can't be sent to a provider. Remove the password first.	PDF yang dilindungi kata sandi tidak dapat dikirim ke penyedia. Hapus kata sandinya terlebih dahulu.
+Document number (optional)	Nomor dokumen (opsional)
+Click where the e-meterai goes, or drag a square.	Klik tempat e-meterai diletakkan, atau seret sebuah persegi.
+Choose the document type.	Pilih jenis dokumen.
+Place the e-meterai on a page first.	Letakkan e-meterai di halaman terlebih dahulu.
+This provider rebuilds the file, which breaks the signatures already in it. Tick the box to go ahead anyway.	Penyedia ini menyusun ulang berkas, sehingga tanda tangan yang sudah ada menjadi rusak. Centang kotaknya untuk tetap melanjutkan.
+Sending to {}…	Mengirim ke {}…
+e-Meterai {} added and saved as {}	e-Meterai {} dibubuhkan dan disimpan sebagai {}
+e-Meterai added and saved as {}	e-Meterai dibubuhkan dan disimpan sebagai {}
+These signatures are no longer valid: {}	Tanda tangan berikut tidak lagi sah: {}
+No e-meterai added	Tidak ada e-meterai yang dibubuhkan
+Your account at the provider (e-mail, phone or user ID)	Akun Anda di penyedia (email, telepon, atau ID pengguna)
+One-time password (OTP)	Kata sandi sekali pakai (OTP)
+Type your account at the provider.	Ketik akun Anda di penyedia.
+No code is needed for this account.	Akun ini tidak memerlukan kode.
+Signing with {}…	Menandatangani dengan {}…
+e-Meterai	e-Meterai
+Certified signatures	Tanda tangan tersertifikasi
+API not public yet	API belum terbuka
+Not set up	Belum disiapkan
+Documentation: {}	Dokumentasi: {}
+Kantor can't use this provider yet: {}	Kantor belum bisa memakai penyedia ini: {}
+Your account	Akun Anda
+Credentials are saved in the system keychain; type a field to replace it.	Kredensial tersimpan di keychain sistem; ketik di kolom untuk menggantinya.
+Allow Kantor to send documents to {}	Izinkan Kantor mengirim dokumen ke {}
+Use the provider's sandbox (test) environment	Gunakan lingkungan sandbox (uji) penyedia
+Server address	Alamat server
+Documents go straight from this computer to the provider, only when you stamp or sign. Credentials stay in the system keychain.	Dokumen dikirim langsung dari komputer ini ke penyedia, hanya saat Anda membubuhkan meterai atau menandatangani. Kredensial tetap di keychain sistem.
+e-Sign Providers	Penyedia e-Sign
+e-Meterai and certified electronic signatures come from licensed providers. Add the account you have with one of them.	e-Meterai dan tanda tangan elektronik tersertifikasi berasal dari penyedia berizin. Tambahkan akun yang Anda miliki di salah satunya.
+Save and Test	Simpan dan Uji
+Loading…	Memuat…
+On page {}, {} × {} mm	Di halaman {}, {} × {} mm
+Not placed yet	Belum diletakkan
+Add e-Meterai	Bubuhkan e-Meterai
+An e-meterai of Rp {} from your provider account. Kantor sends the document to the provider, which stamps it; the stamped document is saved as a new file.	e-Meterai Rp {} dari akun penyedia Anda. Kantor mengirim dokumen ke penyedia, yang membubuhkannya; dokumen bermeterai disimpan sebagai berkas baru.
+Document type	Jenis dokumen
+Place Again	Letakkan Lagi
+Place on Page	Letakkan di Halaman
+This document is signed, and this provider rebuilds files: the signatures already in it will no longer be valid.	Dokumen ini bertanda tangan, dan penyedia ini menyusun ulang berkas: tanda tangan yang sudah ada tidak akan sah lagi.
+Stamp anyway	Tetap bubuhkan
+This document is signed. Kantor checks the stamped file and won't save it if the provider broke the signatures.	Dokumen ini bertanda tangan. Kantor memeriksa berkas bermeterai dan tidak menyimpannya jika penyedia merusak tanda tangannya.
+Stamping…	Membubuhkan…
+Stamp…	Bubuhkan…
+Kantor sends only the document's fingerprint (hash); the provider returns the signature.	Kantor hanya mengirim sidik dokumen (hash); penyedia mengembalikan tanda tangannya.
+Kantor sends the document to the provider, which signs it.	Kantor mengirim dokumen ke penyedia, yang menandatanganinya.
+Sign with Provider	Tanda Tangani lewat Penyedia
+A certified electronic signature from your account at a licensed provider (PSrE). {} The signed document is saved as a new file.	Tanda tangan elektronik tersertifikasi dari akun Anda di penyedia berizin (PSrE). {} Dokumen bertanda tangan disimpan sebagai berkas baru.
+Send Code	Kirim Kode
+Code sent: {}	Kode terkirim: {}
+Sign anyway	Tetap tanda tangani
+Your account at the provider	Akun Anda di penyedia
+Document type code (e.g. VD010)	Kode jenis dokumen (mis. VD010)
+Step {}: type your account at the provider	Langkah {}: ketik akun Anda di penyedia
+Step {}: type the document type	Langkah {}: ketik jenis dokumen
+Signer	Penanda tangan
+Bottom right of the page. Each file uses one e-meterai from your quota.	Kanan bawah halaman. Setiap berkas memakai satu e-meterai dari kuota Anda.
+An invisible certified signature on every file. Providers that send a one-time password for each signature can't sign in a batch.	Tanda tangan tersertifikasi tak terlihat di setiap berkas. Penyedia yang mengirim kata sandi sekali pakai untuk setiap tanda tangan tidak dapat menandatangani secara batch.
+Client ID	ID klien
+Client secret	Rahasia klien
+Token address (from VIDA; optional in the sandbox)	Alamat token (dari VIDA; opsional di sandbox)
+HMAC client ID	ID klien HMAC
+HMAC client secret	Rahasia klien HMAC
+Peruri's e-Meterai API isn't public: it needs a contract with Peruri or a distributor.	API e-Meterai Peruri tidak terbuka untuk umum: perlu kontrak dengan Peruri atau distributor.
+Pajakku shares its e-Meterai API documentation and sandbox only after a non-disclosure agreement.	Pajakku membagikan dokumentasi API dan sandbox e-Meterai hanya setelah perjanjian kerahasiaan (NDA).
+Mitracomm's e-Meterai API documentation isn't public.	Dokumentasi API e-Meterai Mitracomm tidak terbuka untuk umum.
+Finnet's e-Meterai API documentation isn't public.	Dokumentasi API e-Meterai Finnet tidak terbuka untuk umum.
+Privy's public documentation covers identity checks only; its signing and e-Meterai APIs aren't published.	Dokumentasi publik Privy hanya mencakup pemeriksaan identitas; API tanda tangan dan e-Meterai-nya tidak dipublikasikan.
+Tilaka's signing API, including hash signing, is documented only for partners.	API tanda tangan Tilaka, termasuk tanda tangan hash, hanya didokumentasikan untuk mitra.
+Peruri's PSrE signing API documentation isn't public.	Dokumentasi API tanda tangan PSrE Peruri tidak terbuka untuk umum.
+VIDA's signing APIs are public but need the signer's e-KYC data (photo of the ID card and a selfie) with every request, and its hash signing isn't documented yet.	API tanda tangan VIDA terbuka, tetapi memerlukan data e-KYC penanda tangan (foto KTP dan swafoto) di setiap permintaan, dan tanda tangan hash-nya belum didokumentasikan.
+Digisign's API documentation isn't public.	Dokumentasi API Digisign tidak terbuka untuk umum.
+Not stamped: password-protected PDFs can't be sent to the provider	Tidak dibubuhi meterai: PDF yang dilindungi kata sandi tidak dapat dikirim ke penyedia
+Not stamped: the file doesn't have the step's page	Tidak dibubuhi meterai: berkas tidak memiliki halaman pada langkah ini
+Not stamped: the file is signed and this provider rebuilds files, which would break the signatures	Tidak dibubuhi meterai: berkas bertanda tangan dan penyedia ini menyusun ulang berkas, sehingga tanda tangannya akan rusak
+Not stamped: the file is certified and allows no changes	Tidak dibubuhi meterai: berkas tersertifikasi dan tidak mengizinkan perubahan
+Not signed: password-protected PDFs can't be sent to the provider	Tidak ditandatangani: PDF yang dilindungi kata sandi tidak dapat dikirim ke penyedia
+Add e-Meterai…	Bubuhkan e-Meterai…
+Sign with Provider…	Tanda Tangani lewat Penyedia…
+e-Sign Providers…	Penyedia e-Sign…
+PDF · stamp an e-meterai through your provider account (VIDA, Mekari Sign)	PDF · bubuhkan e-meterai lewat akun penyedia Anda (VIDA, Mekari Sign)
+PDF · certified electronic signature from your account at a licensed provider (PSrE)	PDF · tanda tangan elektronik tersertifikasi dari akun Anda di penyedia berizin (PSrE)
+PDF · set up e-meterai and certified-signature provider accounts	PDF · siapkan akun penyedia e-meterai dan tanda tangan tersertifikasi

@@ -91,6 +91,10 @@ impl KeyType {
 /// `Ecdsa-Sig-Value`).
 pub trait SigningKey: Send + Sync {
     fn key_type(&self) -> KeyType;
+    /// The digest to sign with (a remote signing service may sign only one).
+    fn hash(&self) -> Hash {
+        self.key_type().hash()
+    }
     fn sign(&self, msg: &[u8], hash: Hash, pss: bool) -> Result<Vec<u8>, Error>;
 }
 

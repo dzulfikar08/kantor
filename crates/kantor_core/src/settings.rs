@@ -309,6 +309,41 @@ pub struct PdfSettings {
     pub pkcs11_modules: Vec<String>,
     /// Certificate files (.p12/.pfx) used before. Never their passwords.
     pub certificate_files: Vec<String>,
+    /// e-meterai and certified-signature providers set up in e-Sign
+    /// Providers (`[[pdf.esign_providers]]`). Their credentials are in the
+    /// system keychain, never here.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub esign_providers: Vec<EsignProviderSettings>,
+}
+
+/// One e-meterai or certified-signature provider (`[[pdf.esign_providers]]`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EsignProviderSettings {
+    /// The provider's id (kantor_esign's registry, e.g. `mekari`).
+    pub id: String,
+    /// The user allowed Kantor to send documents to this provider. Off,
+    /// nothing goes to it, even when credentials are saved.
+    pub allow_network: bool,
+    /// Use the provider's sandbox (test) environment instead of production.
+    pub sandbox: bool,
+    /// Another server address (a provider's dedicated host, or a test
+    /// server); empty: the provider's documented address.
+    pub base_url: String,
+    /// e-meterai: the document type used last (provider's code).
+    pub doc_type: String,
+}
+
+impl Default for EsignProviderSettings {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            allow_network: false,
+            sandbox: true,
+            base_url: String::new(),
+            doc_type: String::new(),
+        }
+    }
 }
 
 impl Default for PdfSettings {
@@ -323,6 +358,7 @@ impl Default for PdfSettings {
             signing_visible: true,
             pkcs11_modules: Vec::new(),
             certificate_files: Vec::new(),
+            esign_providers: Vec::new(),
         }
     }
 }
@@ -489,6 +525,11 @@ mod tests {
                 online_signature_checks: false,
                 signing_tsa_url: "http://timestamp.example.com".into(),
                 certificate_files: vec!["/home/x/me.p12".into()],
+                esign_providers: vec![EsignProviderSettings {
+                    id: "mekari".into(),
+                    allow_network: true,
+                    ..Default::default()
+                }],
                 ..Default::default()
             },
             language: Some("id".into()),

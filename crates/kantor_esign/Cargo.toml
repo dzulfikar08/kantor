@@ -1,0 +1,34 @@
+[package]
+name = "kantor_esign"
+description = "Kantor: e-meterai stamping and certified (PSrE) signatures through licensed providers' APIs, provider-neutral, no GPUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+base64.workspace = true
+# Credentials in the OS keychain (the same Vault code as AI keys and cloud passwords).
+kantor_ai.workspace = true
+kantor_core.workspace = true
+# The PDF side: signatures in the file, incremental updates, batch steps.
+kantor_pdf.workspace = true
+# Hash-based remote signing plugs into Kantor's PAdES signer; results are
+# checked with Kantor's signature checker.
+pdf_engine.workspace = true
+log.workspace = true
+# The mock providers sign hashes with a test RSA key (raw RSA; already in
+# the tree).
+num-bigint = "0.4"
+ring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Same blocking ureq + rustls stack as kantor_ai, kantor_cloud and kantor_update.
+ureq.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

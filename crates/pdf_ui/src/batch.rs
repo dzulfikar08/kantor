@@ -99,6 +99,8 @@ pub(crate) enum StepUi {
     Flatten,
     /// Sign with Certificate (always the last step).
     Sign(Box<SignUi>),
+    /// Add e-Meterai, or Sign with Provider (always the last step).
+    Esign(Box<crate::esign::EsignStepUi>),
     /// A step from a loaded batch file that this window doesn't edit.
     Other(Step),
 }
@@ -222,6 +224,15 @@ fn parse_values(text: &str) -> batch::Fill {
     f
 }
 
+/// Steps that must come last (a digital signature covers everything).
+fn is_last_kind(s: &StepUi) -> bool {
+    match s {
+        StepUi::Sign(_) => true,
+        StepUi::Esign(e) => e.sign,
+        _ => false,
+    }
+}
+
 fn step_title(s: &StepUi) -> String {
     match s {
         StepUi::Stamp {
@@ -235,6 +246,8 @@ fn step_title(s: &StepUi) -> String {
         StepUi::Watermark { .. } => i18n::t("Add a watermark").into(),
         StepUi::Flatten => i18n::t("Flatten annotations").into(),
         StepUi::Sign(_) => i18n::t("Sign with Certificate").into(),
+        StepUi::Esign(e) if e.sign => i18n::t("Sign with Provider").into(),
+        StepUi::Esign(_) => i18n::t("Add e-Meterai").into(),
         StepUi::Other(s) => tf("Step “{}” (from the batch file)", &[&s.kind()]),
     }
 }
@@ -370,6 +383,7 @@ impl BatchState {
                 }
                 StepUi::Flatten => Step::Flatten,
                 StepUi::Sign(s) => s.to_step(n, cx)?,
+                StepUi::Esign(e) => e.to_step(n, cx)?,
                 StepUi::Other(s) => s.clone(),
             });
         }
@@ -539,18 +553,38 @@ impl PdfView {
             "sign" => {
                 if self
                     .batch()
-                    .is_some_and(|b| b.steps.iter().any(|s| matches!(s, StepUi::Sign(_))))
+                    .is_some_and(|b| b.steps.iter().any(is_last_kind))
                 {
                     return;
                 }
                 self.batch_sign_step(window, cx)
+            }
+            "emeterai" | "provider-sign" => {
+                let sign = kind == "provider-sign";
+                if sign
+                    && self
+                        .batch()
+                        .is_some_and(|b| b.steps.iter().any(is_last_kind))
+                {
+                    return;
+                }
+                match crate::esign::EsignStepUi::new(sign, None, window, cx) {
+                    Some(e) => StepUi::Esign(Box::new(e)),
+                    None => {
+                        if let Some(b) = self.batch() {
+                            b.error = Some(i18n::t(crate::esign::SET_UP).into());
+                        }
+                        cx.notify();
+                        return;
+                    }
+                }
             }
             _ => StepUi::Flatten,
         };
         if let Some(b) = self.batch() {
             // The signature stays last: other steps go before it.
             let at = match b.steps.last() {
-                Some(StepUi::Sign(_)) if !matches!(step, StepUi::Sign(_)) => b.steps.len() - 1,
+                Some(last) if is_last_kind(last) && !is_last_kind(&step) => b.steps.len() - 1,
                 _ => b.steps.len(),
             };
             b.steps.insert(at, step);
@@ -821,6 +855,15 @@ impl PdfView {
                     ))),
                     Err(_) => StepUi::Other(s.clone()),
                 },
+                Step::Plugin { ref kind, .. }
+                    if kind == kantor_esign::batch::EMETERAI
+                        || kind == kantor_esign::batch::PROVIDER_SIGN =>
+                {
+                    match crate::esign::EsignStepUi::from_step(&s, window, cx) {
+                        Some(e) => StepUi::Esign(Box::new(e)),
+                        None => StepUi::Other(s.clone()),
+                    }
+                }
                 other => StepUi::Other(other),
             });
         }
@@ -1097,6 +1140,7 @@ impl PdfView {
         if let Some(p) = plugin {
             all.add(p);
         }
+        crate::esign::add_batch_plugins(&mut all);
         let prepared =
             match Prepared::new(&batch, &base, crate::sign::stamps_dir().as_deref(), &all) {
                 Ok(p) => p,
@@ -1462,7 +1506,10 @@ impl PdfView {
                     .item(item(tk("Add a watermark"), "watermark"))
                     .item(item(tk("Flatten annotations"), "flatten"))
                     .separator()
+                    .item(item(tk("Add e-Meterai"), "emeterai"))
+                    .separator()
                     .item(item(tk("Sign with Certificate"), "sign"))
+                    .item(item(tk("Sign with Provider"), "provider-sign"))
             });
         let steps_box = v_flex()
             .gap(SPACE_2)
@@ -1690,10 +1737,10 @@ impl PdfView {
         };
         let remove = view.clone();
         // The sign step stays last: it doesn't move, nor goes anything below it.
-        let is_sign = matches!(s, StepUi::Sign(_));
+        let is_sign = is_last_kind(s);
         let sign_last = self
             .batch_ref()
-            .is_some_and(|b| matches!(b.steps.last(), Some(StepUi::Sign(_))));
+            .is_some_and(|b| b.steps.last().is_some_and(is_last_kind));
         let header = h_flex()
             .gap(SPACE_1)
             .child(
@@ -1983,6 +2030,7 @@ impl PdfView {
                 cx,
             )),
             StepUi::Sign(sg) => self.render_sign_step(i, sg, cx),
+            StepUi::Esign(e) => self.render_esign_step(i, e, cx),
             StepUi::Other(_) => v_flex().child(note(
                 i18n::t("Kept as it is in the batch file."),
                 false,

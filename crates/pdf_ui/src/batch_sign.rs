@@ -89,7 +89,7 @@ pub(crate) const WHY_KEYS: &[&str] = &[
 
 /// A skip reason from the sign step, in the user's language.
 pub(crate) fn why_text(s: &str) -> String {
-    if why::ALL.contains(&s) {
+    if why::ALL.contains(&s) || kantor_esign::batch::why::ALL.contains(&s) {
         i18n::t_dyn(s).to_owned()
     } else {
         s.to_owned()

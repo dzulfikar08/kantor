@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 mod batch;
+mod esign;
 
 use kantor_pdf::{
     ImageOptions, Orientation, PageNumberOptions, PageRanges, PageSize, Pdf, Position,
@@ -66,7 +67,10 @@ tools:\n\
 \x20 page-numbers  number the pages\n\
 \x20 compress      make the file smaller without losing quality\n\
 \x20 verify        check the digital signatures (exit 0 = all valid)\n\
-\x20 sign          sign with a certificate (PAdES; .p12/.pfx, token or system store)\n\
+\x20 sign          sign with a certificate (PAdES; .p12/.pfx, token or system store),\n\
+\x20               or with a licensed provider's certified signature (--provider)\n\
+\x20 emeterai      add an e-meterai through your provider account\n\
+\x20 providers     set up e-meterai and certified-signature providers\n\
 \x20 stamp         place a picture (company stamp, signature) on many PDFs\n\
 \x20 fill          fill in forms of many PDFs from a table (CSV, JSON, xlsx)\n\
 \x20 batch         run a saved batch of steps on many PDFs\n\
@@ -216,7 +220,11 @@ commenting or filling in fields; the owner password always signs.\n\
 \x20 --pdf-password-file F  the PDF's password from the first line of F\n\
 \x20                      (- reads standard input)\n\
 \n\
-Output: -o OUT.pdf for one file, -o DIR for several (default: FILE-signed.pdf).";
+Output: -o OUT.pdf for one file, -o DIR for several (default: FILE-signed.pdf).\n\
+\n\
+With a licensed provider's certified signature instead of your own\n\
+certificate: kantor pdf sign FILE --provider NAME --signer ID (see\n\
+`kantor pdf sign --provider x --help`).";
 
 fn read_secret(file: Option<&str>, env: &str) -> Result<Option<String>, Failure> {
     let Some(f) = file else {
@@ -748,7 +756,16 @@ pub fn run(args: &[String]) -> Outcome {
         "watermark" => (WATERMARK, watermark),
         "page-numbers" | "number" | "numbers" => (PAGE_NUMBERS, page_numbers),
         "compress" => (COMPRESS, compress),
+        "sign"
+            if rest
+                .iter()
+                .any(|a| a == "--provider" || a.starts_with("--provider=")) =>
+        {
+            (esign::PROVIDER_SIGN_USAGE, esign::provider_sign)
+        }
         "sign" => (SIGN, sign),
+        "emeterai" | "e-meterai" => (esign::EMETERAI_USAGE, esign::emeterai),
+        "providers" => (esign::PROVIDERS_USAGE, esign::providers_cmd),
         "stamp" => (batch::STAMP, batch::stamp),
         "fill" => (batch::FILL, batch::fill),
         "batch" => (batch::BATCH, batch::run_batch),

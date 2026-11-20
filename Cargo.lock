@@ -4084,6 +4084,7 @@ dependencies = [
  "kantor_ai",
  "kantor_cloud",
  "kantor_core",
+ "kantor_esign",
  "kantor_merge",
  "kantor_pdf",
  "kantor_theme",
@@ -4157,6 +4158,24 @@ dependencies = [
  "serde_json",
  "tempfile",
  "toml 0.9.12+spec-1.1.0",
+]
+
+[[package]]
+name = "kantor_esign"
+version = "0.19.0"
+dependencies = [
+ "base64 0.22.1",
+ "kantor_ai",
+ "kantor_core",
+ "kantor_pdf",
+ "log",
+ "num-bigint",
+ "pdf_engine",
+ "ring",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "ureq",
 ]
 
 [[package]]
@@ -5700,11 +5719,14 @@ dependencies = [
  "gpui-kit",
  "image",
  "imagesize 0.14.0",
+ "kantor_ai",
  "kantor_core",
+ "kantor_esign",
  "kantor_pdf",
  "kantor_ui",
  "log",
  "pdf_engine",
+ "serde_json",
  "tempfile",
  "ttf-parser",
 ]

@@ -13,6 +13,11 @@ async-channel = "2"
 gpui-kit.workspace = true
 image.workspace = true
 kantor_core.workspace = true
+# e-meterai and certified signatures through licensed providers; their
+# credentials in the keychain (kantor_ai's vault).
+kantor_ai.workspace = true
+kantor_esign.workspace = true
+serde_json.workspace = true
 kantor_ui.workspace = true
 log.workspace = true
 pdf_engine.workspace = true

@@ -29,6 +29,7 @@ mod batch_sign;
 mod certsign;
 mod comments;
 mod dialog;
+mod esign;
 mod find;
 mod grid;
 mod layout;
@@ -346,6 +347,8 @@ pub struct PdfView {
     pub(crate) sign: Option<sign::SignDialog>,
     /// Sign with Certificate.
     pub(crate) cert_sign: Option<certsign::CertSign>,
+    /// e-Sign Providers, Add e-Meterai, Sign with Provider.
+    pub(crate) esign: Option<esign::Esign>,
     /// Told once that page changes invalidate the signature.
     signed_warned: bool,
     /// Where the page's right-click menu was opened (page, user point).
@@ -489,6 +492,7 @@ impl PdfView {
             markup: markup::Markup::new(),
             sign: None,
             cert_sign: None,
+            esign: None,
             signed_warned: false,
             recovered: None,
             opened_dirty: None,
@@ -1921,6 +1925,7 @@ impl Render for PdfView {
         let dialog = self.render_dialog(cx);
         let sign = self.render_sign(cx);
         let cert_sign = self.render_cert_sign(cx);
+        let esign = self.render_esign(cx);
         let cert_dialog = signatures::cert_dialog(self, cx);
         let banner = if ready {
             signatures::banner(self, cx)
@@ -1938,6 +1943,7 @@ impl Render for PdfView {
             .children(dialog)
             .children(sign)
             .children(cert_sign)
+            .children(esign)
             .children(cert_dialog)
     }
 }

@@ -78,6 +78,8 @@ suffix, or a folder), or into -o FOLDER.\n\
 \x20                   line of F (- reads standard input), or KANTOR_P12_PASSWORD\n\
 \x20 --pin-file F      the sign step's token PIN, or KANTOR_PIN\n\
 \x20 --trust FILE      extra roots for building the chain (sign step, B-LT)\n\
+\x20 --allow-network   let emeterai / provider-sign steps reach their provider\n\
+\x20                   for this run even if not allowed in the saved setup\n\
 \n\
 A batch file:\n\
 \x20 {\"version\": 1, \"output\": {\"suffix\": \"-stamped\"}, \"steps\": [\n\
@@ -94,7 +96,10 @@ A batch file:\n\
 Step types: stamp, signature (a signature picture; image may be\n\
 my-stamps/NAME for one of My Stamps), fill, page-numbers, watermark, flatten,\n\
 sign (a digital signature with your certificate, as kantor pdf sign; always\n\
-the last step; its password or PIN is never in the batch file).\n\
+the last step; its password or PIN is never in the batch file),\n\
+emeterai ({\"provider\": \"vida\", \"doc_type\": \"VD010\", \"page\": \"last\", \"place\": …}),\n\
+provider-sign ({\"provider\": \"xignature\", \"signer\": \"ID\", \"appearance\": …;\n\
+always the last step). Providers are set up with kantor pdf providers.\n\
 Relative paths are from the batch file's folder. On digitally signed files,\n\
 page numbers, watermarks and flatten are skipped (they would invalidate the\n\
 signature), as are steps the certification doesn't allow. Password-protected\n\
@@ -534,7 +539,7 @@ pub fn run_batch(rest: &[String], usage: &str) -> Outcome {
             "pin-file",
             "trust",
         ],
-        &["force", "help", "skip-existing"],
+        &["force", "help", "skip-existing", "allow-network"],
         usage,
     )?;
     let Some((steps_file, files)) = args.positional.split_first() else {
@@ -553,7 +558,9 @@ pub fn run_batch(rest: &[String], usage: &str) -> Outcome {
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     let files = inputs(files)?;
-    let plugins = sign_plugins(&b, base, &args).map_err(|f| f.prefixed(&steps_path))?;
+    let mut plugins = sign_plugins(&b, base, &args).map_err(|f| f.prefixed(&steps_path))?;
+    super::esign::add_plugins(&b, &mut plugins, args.flag("allow-network"))
+        .map_err(|f| f.prefixed(&steps_path))?;
     let prepared = Prepared::new(&b, base, my_stamps().as_deref(), &plugins)
         .map_err(|e| Failure::from(e).prefixed(&steps_path))?;
     let target = match args.value("output") {

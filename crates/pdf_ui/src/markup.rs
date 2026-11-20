@@ -75,8 +75,11 @@ pub(crate) enum Tool {
     FsDate,
     FsCheck,
     FsCross,
-    /// Drag the box of a certificate signature (Sign with Certificate).
+    /// Drag the box of a certificate signature (Sign with Certificate,
+    /// Sign with Provider).
     CertBox,
+    /// Click or drag the e-meterai's square (Add e-Meterai).
+    MeteraiBox,
     /// Put this down where the user clicks (`signature`: from Fill & Sign).
     Place {
         what: Placed,
@@ -718,7 +721,8 @@ impl PdfView {
             | Tool::Ellipse
             | Tool::Line
             | Tool::Arrow
-            | Tool::CertBox => {
+            | Tool::CertBox
+            | Tool::MeteraiBox => {
                 self.markup.drag = Some(Drag::Create {
                     place,
                     start: pt,
@@ -989,7 +993,15 @@ impl PdfView {
                             r[0].max(r[2]),
                             r[1].max(r[3]),
                         ];
-                        self.cert_box_drawn(place, r, window, cx);
+                        if matches!(self.esign, Some(crate::esign::Esign::Sign(_))) {
+                            self.provider_box_drawn(place, r, window, cx);
+                        } else {
+                            self.cert_box_drawn(place, r, window, cx);
+                        }
+                    }
+                    Tool::MeteraiBox => {
+                        let r = crate::esign::meterai_rect(start, now, small);
+                        self.meterai_box_drawn(place, r, cx);
                     }
                     Tool::Rect | Tool::Ellipse => {
                         let kind = if tool == Tool::Rect {

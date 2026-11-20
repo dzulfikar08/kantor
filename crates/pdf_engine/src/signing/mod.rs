@@ -88,6 +88,9 @@ pub enum Source {
     Token { module: String, token: String },
     /// The macOS keychain or the Windows certificate store.
     System,
+    /// A remote signing service (a licensed PSrE) by provider id: the key
+    /// never leaves the provider.
+    Remote(String),
 }
 
 /// A certificate with its private key.
@@ -212,8 +215,7 @@ pub fn sign(pdf: &[u8], id: &Identity, opts: &Options<'_>) -> Result<Vec<u8>, Er
     if cert.not_before > opts.now {
         return Err(Error::Key("the certificate isn't valid yet".into()));
     }
-    let kt = id.key.key_type();
-    let hash = kt.hash();
+    let hash = id.key.hash();
     let chain: Vec<&Cert> = id.chain.iter().map(|c| c.as_ref()).collect();
     let certs_len: usize = cert.der.len() + chain.iter().map(|c| c.der.len()).sum::<usize>();
     let mut reserve = certs_len + 2048 + if want_tsa { 8192 } else { 0 };
@@ -293,6 +295,98 @@ pub fn sign(pdf: &[u8], id: &Identity, opts: &Options<'_>) -> Result<Vec<u8>, Er
             opts.now,
             opts.pdf_password.as_deref(),
         )?;
+    }
+    Ok(file)
+}
+
+/// A signer outside Kantor that makes the whole CMS for a document digest:
+/// a remote signing service (a licensed PSrE) whose API signs hashes and
+/// answers with a PKCS #7 / CAdES SignedData.
+pub trait ExternalSigner {
+    /// The digest algorithm the service signs.
+    fn hash(&self) -> Hash {
+        Hash::Sha256
+    }
+    /// Bytes to reserve for its CMS. Each call may cost money or an OTP,
+    /// so there is no second try with a larger reserve: be generous.
+    fn reserve(&self) -> usize {
+        32 * 1024
+    }
+    /// The signer's name for the signature dictionary's `/Name`, if known
+    /// before signing.
+    fn name(&self) -> Option<String> {
+        None
+    }
+    /// The detached CMS SignedData (DER) over `digest`, the digest of the
+    /// bytes the signature covers.
+    fn cms(&self, digest: &[u8]) -> Result<Vec<u8>, Error>;
+}
+
+/// Sign `pdf` with an [`ExternalSigner`]: Kantor writes the signature field
+/// and `/ByteRange` as an incremental update (earlier signatures stay
+/// valid), the signer returns the CMS. `opts.level` above B-B adds the
+/// signer's validation data (B-LT) and a document time stamp (B-LTA) when
+/// `opts.fetch` allows; the signer's own CMS decides whether there is a
+/// signature time stamp.
+pub fn sign_external(
+    pdf: &[u8],
+    signer: &dyn ExternalSigner,
+    opts: &Options<'_>,
+) -> Result<Vec<u8>, Error> {
+    if opts.level >= Level::Lt && opts.fetch.is_none() {
+        return Err(Error::Offline);
+    }
+    let hash = signer.hash();
+    let mut req = Request::new(
+        SigType::Signature {
+            certify: opts.certify,
+        },
+        opts.place.clone(),
+        opts.now,
+        signer.reserve(),
+    );
+    req.field_name = opts.field_name.clone();
+    req.look = opts.look.clone();
+    req.name = signer.name();
+    req.reason = opts.reason.clone();
+    req.location = opts.location.clone();
+    req.contact = opts.contact.clone();
+    req.app = Some(("Kantor".into(), env!("CARGO_PKG_VERSION").into()));
+    req.rotate = opts.rotate;
+    let prepared = pdfsign::prepare(pdf, &req)?;
+    let [a, b] = prepared.signed_parts();
+    let mut h = crate::signatures::crypto::Hasher::new(hash.oid())
+        .ok_or_else(|| Error::Unsupported("digest".into()))?;
+    h.update(a);
+    h.update(b);
+    let digest = h.finish();
+    let cms = signer.cms(&digest)?;
+    if SignedData::parse(&cms).is_err() {
+        return Err(Error::Key(
+            "the signing service's answer isn't a CMS signature".into(),
+        ));
+    }
+    if cms.len() > prepared.capacity() {
+        return Err(Error::Pdf(format!(
+            "the signing service's signature ({} bytes) is larger than the space reserved for it ({} bytes)",
+            cms.len(),
+            prepared.capacity()
+        )));
+    }
+    let mut file = prepared.finish(&cms)?;
+    if opts.level >= Level::Lt {
+        let fetch = opts.fetch.ok_or(Error::Offline)?;
+        let mut dss = Dss::default();
+        validation_data(&cms, &opts.trust, fetch, opts.now, &mut dss);
+        file = pdfsign::add_dss(&file, &dss)?;
+    }
+    if opts.level >= Level::Lta {
+        let fetch = opts.fetch.ok_or(Error::Offline)?;
+        let tsa = opts.tsa.as_deref().filter(|u| !u.trim().is_empty());
+        let tsa = tsa.ok_or_else(|| {
+            Error::Tsa("a time stamp needs a time-stamp server (TSA) address".into())
+        })?;
+        file = document_timestamp(&file, tsa, fetch, opts.now)?;
     }
     Ok(file)
 }
