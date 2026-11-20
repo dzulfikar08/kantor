@@ -440,6 +440,9 @@ fn the_data_source_link_is_kept_and_written_like_word() {
     let link = doc.mail_merge().unwrap().clone();
     assert!(link.is_text_file() && link.preview);
     assert_eq!(link.active_record, Some(2));
+    // Found beside the document (on Windows the original path would win if
+    // it existed; it doesn't on any test machine).
+    std::fs::write(dir.path().join("people.csv"), "Name\n").unwrap();
     assert_eq!(
         link.source_path(Some(dir.path())),
         Some(dir.path().join("people.csv"))

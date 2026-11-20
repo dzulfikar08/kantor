@@ -2006,7 +2006,9 @@ mod tests {
             "{added}"
         );
         // A Word link on another computer: found beside the document.
-        let dir = std::env::temp_dir();
-        assert_eq!(link.source_path(Some(&dir)), Some(dir.join("a.csv")));
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        std::fs::write(dir.join("a.csv"), "x\n").unwrap();
+        assert_eq!(link.source_path(Some(dir)), Some(dir.join("a.csv")));
     }
 }

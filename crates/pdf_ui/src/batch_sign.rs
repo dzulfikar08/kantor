@@ -715,7 +715,12 @@ mod tests {
         let a = absolute(s, Path::new("/work"));
         assert_eq!(
             a.certificate,
-            Certificate::File("/work/certs/me.p12".into())
+            Certificate::File(
+                Path::new("/work")
+                    .join("certs/me.p12")
+                    .to_string_lossy()
+                    .into_owned()
+            )
         );
         assert_eq!(a.image, "my-stamps/a.sig.png");
     }

@@ -709,7 +709,9 @@ mod tests {
 
     #[test]
     fn batch_stamps_and_signs_with_one_password() {
-        let engine = concat!(env!("CARGO_MANIFEST_DIR"), "/../pdf_engine/tests/fixtures");
+        // Forward slashes: a Windows path's backslashes would be JSON escapes.
+        let engine =
+            concat!(env!("CARGO_MANIFEST_DIR"), "/../pdf_engine/tests/fixtures").replace('\\', "/");
         let dir = tempfile::tempdir().unwrap();
         let d = dir.path();
         std::fs::write(d.join("logo.png"), sample_png(40, 40, true)).unwrap();
