@@ -9,6 +9,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.19.0] - 2026-11-20
+
+Kantor signs PDFs with your own certificate (a .p12/.pfx file, a USB token or the system's store), as Acrobat does:
+with a time stamp and long-term validation data, visible or invisible, keeping earlier signatures valid; Indonesian
+government signatures (BSrE) now chain to a bundled root. Tools ▸ Batch… stamps, fills, numbers and signs a whole
+folder of PDFs, also from the command line. Docs gets Word's mail merge (recipients from a spreadsheet, merge
+fields, preview, one document or one PDF per person), and Slides and Sheets fill `{{Field}}` templates per row.
+
 ### Added
 
 - PDF: *Sign with Certificate…* signs a PDF digitally with your own certificate, as Acrobat's "Use a certificate" does: a `.p12`/`.pfx` file, a USB token or smart card (PKCS #11), or the macOS keychain / Windows certificate store. The signature can be visible (in a box you draw or an empty signature field, with your name, date, reason, location and optionally your signature picture) or invisible, can certify the document, and can carry a time stamp and long-term validation data (PAdES B-T, B-LT). The signed copy is saved as a new file and earlier signatures stay valid. Your password or PIN is never saved.
@@ -2238,7 +2246,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/dzulfikar08/kantor/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/dzulfikar08/kantor/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/dzulfikar08/kantor/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/dzulfikar08/kantor/compare/v0.15.0...v0.16.0
