@@ -353,6 +353,7 @@ pub fn sign_external(
     req.contact = opts.contact.clone();
     req.app = Some(("Kantor".into(), env!("CARGO_PKG_VERSION").into()));
     req.rotate = opts.rotate;
+    req.password = opts.pdf_password.clone();
     let prepared = pdfsign::prepare(pdf, &req)?;
     let [a, b] = prepared.signed_parts();
     let mut h = crate::signatures::crypto::Hasher::new(hash.oid())
@@ -378,7 +379,7 @@ pub fn sign_external(
         let fetch = opts.fetch.ok_or(Error::Offline)?;
         let mut dss = Dss::default();
         validation_data(&cms, &opts.trust, fetch, opts.now, &mut dss);
-        file = pdfsign::add_dss(&file, &dss)?;
+        file = pdfsign::add_dss(&file, &dss, opts.pdf_password.as_deref())?;
     }
     if opts.level >= Level::Lta {
         let fetch = opts.fetch.ok_or(Error::Offline)?;
@@ -386,7 +387,7 @@ pub fn sign_external(
         let tsa = tsa.ok_or_else(|| {
             Error::Tsa("a time stamp needs a time-stamp server (TSA) address".into())
         })?;
-        file = document_timestamp(&file, tsa, fetch, opts.now)?;
+        file = document_timestamp(&file, tsa, fetch, opts.now, opts.pdf_password.as_deref())?;
     }
     Ok(file)
 }
