@@ -51,7 +51,7 @@ pub struct FieldSpan {
     pub instr: String,
     /// How many fields' results it sits in.
     pub depth: usize,
-    mark: Arc<FieldMark>,
+    pub(crate) mark: Arc<FieldMark>,
 }
 
 impl FieldSpan {
@@ -1547,7 +1547,7 @@ pub fn with_style_ref_results(story: &[Paragraph], results: &[String]) -> Vec<Pa
 
 /// Replace a field's result with `text`. Returns the field's start mark's
 /// id afterwards (it changes when an empty simple field gets a result).
-fn set_result(paras: &mut Vec<Paragraph>, span: &FieldSpan, text: &str) -> usize {
+pub(crate) fn set_result(paras: &mut Vec<Paragraph>, span: &FieldSpan, text: &str) -> usize {
     let i = Instr::parse(&span.instr);
     let (start, end) = span.result();
     let begin_run = paras[span.begin.para]

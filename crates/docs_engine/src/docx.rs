@@ -135,6 +135,8 @@ pub struct Package {
     numbering: Option<(String, String)>,
     /// The settings part's name and text, if the package has one.
     settings: Option<(String, String)>,
+    /// The mail merge link as read (`w:mailMerge`).
+    mail_merge: Option<crate::merge::MailMergeLink>,
     /// The comments part, if the package has one.
     comments: Option<crate::review::CommentsPart>,
     /// The threaded comment parts (commentsExtended, commentsIds,
@@ -231,6 +233,8 @@ pub struct Read {
     pub notes: Vec<Note>,
     /// Note numbering from settings.xml (footnotes, endnotes).
     pub note_settings: [NoteProps; 2],
+    /// The mail merge data source link (`w:mailMerge`).
+    pub mail_merge: Option<crate::merge::MailMergeLink>,
 }
 
 fn zip_bytes(
@@ -2434,6 +2438,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
     let unsupported = body.unsupported;
     let preserved = body.preserved;
     let mut settings = None;
+    let mut mail_merge = None;
     let mut even_odd = false;
     let mut default_tab = 720;
     let mut decimal = '.';
@@ -2449,6 +2454,15 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         default_tab = crate::tabs::settings_default_tab(&src).unwrap_or(720);
         decimal = crate::tabs::settings_decimal(&src).unwrap_or('.');
         compat_mode = settings_compat_mode(&src).unwrap_or(12);
+        let rels: HashMap<String, String> = zip_text(&mut zip, &rels_name(&name))?
+            .map(|r| {
+                parse_rels(&r)
+                    .into_iter()
+                    .map(|r| (r.id, r.target))
+                    .collect()
+            })
+            .unwrap_or_default();
+        mail_merge = crate::merge::MailMergeLink::read(&src, &rels);
         settings = Some((name, src));
     }
     let mut comments = Vec::new();
@@ -2530,6 +2544,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         sect_pr: body.sect_pr,
         numbering: numbering_part,
         settings,
+        mail_merge: mail_merge.clone(),
         comments: comments_part,
         comment_threads,
         notes: notes_parts,
@@ -2565,6 +2580,7 @@ pub fn read(bytes: Vec<u8>) -> anyhow::Result<Read> {
         track,
         notes,
         note_settings,
+        mail_merge,
     })
 }
 
@@ -2650,6 +2666,7 @@ fn read_story(
                 modified: false,
                 new: false,
                 locked: Some(format!("Kantor can't read this part: {e:#}")),
+                rels_from: None,
             });
         }
     };
@@ -2703,6 +2720,7 @@ fn read_story(
         modified: false,
         new: false,
         locked,
+        rels_from: None,
     })
 }
 
@@ -3307,6 +3325,81 @@ fn body_xml_raw(doc: &Document) -> String {
     out
 }
 
+/// settings.xml (`out`, the text so far) with the document's mail merge
+/// link, and settings.xml's relationships to match: the old data source
+/// relationships go, the new one is added.
+fn mail_merge_settings(
+    src: &mut zip::ZipArchive<Cursor<&[u8]>>,
+    pkg: &Package,
+    name: &str,
+    out: &str,
+    doc: &Document,
+    (replace, add): (&mut HashMap<String, Vec<u8>>, &mut Vec<(String, Vec<u8>)>),
+) -> anyhow::Result<String> {
+    use crate::merge::{REL_MAIL_MERGE_SOURCE, REL_RECIPIENT_DATA};
+    let rels_part = rels_name(name);
+    let rels = zip_text(src, &rels_part)?;
+    let parsed = rels.as_deref().map(parse_rels).unwrap_or_default();
+    let link = doc.mail_merge();
+    // Kept as read: the data source relationship and Word's `w:odso`.
+    let keep = link.and_then(|l| l.source_rel.clone());
+    let mut drop: HashSet<String> = parsed
+        .iter()
+        .filter(|r| {
+            (r.ty == REL_MAIL_MERGE_SOURCE || r.ty == REL_RECIPIENT_DATA)
+                && !(link.is_some_and(|l| l.odso.is_some()) || keep.as_deref() == Some(&r.id))
+        })
+        .map(|r| r.id.clone())
+        .collect();
+    let mut added = String::new();
+    let mut rel_id = keep.clone();
+    if let Some(l) = link
+        && keep.is_none()
+        && let Some(target) = &l.source
+    {
+        let taken: HashSet<&str> = parsed.iter().map(|r| r.id.as_str()).collect();
+        let id = (1..)
+            .map(|n| format!("rIdKantorMergeSource{n}"))
+            .find(|id| !taken.contains(id.as_str()) || drop.contains(id))
+            .expect("infinite ids");
+        drop.insert(id.clone());
+        added = format!(
+            "<Relationship Id=\"{}\" Type=\"{REL_MAIL_MERGE_SOURCE}\" Target=\"{}\" TargetMode=\"External\"/>",
+            escape(&id),
+            escape(target)
+        );
+        rel_id = Some(id);
+    }
+    if link.is_none() {
+        drop.extend(
+            parsed
+                .iter()
+                .filter(|r| r.ty == REL_MAIL_MERGE_SOURCE || r.ty == REL_RECIPIENT_DATA)
+                .map(|r| r.id.clone()),
+        );
+    }
+    let el = link.map(|l| l.to_xml(rel_id.as_deref()));
+    let mut text = crate::merge::set_settings_mail_merge(out, el.as_deref());
+    // `r:` must be declared for `w:dataSource r:id`.
+    if el.as_deref().is_some_and(|e| e.contains("r:id"))
+        && let Some(i) = text.find("<w:settings")
+        && let Some(gt) = text[i..].find('>')
+        && !text[i..i + gt].contains("xmlns:r=")
+    {
+        text.insert_str(i + "<w:settings".len(), &format!(" xmlns:r=\"{REL_NS}\""));
+    }
+    if !drop.is_empty() || !added.is_empty() {
+        let new_rels = crate::merge::set_settings_rels(rels.as_deref(), &drop, &added);
+        if rels.is_some() {
+            replace.insert(rels_part, new_rels.into_bytes());
+        } else if !added.is_empty() {
+            add.push((rels_part, new_rels.into_bytes()));
+        }
+    }
+    let _ = pkg;
+    Ok(text)
+}
+
 /// A new empty package (styles, settings, page setup) built by docx-rs.
 fn new_package(doc: &Document) -> anyhow::Result<Vec<u8>> {
     let s = &doc.styles;
@@ -3538,6 +3631,13 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
         let part = format!("{XML_DECL}{root}{}{close}", body_xml(&st.doc)).into_bytes();
         if st.new || !pkg.has_part(&st.part) {
             add.push((st.part.clone(), part));
+            // A copy of another part (a mail merge's header per record)
+            // keeps its pictures' relationships.
+            if let Some(from) = &st.rels_from
+                && let Some(rels) = zip_text(&mut src, &rels_name(from))?
+            {
+                add.push((rels_name(&st.part), rels.into_bytes()));
+            }
             let (ty, ct) = match st.kind {
                 HfKind::Header => (REL_HEADER, CT_HEADER),
                 HfKind::Footer => (REL_FOOTER, CT_FOOTER),
@@ -3725,12 +3825,17 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
         .as_ref()
         .and_then(|(_, s)| crate::tabs::settings_default_tab(s))
         .unwrap_or(720);
+    let merge_changed = doc.mail_merge() != pkg.mail_merge.as_ref();
     if (doc.even_odd_headers() != even_odd_was
         || doc.track_changes() != track_was
-        || doc.default_tab() != tab_was)
-        && let Some((name, src)) = &pkg.settings
+        || doc.default_tab() != tab_was
+        || merge_changed)
+        && let Some((name, settings)) = &pkg.settings
     {
-        let mut out = src.clone();
+        let mut out = settings.clone();
+        if merge_changed {
+            out = mail_merge_settings(&mut src, pkg, name, &out, doc, (&mut replace, &mut add))?;
+        }
         if doc.default_tab() != tab_was {
             out = crate::tabs::set_settings_default_tab(&out, doc.default_tab());
         }

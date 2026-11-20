@@ -26,6 +26,7 @@ pub mod fields;
 pub mod find;
 pub mod float;
 pub mod fmt_track;
+pub mod merge;
 pub mod model;
 mod msdoc;
 pub mod notes;
@@ -58,6 +59,7 @@ pub use fields::{
 };
 pub use float::{Float, FloatKind, LayoutOption, Placement, Wrap};
 pub use fmt_track::FormatItem;
+pub use merge::{Filter, FilterOp, MailMergeLink, MergeData, MergeOutcome, MergeValue, Query};
 pub use model::{
     Align, CellRef, Fonts, Indent, LineRule, LineSpacing, NumRef, ParaProps, Paragraph, Position,
     Rgb, Run, RunProps, Selection,
