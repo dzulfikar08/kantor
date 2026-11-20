@@ -24,8 +24,8 @@
 
 extern crate gpui_kit as gpui;
 
-mod certsign;
 mod batch;
+mod certsign;
 mod comments;
 mod dialog;
 mod find;
