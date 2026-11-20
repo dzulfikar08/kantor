@@ -9,6 +9,23 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- PDF: password-protected PDFs can be signed with your certificate (Sign with Certificate…, `kantor pdf sign
+  --password`, and Batch), as Acrobat does. The file stays protected with the same password: the signature, the
+  validation data (B-LT) and the document time stamp (B-LTA) are encrypted with the file's own protection (RC4,
+  AES-128 or AES-256), and earlier signatures stay valid. With only the open password, the file's owner must allow
+  commenting or filling in fields; the owner password always works.
+- PDF Batch: a password for protected files (one for all, in the dialog or `--password`), or each file's own from a
+  `Password` column of the fill step's table or `kantor pdf batch --passwords TABLE`; never saved. Steps the owner's
+  restrictions don't allow with the open password are skipped and say so.
+- PDF: the signature checker and `kantor pdf verify --password` check password-protected PDFs.
+
+### Fixed
+
+- PDF signature checker: a visible signature added on a page that a named destination points to was reported as
+  "Other change (Names)" and the earlier signature as invalid (seen on the ISO 32000 PDF).
+
 ## [0.19.0] - 2026-11-20
 
 Kantor signs PDFs with your own certificate (a .p12/.pfx file, a USB token or the system's store), as Acrobat does:

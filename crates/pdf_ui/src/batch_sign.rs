@@ -72,7 +72,9 @@ pub(crate) struct SignUi {
     allow(dead_code, reason = "read by the catalog check and the test below")
 )]
 pub(crate) const WHY_KEYS: &[&str] = &[
-    tk("Not signed: password-protected PDFs can't be signed yet"),
+    tk(
+        "Not signed: the file's security settings don't allow signing with the password that opens it (give the owner password)",
+    ),
     tk("Not signed: the file is certified and allows no changes, not even another signature"),
     tk(
         "Not signed: the file is already signed, and only the first signature can certify a document",

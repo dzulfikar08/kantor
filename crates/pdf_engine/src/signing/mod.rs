@@ -160,6 +160,10 @@ pub struct Options<'a> {
     /// The page's `/Rotate` for a new visible signature (drawn upright as
     /// the page is shown).
     pub rotate: i64,
+    /// The password of a password-protected PDF (user or owner); `None`
+    /// tries an empty one. The signature, DSS and document time stamp are
+    /// written encrypted like the file.
+    pub pdf_password: Option<String>,
 }
 
 impl Options<'_> {
@@ -179,6 +183,7 @@ impl Options<'_> {
             trust: TrustStore::standard(),
             now: crate::signatures::now(),
             rotate: 0,
+            pdf_password: None,
         }
     }
 }
@@ -232,6 +237,7 @@ pub fn sign(pdf: &[u8], id: &Identity, opts: &Options<'_>) -> Result<Vec<u8>, Er
         req.contact = opts.contact.clone();
         req.app = Some(("Kantor".into(), env!("CARGO_PKG_VERSION").into()));
         req.rotate = opts.rotate;
+        req.password = opts.pdf_password.clone();
         let prepared = pdfsign::prepare(pdf, &req)?;
         let [a, b] = prepared.signed_parts();
         let mut h = crate::signatures::crypto::Hasher::new(hash.oid())
@@ -276,25 +282,34 @@ pub fn sign(pdf: &[u8], id: &Identity, opts: &Options<'_>) -> Result<Vec<u8>, Er
         if let Some(t) = &tsa_token {
             validation_data(t, &opts.trust, fetch, opts.now, &mut dss);
         }
-        file = pdfsign::add_dss(&file, &dss)?;
+        file = pdfsign::add_dss(&file, &dss, opts.pdf_password.as_deref())?;
     }
     if level >= Level::Lta {
         let fetch = opts.fetch.ok_or(Error::Offline)?;
-        file = document_timestamp(&file, tsa.unwrap_or_default(), fetch, opts.now)?;
+        file = document_timestamp(
+            &file,
+            tsa.unwrap_or_default(),
+            fetch,
+            opts.now,
+            opts.pdf_password.as_deref(),
+        )?;
     }
     Ok(file)
 }
 
-/// Add a document time stamp (`/DocTimeStamp`) as an incremental update.
+/// Add a document time stamp (`/DocTimeStamp`) as an incremental update
+/// (`password` opens a password-protected file).
 pub fn document_timestamp(
     pdf: &[u8],
     tsa_url: &str,
     fetch: &dyn Fetch,
     now: i64,
+    password: Option<&str>,
 ) -> Result<Vec<u8>, Error> {
     let mut reserve = 12_288;
     for _ in 0..3 {
-        let req = Request::new(SigType::DocTimeStamp, Place::Invisible, now, reserve);
+        let mut req = Request::new(SigType::DocTimeStamp, Place::Invisible, now, reserve);
+        req.password = password.map(str::to_owned);
         let prepared = pdfsign::prepare(pdf, &req)?;
         let [a, b] = prepared.signed_parts();
         let mut data = Vec::with_capacity(a.len() + b.len());

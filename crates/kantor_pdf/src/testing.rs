@@ -4,8 +4,7 @@
 
 use lopdf::content::{Content, Operation};
 use lopdf::{
-    Dictionary, Document, EncryptionState, EncryptionVersion, Object, Permissions, Stream,
-    StringFormat,
+    Dictionary, Document, EncryptionState, EncryptionVersion, Object, Stream, StringFormat,
 };
 
 /// Width of sample page `k` (1-based).
@@ -117,6 +116,92 @@ pub fn sample_pdf_encrypted(pages: u32, owner: &str, user: &str) -> Vec<u8> {
         user_password: user,
         key_length: 128,
         permissions: Permissions::all(),
+    };
+    let state = EncryptionState::try_from(version).expect("encryption state");
+    doc.encrypt(&state).expect("encrypt");
+    save(doc)
+}
+
+pub use lopdf::Permissions;
+
+/// The standard security handlers, for tests of password-protected files.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Protect {
+    /// RC4 40-bit (V1, R2).
+    Rc4_40,
+    /// RC4 128-bit (V2, R3).
+    Rc4_128,
+    /// AES-128 (V4, R4, AESV2 crypt filter).
+    Aes128,
+    /// AES-256 (V5, R6, AESV3 crypt filter).
+    Aes256,
+}
+
+impl Protect {
+    pub const ALL: [Protect; 4] = [
+        Protect::Rc4_40,
+        Protect::Rc4_128,
+        Protect::Aes128,
+        Protect::Aes256,
+    ];
+}
+
+/// A sample PDF protected with `kind`, the passwords and `permissions`
+/// (for people with the user password).
+pub fn sample_pdf_protected(
+    pages: u32,
+    kind: Protect,
+    owner: &str,
+    user: &str,
+    permissions: Permissions,
+) -> Vec<u8> {
+    use lopdf::encryption::crypt_filters::{Aes128CryptFilter, Aes256CryptFilter, CryptFilter};
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+    let mut doc = build(pages, false);
+    doc.trailer.set(
+        "ID",
+        vec![
+            Object::String(b"kantor-test-id-2".to_vec(), StringFormat::Hexadecimal),
+            Object::String(b"kantor-test-id-2".to_vec(), StringFormat::Hexadecimal),
+        ],
+    );
+    let filters = |f: Arc<dyn CryptFilter>| BTreeMap::from([(b"StdCF".to_vec(), f)]);
+    let key = [0x5Au8; 32];
+    let version = match kind {
+        Protect::Rc4_40 => EncryptionVersion::V1 {
+            document: &doc,
+            owner_password: owner,
+            user_password: user,
+            permissions,
+        },
+        Protect::Rc4_128 => EncryptionVersion::V2 {
+            document: &doc,
+            owner_password: owner,
+            user_password: user,
+            key_length: 128,
+            permissions,
+        },
+        Protect::Aes128 => EncryptionVersion::V4 {
+            document: &doc,
+            encrypt_metadata: true,
+            crypt_filters: filters(Arc::new(Aes128CryptFilter)),
+            stream_filter: b"StdCF".to_vec(),
+            string_filter: b"StdCF".to_vec(),
+            owner_password: owner,
+            user_password: user,
+            permissions,
+        },
+        Protect::Aes256 => EncryptionVersion::V5 {
+            encrypt_metadata: true,
+            crypt_filters: filters(Arc::new(Aes256CryptFilter)),
+            file_encryption_key: &key,
+            stream_filter: b"StdCF".to_vec(),
+            string_filter: b"StdCF".to_vec(),
+            owner_password: owner,
+            user_password: user,
+            permissions,
+        },
     };
     let state = EncryptionState::try_from(version).expect("encryption state");
     doc.encrypt(&state).expect("encrypt");

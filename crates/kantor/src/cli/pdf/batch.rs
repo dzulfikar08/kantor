@@ -33,7 +33,9 @@ their certification allows no changes; password-protected files stay protected.\
 \x20                   (default: next to each input, named FILE-stamped.pdf)\n\
 \x20 -f, --force       replace results that exist\n\
 \x20 --skip-existing   leave results that exist alone and go on\n\
-\x20 --password PW     for encrypted inputs (else they're opened without one)";
+\x20 --password PW     for encrypted inputs (else they're opened without one)\n\
+\x20 --passwords TABLE a CSV/spreadsheet with a file column and a password\n\
+\x20                   column: each encrypted input's own password";
 
 pub const FILL: &str = "usage: kantor pdf fill FILE|FOLDER... (--data TABLE | --set NAME=VALUE...) [-o OUT]\n\
 \x20      kantor pdf fill FILE --list\n\
@@ -51,7 +53,8 @@ buttons and lists take an option's name.\n\
 \x20 --list            show the form's fields, their kinds and options\n\
 \x20 -o OUT            the result file (one input), or a folder for the results\n\
 \x20                   (default: next to each input, named FILE-filled.pdf)\n\
-\x20 -f, --force / --skip-existing / --password PW   as for stamp\n\
+\x20 -f, --force / --skip-existing / --password PW / --passwords TABLE   as for stamp\n\
+\x20                   (a password column in the table opens each file too)\n\
 \n\
 Signed files are filled with an incremental update when their certification\n\
 allows form filling.";
@@ -67,7 +70,10 @@ suffix, or a folder), or into -o FOLDER.\n\
 \x20 --suffix S        added to each result's name (default: the batch file's)\n\
 \x20 -f, --force       replace results that exist\n\
 \x20 --skip-existing   leave results that exist alone and go on\n\
-\x20 --password PW     for encrypted inputs\n\
+\x20 --password PW     for encrypted inputs (one password for all)\n\
+\x20 --passwords TABLE each input's password: a CSV/spreadsheet with a file\n\
+\x20                   column and a password column (a fill step's table may\n\
+\x20                   have the password column too); never saved\n\
 \x20 --password-file F the sign step's certificate password (.p12): the first\n\
 \x20                   line of F (- reads standard input), or KANTOR_P12_PASSWORD\n\
 \x20 --pin-file F      the sign step's token PIN, or KANTOR_PIN\n\
@@ -91,7 +97,9 @@ sign (a digital signature with your certificate, as kantor pdf sign; always\n\
 the last step; its password or PIN is never in the batch file).\n\
 Relative paths are from the batch file's folder. On digitally signed files,\n\
 page numbers, watermarks and flatten are skipped (they would invalidate the\n\
-signature), as are steps the certification doesn't allow.\n\
+signature), as are steps the certification doesn't allow. Password-protected\n\
+files stay protected, signed ones too; with only the open (user) password,\n\
+steps the owner's restrictions don't allow are skipped.\n\
 \n\
 Exit status: 0 when no file failed (skipped files are listed), 1 otherwise.";
 
@@ -161,6 +169,15 @@ fn target(args: &Args, files: &[PathBuf], suffix: &str) -> Result<Target, Failur
 /// Run `prepared` on `files` and describe each result.
 fn execute(prepared: &Prepared, files: &[PathBuf], target: Target, args: &Args) -> Outcome {
     let password = args.password();
+    let mut with_table;
+    let prepared = match args.value("passwords") {
+        Some(t) => {
+            with_table = prepared.clone();
+            with_table.set_passwords(kantor_pdf::table::Table::read(Path::new(t))?);
+            &with_table
+        }
+        None => prepared,
+    };
     let steps = &prepared.batch.steps;
     let existing = if args.flag("force") {
         Existing::Replace
@@ -291,8 +308,17 @@ pub fn stamp(rest: &[String], usage: &str) -> Outcome {
     let args = Args::parse(
         rest,
         &[
-            "output", "password", "image", "page", "pages", "at", "margin", "width", "opacity",
+            "output",
+            "password",
+            "image",
+            "page",
+            "pages",
+            "at",
+            "margin",
+            "width",
+            "opacity",
             "suffix",
+            "passwords",
         ],
         &["force", "help", "signature", "skip-existing"],
         usage,
@@ -371,7 +397,7 @@ pub fn fill(rest: &[String], usage: &str) -> Outcome {
     }
     let args = Args::parse(
         &rest,
-        &["output", "password", "data", "key", "suffix"],
+        &["output", "password", "data", "key", "suffix", "passwords"],
         &["force", "help", "list", "skip-existing"],
         usage,
     )?;
@@ -502,6 +528,7 @@ pub fn run_batch(rest: &[String], usage: &str) -> Outcome {
         &[
             "output",
             "password",
+            "passwords",
             "suffix",
             "password-file",
             "pin-file",
@@ -764,6 +791,7 @@ mod tests {
                     trust: trust.clone(),
                     fetch: None,
                     now: sigs::now(),
+                    password: None,
                 },
             );
             let text = sigs::text_report(&r);

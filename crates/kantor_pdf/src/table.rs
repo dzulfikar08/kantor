@@ -6,6 +6,10 @@
 //! `filename`, `file name`, `nama file` or `pdf`, any case) and one column
 //! per form field, named as the field. A table without a file name column
 //! has one row: the values for every file.
+//!
+//! A `password` column (`pdf password`, `kata sandi`…) holds the password
+//! of each password-protected file; it is used to open the file, never
+//! written into a form.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -35,7 +39,31 @@ const FILE_COLUMNS: &[&str] = &[
     "pdf",
 ];
 
+/// Column names taken as the file's password (not a form field).
+const PASSWORD_COLUMNS: &[&str] = &[
+    "password",
+    "pdf password",
+    "pdf_password",
+    "kata sandi",
+    "kata sandi pdf",
+    "sandi",
+];
+
+/// The column holds the file's password, not a form value.
+pub fn is_password_column(name: &str) -> bool {
+    PASSWORD_COLUMNS.contains(&name.trim().to_lowercase().as_str())
+}
+
 impl Table {
+    /// The password for the file `name` from its row's password column, if
+    /// the table has one and it isn't empty.
+    pub fn password_for(&self, name: &str) -> Option<&str> {
+        self.values_for(name)?
+            .iter()
+            .find(|(k, v)| is_password_column(k) && !v.is_empty())
+            .map(|(_, v)| v.as_str())
+    }
+
     /// Read a table file; its kind comes from the extension.
     pub fn read(path: &Path) -> Result<Table> {
         let ext = path

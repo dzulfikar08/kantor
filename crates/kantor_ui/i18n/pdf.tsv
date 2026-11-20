@@ -494,7 +494,7 @@ Open a saved batch	Buka batch yang tersimpan
 Opened the batch {}	Batch {} dibuka
 Originals are never replaced. Digitally signed files keep their signatures valid: steps that would break them are skipped.	Berkas asli tidak pernah ditimpa. Berkas bertanda tangan digital tetap sah: langkah yang akan merusak tanda tangannya dilewati.
 Page numbers	Nomor halaman
-Password-protected: open it in Kantor with its password	Dilindungi kata sandi: buka di Kantor dengan kata sandinya
+Password-protected: give its password (PDF password, or a Password column in the table)	Dilindungi kata sandi: berikan kata sandinya (Kata sandi PDF, atau kolom Password di tabel)
 Place a signature picture	Bubuhkan gambar tanda tangan
 Place a stamp	Bubuhkan stempel
 Processing {} of {} files…	Memproses {} dari {} berkas…
@@ -555,10 +555,15 @@ Reason	Alasan
 Always the last step, so the signature covers everything the batch did. The password or PIN is asked for when the batch runs; it is never saved.	Selalu langkah terakhir, agar tanda tangan mencakup semua yang dilakukan batch. Kata sandi atau PIN ditanyakan saat batch dijalankan; tidak pernah disimpan.
 The batch signs every file with this certificate. Its password or PIN is used for this run only and is never saved.	Batch menandatangani setiap berkas dengan sertifikat ini. Kata sandi atau PIN-nya hanya dipakai untuk proses ini dan tidak pernah disimpan.
 Opening the certificate…	Membuka sertifikat…
-Not signed: password-protected PDFs can't be signed yet	Tidak ditandatangani: PDF yang dilindungi kata sandi belum dapat ditandatangani
+Not signed: the file's security settings don't allow signing with the password that opens it (give the owner password)	Tidak ditandatangani: pengaturan keamanan berkas tidak mengizinkan penandatanganan dengan kata sandi pembukanya (berikan kata sandi pemilik)
 Not signed: the file is certified and allows no changes, not even another signature	Tidak ditandatangani: berkas tersertifikasi dan tidak mengizinkan perubahan apa pun, termasuk tanda tangan lain
 Not signed: the file is already signed, and only the first signature can certify a document	Tidak ditandatangani: berkas sudah ditandatangani, dan hanya tanda tangan pertama yang dapat menyertifikasi dokumen
 Not signed: the file has no signature field with the step's name	Tidak ditandatangani: berkas tidak memiliki bidang tanda tangan dengan nama pada langkah ini
 Not signed: the step's signature field is already signed	Tidak ditandatangani: bidang tanda tangan pada langkah ini sudah ditandatangani
 Not signed: the file is certified, and a new visible signature would change its pages (sign an empty signature field, or invisibly)	Tidak ditandatangani: berkas tersertifikasi, dan tanda tangan terlihat yang baru akan mengubah halamannya (tanda tangani bidang tanda tangan kosong, atau secara tidak terlihat)
 Not signed: the file doesn't have the step's page	Tidak ditandatangani: berkas tidak memiliki halaman pada langkah ini
+The document's security settings don't allow signing it with the password that opened it. Open it with the owner password to sign it.	Pengaturan keamanan dokumen tidak mengizinkan penandatanganan dengan kata sandi yang dipakai untuk membukanya. Buka dengan kata sandi pemilik untuk menandatanganinya.
+Skipped: the file's security settings don't allow this with the password that opens it (give the owner password)	Dilewati: pengaturan keamanan berkas tidak mengizinkan ini dengan kata sandi pembukanya (berikan kata sandi pemilik)
+Password for protected PDFs (optional)	Kata sandi untuk PDF yang dilindungi (opsional)
+PDF password	Kata sandi PDF
+Password-protected PDFs stay protected. Give one password for all of them here, or a Password column in a fill step's table; it is used for this run only and never saved.	PDF yang dilindungi kata sandi tetap terlindungi. Berikan satu kata sandi untuk semuanya di sini, atau kolom Password di tabel langkah isian; kata sandi hanya dipakai untuk proses ini dan tidak pernah disimpan.
