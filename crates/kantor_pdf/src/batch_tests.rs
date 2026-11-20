@@ -521,8 +521,10 @@ fn batch_files_round_trip_and_plugins_run_last() {
     );
     let p = Prepared::new(&batch(vec![numbers, tag]), s.dir.path(), None, &plugins).unwrap();
     let run = run_file(&p, "a.pdf", &sample_pdf(2), None);
-    let (bytes, _) = done(&run);
+    let (bytes, incremental) = done(&run);
     assert!(bytes.ends_with(b"%TAGGED"));
+    // An unsigned file had no signatures to keep, whatever the plugin did.
+    assert!(!incremental);
     let run = run_file(&p, "skip.pdf", &sample_pdf(2), None);
     let (bytes, _) = done(&run);
     assert!(!bytes.ends_with(b"%TAGGED"));

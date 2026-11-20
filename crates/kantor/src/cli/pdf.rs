@@ -245,7 +245,6 @@ fn sign(rest: &[String], usage: &str) -> Outcome {
         rest,
         &[
             "output",
-            "password",
             "p12",
             "password-file",
             "pkcs11",
