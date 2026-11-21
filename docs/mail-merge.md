@@ -69,7 +69,15 @@ lines, "City State Postcode", country, as Word 365 shows it); `\c 2` with
 `\e "country"` leaves the country out when it is that country (Word knows
 the country under many names: "Deutschland" is "Germany"; Kantor adds the
 Indonesian names). Word 365 shows the country with `\c 0` as with `\c 1`,
-so Kantor's *Never include* leaves `<<_COUNTRY_>>` out of the format. `\d`
+so Kantor's *Never include* leaves `<<_COUNTRY_>>` out of the format. With
+a `\c` switch, Word splits the format into the name (its first run of name
+fields) and the rest, and starts a new line after the name when more fields
+follow on that line, even when the format has no line break there (text alone,
+like Japan's 様, stays with the name); without `\c` it doesn't (Word 365 on the
+CR-067 probe below: A01–A03 have `\c`, A04 hasn't). Dialog-made formats have
+a line break after the name anyway, so this only shows in hand-written ones.
+(LibreOffice doesn't work Address Block out on import, it keeps Word's
+result, so it was no second reference here.) `\d`
 lays a foreign address out as its country does, after the name and company:
 
 | Country | Lines after the street |
@@ -92,12 +100,21 @@ uses the first and last name ("Dear Pat Lee,", "Dear Sam,"). With no `\f`,
 Word shows nothing; so does Kantor. `\l` (language) is kept but changes
 nothing in the result.
 
+A recipient with no courtesy title has no known gender, and Russian Word
+then writes "Уважаемый" as "Уважаемый(ая)" (Aspose's `Field sample -
+ADDRESSBLOCK.docx`, whose cached result is "Уважаемый(ая) Людмила Ивановна!",
+and a 2011 Russian Word mail-merge write-up, bibliofond.ru 463920, with an
+informal name format); Kantor does the same. Other languages keep the
+greeting as written: English "Dear" stays (CR-067: "Dear Pat Lee,"), German
+Word's dialog offers "Sehr geehrte(r)" itself and doesn't inflect it, and for
+French, Spanish, Italian, Dutch, Portuguese, Polish, Indonesian, Japanese and
+Chinese no Word output with a missing title was found, so nothing changes.
+
 Checked against Word 365's merge of docx4j's CR-067
 `address-probe-r1.docx` (four recipients, nine fields;
 `crates/docs_engine/tests/merge.rs` repeats it): every greeting and block
-matches, except that Word started a new paragraph after the name in three
-`\f` formats written with `\n` (Word reads `\n` as a plain "n", as Kantor
-does) for a reason the probe doesn't show.
+matches paragraph for paragraph (the formats there are written with `\n`,
+which Word reads as a plain "n", as Kantor does).
 
 Field names follow Word: a column "First Name" is `MERGEFIELD First_Name`
 (case doesn't matter). Merge fields become plain text in the merged

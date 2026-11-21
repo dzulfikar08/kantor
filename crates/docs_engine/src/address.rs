@@ -988,6 +988,14 @@ pub fn address_block(i: &Instr, get: &dyn Fn(&str) -> String) -> Vec<String> {
         }
         f.extend(parse_format(layout));
         pieces = f;
+    } else if i.has("c") {
+        // With a country rule Word splits the format into the name and
+        // the rest (as `\d` does above) and starts a new line after the
+        // name even when the format has no line break there (Word 365 on
+        // docx4j's CR-067 probe: `<< _SUFFIX0_>>\n<<_COMPANY_…` gives
+        // "Mr John Smith Jr" then "nAcme Pty Ltd…"; without `\c` the
+        // same kind of format stays on one line).
+        pieces = break_after_name(pieces);
     }
     let value = |ph: Ph| {
         if ph == Ph::Country && drop_country {
@@ -1004,6 +1012,44 @@ pub fn address_block(i: &Instr, get: &dyn Fn(&str) -> String) -> Vec<String> {
         })
         .filter(|l| !l.is_empty())
         .collect()
+}
+
+/// `pieces` with a line break after the first run of name groups (groups
+/// holding only name placeholders, with nothing but spaces between them)
+/// when more groups follow on the same line.
+fn break_after_name(mut pieces: Vec<Piece>) -> Vec<Piece> {
+    let is_name = |p: &Piece| {
+        let phs = p.phs();
+        !phs.is_empty() && phs.iter().all(|ph| ph.is_name())
+    };
+    let Some(start) = pieces.iter().position(is_name) else {
+        return pieces;
+    };
+    let mut end = start;
+    for (k, p) in pieces.iter().enumerate().skip(start + 1) {
+        match p {
+            Piece::Text(t) if t.chars().all(|c| c == ' ') => {}
+            p if is_name(p) => end = k,
+            _ => break,
+        }
+    }
+    // Only when more fields follow on the line: text alone after the name
+    // stays with it (Japan's "山田 太郎 様").
+    let mut fields_follow = false;
+    for p in &pieces[end + 1..] {
+        match p {
+            Piece::Text(t) if t.chars().any(is_break) => break,
+            Piece::Text(_) => {}
+            Piece::Group(_) => {
+                fields_follow = true;
+                break;
+            }
+        }
+    }
+    if fields_follow {
+        pieces.insert(end + 1, Piece::Text("\r".into()));
+    }
+    pieces
 }
 
 /// The greeting line name formats Word accepts ([MS-OI29500] 2.1.476),
@@ -1128,6 +1174,9 @@ pub fn greeting_line(i: &Instr, get: &dyn Fn(&str) -> String) -> String {
     if who.is_empty() {
         return invalid;
     }
+    if value(Ph::Title0).is_empty() {
+        before = unknown_gender_greeting(&before);
+    }
     let mut s = String::new();
     if !before.is_empty() {
         s.push_str(&before);
@@ -1136,6 +1185,22 @@ pub fn greeting_line(i: &Instr, get: &dyn Fn(&str) -> String) -> String {
     s.push_str(&who);
     s.push_str(&after);
     s
+}
+
+/// The greeting word Word shows when the record has no courtesy title, so
+/// the recipient's gender is unknown. Only Russian changes, as far as
+/// Word's own outputs show: "Уважаемый" becomes "Уважаемый(ая)" (Aspose's
+/// `Field sample - ADDRESSBLOCK.docx`; a 2011 Word mail-merge write-up,
+/// bibliofond.ru 463920, with the informal "Иван Иванович мл." format).
+/// English keeps "Dear" (docx4j CR-067: "Dear Pat Lee,"); German Word
+/// offers "Sehr geehrte(r)" in the dialog itself and doesn't inflect it.
+/// Other languages: no Word output found, so the text stays as written.
+fn unknown_gender_greeting(before: &str) -> String {
+    if before.to_lowercase() == "уважаемый" {
+        format!("{before}(ая)")
+    } else {
+        before.to_owned()
+    }
 }
 
 /// The code the Address Block dialog writes.
@@ -1334,6 +1399,25 @@ mod tests {
     }
 
     #[test]
+    fn name_line_breaks_with_a_country_rule() {
+        let r = rec(&[
+            ("Courtesy Title", "Mr"),
+            ("First Name", "John"),
+            ("Last Name", "Smith"),
+            ("Address 1", "1 Main St"),
+        ]);
+        let f = r#"<<_TITLE0_ >><<_FIRST0_>><< _LAST0_>>, <<_STREET1_>>"#;
+        let one = Instr::parse(&format!(r#"ADDRESSBLOCK \f "{f}" \l 1033"#));
+        assert_eq!(address_block(&one, &r), ["Mr John Smith, 1 Main St"]);
+        let split = Instr::parse(&format!(r#"ADDRESSBLOCK \f "{f}" \l 1033 \c 1"#));
+        assert_eq!(address_block(&split, &r), ["Mr John Smith", "1 Main St"]);
+        // A break already after the name: no empty line.
+        let dialog =
+            Instr::parse("ADDRESSBLOCK \\f \"<<_FIRST0_>><< _LAST0_>>\r<<_STREET1_>>\" \\c 1");
+        assert_eq!(address_block(&dialog, &r), ["John Smith", "1 Main St"]);
+    }
+
+    #[test]
     fn address_block_lines() {
         let us = rec(&[
             ("Courtesy Title", "Mr."),
@@ -1448,6 +1532,24 @@ mod tests {
         assert_eq!(
             greeting_line(&yth, &rec(&[("First Name", "Budi")])),
             "Yth. Budi"
+        );
+        // Russian with no title: the gender-neutral "Уважаемый(ая)"; with
+        // a title the greeting stays as written.
+        let ru = Instr::parse(&greeting_line_code(
+            &greeting_format("Уважаемый", GREETING_NAMES[3].1, "!"),
+            1049,
+            "Уважаемые господа!",
+        ));
+        assert_eq!(
+            greeting_line(&ru, &rec(&[("First Name", "Иван")])),
+            "Уважаемый(ая) Иван!"
+        );
+        assert_eq!(
+            greeting_line(
+                &ru,
+                &rec(&[("Courtesy Title", "г-н"), ("First Name", "Иван")])
+            ),
+            "Уважаемый Иван!"
         );
     }
 }
