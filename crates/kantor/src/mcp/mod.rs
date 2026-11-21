@@ -88,7 +88,7 @@ pub fn main(args: &[String]) -> i32 {
     // The Mac App Store build doesn't start the app from here: that would
     // run it as a child of the agent, inside the agent's process group
     // (docs/app-store.md). The user starts Kantor.
-    let mut launch = !kantor_core::APP_STORE;
+    let mut launch = !kantor_core::SANDBOXED;
     for arg in args {
         match arg.as_str() {
             "--no-launch" => launch = false,

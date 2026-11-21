@@ -102,7 +102,7 @@ fn store_cli_refusal(cmd: &str) -> String {
 }
 
 fn main() {
-    if kantor_core::APP_STORE
+    if kantor_core::SANDBOXED
         && let Some(cmd) = std::env::args()
             .nth(1)
             .filter(|a| matches!(a.as_str(), "pdf" | "convert" | "slides" | "docs" | "sheets"))
