@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Mac App Store build (scripts/build-mas.sh, cargo feature `app-store`).
+  Every entitlement here is used; App Review rejects unused ones. See
+  docs/app-store.md for the full table and the App Review notes.
+
+  app-sandbox                 required for the Mac App Store.
+  files.user-selected.read-write
+                              open and save the documents the user picks in
+                              open/save panels, opens from Finder or drops on
+                              the window (Save writes them back).
+  files.bookmarks.app-scope   security-scoped bookmarks: reopen last session's
+                              tabs, Recent files, Batch folders, mail-merge data
+                              sources and certificate files in later runs
+                              (crates/kantor_sandbox).
+  network.client              outgoing connections only: AI providers the user
+                              configures, cloud storage (WebDAV/Nextcloud),
+                              IMAGE/WEBSERVICE formulas, signature time stamps,
+                              OCSP/CRL checks, e-signature providers. Kantor
+                              never listens on a network port (its agent socket
+                              is a Unix socket in the container).
+  smartcard                   sign PDFs with a smart card or USB token through
+                              the keychain (CryptoTokenKit); the store build
+                              loads no PKCS #11 modules.
+
+  Not here, on purpose: print (Kantor prints by handing a PDF to the system's
+  viewer, it never runs NSPrintOperation), files.downloads, network.server,
+  JIT / unsigned memory (none: plain Rust, Metal compiles GPUI's shaders),
+  keychain-access-groups (the AI keys use the login keychain, which the
+  sandbox allows for an app's own items).
+
+  com.apple.application-identifier and com.apple.developer.team-identifier
+  are added by `build-mas.sh package` from the provisioning profile.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.app-sandbox</key><true/>
+  <key>com.apple.security.files.user-selected.read-write</key><true/>
+  <key>com.apple.security.files.bookmarks.app-scope</key><true/>
+  <key>com.apple.security.network.client</key><true/>
+  <key>com.apple.security.smartcard</key><true/>
+</dict>
+</plist>

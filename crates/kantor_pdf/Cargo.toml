@@ -7,6 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# Saving inside the App Sandbox (kantor_core::fsx).
+kantor_core.workspace = true
 # Pure-Rust PDF object model (MIT). Default features (chrono, rayon) are not needed.
 lopdf = { version = "0.47", default-features = false }
 image = { workspace = true, features = ["png", "jpeg"] }

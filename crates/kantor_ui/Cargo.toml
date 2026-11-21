@@ -12,9 +12,16 @@ gpui-kit.workspace = true
 kantor_core.workspace = true
 kantor_metafile.workspace = true
 kantor_spell.workspace = true
+# "Grant File Access" in the App Sandbox (file_access.rs).
+kantor_sandbox.workspace = true
 log.workspace = true
 kantor_theme.workspace = true
 rust-i18n.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# The open panel's start folder and message for "Grant File Access"
+# (vendor/gpui-pre-macos KANTOR_PATCHES.md §2).
+gpui_macos = { package = "gpui-pre-macos", version = "0.3.11" }
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -661,7 +661,7 @@ impl PdfView {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .map(Path::to_path_buf)
-            .or_else(kantor_core::dirs::home_dir)
+            .or_else(kantor_core::dirs::user_home_dir)
             .unwrap_or_else(|| PathBuf::from("."))
     }
 }

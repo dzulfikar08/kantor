@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# macos-info-plist.sh VERSION  ->  Kantor.app's Info.plist on stdout.
+# macos-info-plist.sh VERSION [BUILD]  ->  Kantor.app's Info.plist on stdout.
 # Used by macos-app.sh; scripts/check-file-types.py checks its output in CI.
+# BUILD is CFBundleVersion (default VERSION; the Mac App Store build passes a
+# number that grows with every upload). KANTOR_MAS=1 adds the App Store keys
+# (export compliance, see docs/app-store.md).
 #
 # Document types are declared by UTI (LSItemContentTypes), which is what
 # Finder's Open With, double-clicks and Dock drops go by; extensions alone
@@ -11,6 +14,14 @@
 # LibreOffice when those are installed, and those declarations win).
 set -euo pipefail
 version="$1"
+build="${2:-$1}"
+mas_keys=""
+if [ "${KANTOR_MAS:-0}" = 1 ]; then
+  # Kantor's encryption is exempt (docs/app-store.md "Export compliance"); set
+  # KANTOR_MAS_NON_EXEMPT_ENCRYPTION=1 if App Store Connect decides otherwise.
+  if [ "${KANTOR_MAS_NON_EXEMPT_ENCRYPTION:-0}" = 1 ]; then enc='<true/>'; else enc='<false/>'; fi
+  mas_keys="  <key>ITSAppUsesNonExemptEncryption</key>${enc}"
+fi
 
 doc_type() { # name role uti...
   local name="$1" role="$2"; shift 2
@@ -38,11 +49,12 @@ cat <<PLIST
   <key>CFBundleIconFile</key><string>kantor</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>${version}</string>
-  <key>CFBundleVersion</key><string>${version}</string>
+  <key>CFBundleVersion</key><string>${build}</string>
   <key>LSMinimumSystemVersion</key><string>11.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSHumanReadableCopyright</key><string>AGPL-3.0-or-later</string>
+${mas_keys}
   <key>CFBundleDocumentTypes</key>
   <array>
 $(doc_type "Spreadsheet" Editor org.openxmlformats.spreadsheetml.sheet org.openxmlformats.spreadsheetml.sheet.macroenabled public.comma-separated-values-text public.tab-separated-values-text)

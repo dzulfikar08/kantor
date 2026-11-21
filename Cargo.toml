@@ -57,6 +57,7 @@ kantor_metafile = { path = "crates/kantor_metafile" }
 kantor_numfmt = { path = "crates/kantor_numfmt" }
 kantor_ooxml = { path = "crates/kantor_ooxml" }
 kantor_pdf = { path = "crates/kantor_pdf" }
+kantor_sandbox = { path = "crates/kantor_sandbox" }
 kantor_keystore = { path = "crates/kantor_keystore" }
 kantor_theme = { path = "crates/kantor_theme" }
 kantor_ui = { path = "crates/kantor_ui" }
@@ -103,6 +104,9 @@ opt-level = 3
 gpui-pre-wgpu = { path = "vendor/gpui-pre-wgpu" }
 # GPUI's Linux platform with Kantor's X11 fixes (see vendor/gpui-pre-linux/KANTOR_PATCHES.md).
 gpui-pre-linux = { path = "vendor/gpui-pre-linux" }
+# GPUI's macOS platform; feature `mas` drops private selectors for the Mac App Store build
+# (see vendor/gpui-pre-macos/KANTOR_PATCHES.md).
+gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 # IronCalc with fast lookups (see vendor/ironcalc_base/KANTOR_PATCHES.md).
 ironcalc_base = { path = "vendor/ironcalc_base" }
 # IronCalc's xlsx reader/writer with fidelity fixes (see vendor/ironcalc/KANTOR_PATCHES.md).

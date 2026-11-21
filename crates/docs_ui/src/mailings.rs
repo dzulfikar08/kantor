@@ -245,6 +245,24 @@ impl DocsView {
         let Some(path) = link.source_path(dir.as_deref()) else {
             return;
         };
+        // App Sandbox (store build): the linked data source may need the
+        // user's go-ahead, like Word for Mac's "Grant File Access".
+        if !kantor_sandbox::access(&path) {
+            let view = cx.entity().downgrade();
+            let wanted = path.clone();
+            kantor_ui::file_access::with_access(
+                path,
+                kantor_ui::file_access::Need::File,
+                window,
+                cx,
+                move |_, window, cx| {
+                    if kantor_sandbox::access(&wanted) {
+                        let _ = view.update(cx, |this, cx| this.open_linked_source(window, cx));
+                    }
+                },
+            );
+            return;
+        }
         let query = link.parsed_query();
         let sheet = (!link.is_text_file() && !query.table.is_empty()).then(|| query.table.clone());
         let preview = link.preview;
@@ -284,6 +302,8 @@ impl DocsView {
             let Some(path) = paths.into_iter().next() else {
                 return;
             };
+            // App Sandbox: reopened next time through this bookmark.
+            kantor_sandbox::remember(&path);
             let _ = this.update_in(cx, |this, window, cx| {
                 this.load_recipients(&path, None, None, None, true, window, cx);
                 if let Some(m) = &mut this.mailings

@@ -10,6 +10,7 @@ pub mod cached;
 pub mod components;
 pub mod content_strings;
 pub mod disk_guard;
+pub mod file_access;
 pub mod find_bar;
 pub mod fonts;
 pub mod i18n;

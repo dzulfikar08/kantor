@@ -137,6 +137,7 @@ pub fn system_candidates() -> Result<Vec<Candidate>, Error> {
     Ok(candidates(found))
 }
 
+pub use kantor_keystore::pkcs11::AVAILABLE as TOKEN_MODULES;
 pub use kantor_keystore::pkcs11::common_modules;
 pub use kantor_keystore::system::AVAILABLE as SYSTEM_STORE;
 

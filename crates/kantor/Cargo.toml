@@ -7,6 +7,11 @@ license.workspace = true
 repository.workspace = true
 default-run = "kantor"
 
+[features]
+# The Mac App Store build: sandboxed, no self-update, no command-line file
+# tools (docs/app-store.md). scripts/build-mas.sh builds it.
+app-store = ["kantor_core/app-store", "gpui-pre-macos/mas"]
+
 [dependencies]
 anyhow.workspace = true
 async-channel = "2"
@@ -24,6 +29,8 @@ kantor_core.workspace = true
 # `kantor pdf emeterai` / `sign --provider` / `providers`.
 kantor_esign.workspace = true
 kantor_merge.workspace = true
+# File access in the App Sandbox (store build; no-ops elsewhere).
+kantor_sandbox.workspace = true
 kantor_pdf.workspace = true
 kantor_theme.workspace = true
 kantor_ui.workspace = true
@@ -44,6 +51,11 @@ slides_ui.workspace = true
 # SIGTERM/SIGINT/SIGHUP (logout, `kill`, Ctrl+C) quit like the Quit command:
 # cloud locks are released (main.rs).
 signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# GPUI's macOS platform (vendor/gpui-pre-macos): its `mas` feature for the
+# store build, and the open panel's start folder for "Grant File Access".
+gpui-pre-macos = "0.3.11"
 
 [target.'cfg(windows)'.dependencies]
 # The MCP endpoint's token (ipc.rs); already linked through rustls.

@@ -7,6 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# Saving inside the App Sandbox (kantor_core::fsx).
+kantor_core.workspace = true
 anyhow.workspace = true
 # .ppt import: the compound file container and compressed EMF/WMF pictures.
 cfb = "0.14"

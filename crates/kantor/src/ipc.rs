@@ -5,7 +5,12 @@
 //! Linux    $XDG_RUNTIME_DIR/kantor/kantor-<pid>.sock   (else ~/.local/state/kantor/run/)
 //! macOS    ~/Library/Application Support/Kantor/run/kantor-<pid>.sock
 //! Windows  %LOCALAPPDATA%\Kantor\run\kantor-<pid>.port
+//! Mac App Store build: <sandbox container>/run/kantor-<pid>.sock
 //! ```
+//!
+//! (The store build's path is short on purpose: a socket path must fit in
+//! 104 bytes, and the container path is long. `kantor mcp` run from
+//! Terminal shares the app's sandbox and container, so it finds it there.)
 //!
 //! (`KANTOR_SOCKET_DIR` overrides the directory, for tests.) On Linux and
 //! macOS the endpoint is a Unix domain socket; the directory is `0700` and the
@@ -55,6 +60,9 @@ pub fn socket_dir() -> Option<PathBuf> {
     }
     if cfg!(windows) {
         return kantor_core::session::state_dir().map(|d| d.join("run"));
+    }
+    if kantor_core::SANDBOXED {
+        return kantor_core::dirs::home_dir().map(|h| h.join("run"));
     }
     let home = std::env::var_os("HOME").map(PathBuf::from);
     if cfg!(target_os = "macos") {

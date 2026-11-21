@@ -61,6 +61,44 @@ impl Default for Batch {
 }
 
 impl Batch {
+    /// The files and folders running this batch on `inputs` reads or
+    /// writes, besides the inputs: pictures and tables its steps name
+    /// (relative ones from `base`; My Stamps aside) and where results go
+    /// (the output folder, or each input's folder). The sandboxed store
+    /// build asks for access to them before it starts.
+    pub fn paths_used(&self, base: &Path, inputs: &[PathBuf]) -> (Vec<PathBuf>, Vec<PathBuf>) {
+        let mut files = Vec::new();
+        for s in &self.steps {
+            let named = match s {
+                Step::Stamp(st) | Step::Signature(st) => {
+                    Some(st.image.as_str()).filter(|i| !i.starts_with(MY_STAMPS))
+                }
+                Step::Fill(f) => f.data.as_deref(),
+                _ => None,
+            };
+            if let Some(n) = named.filter(|n| !n.is_empty()) {
+                let p = base.join(n);
+                if !files.contains(&p) {
+                    files.push(p);
+                }
+            }
+        }
+        let mut folders = Vec::new();
+        match &self.output.folder {
+            Some(f) => folders.push(f.clone()),
+            None => {
+                for i in inputs {
+                    if let Some(d) = i.parent()
+                        && !folders.iter().any(|f: &PathBuf| f == d)
+                    {
+                        folders.push(d.to_path_buf());
+                    }
+                }
+            }
+        }
+        (files, folders)
+    }
+
     pub fn from_json(text: &str) -> Result<Batch> {
         let b: Batch = serde_json::from_str(text)
             .map_err(|e| Error::Invalid(format!("not a Kantor batch file ({e})")))?;

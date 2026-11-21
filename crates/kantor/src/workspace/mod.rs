@@ -273,6 +273,7 @@ impl Workspace {
         let kind = view.kind();
         let id = self.alloc_id();
         if let Some(path) = view.path(cx) {
+            kantor_sandbox::remember_all([path.as_path()]);
             Session::touch_recent(&mut self.recent, &path);
         } else if !view.is_dirty(cx) {
             // (A restored copy is named after the document it came from.)
@@ -389,6 +390,26 @@ impl Workspace {
         {
             self.tabs[ti].focused = pane;
             self.activate(Some(ti), window, cx);
+            return;
+        }
+        // App Sandbox (store build): a file from Recent, the agent or an
+        // older run may need the user's go-ahead first.
+        if let Some(path) = &file
+            && !kantor_sandbox::access(path)
+        {
+            let ws = cx.entity().downgrade();
+            kantor_ui::file_access::with_access(
+                path.clone(),
+                kantor_ui::file_access::Need::File,
+                window,
+                cx,
+                move |picked, window, cx| {
+                    if let Some(picked) = picked {
+                        let app = AppKind::for_path(&picked).unwrap_or(app);
+                        let _ = ws.update(cx, |ws, cx| ws.launch(app, Some(picked), window, cx));
+                    }
+                },
+            );
             return;
         }
         let Some(pane) = self.new_doc(app, file, window, cx) else {
@@ -804,7 +825,10 @@ impl Workspace {
             let mut ids = HashMap::new();
             for p in &saved.panes {
                 let path = cloud::migrated_path(&p.path);
-                if path.is_file()
+                // App Sandbox: reopened through its bookmark; a tab without
+                // one stays closed (Recent asks for access when clicked).
+                if kantor_sandbox::access(&path)
+                    && path.is_file()
                     && let Some(kind) = AppKind::for_path(&path)
                     && let Some(id) = self.new_doc(kind, Some(path.clone()), window, cx)
                 {
@@ -855,6 +879,12 @@ impl Workspace {
                 panes,
             });
         }
+        // App Sandbox: keep access to every open file for the next run
+        // (covers Save As, which changes the path).
+        kantor_sandbox::remember_all(
+            tabs.iter()
+                .flat_map(|t| t.panes.iter().map(|p| p.path.as_path())),
+        );
         let session = Session {
             tabs,
             active,

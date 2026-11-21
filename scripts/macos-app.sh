@@ -3,6 +3,8 @@
 # Bundle id com.dzulfikar.kantor, icon, and the document types Kantor opens.
 # Used by package-macos.sh (tarball) and build-dmg.sh (DMG, Developer ID).
 # Needs rsvg-convert (brew install librsvg) and iconutil (Xcode).
+# KANTOR_BUNDLE_VERSION sets CFBundleVersion and KANTOR_MAS=1 the App Store
+# keys (build-mas.sh; see macos-info-plist.sh).
 set -euo pipefail
 bin="$1"; dest="$2"
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,7 +28,7 @@ iconutil -c icns "$iconset" -o "$app/Contents/Resources/kantor.icns"
 tpl="$root/THIRD_PARTY_LICENSES.txt"; [ -f "$tpl" ] || python3 "$root/scripts/third-party-licenses.py" "$tpl"
 install -m644 "$root/LICENSE" "$root/NOTICE" "$tpl" "$app/Contents/Resources/"
 
-"$root/scripts/macos-info-plist.sh" "$version" > "$app/Contents/Info.plist"
+"$root/scripts/macos-info-plist.sh" "$version" "${KANTOR_BUNDLE_VERSION:-$version}" > "$app/Contents/Info.plist"
 plutil -lint "$app/Contents/Info.plist" >/dev/null
 
 # Ad-hoc, so the bundle launches as built; build-dmg.sh re-signs it with a

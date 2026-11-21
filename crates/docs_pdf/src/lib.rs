@@ -744,8 +744,15 @@ pub fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)
-        .with_context(|| format!("can't write in {}", dir.display()))?;
+    let mut tmp = match tempfile::NamedTempFile::new_in(dir) {
+        Ok(tmp) => tmp,
+        // Sandbox: only the file itself may be written (kantor_core::fsx).
+        Err(e) if kantor_core::fsx::no_folder_access(&e) => {
+            return kantor_core::fsx::write_in_place(path, bytes)
+                .with_context(|| format!("can't write {}", path.display()));
+        }
+        Err(e) => return Err(e).with_context(|| format!("can't write in {}", dir.display())),
+    };
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
     tmp.persist(path)

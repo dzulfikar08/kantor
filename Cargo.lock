@@ -1676,6 +1676,7 @@ dependencies = [
  "docs_engine",
  "docs_layout",
  "flate2",
+ "kantor_core",
  "kantor_metafile",
  "kantor_ooxml",
  "krilla",
@@ -1703,6 +1704,7 @@ dependencies = [
  "image",
  "kantor_core",
  "kantor_merge",
+ "kantor_sandbox",
  "kantor_spell",
  "kantor_ui",
  "log",
@@ -2864,8 +2866,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-macos"
 version = "0.3.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7410cfdaa1fa55a414346cc492d18ce340e3a8b6d0ac3213b984ed690c82b92"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -4081,12 +4081,14 @@ dependencies = [
  "env_logger",
  "futures",
  "gpui-kit",
+ "gpui-pre-macos",
  "kantor_ai",
  "kantor_cloud",
  "kantor_core",
  "kantor_esign",
  "kantor_merge",
  "kantor_pdf",
+ "kantor_sandbox",
  "kantor_theme",
  "kantor_ui",
  "kantor_update",
@@ -4182,6 +4184,7 @@ dependencies = [
 name = "kantor_keystore"
 version = "0.21.1"
 dependencies = [
+ "kantor_core",
  "libloading",
  "security-framework",
  "windows-sys 0.61.2",
@@ -4213,6 +4216,7 @@ version = "0.21.1"
 dependencies = [
  "base64 0.22.1",
  "flate2",
+ "kantor_core",
  "log",
  "resvg 0.46.0",
 ]
@@ -4239,7 +4243,21 @@ version = "0.21.1"
 dependencies = [
  "calamine",
  "image",
+ "kantor_core",
  "lopdf",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "kantor_sandbox"
+version = "0.21.1"
+dependencies = [
+ "base64 0.22.1",
+ "kantor_core",
+ "log",
+ "objc2-core-foundation",
  "serde",
  "serde_json",
  "tempfile",
@@ -4271,10 +4289,12 @@ name = "kantor_ui"
 version = "0.21.1"
 dependencies = [
  "gpui-kit",
+ "gpui-pre-macos",
  "gpui-pre-wgpu",
  "kantor_core",
  "kantor_metafile",
  "kantor_numfmt",
+ "kantor_sandbox",
  "kantor_spell",
  "kantor_theme",
  "log",
@@ -5723,6 +5743,7 @@ dependencies = [
  "kantor_core",
  "kantor_esign",
  "kantor_pdf",
+ "kantor_sandbox",
  "kantor_ui",
  "log",
  "pdf_engine",
@@ -7163,6 +7184,7 @@ dependencies = [
  "imagesize 0.14.0",
  "ironcalc",
  "ironcalc_base",
+ "kantor_core",
  "kantor_mem",
  "kantor_metafile",
  "kantor_numfmt",
@@ -7369,6 +7391,7 @@ dependencies = [
  "cfb",
  "docs_engine",
  "flate2",
+ "kantor_core",
  "kantor_metafile",
  "kantor_ooxml",
  "roxmltree 0.21.2",

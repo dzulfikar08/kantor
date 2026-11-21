@@ -28,6 +28,7 @@ use kantor_pdf::batch::{
     self, Anchor, Batch, Example, Existing, FileResult, Fill, Output, PageNumbers, Place, Plugin,
     Plugins, Prepared, Reason, Stamp, Status, Step, Watermark,
 };
+use kantor_ui::file_access::{self, Need};
 use kantor_ui::i18n::{self, tf, tk};
 use kantor_ui::{metrics::*, tokens};
 
@@ -692,6 +693,9 @@ impl PdfView {
             let Ok(Ok(Some(paths))) = paths.await else {
                 return;
             };
+            if let Some(p) = paths.first() {
+                kantor_sandbox::remember(p);
+            }
             let _ = this.update(cx, |this, cx| {
                 if let Some(b) = this.batch() {
                     b.folder = paths.into_iter().next();
@@ -891,6 +895,7 @@ impl PdfView {
 
     /// Run: ask first when results would replace files.
     fn batch_run(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let base = self.dir();
         let Some(b) = self.batch() else {
             return;
         };
@@ -907,6 +912,36 @@ impl PdfView {
                 return;
             }
         };
+        // App Sandbox (store build): ask for whatever this run reads or
+        // writes that Kantor may not use yet, then run.
+        let (used, folders) = batch.paths_used(&base, &b.files);
+        let needs: Vec<_> = b
+            .files
+            .iter()
+            .chain(&used)
+            .map(|p| (p.clone(), Need::File))
+            .chain(folders.into_iter().map(|f| (f, Need::Folder)))
+            .collect();
+        if kantor_sandbox::ACTIVE && !needs.iter().all(|(p, _)| kantor_sandbox::access(p)) {
+            let view = cx.entity().downgrade();
+            file_access::with_access_all(needs, window, cx, move |ok, window, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    if ok {
+                        this.batch_run(window, cx);
+                    } else if let Some(b) = this.batch() {
+                        b.error = Some(
+                            i18n::tr(
+                                "Kantor wasn't given access to every file and folder this batch uses.",
+                                "Kantor tidak diberi akses ke semua berkas dan folder yang dipakai batch ini.",
+                            )
+                            .into(),
+                        );
+                        cx.notify();
+                    }
+                });
+            });
+            return;
+        }
         // A sign step: its password or PIN is asked for now, once.
         if let Some((_, step)) = sb::find(&batch) {
             let step = match step {
@@ -2065,6 +2100,8 @@ fn step_kind_name(s: &Step) -> String {
 
 /// Add PDFs, and the PDFs in folders, once each.
 fn add_paths(b: &mut BatchState, paths: &[PathBuf]) {
+    // App Sandbox: keep access for a later run (a saved batch, Recent).
+    kantor_sandbox::remember_all(paths.iter().map(PathBuf::as_path));
     for p in paths {
         let found = if p.is_dir() {
             batch::pdfs_in(p)

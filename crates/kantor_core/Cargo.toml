@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+# The Mac App Store build (see `kantor_core::APP_STORE`, docs/app-store.md).
+app-store = []
 
 [dependencies]
 anyhow.workspace = true

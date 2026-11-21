@@ -9,6 +9,8 @@ repository.workspace = true
 [dependencies]
 base64.workspace = true
 flate2 = "1"
+# The user font folder in the App Sandbox (kantor_core::dirs).
+kantor_core.workspace = true
 log.workspace = true
 # Same version and features GPUI already builds: no new crates in the tree.
 resvg = { version = "0.46", default-features = false, features = ["text", "system-fonts", "memmap-fonts", "raster-images"] }
