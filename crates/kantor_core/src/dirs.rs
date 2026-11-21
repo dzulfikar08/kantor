@@ -11,6 +11,13 @@
 //!
 //! Data that users may need to find (recovery copies) goes where each OS
 //! expects it ([`data_dir`]).
+//!
+//! The Mac App Store build ([`crate::SANDBOXED`]) keeps all of it in its
+//! sandbox container, `~/Library/Containers/com.dzulfikar.kantor/Data`,
+//! which is its [`home_dir`]: macOS points `HOME` there for the app, and
+//! `kantor` run from Terminal (same sandbox, same container) works it out
+//! from the real `HOME`. The `XDG_*` variables are ignored there, so the
+//! app and the command line always agree.
 
 use std::path::PathBuf;
 
@@ -21,15 +28,73 @@ fn env_dir(var: &str) -> Option<PathBuf> {
         .filter(|p| p.is_absolute())
 }
 
-/// The user's home folder: `HOME`, else (Windows) `USERPROFILE`.
+/// The user's home folder: `HOME`, else (Windows) `USERPROFILE`. In the
+/// sandboxed store build: the sandbox container's home (see the module
+/// docs); the user's own home is [`user_home_dir`].
 pub fn home_dir() -> Option<PathBuf> {
-    env_dir("HOME").or_else(|| {
+    let home = env_dir("HOME").or_else(|| {
         if cfg!(windows) {
             env_dir("USERPROFILE")
         } else {
             None
         }
+    })?;
+    Some(if crate::SANDBOXED {
+        container_home(&home)
+    } else {
+        home
     })
+}
+
+/// The user's own home folder, also in the sandboxed store build (where
+/// [`home_dir`] is the container). For reading what the sandbox lets every
+/// app read there, such as `~/Library/Fonts`.
+pub fn user_home_dir() -> Option<PathBuf> {
+    let home = env_dir("HOME")?;
+    Some(if crate::SANDBOXED {
+        real_home(&home)
+    } else {
+        home
+    })
+}
+
+/// An `XDG_*` base directory, unless sandboxed (see the module docs).
+pub(crate) fn xdg_dir(var: &str) -> Option<PathBuf> {
+    if crate::SANDBOXED {
+        None
+    } else {
+        env_dir(var)
+    }
+}
+
+/// The container's `Data` folder as seen from `home`: `home` itself when
+/// macOS already pointed `HOME` into the container, else the container
+/// under `home`.
+fn container_home(home: &std::path::Path) -> PathBuf {
+    let suffix = container_suffix();
+    if home.ends_with(&suffix) {
+        home.to_path_buf()
+    } else {
+        home.join(suffix)
+    }
+}
+
+/// The user's real home from `home`, which may be the container.
+fn real_home(home: &std::path::Path) -> PathBuf {
+    let suffix = container_suffix();
+    let mut real = home.to_path_buf();
+    if home.ends_with(&suffix) {
+        for _ in suffix.components() {
+            real.pop();
+        }
+    }
+    real
+}
+
+fn container_suffix() -> PathBuf {
+    ["Library", "Containers", crate::BUNDLE_ID, "Data"]
+        .iter()
+        .collect()
 }
 
 /// Windows: `%APPDATA%\Kantor`, where settings.toml lives.
@@ -73,7 +138,7 @@ fn platform_data_dir() -> Option<PathBuf> {
 
 #[cfg(not(any(target_os = "macos", windows)))]
 fn platform_data_dir() -> Option<PathBuf> {
-    let base = env_dir("XDG_DATA_HOME").or_else(|| Some(home_dir()?.join(".local/share")))?;
+    let base = xdg_dir("XDG_DATA_HOME").or_else(|| Some(home_dir()?.join(".local/share")))?;
     Some(base.join("kantor"))
 }
 
@@ -97,8 +162,19 @@ pub fn cache_dir() -> Option<PathBuf> {
     if cfg!(target_os = "macos") {
         return Some(home_dir()?.join("Library/Caches/Kantor"));
     }
-    let base = env_dir("XDG_CACHE_HOME").or_else(|| Some(home_dir()?.join(".cache")))?;
+    let base = xdg_dir("XDG_CACHE_HOME").or_else(|| Some(home_dir()?.join(".cache")))?;
     Some(base.join("kantor"))
+}
+
+/// The user's font folder when the sandbox hides it from libraries that
+/// look in `$HOME/Library/Fonts` (fontdb): `~/Library/Fonts` in the
+/// sandboxed store build, else `None` (they find it themselves).
+pub fn sandboxed_user_fonts_dir() -> Option<PathBuf> {
+    if crate::SANDBOXED {
+        Some(user_home_dir()?.join("Library/Fonts"))
+    } else {
+        None
+    }
 }
 
 /// Where Print puts the PDF it hands to the system's PDF viewer:
@@ -142,5 +218,33 @@ pub fn user_full_name() -> String {
         "Kantor".to_owned()
     } else {
         login
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn container_paths() {
+        let data = "/Users/ana/Library/Containers/com.dzulfikar.kantor/Data";
+        // macOS already set HOME to the container (the app).
+        assert_eq!(container_home(Path::new(data)), Path::new(data));
+        // Run from Terminal: HOME is the real home.
+        assert_eq!(container_home(Path::new("/Users/ana")), Path::new(data));
+        assert_eq!(real_home(Path::new(data)), Path::new("/Users/ana"));
+        assert_eq!(real_home(Path::new("/Users/ana")), Path::new("/Users/ana"));
+        // Another app's container isn't ours.
+        let other = "/Users/ana/Library/Containers/com.example.other/Data";
+        assert_eq!(real_home(Path::new(other)), Path::new(other));
+    }
+
+    #[test]
+    fn unsandboxed_build_uses_home_as_is() {
+        if !crate::SANDBOXED {
+            assert_eq!(sandboxed_user_fonts_dir(), None);
+            assert_eq!(xdg_dir("PATH"), env_dir("PATH"));
+        }
     }
 }

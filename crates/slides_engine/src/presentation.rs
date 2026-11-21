@@ -1421,7 +1421,15 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
         .parent()
         .filter(|d| !d.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    let mut tmp = match tempfile::NamedTempFile::new_in(dir) {
+        Ok(tmp) => tmp,
+        // Sandbox: only the document itself may be written (kantor_core::fsx).
+        Err(e) if kantor_core::fsx::no_folder_access(&e) => {
+            return kantor_core::fsx::write_in_place(path, bytes)
+                .map_err(|e| anyhow::anyhow!("Can't write {}: {e}", path.display()));
+        }
+        Err(e) => return Err(e.into()),
+    };
     tmp.write_all(bytes)?;
     tmp.as_file().sync_all()?;
     // The temp file is private (0600): keep the permissions the file had.

@@ -1,0 +1,36 @@
+[package]
+name = "kantor_sandbox"
+description = "Kantor: file access inside the macOS App Sandbox (security-scoped bookmarks) for the Mac App Store build, no GPUI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+kantor_core.workspace = true
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# CFURL security-scoped bookmarks (already in the tree through GPUI).
+objc2-core-foundation = { version = "0.3", default-features = false, features = [
+    "std",
+    "CFURL",
+    "CFData",
+    "CFError",
+    "CFArray",
+] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# Not the workspace lints: those forbid unsafe code. Creating and resolving
+# a security-scoped bookmark is a CoreFoundation call; `deny` lets exactly
+# the `macos` module opt in, as kantor_keystore and kantor_mem do.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"

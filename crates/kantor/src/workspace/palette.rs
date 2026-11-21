@@ -2540,6 +2540,7 @@ fn rank_commands(query: &str) -> Vec<usize> {
     let mut scored: Vec<(usize, i32)> = COMMANDS
         .iter()
         .enumerate()
+        .filter(|(_, c)| !super::update::store_hides(c.title))
         .filter_map(|(i, c)| {
             let en = score(c.title);
             let id = indonesian(c.title).and_then(score);

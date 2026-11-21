@@ -7,6 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# Saving inside the App Sandbox (kantor_core::fsx).
+kantor_core.workspace = true
 kantor_metafile.workspace = true
 anyhow.workspace = true
 docs_engine.workspace = true

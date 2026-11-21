@@ -2,6 +2,10 @@
 //! day and from the palette, a background download, and a quiet status-bar
 //! notice once the new build is ready. The swap happens on "Restart to
 //! update" (after the unsaved-changes check) or when Kantor quits.
+//!
+//! The Mac App Store build never updates itself (App Review guideline
+//! 2.4.5): the App Store does. There, none of this runs and the palette has
+//! no update commands (see [`store_hides`]).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -99,12 +103,27 @@ impl Updates {
     }
 
     fn remember(&mut self, settings: &kantor_core::settings::UpdateSettings) {
-        self.setting = if settings.enabled {
+        self.setting = if kantor_core::APP_STORE {
+            kantor_ui::i18n::tr("updates from the App Store", "pembaruan dari App Store").into()
+        } else if settings.enabled {
             tf("{} channel", &[&channel(settings).as_str()])
         } else {
             t("updates off").into()
         };
     }
+}
+
+/// The palette commands the store build leaves out: updating itself.
+pub(super) fn store_hides(title: &str) -> bool {
+    kantor_core::APP_STORE && matches!(title, "Check for Updates…" | "Restart to Update")
+}
+
+fn store_updates_notice() -> String {
+    kantor_ui::i18n::tr(
+        "Kantor from the App Store is updated by the App Store",
+        "Kantor dari App Store diperbarui oleh App Store",
+    )
+    .into()
 }
 
 impl Workspace {
@@ -113,6 +132,9 @@ impl Workspace {
     pub(super) fn init_updates(&mut self, cx: &mut Context<Self>) {
         let settings = Settings::load().update;
         self.updates.remember(&settings);
+        if kantor_core::APP_STORE {
+            return;
+        }
         let mut state = State::load();
         kantor_update::clean_leftovers(
             &kantor_update::InstallKind::detect(),
@@ -142,6 +164,12 @@ impl Workspace {
     pub(super) fn check_for_updates(&mut self, manual: bool, cx: &mut Context<Self>) {
         let settings = Settings::load().update;
         self.updates.remember(&settings);
+        if kantor_core::APP_STORE {
+            if manual {
+                self.notice(store_updates_notice(), cx);
+            }
+            return;
+        }
         if !settings.enabled {
             if manual {
                 self.notice(
@@ -308,7 +336,9 @@ impl Workspace {
 
     /// Restart into the downloaded build, once nothing unsaved would be lost.
     pub(super) fn restart_to_update(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if matches!(self.updates.status, UpdateStatus::Ready(_)) {
+        if kantor_core::APP_STORE {
+            self.notice(store_updates_notice(), cx);
+        } else if matches!(self.updates.status, UpdateStatus::Ready(_)) {
             self.request_close(Closing::Restart, window, cx);
         } else {
             self.notice(

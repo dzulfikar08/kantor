@@ -622,11 +622,18 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
         Some(d) if !d.as_os_str().is_empty() => d,
         _ => Path::new("."),
     };
-    let mut tmp = tempfile::Builder::new()
+    let mut tmp = match tempfile::Builder::new()
         .prefix(".kantor-")
         .suffix(".pdf.tmp")
         .tempfile_in(dir)
-        .map_err(io)?;
+    {
+        Ok(tmp) => tmp,
+        // Sandbox: only the file itself may be written (kantor_core::fsx).
+        Err(e) if kantor_core::fsx::no_folder_access(&e) => {
+            return kantor_core::fsx::write_in_place(path, bytes).map_err(io);
+        }
+        Err(e) => return Err(io(e)),
+    };
     tmp.write_all(bytes).map_err(io)?;
     tmp.as_file().sync_all().map_err(io)?;
     if let Ok(meta) = std::fs::metadata(path) {

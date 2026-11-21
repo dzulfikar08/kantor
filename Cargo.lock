@@ -1676,6 +1676,7 @@ dependencies = [
  "docs_engine",
  "docs_layout",
  "flate2",
+ "kantor_core",
  "kantor_metafile",
  "kantor_ooxml",
  "krilla",
@@ -2864,8 +2865,6 @@ dependencies = [
 [[package]]
 name = "gpui-pre-macos"
 version = "0.3.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7410cfdaa1fa55a414346cc492d18ce340e3a8b6d0ac3213b984ed690c82b92"
 dependencies = [
  "accesskit",
  "accesskit_macos",
@@ -4239,7 +4238,21 @@ version = "0.21.1"
 dependencies = [
  "calamine",
  "image",
+ "kantor_core",
  "lopdf",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "kantor_sandbox"
+version = "0.21.1"
+dependencies = [
+ "base64 0.22.1",
+ "kantor_core",
+ "log",
+ "objc2-core-foundation",
  "serde",
  "serde_json",
  "tempfile",
@@ -7163,6 +7176,7 @@ dependencies = [
  "imagesize 0.14.0",
  "ironcalc",
  "ironcalc_base",
+ "kantor_core",
  "kantor_mem",
  "kantor_metafile",
  "kantor_numfmt",
@@ -7369,6 +7383,7 @@ dependencies = [
  "cfb",
  "docs_engine",
  "flate2",
+ "kantor_core",
  "kantor_metafile",
  "kantor_ooxml",
  "roxmltree 0.21.2",

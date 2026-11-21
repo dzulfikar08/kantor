@@ -73,10 +73,8 @@ pub fn state_dir() -> Option<PathBuf> {
     if cfg!(windows) {
         return crate::dirs::windows_state_dir();
     }
-    let base = std::env::var_os("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .filter(|p| p.is_absolute())
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/state")))?;
+    let base = crate::dirs::xdg_dir("XDG_STATE_HOME")
+        .or_else(|| Some(crate::dirs::home_dir()?.join(".local/state")))?;
     Some(base.join("kantor"))
 }
 

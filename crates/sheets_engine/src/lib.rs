@@ -1953,9 +1953,23 @@ fn write_atomic(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) ->
         bail!("{} is read-only", path.display());
     }
     let tmp = dir.join(format!(".{}.kantor-tmp", file_name.to_string_lossy()));
+    let mut write = Some(write);
     let result = (|| {
-        let mut file =
-            fs::File::create(&tmp).with_context(|| format!("creating {}", tmp.display()))?;
+        let mut file = match fs::File::create(&tmp) {
+            Ok(f) => f,
+            // Sandbox: only the workbook itself may be written (kantor_core::fsx).
+            Err(e) if kantor_core::fsx::no_folder_access(&e) => {
+                let mut file = fs::File::create(path)
+                    .with_context(|| format!("writing {}", path.display()))?;
+                let write = write.take().context("written twice")?;
+                write(&mut file).with_context(|| format!("writing {}", path.display()))?;
+                return file
+                    .sync_all()
+                    .with_context(|| format!("writing {}", path.display()));
+            }
+            Err(e) => return Err(e).with_context(|| format!("creating {}", tmp.display())),
+        };
+        let write = write.take().context("written twice")?;
         write(&mut file).with_context(|| format!("writing {}", tmp.display()))?;
         file.sync_all()
             .with_context(|| format!("writing {}", tmp.display()))?;
