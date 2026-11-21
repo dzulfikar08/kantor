@@ -1704,6 +1704,7 @@ dependencies = [
  "image",
  "kantor_core",
  "kantor_merge",
+ "kantor_sandbox",
  "kantor_spell",
  "kantor_ui",
  "log",
@@ -4080,12 +4081,14 @@ dependencies = [
  "env_logger",
  "futures",
  "gpui-kit",
+ "gpui-pre-macos",
  "kantor_ai",
  "kantor_cloud",
  "kantor_core",
  "kantor_esign",
  "kantor_merge",
  "kantor_pdf",
+ "kantor_sandbox",
  "kantor_theme",
  "kantor_ui",
  "kantor_update",
@@ -4181,6 +4184,7 @@ dependencies = [
 name = "kantor_keystore"
 version = "0.21.1"
 dependencies = [
+ "kantor_core",
  "libloading",
  "security-framework",
  "windows-sys 0.61.2",
@@ -4212,6 +4216,7 @@ version = "0.21.1"
 dependencies = [
  "base64 0.22.1",
  "flate2",
+ "kantor_core",
  "log",
  "resvg 0.46.0",
 ]
@@ -4284,10 +4289,12 @@ name = "kantor_ui"
 version = "0.21.1"
 dependencies = [
  "gpui-kit",
+ "gpui-pre-macos",
  "gpui-pre-wgpu",
  "kantor_core",
  "kantor_metafile",
  "kantor_numfmt",
+ "kantor_sandbox",
  "kantor_spell",
  "kantor_theme",
  "log",
@@ -5736,6 +5743,7 @@ dependencies = [
  "kantor_core",
  "kantor_esign",
  "kantor_pdf",
+ "kantor_sandbox",
  "kantor_ui",
  "log",
  "pdf_engine",

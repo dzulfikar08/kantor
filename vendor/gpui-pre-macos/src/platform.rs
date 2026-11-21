@@ -1041,6 +1041,20 @@ impl Platform for MacPlatform {
             .detach();
     }
 
+    // KANTOR PATCH (KANTOR_PATCHES.md §3): the Mac App Store build asks
+    // NSWorkspace instead of running /usr/bin/open.
+    #[cfg(feature = "mas")]
+    fn open_with_system(&self, path: &Path) {
+        let url = NSURL::from_file_path(path);
+        match url {
+            Some(url) => {
+                NSWorkspace::sharedWorkspace().openURL(&url);
+            }
+            None => log::error!("Failed to create NSURL from path: {}", path.display()),
+        }
+    }
+
+    #[cfg(not(feature = "mas"))]
     fn open_with_system(&self, path: &Path) {
         let path = path.to_owned();
         self.0

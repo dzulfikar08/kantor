@@ -15,6 +15,10 @@ use sheets_engine::CellRange;
 
 use crate::agent::path_arg;
 
+/// The Mac App Store build may use only files the user chose (agent tool
+/// results stay English).
+const SANDBOX_NO_ACCESS: &str = "Kantor isn't allowed to use {} yet: the Mac App Store version of Kantor may only use files and folders the user has chosen. Kantor is now asking the user to grant access; try again once they have, or ask them to open the file in Kantor.";
+
 use super::doc::DocView;
 use super::{AppKind, Workspace};
 use crate::agent::{self, docs, sheets, slides};
@@ -269,6 +273,13 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Result<Value> {
         let path = path_arg(agent::req_str(args, "path")?)?;
+        if !kantor_sandbox::access(&path) {
+            // Mac App Store build: ask the user (Grant File Access).
+            if let Some(kind) = AppKind::for_path(&path) {
+                self.launch(kind, Some(path.clone()), window, cx);
+            }
+            bail!("{}", SANDBOX_NO_ACCESS.replace("{}", &path.display().to_string()));
+        }
         if !path.is_file() {
             bail!("{} is not a file", path.display());
         }
@@ -334,6 +345,11 @@ impl Workspace {
                         "{} already exists; pass overwrite=true to replace it",
                         path.display()
                     );
+                }
+                if !kantor_sandbox::access(&path) && !kantor_sandbox::access_dir_of(&path) {
+                    // Mac App Store build: ask the user (Grant File Access).
+                    kantor_ui::file_access::with_folder_of(path.clone(), window, cx, |_, _, _| {});
+                    bail!("{}", SANDBOX_NO_ACCESS.replace("{}", &path.display().to_string()));
                 }
                 if !path.parent().is_some_and(Path::is_dir) {
                     bail!("the folder for {} doesn't exist", path.display());

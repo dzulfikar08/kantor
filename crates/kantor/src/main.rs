@@ -90,7 +90,26 @@ fn parse_args() -> Result<Args> {
     Ok(Args { app, files })
 }
 
+/// What the Mac App Store build says for the command-line file tools.
+fn store_cli_refusal(cmd: &str) -> String {
+    format!(
+        "kantor {cmd}: not available in the Mac App Store version of Kantor.\n\
+         macOS runs App Store apps in a sandbox that can only open files you choose in\n\
+         Kantor's own windows, not files named on a command line. The download from\n\
+         https://kantor.paparanai.id is the same app with the command-line tools.\n\
+         (`kantor mcp` works here: agents can edit the documents open in Kantor.)"
+    )
+}
+
 fn main() {
+    if kantor_core::APP_STORE
+        && let Some(cmd) = std::env::args().nth(1).filter(|a| {
+            matches!(a.as_str(), "pdf" | "convert" | "slides" | "docs" | "sheets")
+        })
+    {
+        eprintln!("{}", store_cli_refusal(&cmd));
+        std::process::exit(2);
+    }
     if std::env::args_os().nth(1).is_some_and(|a| a == "pdf") {
         std::process::exit(cli::pdf::main(std::env::args_os().skip(2).collect()));
     }

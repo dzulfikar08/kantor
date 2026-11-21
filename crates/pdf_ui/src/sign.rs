@@ -201,6 +201,10 @@ fn fonts() -> &'static fontdb::Database {
     DB.get_or_init(|| {
         let mut db = fontdb::Database::new();
         db.load_system_fonts();
+        // App Sandbox: fontdb looks in the container's Library/Fonts.
+        if let Some(dir) = kantor_core::dirs::sandboxed_user_fonts_dir() {
+            db.load_fonts_dir(dir);
+        }
         db
     })
 }

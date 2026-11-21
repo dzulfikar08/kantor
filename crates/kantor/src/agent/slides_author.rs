@@ -847,7 +847,7 @@ fn keys_with(lists: &[&[&'static str]]) -> Vec<&'static str> {
 fn read_file(path: &str, cx: &Ctx) -> Result<(PathBuf, Vec<u8>)> {
     let text = path.trim();
     let mut p = match text.strip_prefix("~/") {
-        Some(rest) => kantor_core::dirs::home_dir()
+        Some(rest) => kantor_core::dirs::user_home_dir()
             .context("HOME is not set")?
             .join(rest),
         None => PathBuf::from(text),

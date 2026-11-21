@@ -7,6 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+# File access in the App Sandbox (store build; no-ops elsewhere).
+kantor_sandbox.workspace = true
 anyhow.workspace = true
 # The clock for DATE / TIME fields.
 chrono = { workspace = true, features = ["clock"] }

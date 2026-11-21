@@ -147,7 +147,8 @@ impl SignUi {
         let found: Vec<(Certificate, String)> = s
             .certificate_files
             .iter()
-            .filter(|p| Path::new(p).exists())
+            // App Sandbox: reopened through the bookmark made when picked.
+            .filter(|p| kantor_sandbox::access(Path::new(p)) && Path::new(p).exists())
             .map(|p| {
                 let c = Certificate::File(p.clone());
                 let n = shown(&c);
@@ -347,6 +348,7 @@ impl PdfView {
         let modules: Vec<String> = s
             .pkcs11_modules
             .iter()
+            .filter(|_| pdf_engine::signing::stores::TOKEN_MODULES)
             .cloned()
             .chain(pdf_engine::signing::stores::common_modules())
             .collect();
@@ -411,6 +413,7 @@ impl PdfView {
             let Some(p) = paths.into_iter().next() else {
                 return;
             };
+            kantor_sandbox::remember(&p);
             let _ = this.update(cx, |this, cx| {
                 if let Some(d) = this.dialog.as_mut()
                     && let Some(s) = sign_ui(d, i)

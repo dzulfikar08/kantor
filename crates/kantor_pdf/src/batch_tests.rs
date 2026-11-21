@@ -687,3 +687,22 @@ fn runs_files_into_a_folder_and_skips_existing_results() {
         .is_empty()
     );
 }
+
+#[test]
+fn paths_used_names_pictures_tables_and_result_folders() {
+    let mut b = Batch::default();
+    b.steps.push(Step::Stamp(stamp("seal.png", "all", Place::Center, 0.0)));
+    b.steps
+        .push(Step::Signature(stamp("my-stamps/Me.ink", "all", Place::Center, 0.0)));
+    b.steps.push(Step::Fill(Fill {
+        data: Some("/data/rows.csv".into()),
+        ..Fill::default()
+    }));
+    let base = Path::new("/work");
+    let inputs = [PathBuf::from("/in/a.pdf"), PathBuf::from("/in/b.pdf"), PathBuf::from("/x/c.pdf")];
+    let (files, folders) = b.paths_used(base, &inputs);
+    assert_eq!(files, [PathBuf::from("/work/seal.png"), PathBuf::from("/data/rows.csv")]);
+    assert_eq!(folders, [PathBuf::from("/in"), PathBuf::from("/x")]);
+    b.output.folder = Some("/out".into());
+    assert_eq!(b.paths_used(base, &inputs).1, [PathBuf::from("/out")]);
+}

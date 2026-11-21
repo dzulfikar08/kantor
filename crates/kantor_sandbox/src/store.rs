@@ -77,6 +77,8 @@ pub struct Store {
     entries: Vec<Entry>,
     /// Files and folders in use this run (bookmarks started, or picked).
     open: Vec<PathBuf>,
+    /// Paths the system made no bookmark for this run (not tried again).
+    failed: Vec<PathBuf>,
 }
 
 impl Store {
@@ -92,6 +94,7 @@ impl Store {
             file,
             entries,
             open: Vec::new(),
+            failed: Vec::new(),
         }
     }
 
@@ -104,6 +107,13 @@ impl Store {
         self.entries.iter().any(|e| e.path == path)
     }
 
+    /// Bookmark `path` unless it has one or failed before this run.
+    pub fn remember_once(&mut self, os: &dyn Os, path: &Path) {
+        if !self.has(path) && !self.failed.iter().any(|f| f == path) {
+            self.remember(os, path);
+        }
+    }
+
     /// Bookmark `path` (an absolute path Kantor can use now). `false` when
     /// the system made no bookmark.
     pub fn remember(&mut self, os: &dyn Os, path: &Path) -> bool {
@@ -113,6 +123,7 @@ impl Store {
         let dir = path.is_dir();
         let Some(data) = os.create(path, dir) else {
             log::warn!("no bookmark for {}", path.display());
+            self.failed.push(path.to_path_buf());
             return false;
         };
         self.put(Entry {

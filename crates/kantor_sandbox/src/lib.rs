@@ -33,20 +33,18 @@ pub const ACTIVE: bool = kantor_core::SANDBOXED;
 /// Remember access to `path` (a file or folder Kantor can use now) for
 /// later runs. Call it with what the user picked, opened or saved.
 pub fn remember(path: &Path) {
-    if ACTIVE {
+    if ACTIVE && !in_container(path) {
         with_store(|s, os| s.remember(os, path));
     }
 }
 
 /// [`remember`] for each of `paths` that has no bookmark yet (cheap for
-/// the ones that have).
+/// the ones that have, and for ones that failed earlier in this run).
 pub fn remember_all<'a>(paths: impl IntoIterator<Item = &'a Path>) {
     if ACTIVE {
         with_store(|s, os| {
-            for p in paths {
-                if !s.has(p) {
-                    s.remember(os, p);
-                }
+            for p in paths.into_iter().filter(|p| !in_container(p)) {
+                s.remember_once(os, p);
             }
         });
     }
@@ -57,10 +55,16 @@ pub fn remember_all<'a>(paths: impl IntoIterator<Item = &'a Path>) {
 /// nearest folder above it that has one; with none, `true` only when the
 /// sandbox already allows it (picked this run), and then it is remembered.
 pub fn access(path: &Path) -> bool {
-    if !ACTIVE {
+    if !ACTIVE || in_container(path) {
         return true;
     }
     with_store(|s, os| s.access(os, path))
+}
+
+/// Kantor's own container (settings, cloud working copies, recovery
+/// copies) is always usable and needs no bookmark.
+fn in_container(path: &Path) -> bool {
+    kantor_core::dirs::home_dir().is_some_and(|home| path.starts_with(home))
 }
 
 /// [`access`] for the folder `path` is in (to create files next to it).

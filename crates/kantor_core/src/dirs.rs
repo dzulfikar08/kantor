@@ -49,13 +49,13 @@ pub fn home_dir() -> Option<PathBuf> {
 /// The user's own home folder, also in the sandboxed store build (where
 /// [`home_dir`] is the container). For reading what the sandbox lets every
 /// app read there, such as `~/Library/Fonts`.
+/// Save panels for untitled documents start here.
 pub fn user_home_dir() -> Option<PathBuf> {
-    let home = env_dir("HOME")?;
-    Some(if crate::SANDBOXED {
-        real_home(&home)
+    if crate::SANDBOXED {
+        Some(real_home(&env_dir("HOME")?))
     } else {
-        home
-    })
+        home_dir()
+    }
 }
 
 /// An `XDG_*` base directory, unless sandboxed (see the module docs).

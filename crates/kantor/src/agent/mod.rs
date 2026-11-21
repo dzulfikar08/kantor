@@ -81,7 +81,7 @@ pub fn char_offset(text: &str, offset: usize) -> usize {
 pub fn path_arg(text: &str) -> Result<PathBuf> {
     let text = text.trim();
     let path = match text.strip_prefix("~/") {
-        Some(rest) => kantor_core::dirs::home_dir()
+        Some(rest) => kantor_core::dirs::user_home_dir()
             .context("HOME is not set")?
             .join(rest),
         None => PathBuf::from(text),

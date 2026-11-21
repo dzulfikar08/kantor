@@ -184,9 +184,21 @@ pub struct TokenCert {
     pub pin_pad: bool,
 }
 
+/// Whether this build loads PKCS #11 modules. The Mac App Store build
+/// doesn't: a module is code from outside the app (App Review guideline
+/// 2.5.2, and the hardened runtime refuses libraries not signed by Apple or
+/// the app's team). Tokens and smart cards reach it through the keychain
+/// instead (CryptoTokenKit, [`crate::system`]).
+pub const AVAILABLE: bool = !kantor_core::APP_STORE;
+
 impl Module {
     /// Load a module and initialise it.
     pub fn load(path: &str) -> Result<Arc<Module>, Error> {
+        if !AVAILABLE {
+            return Err(Error::Failed(
+                "this version of Kantor can't load token modules; tokens and smart cards that macOS supports appear among the keychain's certificates".into(),
+            ));
+        }
         // SAFETY: loading a PKCS #11 module the user chose runs its
         // initialisers; that is what using it means.
         let lib = unsafe { libloading::Library::new(path) }
@@ -488,6 +500,9 @@ impl TokenKey {
 
 /// Where PKCS #11 modules usually are, for the module picker.
 pub fn common_modules() -> Vec<String> {
+    if !AVAILABLE {
+        return Vec::new();
+    }
     let candidates: &[&str] = if cfg!(target_os = "macos") {
         &[
             "/Library/OpenSC/lib/opensc-pkcs11.so",

@@ -191,7 +191,8 @@ impl PdfView {
             .certificate_files
             .iter()
             .map(PathBuf::from)
-            .filter(|p| p.exists())
+            // App Sandbox: reopened through the bookmark made when picked.
+            .filter(|p| kantor_sandbox::access(p) && p.exists())
             .map(|p| Entry {
                 source: Source::File(p),
                 cert: None,
@@ -236,6 +237,7 @@ impl PdfView {
         let modules: Vec<String> = s
             .pkcs11_modules
             .iter()
+            .filter(|_| stores::TOKEN_MODULES)
             .cloned()
             .chain(stores::common_modules())
             .collect();
@@ -278,6 +280,7 @@ impl PdfView {
             let Some(p) = paths.into_iter().next() else {
                 return;
             };
+            kantor_sandbox::remember(&p);
             let _ = this.update_in(cx, |this, window, cx| {
                 if let Some(d) = &mut this.cert_sign {
                     let at = d
@@ -774,7 +777,7 @@ impl PdfView {
                                 let _ = vo.update(cx, |this, cx| this.cert_sign_open_file(window, cx));
                             }),
                     )
-                    .child(
+                    .when(stores::TOKEN_MODULES, |r| r.child(
                         Button::new("pdf-cs-module")
                             .small()
                             .ghost()
@@ -782,7 +785,7 @@ impl PdfView {
                             .on_click(move |_, window, cx| {
                                 let _ = vm.update(cx, |this, cx| this.cert_sign_add_module(window, cx));
                             }),
-                    ),
+                    )),
             )
             .children(details)
             .when(needs_secret, |c| c.child(Input::new(&d.secret)))

@@ -26,4 +26,9 @@ in the workspace `Cargo.toml`. Changes (search for `KANTOR PATCH`):
    a linked data source or picture) but macOS hasn't given it access, the panel opens on
    that file's folder and says why. Not called by the Developer ID build.
 
+3. Feature `mas`: `open_with_system` (Print hands its PDF to the system's viewer; "Open"
+   after an export) opens the file through `NSWorkspace openURL:` instead of running
+   `/usr/bin/open`. A sandboxed app shouldn't start other programs (App Review guideline
+   2.5.2), and `NSWorkspace` passes the sandbox's access to the file on to the viewer.
+
 Drop this vendor copy once upstream offers a switch for it (or stops using the selectors).
