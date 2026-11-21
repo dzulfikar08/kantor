@@ -72,6 +72,16 @@ pub(crate) struct StampDlg {
     signed: usize,
     /// The user agreed the provider may break them.
     accept_break: bool,
+    /// The document is password-protected: only an unprotected copy can be
+    /// stamped.
+    protected: bool,
+    /// The password that opened it is the owner password.
+    owner_known: bool,
+    /// The user chose to stamp an unprotected copy.
+    unprotect: bool,
+    /// The owner password, when the document was opened with another one
+    /// (used once, never saved).
+    owner_pw: Entity<InputState>,
     drawn: Option<(usize, [f32; 4])>,
     hidden: bool,
     working: bool,
@@ -91,10 +101,24 @@ pub(crate) struct SignDlg {
     location: Entity<InputState>,
     signed: usize,
     accept_break: bool,
+    /// The document is password-protected (signed with the password that
+    /// opened it; the result stays protected).
+    protected: bool,
     drawn: Option<(usize, [f32; 4])>,
     hidden: bool,
     working: bool,
     error: Option<String>,
+}
+
+/// The saved document, as it goes to a provider.
+struct DocToSend {
+    bytes: Arc<Vec<u8>>,
+    /// The password that opened it (`""` for none).
+    password: String,
+    /// It is password-protected (also when it opens without a password).
+    protected: bool,
+    /// Signed signatures in it.
+    signed: usize,
 }
 
 fn err_text(e: &Error) -> String {
@@ -111,6 +135,18 @@ fn err_text(e: &Error) -> String {
         Error::Quota(m) => tf("No e-meterai quota left: {}", &[m]),
         Error::Encrypted => i18n::t(
             "Password-protected PDFs can't be sent to a provider. Remove the password first.",
+        )
+        .into(),
+        Error::Restricted => i18n::t(
+            "The document's security settings don't allow signing it with the password that opened it. Open it with the owner password to sign it.",
+        )
+        .into(),
+        Error::OwnerPassword => i18n::t(
+            "That isn't the document's owner password. An unprotected copy needs the owner (permissions) password.",
+        )
+        .into(),
+        Error::ProtectedSigned => i18n::t(
+            "This document is signed and password-protected. Removing the password would break its signatures, so it can't be stamped.",
         )
         .into(),
         Error::OtpRequired(m) => tf("Type the one-time password (OTP): {}", &[m]),
@@ -364,26 +400,32 @@ impl PdfView {
 
     // ---- Add e-Meterai ---------------------------------------------------
 
-    /// Can the saved document go to a provider? (Unsaved changes and
-    /// password-protected files can't.)
-    fn esign_doc_ok(&mut self, cx: &mut Context<Self>) -> Option<(Arc<Vec<u8>>, usize)> {
+    /// The saved document, if it can go to a provider (unsaved changes
+    /// can't). Password-protected ones are dealt with by each command.
+    fn esign_doc_ok(&mut self, cx: &mut Context<Self>) -> Option<DocToSend> {
         let doc = self.doc()?;
         if !doc.model.is_base_as_is() || doc.model.is_dirty() {
             self.status = i18n::t("Save your changes first, then use the saved document.").into();
             cx.notify();
             return None;
         }
-        if !doc.model.base().password.is_empty() {
-            self.status = i18n::t(
-                "Password-protected PDFs can't be sent to a provider. Remove the password first.",
-            )
-            .into();
-            cx.notify();
-            return None;
-        }
         let bytes = doc.model.base().bytes.clone();
-        let signed = kantor_esign::check::signature_count(&bytes);
-        Some((bytes, signed))
+        let password = doc.model.base().password.clone();
+        let protected = emeterai::is_protected(&bytes);
+        let signed = if protected {
+            kantor_pdf::Pdf::from_bytes(&bytes, Some(&password))
+                .ok()
+                .and_then(|p| kantor_pdf::sig::signatures(&p))
+                .map_or(0, |s| s.count)
+        } else {
+            kantor_esign::check::signature_count(&bytes)
+        };
+        Some(DocToSend {
+            bytes,
+            password,
+            protected,
+            signed,
+        })
     }
 
     /// Add e-Meterai…
@@ -394,9 +436,21 @@ impl PdfView {
             self.open_esign_providers(window, cx);
             return;
         }
-        let Some((_, signed)) = self.esign_doc_ok(cx) else {
+        let Some(doc) = self.esign_doc_ok(cx) else {
             return;
         };
+        // A signed protected file can't lose its password without losing
+        // its signatures: said now, before anything is filled in.
+        if doc.protected && doc.signed > 0 {
+            self.status = err_text(&Error::ProtectedSigned).into();
+            cx.notify();
+            return;
+        }
+        let owner_known = doc.protected
+            && kantor_pdf::Pdf::from_bytes(&doc.bytes, Some(&doc.password))
+                .ok()
+                .and_then(|p| p.protection(&doc.password))
+                .is_some_and(|p| p.owner);
         let s = Settings::load().pdf;
         let dlg = StampDlg {
             providers: list,
@@ -413,8 +467,12 @@ impl PdfView {
                 window,
                 cx,
             ),
-            signed,
+            signed: doc.signed,
             accept_break: false,
+            protected: doc.protected,
+            owner_known,
+            unprotect: false,
+            owner_pw: input("", tk("Owner password"), true, window, cx),
             drawn: None,
             hidden: false,
             working: false,
@@ -496,9 +554,10 @@ impl PdfView {
     }
 
     fn esign_stamp_ok(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((bytes, _)) = self.esign_doc_ok(cx) else {
+        let Some(doc) = self.esign_doc_ok(cx) else {
             return;
         };
+        let bytes = doc.bytes;
         let dir = self.dir();
         let name = self.name.clone();
         let Some(Esign::Stamp(d)) = &mut self.esign else {
@@ -522,6 +581,29 @@ impl PdfView {
             cx.notify();
             return;
         }
+        // A protected document: only a copy without the password, made with
+        // the owner password before anything is sent.
+        let owner_pw = if d.protected {
+            if !d.unprotect {
+                d.error = Some(
+                    i18n::t(
+                        "Tick “Stamp an unprotected copy” to stamp this password-protected PDF.",
+                    )
+                    .into(),
+                );
+                cx.notify();
+                return;
+            }
+            let pw = if d.owner_known {
+                doc.password
+            } else {
+                d.owner_pw.read(cx).value().to_string()
+            };
+            Some(pw)
+        } else {
+            None
+        };
+        let unprotected = owner_pw.is_some();
         let mut req = StampRequest::new(&name, page as u32, rect, &dt.code);
         req.doc_number = d.doc_number.read(cx).value().trim().to_string();
         req.reason = d.reason.read(cx).value().trim().to_string();
@@ -555,11 +637,15 @@ impl PdfView {
             let out = path.clone();
             let result = cx
                 .background_spawn(async move {
+                    let plain = match &owner_pw {
+                        Some(pw) => Arc::new(emeterai::unprotected_copy(&bytes, pw)?),
+                        None => bytes,
+                    };
                     let s = Settings::load().pdf;
                     let account = Account::load(info.id, &s.esign_providers)?;
                     let p = providers::emeterai(account)?;
                     let (stamped, kept) =
-                        emeterai::stamp_checked(p.as_ref(), &bytes, &req, allow_break)?;
+                        emeterai::stamp_checked(p.as_ref(), &plain, &req, allow_break)?;
                     kantor_pdf::write_atomic(&out, &stamped.pdf)
                         .map_err(|e| Error::Pdf(e.to_string()))?;
                     Ok::<_, Error>((stamped.serial, kept))
@@ -582,6 +668,10 @@ impl PdfView {
                                 "{msg}. {}",
                                 tf("These signatures are no longer valid: {}", &[&f.join(", ")])
                             );
+                        }
+                        if unprotected {
+                            msg =
+                                format!("{msg}. {}", i18n::t("The stamped copy has no password."));
                         }
                         this.status = msg.into();
                         cx.emit(PdfEvent::Open(path));
@@ -613,10 +703,21 @@ impl PdfView {
             self.open_esign_providers(window, cx);
             return;
         }
-        let Some((bytes, signed)) = self.esign_doc_ok(cx) else {
+        let Some(doc) = self.esign_doc_ok(cx) else {
             return;
         };
-        let fields: Vec<String> = kantor_pdf::Pdf::from_bytes(&bytes, None)
+        // A password-protected file is signed with the password that opened
+        // it, if its owner allows that (always with the owner password), as
+        // with Sign with Certificate.
+        let opened = kantor_pdf::sign::open_to_sign(&doc.bytes, Some(&doc.password));
+        if let Err(kantor_pdf::Error::Invalid(e)) = &opened
+            && e == kantor_pdf::sign::NOT_PERMITTED
+        {
+            self.status = err_text(&Error::Restricted).into();
+            cx.notify();
+            return;
+        }
+        let fields: Vec<String> = opened
             .map(|p| {
                 kantor_pdf::sign::signature_fields(&p)
                     .into_iter()
@@ -657,8 +758,9 @@ impl PdfView {
                 window,
                 cx,
             ),
-            signed,
+            signed: doc.signed,
             accept_break: false,
+            protected: doc.protected,
             drawn: None,
             hidden: false,
             working: false,
@@ -726,9 +828,11 @@ impl PdfView {
     }
 
     fn esign_sign_ok(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((bytes, _)) = self.esign_doc_ok(cx) else {
+        let Some(doc) = self.esign_doc_ok(cx) else {
             return;
         };
+        let bytes = doc.bytes;
+        let pdf_password = doc.protected.then_some(doc.password);
         let dir = self.dir();
         let name = self.name.clone();
         let Some(Esign::Sign(d)) = &mut self.esign else {
@@ -748,6 +852,11 @@ impl PdfView {
             d.error = Some(i18n::t(
                 "This provider rebuilds the file, which breaks the signatures already in it. Tick the box to go ahead anyway.",
             ).into());
+            cx.notify();
+            return;
+        }
+        if d.protected && !info.hash_signing {
+            d.error = Some(err_text(&Error::Encrypted));
             cx.notify();
             return;
         }
@@ -773,6 +882,7 @@ impl PdfView {
         let mut req = SignRequest::new(&name, place);
         req.reason = d.reason.read(cx).value().trim().to_string();
         req.location = d.location.read(cx).value().trim().to_string();
+        req.password = pdf_password.clone();
         let allow_break = d.accept_break;
         let target = cx.prompt_for_new_path(&dir, Some(&format!("{}-signed.pdf", stem(&name))));
         d.error = None;
@@ -807,6 +917,11 @@ impl PdfView {
                 match result {
                     Ok(kept) => {
                         this.esign = None;
+                        // The signed copy keeps the password: it opens
+                        // with the same one, without asking.
+                        if let Some(pw) = pdf_password.filter(|p| !p.is_empty()) {
+                            crate::remember_password(&path, pw);
+                        }
                         let mut msg = tf("Signed and saved as {}", &[&path.display()]);
                         if let Kept::Broken(f) = kept {
                             msg = format!(
@@ -1157,6 +1272,7 @@ impl PdfView {
             None => i18n::t("Not placed yet").into(),
         };
         let (vp, vb, vc, vs) = (view.clone(), view.clone(), view.clone(), view.clone());
+        let vu = view.clone();
         crate::dialog::card(i18n::t("Add e-Meterai"), 560.0, cx)
             .overflow_y_scroll()
             .child(div().text_size(FONT_SMALL).text_color(t.fg_muted).child(tf(
@@ -1192,6 +1308,35 @@ impl PdfView {
                     ),
                 cx,
             ))
+            .when(d.protected, |c| {
+                c.child(crate::dialog::note(
+                    i18n::t("This PDF is password-protected, and the provider needs the whole document. Kantor can stamp a copy without the password; the copy can't be protected again without breaking the e-meterai. The original file stays as it is."),
+                    false,
+                    cx,
+                ))
+                .child(
+                    Checkbox::new("pdf-em-unprotect")
+                        .checked(d.unprotect)
+                        .label(i18n::t("Stamp an unprotected copy"))
+                        .on_click(move |c, _, cx| {
+                            let c = *c;
+                            let _ = vu.update(cx, |this, cx| {
+                                if let Some(Esign::Stamp(d)) = &mut this.esign {
+                                    d.unprotect = c;
+                                    d.error = None;
+                                }
+                                cx.notify();
+                            });
+                        }),
+                )
+                .when(d.unprotect && !d.owner_known, |c| {
+                    c.child(crate::dialog::row(
+                        i18n::t("Owner password"),
+                        Input::new(&d.owner_pw),
+                        cx,
+                    ))
+                })
+            })
             .when(d.signed > 0, |c| {
                 if info.rewrites_file {
                     c.child(crate::dialog::note(
@@ -1369,6 +1514,17 @@ impl PdfView {
                     .child(div().flex_1().child(Input::new(&d.reason)))
                     .child(div().flex_1().child(Input::new(&d.location))),
             )
+            .when(d.protected, |c| {
+                c.child(if info.hash_signing {
+                    crate::dialog::note(
+                        i18n::t("The signed copy keeps the document's password."),
+                        false,
+                        cx,
+                    )
+                } else {
+                    crate::dialog::note(err_text(&Error::Encrypted), true, cx)
+                })
+            })
             .when(d.signed > 0 && info.rewrites_file && !info.hash_signing, |c| {
                 c.child(crate::dialog::note(
                     i18n::t("This document is signed, and this provider rebuilds files: the signatures already in it will no longer be valid."),
@@ -1462,6 +1618,8 @@ pub(crate) struct EsignStepUi {
     text: Entity<InputState>,
     /// e-meterai on the last page (else the first).
     last_page: bool,
+    /// e-meterai: stamp unprotected copies of password-protected files.
+    unprotect: bool,
     /// The rest of a step loaded from a file (kept as it was).
     base: serde_json::Value,
 }
@@ -1480,7 +1638,7 @@ impl EsignStepUi {
     /// A new step with the first provider set up (`None`: none is).
     pub(crate) fn new(
         sign: bool,
-        from: Option<(&str, &str, bool, serde_json::Value)>,
+        from: Option<(&str, &str, bool, bool, serde_json::Value)>,
         window: &mut Window,
         cx: &mut Context<PdfView>,
     ) -> Option<EsignStepUi> {
@@ -1490,11 +1648,12 @@ impl EsignStepUi {
             return None;
         }
         let saved = Settings::load().pdf.esign_providers;
-        let (provider, text, last_page, base) = match from {
-            Some((id, text, last, base)) => (
+        let (provider, text, last_page, unprotect, base) = match from {
+            Some((id, text, last, unprotect, base)) => (
                 providers.iter().position(|p| p.id == id)?,
                 text.to_string(),
                 last,
+                unprotect,
                 base,
             ),
             None => {
@@ -1507,7 +1666,7 @@ impl EsignStepUi {
                         .map(|s| s.doc_type.clone())
                         .unwrap_or_default()
                 };
-                (0, doc_type, true, serde_json::Value::Null)
+                (0, doc_type, true, false, serde_json::Value::Null)
             }
         };
         let ph = if sign {
@@ -1521,6 +1680,7 @@ impl EsignStepUi {
             provider,
             text: input(&text, ph, false, window, cx),
             last_page,
+            unprotect,
             base,
         })
     }
@@ -1548,7 +1708,13 @@ impl EsignStepUi {
             }
             EsignStepUi::new(
                 false,
-                Some((&st.provider, &st.doc_type, last, options.clone())),
+                Some((
+                    &st.provider,
+                    &st.doc_type,
+                    last,
+                    st.unprotected_copy,
+                    options.clone(),
+                )),
                 window,
                 cx,
             )
@@ -1559,7 +1725,7 @@ impl EsignStepUi {
             }
             EsignStepUi::new(
                 true,
-                Some((&st.provider, &st.signer, true, options.clone())),
+                Some((&st.provider, &st.signer, true, false, options.clone())),
                 window,
                 cx,
             )
@@ -1586,6 +1752,7 @@ impl EsignStepUi {
             st.provider = id;
             st.doc_type = text;
             st.page = if self.last_page { "last" } else { "first" }.into();
+            st.unprotected_copy = self.unprotect;
             Ok(st.to_step())
         }
     }
@@ -1674,10 +1841,32 @@ impl PdfView {
                     ),
                     false,
                     cx,
+                ))
+                .child({
+                    let v = view.clone();
+                    Checkbox::new(("pdf-batch-em-unprotect", i))
+                        .checked(e.unprotect)
+                        .label(i18n::t("Stamp unprotected copies of password-protected files"))
+                        .on_click(move |c, _, cx| {
+                            let c = *c;
+                            let _ = v.update(cx, |this, cx| {
+                                if let Some(d) = this.dialog.as_mut()
+                                    && let Some(e) = esign_ui(d, i)
+                                {
+                                    e.unprotect = c;
+                                }
+                                cx.notify();
+                            });
+                        })
+                })
+                .child(crate::dialog::note(
+                    i18n::t("The provider needs the whole document, so a password-protected file is stamped only as a copy without the password, made with its owner password (PDF password, or a Password column in the table). Off, such files are skipped."),
+                    false,
+                    cx,
                 ));
         } else {
             body = body.child(crate::dialog::note(
-                i18n::t("An invisible certified signature on every file. Providers that send a one-time password for each signature can't sign in a batch."),
+                i18n::t("An invisible certified signature on every file. Providers that send a one-time password for each signature can't sign in a batch. Password-protected files are signed with their password and stay protected (providers that need the whole document skip them)."),
                 false,
                 cx,
             ));
@@ -1742,15 +1931,29 @@ pub(crate) const ESIGN_KEYS: &[&str] = &[
         "VIDA's signing APIs are public but need the signer's e-KYC data (photo of the ID card and a selfie) with every request, and its hash signing isn't documented yet.",
     ),
     tk("Digisign's API documentation isn't public."),
-    tk("Not stamped: password-protected PDFs can't be sent to the provider"),
+    tk(
+        "Not stamped: the file is password-protected, and the provider needs the whole document (the step can stamp an unprotected copy instead)",
+    ),
+    tk(
+        "Not stamped: an unprotected copy needs the file's owner (permissions) password, not the password that opens it",
+    ),
+    tk(
+        "Not stamped: the file is signed and password-protected; removing the password would break its signatures",
+    ),
     tk("Not stamped: the file doesn't have the step's page"),
     tk(
         "Not stamped: the file is signed and this provider rebuilds files, which would break the signatures",
     ),
     tk("Not stamped: the file is certified and allows no changes"),
-    tk("Not signed: password-protected PDFs can't be sent to the provider"),
+    tk("Not signed: the file is password-protected, and this provider needs the whole document"),
+    tk(
+        "Not signed: the file's security settings don't allow signing with the password that opens it (give the owner password)",
+    ),
     tk("Not signed: the file is certified and allows no changes, not even another signature"),
     tk("Not signed: the file doesn't have the step's page"),
+    tk(
+        "Stamped an unprotected copy: the result has no password (adding it back would break the e-meterai)",
+    ),
 ];
 
 #[cfg(test)]

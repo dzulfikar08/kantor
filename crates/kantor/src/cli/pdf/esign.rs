@@ -32,7 +32,12 @@ Set the provider up first: kantor pdf providers set NAME ...\n\
 \x20 --number TEXT        the document number (nomor dokumen)\n\
 \x20 --reason TEXT, --location TEXT\n\
 \x20 --allow-breaking-signatures   save even if the provider broke earlier signatures\n\
-Password-protected PDFs can't be sent to the provider: remove the password first.\n\
+\x20 --unprotected-copy   stamp a copy of a password-protected PDF without its\n\
+\x20                      password (the provider needs the whole document). Needs\n\
+\x20                      the owner password: --password PW, KANTOR_PDF_PASSWORD or\n\
+\x20                      --pdf-password-file F. The result has no password: adding\n\
+\x20                      it back would break the e-meterai. Signed protected files\n\
+\x20                      are refused. Without it, protected PDFs are refused.\n\
 \n\
 For one run, instead of the saved setup:\n\
 \x20 --credentials-file F the provider's credentials (JSON or key=value lines)\n\
@@ -57,8 +62,10 @@ Kantor builds the PAdES signature and the provider signs its hash.\n\
 \x20 --reason TEXT, --location TEXT\n\
 \x20 --password PW        a password-protected PDF's password (or set\n\
 \x20                      KANTOR_PDF_PASSWORD); --pdf-password-file F reads it from F.\n\
-\x20                      The result stays protected. Only hash-based providers can\n\
-\x20                      sign such files: the others would get the whole document\n\
+\x20                      The result stays protected. The password that opens it\n\
+\x20                      must allow signing (the owner password always does). Only\n\
+\x20                      hash-based providers can sign such files: the others\n\
+\x20                      would get the whole document\n\
 \x20 --credentials-file F, --server URL, --allow-network   as for kantor pdf emeterai\n\
 \n\
 Output: -o OUT.pdf for one file, -o DIR for several (default: FILE-signed.pdf).";
@@ -250,18 +257,26 @@ pub fn emeterai(rest: &[String], usage: &str) -> Outcome {
             "location",
             "credentials-file",
             "server",
+            "password",
+            "pdf-password-file",
         ],
         &[
             "force",
             "help",
             "allow-network",
             "allow-breaking-signatures",
+            "unprotected-copy",
         ],
         usage,
     )?;
     if args.positional.is_empty() {
         return Err(Failure::usage(format!("missing FILE\n\n{usage}")));
     }
+    let unprotect = args.flag("unprotected-copy");
+    let pdf_password = match args.value("pdf-password-file") {
+        Some(f) => super::read_secret(Some(f), "KANTOR_PDF_PASSWORD")?,
+        None => args.password(),
+    };
     let id = args
         .value("provider")
         .ok_or_else(|| Failure::usage(format!("give --provider NAME\n\n{usage}")))?;
@@ -282,10 +297,27 @@ pub fn emeterai(rest: &[String], usage: &str) -> Outcome {
     };
     let allow_break = args.flag("allow-breaking-signatures");
     each(&args, "emeterai", "stamped", |input, bytes| {
-        let pdf = match kantor_pdf::Pdf::from_bytes(bytes, None) {
-            Err(kantor_pdf::Error::Encrypted) => return Err(fail(kantor_esign::Error::Encrypted)),
-            r => r?,
+        // The provider gets the whole file: a password-protected one only
+        // as a copy without the password (checked before sending).
+        let unprotected = emeterai::is_protected(bytes);
+        let plain;
+        let bytes = if unprotected {
+            if !unprotect {
+                return Err(Failure {
+                    message: format!(
+                        "{}, or stamp a copy without it (--unprotected-copy, with the owner password)",
+                        Error::Encrypted
+                    ),
+                    code: 1,
+                });
+            }
+            plain = emeterai::unprotected_copy(bytes, pdf_password.as_deref().unwrap_or(""))
+                .map_err(fail)?;
+            plain.as_slice()
+        } else {
+            bytes
         };
+        let pdf = kantor_pdf::Pdf::from_bytes(bytes, None)?;
         let page = batch::one_page(&page_spec, pdf.page_count()).map_err(Failure::usage)?;
         let rect = match rect {
             Some(r) => r,
@@ -313,10 +345,15 @@ pub fn emeterai(rest: &[String], usage: &str) -> Outcome {
         Ok((
             out.pdf,
             format!(
-                "e-meterai{sn} by {} on page {}{}",
+                "e-meterai{sn} by {} on page {}{}{}",
                 p.info().name,
                 page + 1,
-                kept_note(&kept)
+                kept_note(&kept),
+                if unprotected {
+                    ", on an unprotected copy (the result has no password)"
+                } else {
+                    ""
+                }
             ),
         ))
     })
@@ -821,8 +858,48 @@ mod tests {
             "--allow-network",
         ]))
         .unwrap_err();
-        assert!(e.message.contains("remove the password"), "{}", e.message);
+        assert!(e.message.contains("--unprotected-copy"), "{}", e.message);
         assert_eq!(vs.calls("/api/v1/emeterai/upload").len(), uploads);
+        // An unprotected copy: refused without the owner password (nothing
+        // sent), stamped with it; the result has no password.
+        let copy = tmp.path().join("copy.pdf");
+        let stamp_copy = |pw: &str| {
+            run(&s(&[
+                "emeterai",
+                locked.to_str().unwrap(),
+                "-o",
+                copy.to_str().unwrap(),
+                "--provider",
+                "vida",
+                "--doc-type",
+                "VD010",
+                "--credentials-file",
+                vc.to_str().unwrap(),
+                "--server",
+                &vs.url,
+                "--allow-network",
+                "--unprotected-copy",
+                "--password",
+                pw,
+            ]))
+        };
+        let e = stamp_copy("wrong").unwrap_err();
+        assert!(e.message.contains("owner"), "{}", e.message);
+        assert_eq!(vs.calls("/api/v1/emeterai/upload").len(), uploads);
+        let msg = stamp_copy("owner4").unwrap();
+        assert!(msg.contains("unprotected copy"), "{msg}");
+        assert_eq!(vs.calls("/api/v1/emeterai/upload").len(), uploads + 1);
+        assert!(!kantor_esign::emeterai::is_protected(
+            &std::fs::read(&copy).unwrap()
+        ));
+        let (text, _) = verify(&s(&[
+            copy.to_str().unwrap(),
+            "--trust",
+            &fixture("root.pem"),
+            "--no-system-roots",
+        ]));
+        assert!(text.contains("Mock e-Meterai Stamp"), "{text}");
+        assert!(!text.contains("altered"), "{text}");
         let signed_locked = tmp.path().join("signed-locked.pdf");
         run(&s(&[
             "sign",

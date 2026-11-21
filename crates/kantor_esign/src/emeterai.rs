@@ -48,7 +48,8 @@ pub struct StampRequest {
     pub reason: String,
     pub location: String,
     /// The document's open password, when it has one. Password-protected
-    /// files are refused ([`Error::Encrypted`]): the provider gets the file.
+    /// files are refused ([`Error::Encrypted`]): the provider gets the whole
+    /// file and can't open it. Stamp an [`unprotected_copy`] instead.
     pub password: Option<String>,
 }
 
@@ -89,6 +90,52 @@ pub trait EMeteraiProvider: Send + Sync {
     }
     /// Stamp `pdf`: send it as the API wants and return the provider's file.
     fn stamp(&self, pdf: &[u8], req: &StampRequest) -> Result<Stamped, Error>;
+}
+
+/// The PDF is password-protected (including files that open without a
+/// password but carry permissions).
+pub fn is_protected(pdf: &[u8]) -> bool {
+    match kantor_pdf::Pdf::from_bytes(pdf, None) {
+        Err(kantor_pdf::Error::Encrypted | kantor_pdf::Error::WrongPassword) => true,
+        Ok(d) => d.was_encrypted(),
+        Err(_) => false,
+    }
+}
+
+/// A copy of a password-protected PDF without its password, to stamp.
+///
+/// The provider receives the whole document, so an encrypted one can't be
+/// stamped as it is. The copy can't be protected again afterwards either:
+/// a PDF's encryption covers every string and stream of the file, so adding
+/// it means rewriting the bytes the e-meterai's signature covers (an
+/// incremental update can't encrypt the revisions before it). The stamped
+/// copy therefore stays unprotected; the original file is left as it was.
+///
+/// Removing the protection needs the owner (permissions) password, as in
+/// Acrobat ([`Error::OwnerPassword`] otherwise; an owner password that is
+/// empty works too). A signed file is refused ([`Error::ProtectedSigned`]):
+/// decrypting rewrites it and breaks the signatures. An unprotected `pdf` is
+/// returned as it is. Nothing here goes online.
+pub fn unprotected_copy(pdf: &[u8], password: &str) -> Result<Vec<u8>, Error> {
+    match kantor_pdf::Pdf::from_bytes(pdf, None) {
+        Ok(d) if !d.was_encrypted() => return Ok(pdf.to_vec()),
+        Ok(_) | Err(kantor_pdf::Error::Encrypted | kantor_pdf::Error::WrongPassword) => {}
+        Err(e) => return Err(e.into()),
+    }
+    let mut doc = match kantor_pdf::Pdf::from_bytes(pdf, Some(password)) {
+        Ok(d) => d,
+        Err(kantor_pdf::Error::WrongPassword | kantor_pdf::Error::Encrypted) => {
+            return Err(Error::OwnerPassword);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    if !doc.protection(password).is_some_and(|p| p.owner) {
+        return Err(Error::OwnerPassword);
+    }
+    if kantor_pdf::sig::signatures(&doc).is_some() {
+        return Err(Error::ProtectedSigned);
+    }
+    Ok(doc.to_bytes_encrypted(false)?)
 }
 
 /// Problems with the box, before anything is sent.

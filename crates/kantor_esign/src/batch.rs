@@ -23,24 +23,32 @@ pub const PROVIDER_SIGN: &str = "provider-sign";
 
 /// Why a file was skipped (shown as they are; the app translates them).
 pub mod why {
-    pub const ENCRYPTED: &str =
-        "Not stamped: password-protected PDFs can't be sent to the provider";
+    pub const ENCRYPTED: &str = "Not stamped: the file is password-protected, and the provider needs the whole document (the step can stamp an unprotected copy instead)";
+    pub const NOT_OWNER: &str = "Not stamped: an unprotected copy needs the file's owner (permissions) password, not the password that opens it";
+    pub const ENCRYPTED_SIGNED: &str = "Not stamped: the file is signed and password-protected; removing the password would break its signatures";
     pub const NO_PAGE: &str = "Not stamped: the file doesn't have the step's page";
     pub const SIGNED_REWRITE: &str = "Not stamped: the file is signed and this provider rebuilds files, which would break the signatures";
     pub const CERTIFIED: &str = "Not stamped: the file is certified and allows no changes";
     pub const SIGN_ENCRYPTED: &str =
-        "Not signed: password-protected PDFs can't be sent to the provider";
+        "Not signed: the file is password-protected, and this provider needs the whole document";
+    pub const SIGN_RESTRICTED: &str = "Not signed: the file's security settings don't allow signing with the password that opens it (give the owner password)";
     pub const SIGN_CERTIFIED: &str =
         "Not signed: the file is certified and allows no changes, not even another signature";
     pub const SIGN_NO_PAGE: &str = "Not signed: the file doesn't have the step's page";
-    pub const ALL: [&str; 7] = [
+    /// Not a skip: said of a file stamped from an unprotected copy.
+    pub const UNPROTECTED: &str = "Stamped an unprotected copy: the result has no password (adding it back would break the e-meterai)";
+    pub const ALL: [&str; 11] = [
         ENCRYPTED,
+        NOT_OWNER,
+        ENCRYPTED_SIGNED,
         NO_PAGE,
         SIGNED_REWRITE,
         CERTIFIED,
         SIGN_ENCRYPTED,
+        SIGN_RESTRICTED,
         SIGN_CERTIFIED,
         SIGN_NO_PAGE,
+        UNPROTECTED,
     ];
 }
 
@@ -57,6 +65,10 @@ pub struct EMeteraiStep {
     pub size: f32,
     pub reason: String,
     pub location: String,
+    /// Password-protected files: stamp a copy without the password (needs
+    /// the owner password; see [`emeterai::unprotected_copy`]). Off, they
+    /// are skipped.
+    pub unprotected_copy: bool,
 }
 
 impl Default for EMeteraiStep {
@@ -69,6 +81,7 @@ impl Default for EMeteraiStep {
             size: emeterai::SIZE_PT,
             reason: String::new(),
             location: String::new(),
+            unprotected_copy: false,
         }
     }
 }
@@ -260,13 +273,32 @@ impl Plugin for EMeteraiPlugin {
     ) -> Result<Applied, String> {
         let s = EMeteraiStep::from_value(options)?;
         let p = self.get(&s.provider)?;
-        if file.password.is_some() {
-            return Ok(Applied::Skipped(why::ENCRYPTED.into()));
-        }
+        // The provider gets the whole file: a password-protected one only
+        // as an unprotected copy, when the step allows that and the batch's
+        // password for the file is its owner password. Checked before
+        // anything is sent.
+        let plain;
+        let mut unprotected = false;
+        let bytes = if emeterai::is_protected(bytes) {
+            if !s.unprotected_copy {
+                return Ok(Applied::Skipped(why::ENCRYPTED.into()));
+            }
+            plain = match emeterai::unprotected_copy(bytes, file.password.unwrap_or("")) {
+                Ok(b) => b,
+                Err(crate::Error::OwnerPassword) => {
+                    return Ok(Applied::Skipped(why::NOT_OWNER.into()));
+                }
+                Err(crate::Error::ProtectedSigned) => {
+                    return Ok(Applied::Skipped(why::ENCRYPTED_SIGNED.into()));
+                }
+                Err(e) => return Err(e.to_string()),
+            };
+            unprotected = true;
+            plain.as_slice()
+        } else {
+            bytes
+        };
         let pdf = kantor_pdf::Pdf::from_bytes(bytes, None).map_err(|e| e.to_string())?;
-        if pdf.was_encrypted() {
-            return Ok(Applied::Skipped(why::ENCRYPTED.into()));
-        }
         let sigs = kantor_pdf::sig::signatures(&pdf);
         if sigs.and_then(|s| s.docmdp) == Some(1) {
             return Ok(Applied::Skipped(why::CERTIFIED.into()));
@@ -284,7 +316,11 @@ impl Plugin for EMeteraiPlugin {
         req.location = s.location.clone();
         let (out, _) =
             emeterai::stamp_checked(p.as_ref(), bytes, &req, false).map_err(|e| e.to_string())?;
-        Ok(Applied::Changed(out.pdf))
+        Ok(if unprotected {
+            Applied::Noted(out.pdf, why::UNPROTECTED.into())
+        } else {
+            Applied::Changed(out.pdf)
+        })
     }
 }
 
@@ -351,13 +387,20 @@ impl Plugin for ProviderSignPlugin {
     ) -> Result<Applied, String> {
         let s = ProviderSignStep::from_value(options)?;
         let p = self.get(&s.provider)?;
-        if file.password.is_some() {
+        // A password-protected file opens with the batch's password for it
+        // and stays protected (hash signing: the provider only sees a hash),
+        // with the same permission rules as signing with a certificate.
+        // Providers that take the whole document can't open it.
+        if !p.info().hash_signing && emeterai::is_protected(bytes) {
             return Ok(Applied::Skipped(why::SIGN_ENCRYPTED.into()));
         }
-        let pdf = kantor_pdf::Pdf::from_bytes(bytes, None).map_err(|e| e.to_string())?;
-        if pdf.was_encrypted() {
-            return Ok(Applied::Skipped(why::SIGN_ENCRYPTED.into()));
-        }
+        let pdf = match kantor_pdf::sign::open_to_sign(bytes, file.password) {
+            Ok(pdf) => pdf,
+            Err(kantor_pdf::Error::Invalid(e)) if e == kantor_pdf::sign::NOT_PERMITTED => {
+                return Ok(Applied::Skipped(why::SIGN_RESTRICTED.into()));
+            }
+            Err(e) => return Err(e.to_string()),
+        };
         if kantor_pdf::sig::signatures(&pdf).and_then(|s| s.docmdp) == Some(1) {
             return Ok(Applied::Skipped(why::SIGN_CERTIFIED.into()));
         }
@@ -384,6 +427,7 @@ impl Plugin for ProviderSignPlugin {
         req.reason = s.reason.clone();
         req.location = s.location.clone();
         req.rotate = rotate;
+        req.password = file.password.map(str::to_owned);
         let who = Signer {
             id: s.signer.clone(),
             otp: None,

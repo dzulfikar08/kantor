@@ -53,6 +53,16 @@ kantor pdf emeterai *.pdf -o stamped/ --provider mekari --doc-type account --rec
 kantor pdf sign kontrak-emeterai.pdf --provider xignature --signer MY-XIGNATURE-ID --page 1 --rect 72,72,180,60
 ```
 
+## Password-protected PDFs
+
+*Sign with Provider…* signs a password-protected PDF with the password it was opened with, and the signed copy keeps that password and protection (RC4, AES-128 or AES-256): with hash signing (Xignature) only the document's hash goes to the provider. The same rules as *Sign with Certificate…* apply: the owner password always works; the open (user) password only when the file's owner allowed commenting or filling in forms. Providers that take the whole document can't sign a protected file; Kantor says so before sending anything. On the command line: `kantor pdf sign --provider … --password PW` (or `KANTOR_PDF_PASSWORD`, or `--pdf-password-file F`).
+
+An e-meterai provider needs the whole document, so a protected file can't be stamped as it is. *Add e-Meterai…* offers *Stamp an unprotected copy*: Kantor removes the password from a copy with the owner (permissions) password (asked in the dialog if the file was opened with the open password), checks it, and only then sends it; the original file isn't changed. The stamped copy has no password, and it can't be given one again: a PDF's encryption covers every string and stream in the file, so protecting it would rewrite the bytes the e-meterai's signature covers (an incremental update can't encrypt the revisions before it). A file that is both signed and protected is refused, because removing its password would break its signatures. Every refusal happens before anything is sent, so no e-meterai is spent on it.
+
+```sh
+kantor pdf emeterai locked.pdf --provider vida --doc-type VD010 --unprotected-copy --password OWNER-PASSWORD
+```
+
 ## Signatures already in the document
 
 A stamp or signature is added as an incremental update, so earlier signatures stay valid. Kantor checks every result before saving it: if the provider rebuilt the file and an earlier signature no longer verifies, nothing is saved, unless you ticked *Stamp anyway* / *Sign anyway* after the warning (or passed `--allow-breaking-signatures`).
@@ -67,6 +77,8 @@ A stamp or signature is added as an incremental update, so earlier signatures st
 {"type": "provider-sign", "provider": "xignature", "signer": "MY-XIGNATURE-ID",
  "appearance": {"kind": "invisible"}, "reason": "Approved"}
 ```
+
+Password-protected files use the batch's password (one for all, or each file's from a `Password` column). *Sign with Provider* signs them with it and they stay protected (with the permission rules above); *Add e-Meterai* skips them unless its *Stamp unprotected copies of password-protected files* box is ticked (`"unprotected_copy": true`) and the password is the owner password. Each skipped file says why in the results, and stamped copies say they have no password.
 
 `kantor pdf batch steps.json folder/` runs them with the saved provider setup (`--allow-network` allows sending for that run).
 
