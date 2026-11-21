@@ -639,7 +639,6 @@ Step {}: type your account at the provider	Langkah {}: ketik akun Anda di penyed
 Step {}: type the document type	Langkah {}: ketik jenis dokumen
 Signer	Penanda tangan
 Bottom right of the page. Each file uses one e-meterai from your quota.	Kanan bawah halaman. Setiap berkas memakai satu e-meterai dari kuota Anda.
-An invisible certified signature on every file. Providers that send a one-time password for each signature can't sign in a batch.	Tanda tangan tersertifikasi tak terlihat di setiap berkas. Penyedia yang mengirim kata sandi sekali pakai untuk setiap tanda tangan tidak dapat menandatangani secara batch.
 Client ID	ID klien
 Client secret	Rahasia klien
 Token address (from VIDA; optional in the sandbox)	Alamat token (dari VIDA; opsional di sandbox)
@@ -654,14 +653,28 @@ Tilaka's signing API, including hash signing, is documented only for partners.	A
 Peruri's PSrE signing API documentation isn't public.	Dokumentasi API tanda tangan PSrE Peruri tidak terbuka untuk umum.
 VIDA's signing APIs are public but need the signer's e-KYC data (photo of the ID card and a selfie) with every request, and its hash signing isn't documented yet.	API tanda tangan VIDA terbuka, tetapi memerlukan data e-KYC penanda tangan (foto KTP dan swafoto) di setiap permintaan, dan tanda tangan hash-nya belum didokumentasikan.
 Digisign's API documentation isn't public.	Dokumentasi API Digisign tidak terbuka untuk umum.
-Not stamped: password-protected PDFs can't be sent to the provider	Tidak dibubuhi meterai: PDF yang dilindungi kata sandi tidak dapat dikirim ke penyedia
 Not stamped: the file doesn't have the step's page	Tidak dibubuhi meterai: berkas tidak memiliki halaman pada langkah ini
 Not stamped: the file is signed and this provider rebuilds files, which would break the signatures	Tidak dibubuhi meterai: berkas bertanda tangan dan penyedia ini menyusun ulang berkas, sehingga tanda tangannya akan rusak
 Not stamped: the file is certified and allows no changes	Tidak dibubuhi meterai: berkas tersertifikasi dan tidak mengizinkan perubahan
-Not signed: password-protected PDFs can't be sent to the provider	Tidak ditandatangani: PDF yang dilindungi kata sandi tidak dapat dikirim ke penyedia
 Add e-Meterai…	Bubuhkan e-Meterai…
 Sign with Provider…	Tanda Tangani lewat Penyedia…
 e-Sign Providers…	Penyedia e-Sign…
 PDF · stamp an e-meterai through your provider account (VIDA, Mekari Sign)	PDF · bubuhkan e-meterai lewat akun penyedia Anda (VIDA, Mekari Sign)
 PDF · certified electronic signature from your account at a licensed provider (PSrE)	PDF · tanda tangan elektronik tersertifikasi dari akun Anda di penyedia berizin (PSrE)
 PDF · set up e-meterai and certified-signature provider accounts	PDF · siapkan akun penyedia e-meterai dan tanda tangan tersertifikasi
+That isn't the document's owner password. An unprotected copy needs the owner (permissions) password.	Itu bukan kata sandi pemilik dokumen. Salinan tanpa perlindungan memerlukan kata sandi pemilik (izin).
+This document is signed and password-protected. Removing the password would break its signatures, so it can't be stamped.	Dokumen ini ditandatangani dan dilindungi kata sandi. Menghapus kata sandinya akan merusak tanda tangannya, jadi dokumen ini tidak dapat dibubuhi meterai.
+Owner password	Kata sandi pemilik
+Tick “Stamp an unprotected copy” to stamp this password-protected PDF.	Centang “Bubuhkan pada salinan tanpa perlindungan” untuk membubuhkan meterai pada PDF yang dilindungi kata sandi ini.
+The stamped copy has no password.	Salinan yang dibubuhi meterai tidak berkata sandi.
+This PDF is password-protected, and the provider needs the whole document. Kantor can stamp a copy without the password; the copy can't be protected again without breaking the e-meterai. The original file stays as it is.	PDF ini dilindungi kata sandi, dan penyedia memerlukan seluruh dokumen. Kantor dapat membubuhkan meterai pada salinan tanpa kata sandi; salinan itu tidak dapat dilindungi lagi tanpa merusak e-meterai. Berkas aslinya tetap seperti semula.
+Stamp an unprotected copy	Bubuhkan pada salinan tanpa perlindungan
+The signed copy keeps the document's password.	Salinan yang ditandatangani tetap memakai kata sandi dokumen.
+Stamp unprotected copies of password-protected files	Bubuhkan pada salinan tanpa perlindungan dari berkas yang dilindungi kata sandi
+The provider needs the whole document, so a password-protected file is stamped only as a copy without the password, made with its owner password (PDF password, or a Password column in the table). Off, such files are skipped.	Penyedia memerlukan seluruh dokumen, jadi berkas yang dilindungi kata sandi hanya dibubuhi meterai sebagai salinan tanpa kata sandi, dibuat dengan kata sandi pemiliknya (Kata sandi PDF, atau kolom Password di tabel). Jika nonaktif, berkas seperti itu dilewati.
+An invisible certified signature on every file. Providers that send a one-time password for each signature can't sign in a batch. Password-protected files are signed with their password and stay protected (providers that need the whole document skip them).	Tanda tangan tersertifikasi tak terlihat di setiap berkas. Penyedia yang mengirim kata sandi sekali pakai untuk setiap tanda tangan tidak dapat menandatangani secara massal. Berkas yang dilindungi kata sandi ditandatangani dengan kata sandinya dan tetap terlindungi (penyedia yang memerlukan seluruh dokumen melewatinya).
+Not stamped: the file is password-protected, and the provider needs the whole document (the step can stamp an unprotected copy instead)	Tidak dibubuhi meterai: berkas dilindungi kata sandi, dan penyedia memerlukan seluruh dokumen (langkah ini dapat membubuhkan pada salinan tanpa perlindungan)
+Not stamped: an unprotected copy needs the file's owner (permissions) password, not the password that opens it	Tidak dibubuhi meterai: salinan tanpa perlindungan memerlukan kata sandi pemilik (izin) berkas, bukan kata sandi pembukanya
+Not stamped: the file is signed and password-protected; removing the password would break its signatures	Tidak dibubuhi meterai: berkas ditandatangani dan dilindungi kata sandi; menghapus kata sandinya akan merusak tanda tangannya
+Not signed: the file is password-protected, and this provider needs the whole document	Tidak ditandatangani: berkas dilindungi kata sandi, dan penyedia ini memerlukan seluruh dokumen
+Stamped an unprotected copy: the result has no password (adding it back would break the e-meterai)	Dibubuhkan pada salinan tanpa perlindungan: hasilnya tidak berkata sandi (menambahkannya kembali akan merusak e-meterai)

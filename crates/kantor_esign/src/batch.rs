@@ -23,7 +23,7 @@ pub const PROVIDER_SIGN: &str = "provider-sign";
 
 /// Why a file was skipped (shown as they are; the app translates them).
 pub mod why {
-    pub const ENCRYPTED: &str = "Not stamped: the file is password-protected, and the provider needs the whole document (turn on \"Stamp an unprotected copy\" to stamp a copy without the password)";
+    pub const ENCRYPTED: &str = "Not stamped: the file is password-protected, and the provider needs the whole document (the step can stamp an unprotected copy instead)";
     pub const NOT_OWNER: &str = "Not stamped: an unprotected copy needs the file's owner (permissions) password, not the password that opens it";
     pub const ENCRYPTED_SIGNED: &str = "Not stamped: the file is signed and password-protected; removing the password would break its signatures";
     pub const NO_PAGE: &str = "Not stamped: the file doesn't have the step's page";

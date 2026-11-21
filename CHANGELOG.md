@@ -9,6 +9,18 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- PDF: Sign with Provider… and Batch's Sign with Provider step sign password-protected PDFs with the password the
+  file was opened with (or the batch's password), and the signed copy stays protected. As with your own
+  certificate, the open password works only when the file's owner allowed commenting or filling in forms; the owner
+  password always works.
+- PDF: Add e-Meterai… can stamp a password-protected PDF as an unprotected copy (*Stamp an unprotected copy*, with
+  the owner password); the original stays protected. The copy can't get its password back without breaking the
+  e-meterai, and signed protected files are refused. Batch's Add e-Meterai step has the same option, and
+  `kantor pdf emeterai --unprotected-copy --password`. Everything is checked before the document is sent, so no
+  e-meterai is spent on a file that would be refused.
+
 ## [0.20.0] - 2026-11-21
 
 Kantor signs password-protected PDFs too, keeping their passwords and encryption, in the app, the command line and
