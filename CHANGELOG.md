@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-21
+
+Provider features work on password-protected PDFs: *Sign with Provider…* (and its Batch step) signs them by hash and
+the signed copy keeps the password, and *Add e-Meterai…* can stamp an unprotected copy with the owner password,
+refusing before anything is sent when a file can't be stamped, so no e-Meterai is spent on a request that would fail.
+
 ### Added
 
 - PDF: Sign with Provider… and Batch's Sign with Provider step sign password-protected PDFs with the password the
@@ -2302,7 +2308,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/dzulfikar08/kantor/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/dzulfikar08/kantor/compare/v0.19.0...v0.20.0
 [0.19.0]: https://github.com/dzulfikar08/kantor/compare/v0.18.0...v0.19.0
 [0.18.0]: https://github.com/dzulfikar08/kantor/compare/v0.17.0...v0.18.0
