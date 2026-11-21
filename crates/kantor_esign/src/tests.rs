@@ -563,3 +563,283 @@ fn batch_runs_emeterai_then_provider_sign() {
     .unwrap();
     assert!(batch::Prepared::new(&bad, dir.path(), None, &plugins).is_err());
 }
+
+/// Hash signing keeps every standard security handler (RC4 40/128,
+/// AES-128, AES-256) and follows the owner's permissions: the user password
+/// signs only when commenting or form filling is allowed; the owner
+/// password always. Refusals happen before the provider is called.
+#[test]
+fn provider_signing_follows_the_file_s_permissions() {
+    use kantor_pdf::testing::{Permissions, Protect, sample_pdf_protected};
+    let server = xignature_server(false);
+    let x = xignature_client(&server.url);
+    let who = Signer {
+        id: "mocksigner01".into(),
+        otp: None,
+    };
+    for kind in Protect::ALL {
+        let open = sample_pdf_protected(1, kind, "owner4", "user4", Permissions::all());
+        let locked = sample_pdf_protected(1, kind, "owner4", "user4", Permissions::empty());
+        for (pdf, pw, ok) in [
+            (&open, "user4", true),
+            (&open, "owner4", true),
+            (&locked, "user4", false),
+            (&locked, "owner4", true),
+        ] {
+            let calls = server.calls("/v3/sign/hash").len();
+            let mut req = SignRequest::new("a.pdf", Place::Invisible);
+            req.password = Some(pw.into());
+            let r = signer::sign(&x, pdf, &req, &who, false);
+            if !ok {
+                assert_eq!(r.unwrap_err(), Error::Restricted, "{kind:?}");
+                assert_eq!(server.calls("/v3/sign/hash").len(), calls, "nothing sent");
+                continue;
+            }
+            let (out, _) = r.unwrap_or_else(|e| panic!("{kind:?} {pw}: {e}"));
+            keep(&format!("xignature-{kind:?}-{pw}.pdf"), &out);
+            assert!(out.starts_with(pdf), "{kind:?}: an incremental update");
+            assert!(
+                kantor_pdf::Pdf::from_bytes(&out, Some("user4"))
+                    .unwrap()
+                    .was_encrypted(),
+                "{kind:?}: still protected"
+            );
+            let mut o = sigs::Options::standard();
+            o.trust = trust();
+            o.password = Some("user4".into());
+            let r = sigs::verify(&out, &o);
+            assert_eq!(r.signatures.len(), 1, "{kind:?}");
+            assert_eq!(r.signatures[0].integrity, Integrity::Intact, "{kind:?}");
+            assert_eq!(
+                r.signatures[0].status,
+                Status::Valid,
+                "{kind:?} {:?}",
+                r.signatures[0].notes
+            );
+        }
+    }
+}
+
+/// A signing provider that takes the whole document (none is implemented
+/// yet): records what it was sent.
+struct Uploader(std::sync::Mutex<usize>);
+
+static UPLOADER: crate::Info = crate::Info {
+    id: "uploader",
+    name: "Uploader",
+    kinds: &[crate::Kind::Signing],
+    support: crate::Support::Implemented,
+    docs: "",
+    production_url: "",
+    sandbox_url: "",
+    fields: &[],
+    rewrites_file: false,
+    hash_signing: false,
+};
+
+impl RemoteSigner for Uploader {
+    fn info(&self) -> &'static crate::Info {
+        &UPLOADER
+    }
+    fn test(&self) -> Result<(), Error> {
+        Ok(())
+    }
+    fn sign_document(&self, pdf: &[u8], _: &SignRequest, _: &Signer) -> Result<Vec<u8>, Error> {
+        *self.0.lock().unwrap() += 1;
+        Ok(pdf.to_vec())
+    }
+}
+
+#[test]
+fn whole_document_providers_never_get_a_protected_file() {
+    use kantor_pdf::testing::{Permissions, Protect, sample_pdf_protected};
+    let up = Uploader(std::sync::Mutex::new(0));
+    let who = Signer::default();
+    for kind in Protect::ALL {
+        // Even one that opens without a password, and with its password.
+        let owner_only = sample_pdf_protected(1, kind, "owner4", "", Permissions::all());
+        for pw in [None, Some("owner4")] {
+            let mut req = SignRequest::new("a.pdf", Place::Invisible);
+            req.password = pw.map(str::to_string);
+            let e = signer::sign(&up, &owner_only, &req, &who, false).unwrap_err();
+            assert_eq!(e, Error::Encrypted, "{kind:?}");
+        }
+    }
+    assert_eq!(*up.0.lock().unwrap(), 0);
+    signer::sign(
+        &up,
+        &kantor_pdf::testing::sample_pdf(1),
+        &SignRequest::new("a.pdf", Place::Invisible),
+        &who,
+        false,
+    )
+    .unwrap();
+    assert_eq!(*up.0.lock().unwrap(), 1);
+}
+
+/// e-meterai on a password-protected file: only an unprotected copy, made
+/// with the owner password, before anything is sent. The stamp verifies;
+/// the copy has no password.
+#[test]
+fn emeterai_on_an_unprotected_copy() {
+    use kantor_pdf::testing::{Permissions, Protect, sample_pdf_protected};
+    let vs = vida_server(0);
+    let v = vida_client(&vs.url, "s3cret");
+    let uploads = || vs.calls("/api/v1/emeterai/upload").len();
+    for kind in Protect::ALL {
+        let pdf = sample_pdf_protected(2, kind, "owner4", "user4", Permissions::all());
+        assert!(emeterai::is_protected(&pdf));
+        for wrong in ["user4", "nope", ""] {
+            assert_eq!(
+                emeterai::unprotected_copy(&pdf, wrong).unwrap_err(),
+                Error::OwnerPassword,
+                "{kind:?} {wrong:?}"
+            );
+        }
+        let before = uploads();
+        let plain = emeterai::unprotected_copy(&pdf, "owner4").unwrap();
+        assert!(!emeterai::is_protected(&plain), "{kind:?}");
+        assert_eq!(
+            kantor_pdf::Pdf::from_bytes(&plain, None)
+                .unwrap()
+                .page_count(),
+            2
+        );
+        let req = StampRequest::new("a.pdf", 1, emeterai::box_at(400.0, 120.0), "VD010");
+        let (out, kept) = emeterai::stamp_checked(&v, &plain, &req, false).unwrap();
+        keep(&format!("emeterai-unprotected-{kind:?}.pdf"), &out.pdf);
+        assert_eq!(kept, Kept::Unsigned);
+        assert_eq!(uploads(), before + 1);
+        assert!(!emeterai::is_protected(&out.pdf));
+        let r = verify(&out.pdf);
+        assert_eq!(r.signatures.len(), 1, "{kind:?}");
+        assert_eq!(r.signatures[0].integrity, Integrity::Intact, "{kind:?}");
+        assert!(
+            r.signatures[0].status.is_ok(),
+            "{:?}",
+            r.signatures[0].notes
+        );
+    }
+    // An unprotected file is returned as it is.
+    let plain = kantor_pdf::testing::sample_pdf(1);
+    assert_eq!(emeterai::unprotected_copy(&plain, "").unwrap(), plain);
+    // An empty owner password is the owner password.
+    let no_owner = sample_pdf_protected(1, Protect::Aes128, "", "", Permissions::empty());
+    assert!(!emeterai::is_protected(
+        &emeterai::unprotected_copy(&no_owner, "").unwrap()
+    ));
+
+    // Signed and protected: removing the password would break the
+    // signature, so it is refused (nothing sent).
+    let xs = xignature_server(false);
+    let x = xignature_client(&xs.url);
+    let pdf = sample_pdf_protected(1, Protect::Aes256, "owner4", "user4", Permissions::all());
+    let mut req = SignRequest::new("a.pdf", Place::Invisible);
+    req.password = Some("owner4".into());
+    let (signed, _) = signer::sign(
+        &x,
+        &pdf,
+        &req,
+        &Signer {
+            id: "mocksigner01".into(),
+            otp: None,
+        },
+        false,
+    )
+    .unwrap();
+    let before = uploads();
+    assert_eq!(
+        emeterai::unprotected_copy(&signed, "owner4").unwrap_err(),
+        Error::ProtectedSigned
+    );
+    assert_eq!(uploads(), before);
+}
+
+/// Batch: protected files per the step and the file's password, with the
+/// reason in the results.
+#[test]
+fn batch_on_password_protected_files() {
+    use crate::batch::why;
+    use kantor_pdf::batch::Reason;
+    use kantor_pdf::testing::{Permissions, Protect, sample_pdf_protected};
+    let vs = vida_server(0);
+    let xs = xignature_server(false);
+    let mut plugins = Plugins::default();
+    plugins.add(Arc::new(crate::batch::EMeteraiPlugin::new(vec![Arc::new(
+        vida_client(&vs.url, "s3cret"),
+    )])));
+    plugins.add(Arc::new(crate::batch::ProviderSignPlugin::new(vec![
+        Arc::new(xignature_client(&xs.url)) as Arc<dyn RemoteSigner>,
+    ])));
+    let dir = tempfile::tempdir().unwrap();
+    let prepare = |json: &str| {
+        let b: Batch = serde_json::from_str(json).unwrap();
+        batch::Prepared::new(&b, dir.path(), None, &plugins).unwrap()
+    };
+    let notes = |r: &batch::FileRun| -> Vec<String> {
+        r.notes
+            .iter()
+            .filter_map(|n| match &n.reason {
+                Reason::Plugin(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    let sign_only = prepare(
+        r#"{"version":1,"steps":[{"type":"provider-sign","provider":"xignature",
+        "signer":"mocksigner01","appearance":{"kind":"invisible"}}]}"#,
+    );
+    let both = |unprotect: bool| {
+        prepare(&format!(
+            r#"{{"version":1,"steps":[
+            {{"type":"emeterai","provider":"vida","doc_type":"VD010","page":"last","unprotected_copy":{unprotect}}},
+            {{"type":"provider-sign","provider":"xignature","signer":"mocksigner01",
+             "appearance":{{"kind":"invisible"}}}}]}}"#
+        ))
+    };
+    let uploads = || vs.calls("/api/v1/emeterai/upload").len();
+    for kind in Protect::ALL {
+        let open = sample_pdf_protected(1, kind, "owner4", "user4", Permissions::all());
+        let locked = sample_pdf_protected(1, kind, "owner4", "user4", Permissions::empty());
+
+        // Provider signing: user password when allowed, else skipped.
+        let r = batch::run_file(&sign_only, "a.pdf", &open, Some("user4"));
+        let Outcome::Done { bytes, .. } = &r.outcome else {
+            panic!("{kind:?} {:?} {:?}", r.outcome, r.notes);
+        };
+        assert!(bytes.starts_with(&open));
+        assert!(emeterai::is_protected(bytes), "{kind:?}: stays protected");
+        let r = batch::run_file(&sign_only, "a.pdf", &locked, Some("user4"));
+        assert!(matches!(r.outcome, Outcome::Skipped), "{kind:?}");
+        assert_eq!(notes(&r), [why::SIGN_RESTRICTED]);
+        let r = batch::run_file(&sign_only, "a.pdf", &locked, Some("owner4"));
+        assert!(matches!(r.outcome, Outcome::Done { .. }), "{kind:?}");
+
+        // e-meterai without the option: skipped, nothing sent; the file is
+        // still signed.
+        let before = uploads();
+        let r = batch::run_file(&both(false), "a.pdf", &open, Some("owner4"));
+        assert_eq!(notes(&r), [why::ENCRYPTED]);
+        let Outcome::Done { bytes, .. } = &r.outcome else {
+            panic!("{:?}", r.outcome);
+        };
+        assert!(emeterai::is_protected(bytes));
+        assert_eq!(uploads(), before);
+        // With it but the user password: skipped with the reason.
+        let r = batch::run_file(&both(true), "a.pdf", &open, Some("user4"));
+        assert_eq!(notes(&r), [why::NOT_OWNER]);
+        assert_eq!(uploads(), before);
+        // With the owner password: stamped and signed, unprotected.
+        let r = batch::run_file(&both(true), "a.pdf", &open, Some("owner4"));
+        assert_eq!(notes(&r), [why::UNPROTECTED]);
+        let Outcome::Done { bytes, .. } = &r.outcome else {
+            panic!("{:?}", r.outcome);
+        };
+        assert_eq!(uploads(), before + 1);
+        assert!(!emeterai::is_protected(bytes));
+        keep(&format!("batch-unprotected-{kind:?}.pdf"), bytes);
+        let v = verify(bytes);
+        assert_eq!(v.signatures.len(), 2, "{kind:?}");
+        assert!(v.signatures.iter().all(|s| s.status.is_ok()));
+    }
+}

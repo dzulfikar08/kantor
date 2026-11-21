@@ -497,6 +497,9 @@ pub trait Plugin: Send + Sync {
 pub enum Applied {
     /// The file's new bytes.
     Changed(Vec<u8>),
+    /// The file's new bytes, with something the results should say about
+    /// them (an e-meterai stamped on an unprotected copy…).
+    Noted(Vec<u8>, String),
     /// The step doesn't apply to this file: why (shown in the results).
     Skipped(String),
 }
@@ -1075,7 +1078,17 @@ pub fn run_file(p: &Prepared, name: &str, bytes: &[u8], password: Option<&str>) 
             signed: sigs.is_some(),
         };
         let current = out.as_deref().unwrap_or(bytes);
-        match pl.apply(&opts, &ctx, current) {
+        let applied = match pl.apply(&opts, &ctx, current) {
+            Ok(Applied::Noted(b, note)) => {
+                notes.push(Note {
+                    step: Some(i),
+                    reason: Reason::Plugin(note),
+                });
+                Ok(Applied::Changed(b))
+            }
+            other => other,
+        };
+        match applied {
             Ok(Applied::Changed(b)) => {
                 out = Some(b);
                 // A plugin (the sign step) appends to whatever it gets:
@@ -1087,6 +1100,7 @@ pub fn run_file(p: &Prepared, name: &str, bytes: &[u8], password: Option<&str>) 
                 step: Some(i),
                 reason: Reason::Plugin(why),
             }),
+            Ok(Applied::Noted(..)) => unreachable!("turned into Changed above"),
             Err(e) => {
                 return fail(
                     Error::Invalid(format!("step {} ({}): {e}", i + 1, pl.kind())),

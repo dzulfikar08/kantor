@@ -95,11 +95,36 @@ pub fn sign(
     signer: &Signer,
     allow_breaking: bool,
 ) -> Result<(Vec<u8>, Kept), Error> {
+    // Found out before anything goes to the provider. Providers that take
+    // the whole document can't open a password-protected one; with hash
+    // signing the file stays protected, and the password that opens it must
+    // allow signing (always the owner password; the user password when the
+    // owner allowed commenting or filling in forms), as Sign with
+    // Certificate.
+    let hash = p.info().hash_signing;
+    if !hash && crate::emeterai::is_protected(pdf) {
+        return Err(Error::Encrypted);
+    }
+    let doc = match kantor_pdf::sign::open_to_sign(pdf, req.password.as_deref()) {
+        Ok(d) => d,
+        Err(kantor_pdf::Error::Invalid(e)) if e == kantor_pdf::sign::NOT_PERMITTED => {
+            return Err(Error::Restricted);
+        }
+        Err(e) => return Err(e.into()),
+    };
+    if kantor_pdf::sig::signatures(&doc).and_then(|s| s.docmdp) == Some(1) {
+        return Err(Error::Pdf(
+            "the document was certified with no changes allowed; it can't be signed again".into(),
+        ));
+    }
+    // Unprotected files need no password (one given anyway is ignored).
+    let password = req.password.clone().filter(|_| doc.was_encrypted());
+    drop(doc);
     let mut opts = signing::Options::new(req.place.clone());
     opts.reason = Some(req.reason.clone()).filter(|r| !r.is_empty());
     opts.location = Some(req.location.clone()).filter(|r| !r.is_empty());
     opts.rotate = req.rotate;
-    opts.pdf_password = req.password.clone();
+    opts.pdf_password = password;
     let look = |name: &str, opts: &signing::Options<'_>| {
         matches!(req.place, Place::New { .. }).then(|| kantor_pdf::sign::Look {
             lines: signing::look_lines(
@@ -128,19 +153,8 @@ pub fn sign(
                 signing::sign_external(pdf, ext.as_ref(), &opts).map_err(map)?
             }
             None => {
-                // This kind of provider gets the whole file.
-                match kantor_pdf::Pdf::from_bytes(pdf, None) {
-                    Err(kantor_pdf::Error::Encrypted | kantor_pdf::Error::WrongPassword) => {
-                        return Err(Error::Encrypted);
-                    }
-                    Ok(d) if kantor_pdf::sig::signatures(&d).and_then(|s| s.docmdp) == Some(1) => {
-                        return Err(Error::Pdf(
-                            "the document was certified with no changes allowed; it can't be signed again"
-                                .into(),
-                        ));
-                    }
-                    _ => {}
-                }
+                // This kind of provider gets the whole file (checked above:
+                // it isn't password-protected).
                 p.sign_document(pdf, req, signer)?
             }
         }

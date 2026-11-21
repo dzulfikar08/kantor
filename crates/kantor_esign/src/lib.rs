@@ -65,6 +65,16 @@ pub enum Error {
     /// The PDF is password-protected and would have to go to the provider
     /// (e-meterai, providers that take the whole document).
     Encrypted,
+    /// The password that opened a password-protected PDF doesn't allow
+    /// signing it (the owner allowed neither commenting nor filling in
+    /// forms): the owner password is needed.
+    Restricted,
+    /// Removing a PDF's password (for an unprotected copy to stamp) needs
+    /// its owner password, and the one given isn't it.
+    OwnerPassword,
+    /// The PDF is password-protected and signed: removing the password
+    /// rewrites the file, which would break its signatures.
+    ProtectedSigned,
     /// The provider's result would break earlier signatures.
     BreaksSignatures(Vec<String>),
 }
@@ -87,6 +97,18 @@ impl fmt::Display for Error {
             Error::Network(m) | Error::Provider(m) | Error::Pdf(m) => f.write_str(m),
             Error::Encrypted => f.write_str(
                 "password-protected PDFs can't be sent to the provider: remove the password first",
+            ),
+            Error::Restricted => f.write_str(
+                "the document's security settings don't allow signing it with the password that \
+                 opens it: give the owner (permissions) password",
+            ),
+            Error::OwnerPassword => f.write_str(
+                "an unprotected copy needs the document's owner (permissions) password, and the \
+                 password given isn't it",
+            ),
+            Error::ProtectedSigned => f.write_str(
+                "the document is signed and password-protected: removing the password would \
+                 break its signatures, so it can't be stamped",
             ),
             Error::BreaksSignatures(f2) => write!(
                 f,
