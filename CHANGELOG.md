@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Fixed
+
+- Docs mail merge: an Address Block whose format has no line break after the name now starts a new line there when it
+  has a country rule, as Word does, and a Russian Greeting Line for a recipient with no title says
+  "Уважаемый(ая) …" like Word instead of "Уважаемый …".
+
 ## [0.21.0] - 2026-11-21
 
 Provider features work on password-protected PDFs: *Sign with Provider…* (and its Batch step) signs them by hash and

@@ -691,16 +691,17 @@ fn address_block_and_greeting_line_match_word_365() {
     assert!(doc.has_address_fields());
     let copies = doc.merge_all(&data, &[0, 1, 2, 3]);
     assert_eq!(copies.len(), 4);
-    // Word's output, paragraph by paragraph. The probe wrote `\n` in the
-    // formats, which Word reads as a plain "n"; Word 365 also broke the
-    // line after the name in A01–A03 (only there, for a reason the probe
-    // doesn't show), which Kantor doesn't: those two paragraphs are one
-    // here.
+    // Word's output, paragraph by paragraph, exactly. The probe wrote `\n`
+    // in the formats, which Word reads as a plain "n"; with a country rule
+    // (`\c`, A01–A03) Word starts a new paragraph after the name anyway.
     let word: [&[&str]; 4] = [
         &[
-            "A01 = Mr John Smith JrnAcme Pty Ltdn1 Main StnSuite 2nSydney, NSW",
-            "A02 = Mr John Smith JrnAcme Pty Ltdn1 Main StnSuite 2nSydney, NSWnAustralia",
-            "A03 = Mr John Smith JrnAcme Pty Ltdn1 Main StnSuite 2nSydney, NSWnAustralia",
+            "A01 = Mr John Smith Jr",
+            "nAcme Pty Ltdn1 Main StnSuite 2nSydney, NSW",
+            "A02 = Mr John Smith Jr",
+            "nAcme Pty Ltdn1 Main StnSuite 2nSydney, NSWnAustralia",
+            "A03 = Mr John Smith Jr",
+            "nAcme Pty Ltdn1 Main StnSuite 2nSydney, NSWnAustralia",
             "A04 = John Smithn1 Main StnSydney",
             "A05 = Acme Pty Ltd",
             "John Smith",
@@ -719,8 +720,10 @@ fn address_block_and_greeting_line_match_word_365() {
             "2 High St",
             "Auckland",
             "New Zealand",
-            "A02 = Ms Jane Doen2 High StnAucklandnNew Zealand",
-            "A03 = Ms Jane Doen2 High StnAucklandnNew Zealand",
+            "A02 = Ms Jane Doe",
+            "n2 High StnAucklandnNew Zealand",
+            "A03 = Ms Jane Doe",
+            "n2 High StnAucklandnNew Zealand",
             "A04 = Jane Doen2 High StnAuckland",
             "A05 = Jane Doe",
             "2 High St",
@@ -732,9 +735,12 @@ fn address_block_and_greeting_line_match_word_365() {
             "G04 = ",
         ],
         &[
-            "A01 = Pat LeenBeta Incn3 Low RdnPerth, WA",
-            "A02 = Pat LeenBeta Incn3 Low RdnPerth, WAnAustralia",
-            "A03 = Pat LeenBeta Incn3 Low RdnPerth, WAnAustralia",
+            "A01 = Pat Lee",
+            "nBeta Incn3 Low RdnPerth, WA",
+            "A02 = Pat Lee",
+            "nBeta Incn3 Low RdnPerth, WAnAustralia",
+            "A03 = Pat Lee",
+            "nBeta Incn3 Low RdnPerth, WAnAustralia",
             "A04 = Pat Leen3 Low RdnPerth",
             "A05 = Beta Inc",
             "Pat Lee",
@@ -747,9 +753,12 @@ fn address_block_and_greeting_line_match_word_365() {
             "G04 = ",
         ],
         &[
-            "A01 = Samn4 Side LnnHobart, TAS",
-            "A02 = Samn4 Side LnnHobart, TASnAustralia",
-            "A03 = Samn4 Side LnnHobart, TASnAustralia",
+            "A01 = Sam",
+            "n4 Side LnnHobart, TAS",
+            "A02 = Sam",
+            "n4 Side LnnHobart, TASnAustralia",
+            "A03 = Sam",
+            "n4 Side LnnHobart, TASnAustralia",
             "A04 = Samn4 Side LnnHobart",
             "A05 = Sam",
             "4 Side Ln",
@@ -771,6 +780,37 @@ fn address_block_and_greeting_line_match_word_365() {
             .any(|v| v == "Ms Jane Doe, 2 High St, Auckland, New Zealand")
     );
     assert!(view.values().any(|v| v == "Dear Ms Doe,"));
+}
+
+/// Aspose's Russian `Field sample - ADDRESSBLOCK.docx` (the same code,
+/// with its line break before `_AFTER_`): with no courtesy title Word
+/// cached "Уважаемый(ая) Людмила Ивановна!".
+#[test]
+fn russian_greeting_without_title_matches_word() {
+    let dir = tempfile::tempdir().unwrap();
+    let body = p(&field(
+        "GREETINGLINE \\f \"&lt;&lt;_BEFORE_ Уважаемый &gt;&gt;&lt;&lt;_TITLE0_&gt;&gt;&lt;&lt; _LAST0_&gt;&gt;\n&lt;&lt;_AFTER_ !&gt;&gt;\" \\l 1049 \\e \"Уважаемые господа!\"",
+        "x",
+    ));
+    let doc = open(dir.path(), "ru.docx", &package(&body, "", "", None));
+    let data = MergeData {
+        fields: vec!["Title".into(), "First Name".into(), "Last Name".into()],
+        rows: vec![
+            vec![
+                MergeValue::text(""),
+                MergeValue::text("Людмила"),
+                MergeValue::text("Ивановна"),
+            ],
+            vec![
+                MergeValue::text(""),
+                MergeValue::text(""),
+                MergeValue::text(""),
+            ],
+        ],
+    };
+    let copies = doc.merge_all(&data, &[0, 1]);
+    assert_eq!(shown(&copies[0].1), ["Уважаемый(ая) Людмила Ивановна!"]);
+    assert_eq!(shown(&copies[1].1), ["Уважаемые господа!"]);
 }
 
 /// Match Fields is saved in `w:odso` and read back; without it the
