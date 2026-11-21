@@ -148,10 +148,7 @@ impl Store {
         let mut changed = false;
         let mut granted = false;
         for entry in candidates {
-            let opened = B64
-                .decode(&entry.data)
-                .ok()
-                .and_then(|data| os.open(&data));
+            let opened = B64.decode(&entry.data).ok().and_then(|data| os.open(&data));
             let Some(opened) = opened else {
                 // Deleted, or on a disk that's gone: forget it.
                 self.entries.retain(|e| e.path != entry.path);

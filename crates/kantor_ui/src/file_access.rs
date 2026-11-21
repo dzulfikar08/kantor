@@ -17,6 +17,11 @@ use gpui_kit::*;
 
 use crate::i18n::{fill, tr};
 
+/// The answer to "may Kantor use it?": the path to use, `None` if not.
+type Answer = Box<dyn FnOnce(Option<PathBuf>, &mut Window, &mut App)>;
+/// Whether every path asked for may be used.
+type AllAnswer = Box<dyn FnOnce(bool, &mut Window, &mut App)>;
+
 /// What Kantor needs to use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Need {
@@ -65,7 +70,7 @@ fn next_missing(
     mut missing: Vec<(PathBuf, Need)>,
     window: &mut Window,
     cx: &mut App,
-    done: Box<dyn FnOnce(bool, &mut Window, &mut App)>,
+    done: AllAnswer,
 ) {
     let Some((path, need)) = missing.pop() else {
         done(true, window, cx);
@@ -148,7 +153,7 @@ fn ask(
     let (title, detail) = wording(&path, need);
     let (title, detail): (SharedString, SharedString) = (title.into(), detail.into());
     // The dialog's buttons are `Fn`; the answer runs once.
-    let done: Rc<std::cell::RefCell<Option<Box<dyn FnOnce(Option<PathBuf>, &mut Window, &mut App)>>>> =
+    let done: Rc<std::cell::RefCell<Option<Answer>>> =
         Rc::new(std::cell::RefCell::new(Some(Box::new(done))));
     window.open_dialog(cx, move |dialog, _, _| {
         let cancel = {
@@ -196,13 +201,7 @@ fn ask(
 
 /// The open panel, on `path`'s folder (a folder: on the folder itself, so
 /// Grant Access picks it).
-fn pick(
-    path: PathBuf,
-    need: Need,
-    window: &mut Window,
-    cx: &mut App,
-    done: Box<dyn FnOnce(Option<PathBuf>, &mut Window, &mut App)>,
-) {
+fn pick(path: PathBuf, need: Need, window: &mut Window, cx: &mut App, done: Answer) {
     let start = match need {
         Need::Folder if path.is_dir() => Some(path.clone()),
         _ => kantor_sandbox::grant_panel_dir(&path),

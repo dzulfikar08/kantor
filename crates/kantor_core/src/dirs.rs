@@ -60,11 +60,7 @@ pub fn user_home_dir() -> Option<PathBuf> {
 
 /// An `XDG_*` base directory, unless sandboxed (see the module docs).
 pub(crate) fn xdg_dir(var: &str) -> Option<PathBuf> {
-    if crate::SANDBOXED {
-        None
-    } else {
-        env_dir(var)
-    }
+    if crate::SANDBOXED { None } else { env_dir(var) }
 }
 
 /// The container's `Data` folder as seen from `home`: `home` itself when

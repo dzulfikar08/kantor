@@ -3,6 +3,7 @@ use crate::{
     MacWindow, events::key_to_native, main_thread_marker, ns_string, pasteboard::Pasteboard,
     renderer, set_active_window_cursor_style,
 };
+#[cfg_attr(feature = "mas", allow(unused_imports))] // KANTOR PATCH §3
 use anyhow::{Context as _, anyhow};
 use block2::RcBlock;
 use core_foundation::{runloop::CFRunLoopRun, string::CFStringRef};
@@ -21,6 +22,7 @@ use gpui_apple::{
     keychain,
     process_info::{self, ProcessInfoObserver},
 };
+#[cfg_attr(feature = "mas", allow(unused_imports))] // KANTOR PATCH §3
 use gpui_util::{ResultExt, new_std_command};
 use itertools::Itertools;
 use objc2::{

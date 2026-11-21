@@ -285,7 +285,20 @@ Kantor downloaded from the site, the GitHub releases or the install script keeps
   # channel = "nightly"   # or "stable"; unset follows the build
   ```
 
+Kantor from the Mac App Store (when it is there) is updated by the App Store instead; see below.
+
 For testing, `KANTOR_UPDATE_URL` replaces the manifest URL and `KANTOR_UPDATE_CURRENT=0.1.0` makes Kantor compare as if it were that version; signatures, checksums and code-signing checks still apply.
+
+## Mac App Store build
+
+Besides the download, Kantor can be built for the Mac App Store: the same app with the
+cargo feature `app-store`, inside Apple's App Sandbox. It doesn't update itself (the App
+Store does), loads no PKCS #11 modules (smart cards work through the keychain) and has no
+command-line file tools (`kantor mcp` works). macOS lets a sandboxed app use only files you
+choose, so Kantor remembers them (security-scoped bookmarks) to reopen your last session,
+Recent files, Batch folders and mail-merge data sources, and asks with **Grant File Access**
+when it needs a file it can't use yet. Build it with `scripts/build-mas.sh`; everything that
+differs, the entitlements and the upload steps are in [docs/app-store.md](docs/app-store.md).
 
 ## Your work is safe
 

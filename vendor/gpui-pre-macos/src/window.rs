@@ -296,6 +296,7 @@ unsafe fn build_classes() {
             decl.register()
         };
         WINDOW_STATE_UNARCHIVER_CLASS = {
+            #[cfg_attr(feature = "mas", allow(unused_mut))] // KANTOR PATCH §1
             let mut decl =
                 ClassBuilder::new(c"GPUIWindowStateKeyedUnarchiver", class!(NSKeyedUnarchiver))
                     .unwrap();
@@ -695,6 +696,7 @@ struct MacWindowState {
     // `_opaqueRectForWindowMoveWhenInTitlebar`, so AppKit does not drag the window from
     // the titlebar or delay titlebar clicks (a delay first observed on macOS 27). Such
     // windows draw their own titlebar and move the window via `start_window_move`.
+    #[cfg_attr(feature = "mas", allow(dead_code))] // KANTOR PATCH §1
     app_owns_titlebar_drag: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
     is_exiting_fullscreen: bool,

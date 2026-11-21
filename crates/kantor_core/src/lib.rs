@@ -13,9 +13,9 @@ pub const SANDBOXED: bool = APP_STORE && cfg!(target_os = "macos");
 pub const BUNDLE_ID: &str = "com.dzulfikar.kantor";
 
 pub mod dirs;
-pub mod fsx;
 pub mod find;
 pub mod fonts;
+pub mod fsx;
 pub mod fuzzy;
 pub mod layout;
 pub mod recovery;

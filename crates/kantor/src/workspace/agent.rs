@@ -278,7 +278,10 @@ impl Workspace {
             if let Some(kind) = AppKind::for_path(&path) {
                 self.launch(kind, Some(path.clone()), window, cx);
             }
-            bail!("{}", SANDBOX_NO_ACCESS.replace("{}", &path.display().to_string()));
+            bail!(
+                "{}",
+                SANDBOX_NO_ACCESS.replace("{}", &path.display().to_string())
+            );
         }
         if !path.is_file() {
             bail!("{} is not a file", path.display());
@@ -349,7 +352,10 @@ impl Workspace {
                 if !kantor_sandbox::access(&path) && !kantor_sandbox::access_dir_of(&path) {
                     // Mac App Store build: ask the user (Grant File Access).
                     kantor_ui::file_access::with_folder_of(path.clone(), window, cx, |_, _, _| {});
-                    bail!("{}", SANDBOX_NO_ACCESS.replace("{}", &path.display().to_string()));
+                    bail!(
+                        "{}",
+                        SANDBOX_NO_ACCESS.replace("{}", &path.display().to_string())
+                    );
                 }
                 if !path.parent().is_some_and(Path::is_dir) {
                     bail!("the folder for {} doesn't exist", path.display());

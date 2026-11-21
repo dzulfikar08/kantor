@@ -78,7 +78,10 @@ pub fn access_dir_of(path: &Path) -> bool {
 /// Where to point the "Grant File Access" panel for `path`: the nearest
 /// folder above it that exists (as far as Kantor can tell).
 pub fn grant_panel_dir(path: &Path) -> Option<PathBuf> {
-    path.ancestors().skip(1).find(|d| d.is_dir()).map(Path::to_path_buf)
+    path.ancestors()
+        .skip(1)
+        .find(|d| d.is_dir())
+        .map(Path::to_path_buf)
 }
 
 fn with_store<T>(f: impl FnOnce(&mut Store, &dyn Os) -> T) -> T {

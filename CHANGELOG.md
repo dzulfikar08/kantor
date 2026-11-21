@@ -9,6 +9,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- A Mac App Store build of Kantor (`scripts/build-mas.sh`, cargo feature `app-store`; see
+  docs/app-store.md). It runs in Apple's App Sandbox: it remembers the files and folders you
+  choose so your last session, Recent files, Batch folders, mail-merge data sources and
+  certificate files open again later, and asks with "Grant File Access" when it needs a file
+  it can't use yet. It is updated by the App Store, signs with smart cards through the
+  keychain instead of token modules, and leaves out the command-line file tools (`kantor mcp`
+  works). The download from kantor.paparanai.id is unchanged.
+
 ## [0.21.1] - 2026-11-21
 
 Mail merge now matches Word's own output for Address Block formats with a country switch (the name gets its own
