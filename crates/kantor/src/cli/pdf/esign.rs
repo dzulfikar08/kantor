@@ -858,8 +858,48 @@ mod tests {
             "--allow-network",
         ]))
         .unwrap_err();
-        assert!(e.message.contains("remove the password"), "{}", e.message);
+        assert!(e.message.contains("--unprotected-copy"), "{}", e.message);
         assert_eq!(vs.calls("/api/v1/emeterai/upload").len(), uploads);
+        // An unprotected copy: refused without the owner password (nothing
+        // sent), stamped with it; the result has no password.
+        let copy = tmp.path().join("copy.pdf");
+        let stamp_copy = |pw: &str| {
+            run(&s(&[
+                "emeterai",
+                locked.to_str().unwrap(),
+                "-o",
+                copy.to_str().unwrap(),
+                "--provider",
+                "vida",
+                "--doc-type",
+                "VD010",
+                "--credentials-file",
+                vc.to_str().unwrap(),
+                "--server",
+                &vs.url,
+                "--allow-network",
+                "--unprotected-copy",
+                "--password",
+                pw,
+            ]))
+        };
+        let e = stamp_copy("wrong").unwrap_err();
+        assert!(e.message.contains("owner"), "{}", e.message);
+        assert_eq!(vs.calls("/api/v1/emeterai/upload").len(), uploads);
+        let msg = stamp_copy("owner4").unwrap();
+        assert!(msg.contains("unprotected copy"), "{msg}");
+        assert_eq!(vs.calls("/api/v1/emeterai/upload").len(), uploads + 1);
+        assert!(!kantor_esign::emeterai::is_protected(
+            &std::fs::read(&copy).unwrap()
+        ));
+        let (text, _) = verify(&s(&[
+            copy.to_str().unwrap(),
+            "--trust",
+            &fixture("root.pem"),
+            "--no-system-roots",
+        ]));
+        assert!(text.contains("Mock e-Meterai Stamp"), "{text}");
+        assert!(!text.contains("altered"), "{text}");
         let signed_locked = tmp.path().join("signed-locked.pdf");
         run(&s(&[
             "sign",
