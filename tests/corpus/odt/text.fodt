@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<office:document xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
+ xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
+ xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+ xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0"
+ xmlns:fo="urn:oasis:names:tc:opendocument:xmlns:xsl-fo-compatible:1.0"
+ xmlns:xlink="http://www.w3.org/1999/xlink"
+ xmlns:dc="http://purl.org/dc/elements/1.1/"
+ xmlns:meta="urn:oasis:names:tc:opendocument:xmlns:meta:1.0"
+ xmlns:svg="urn:oasis:names:tc:opendocument:xmlns:svg-compatible:1.0"
+ xmlns:loext="urn:org:documentfoundation:names:experimental:office:xmlns:loext:1.0"
+ office:version="1.3" office:mimetype="application/vnd.oasis.opendocument.text">
+<office:meta></office:meta>
+<office:font-face-decls>
+ <style:font-face style:name="Liberation Serif" svg:font-family="'Liberation Serif'" style:font-family-generic="roman"/>
+ <style:font-face style:name="Liberation Sans" svg:font-family="'Liberation Sans'" style:font-family-generic="swiss"/>
+ <style:font-face style:name="Courier New" svg:font-family="'Courier New'" style:font-family-generic="modern"/>
+</office:font-face-decls>
+<office:styles><style:default-style style:family="paragraph">
+  <style:paragraph-properties style:tab-stop-distance="1.25cm"/>
+  <style:text-properties style:font-name="Liberation Serif" fo:font-size="12pt" fo:language="en" fo:country="US"/>
+ </style:default-style>
+ <style:style style:name="Standard" style:family="paragraph" style:class="text"/>
+ <style:style style:name="Heading" style:family="paragraph" style:parent-style-name="Standard" style:next-style-name="Text_20_body">
+  <style:paragraph-properties fo:margin-top="0.423cm" fo:margin-bottom="0.212cm" fo:keep-with-next="always"/>
+  <style:text-properties style:font-name="Liberation Sans" fo:font-size="14pt"/>
+ </style:style>
+ <style:style style:name="Heading_20_1" style:display-name="Heading 1" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="1">
+  <style:text-properties fo:font-size="130%" fo:font-weight="bold"/>
+ </style:style>
+ <style:style style:name="Heading_20_2" style:display-name="Heading 2" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="2">
+  <style:text-properties fo:font-size="115%" fo:font-weight="bold"/>
+ </style:style>
+ <style:style style:name="Heading_20_3" style:display-name="Heading 3" style:family="paragraph" style:parent-style-name="Heading" style:default-outline-level="3">
+  <style:text-properties fo:font-size="101%" fo:font-weight="bold"/>
+ </style:style>
+ <style:style style:name="Text_20_body" style:display-name="Text body" style:family="paragraph" style:parent-style-name="Standard">
+  <style:paragraph-properties fo:margin-top="0cm" fo:margin-bottom="0.247cm" fo:line-height="115%"/>
+ </style:style>
+ <style:style style:name="Note_20_box" style:display-name="Note box" style:family="paragraph" style:parent-style-name="Text_20_body">
+  <style:paragraph-properties fo:margin-left="1cm" fo:background-color="#eeeeee" fo:border="0.5pt solid #808080" fo:padding="0.1cm"/>
+  <style:text-properties fo:font-style="italic" fo:color="#333333"/>
+ </style:style>
+ <style:style style:name="Header" style:family="paragraph" style:parent-style-name="Standard"/>
+ <style:style style:name="Footer" style:family="paragraph" style:parent-style-name="Standard"/>
+ <style:style style:name="Footnote" style:family="paragraph" style:parent-style-name="Standard">
+  <style:text-properties fo:font-size="10pt"/>
+ </style:style>
+ <style:style style:name="Table_20_Contents" style:display-name="Table Contents" style:family="paragraph" style:parent-style-name="Standard"/>
+ <style:style style:name="Internet_20_link" style:display-name="Internet link" style:family="text">
+  <style:text-properties fo:color="#000080" style:text-underline-style="solid" style:text-underline-width="auto" style:text-underline-color="font-color"/>
+ </style:style>
+ <style:style style:name="Strong_20_Emphasis" style:display-name="Strong Emphasis" style:family="text">
+  <style:text-properties fo:font-weight="bold"/>
+ </style:style>
+ <style:style style:name="Code" style:family="text">
+  <style:text-properties style:font-name="Courier New" fo:color="#006400"/>
+ </style:style></office:styles>
+<office:automatic-styles><style:page-layout style:name="pm1">
+  <style:page-layout-properties fo:page-width="21cm" fo:page-height="29.7cm" style:print-orientation="portrait"
+   fo:margin-top="2cm" fo:margin-bottom="2cm" fo:margin-left="2cm" fo:margin-right="2cm"/>
+ </style:page-layout><style:style style:name="P1" style:family="paragraph" style:parent-style-name="Standard">
+  <style:paragraph-properties fo:text-align="center"/></style:style>
+ <style:style style:name="P2" style:family="paragraph" style:parent-style-name="Standard">
+  <style:paragraph-properties fo:text-align="end"/></style:style>
+ <style:style style:name="P3" style:family="paragraph" style:parent-style-name="Standard">
+  <style:paragraph-properties fo:text-align="justify" fo:margin-left="2cm" fo:margin-right="1cm" fo:text-indent="0.5cm"
+   fo:margin-top="12pt" fo:margin-bottom="6pt" fo:line-height="150%"/></style:style>
+ <style:style style:name="P4" style:family="paragraph" style:parent-style-name="Standard">
+  <style:paragraph-properties fo:margin-left="1cm">
+   <style:tab-stops>
+    <style:tab-stop style:position="5cm"/>
+    <style:tab-stop style:position="10cm" style:type="right" style:leader-style="dotted" style:leader-text="."/>
+   </style:tab-stops>
+  </style:paragraph-properties></style:style>
+ <style:style style:name="P5" style:family="paragraph" style:parent-style-name="Standard">
+  <style:paragraph-properties fo:break-before="page"/></style:style>
+ <style:style style:name="P6" style:family="paragraph" style:parent-style-name="Standard">
+  <style:text-properties fo:font-size="9pt" fo:color="#0000ff"/></style:style>
+ <style:style style:name="T1" style:family="text"><style:text-properties fo:font-weight="bold"/></style:style>
+ <style:style style:name="T2" style:family="text"><style:text-properties fo:font-style="italic"/></style:style>
+ <style:style style:name="T3" style:family="text"><style:text-properties style:text-underline-style="solid" style:text-underline-width="auto"/></style:style>
+ <style:style style:name="T4" style:family="text"><style:text-properties style:text-underline-style="solid" style:text-underline-type="double"/></style:style>
+ <style:style style:name="T5" style:family="text"><style:text-properties style:text-line-through-style="solid"/></style:style>
+ <style:style style:name="T6" style:family="text"><style:text-properties fo:font-size="18pt" fo:color="#c00000"/></style:style>
+ <style:style style:name="T7" style:family="text"><style:text-properties style:font-name="Courier New"/></style:style>
+ <style:style style:name="T8" style:family="text"><style:text-properties fo:background-color="#ffff00"/></style:style>
+ <style:style style:name="T9" style:family="text"><style:text-properties style:text-position="super 58%"/></style:style>
+ <style:style style:name="T10" style:family="text"><style:text-properties style:text-position="sub 58%"/></style:style>
+ <style:style style:name="T11" style:family="text"><style:text-properties fo:font-variant="small-caps" fo:letter-spacing="0.1cm"/></style:style>
+ <style:style style:name="T12" style:family="text"><style:text-properties fo:background-color="#ccffcc"/></style:style></office:automatic-styles>
+<office:master-styles><style:master-page style:name="Standard" style:page-layout-name="pm1"/></office:master-styles>
+<office:body><office:text><text:h text:style-name="Heading_20_1" text:outline-level="1">Laporan Kantor</text:h>
+<text:h text:style-name="Heading_20_2" text:outline-level="2">Ringkasan</text:h>
+<text:h text:style-name="Heading_20_3" text:outline-level="3">Detail</text:h>
+<text:p text:style-name="Standard">Plain, <text:span text:style-name="T1">bold</text:span>, <text:span text:style-name="T2">italic</text:span>, <text:span text:style-name="T3">underlined</text:span>, <text:span text:style-name="T4">double</text:span>, <text:span text:style-name="T5">struck</text:span>, <text:span text:style-name="T6">big red</text:span>, <text:span text:style-name="T7">Courier New</text:span>, <text:span text:style-name="T8">highlighted</text:span>, <text:span text:style-name="T12">shaded</text:span>, E=mc<text:span text:style-name="T9">2</text:span>, H<text:span text:style-name="T10">2</text:span>O, <text:span text:style-name="T11">small caps</text:span>, <text:span text:style-name="Code">code style</text:span>, <text:span text:style-name="Strong_20_Emphasis">strong <text:span text:style-name="T2">and italic</text:span></text:span>.</text:p>
+<text:p text:style-name="P1">Centred paragraph.</text:p>
+<text:p text:style-name="P2">Right aligned paragraph.</text:p>
+<text:p text:style-name="P3">Justified and indented paragraph with space before and after and one and a half line spacing, long enough to wrap onto a second line on an A4 page.</text:p>
+<text:p text:style-name="P4">Name:<text:tab/>Kantor<text:tab/>12<text:line-break/>Second   line with<text:s text:c="3"/>spaces.</text:p>
+<text:p text:style-name="Text_20_body">Body text paragraph.</text:p>
+<text:p text:style-name="Note_20_box">A note box: a custom style based on Text Body.</text:p>
+<text:p text:style-name="P6">Small blue paragraph.</text:p>
+<text:p text:style-name="Standard">Bahasa Indonesia: Selamat pagi, apa kabar? Rp 1.250.000,00</text:p>
+<text:p text:style-name="Standard">CJK: 你好世界 こんにちは 안녕하세요</text:p>
+<text:p text:style-name="Standard">Emoji: 😀 👍🏽 ✓</text:p>
+<text:p text:style-name="Standard">Visit <text:a xlink:type="simple" xlink:href="https://kantor.paparanai.id/" text:style-name="Internet_20_link">the Kantor site</text:a> or go to <text:a xlink:type="simple" xlink:href="#target">the target</text:a>.</text:p>
+<text:p text:style-name="P5"><text:bookmark text:name="target"/>After a page break.</text:p></office:text></office:body>
+</office:document>

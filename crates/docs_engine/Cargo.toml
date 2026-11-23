@@ -16,6 +16,8 @@ docx-rs = { version = "0.4.22", default-features = false }
 # Same versions docx-rs uses, for the package scan (no duplicate crates).
 zip.workspace = true
 quick-xml = "0.41"
+# Reading OpenDocument text (.odt) imports.
+roxmltree.workspace = true
 unicode-segmentation = "1"
 log.workspace = true
 # Field dates (DATE, CREATEDATE…); the clock is read by the caller.
