@@ -28,7 +28,8 @@ impl Hash {
         })
     }
 
-    pub fn len(self) -> usize {
+    /// The digest's size in bytes.
+    pub fn size(self) -> usize {
         match self {
             Hash::Sha1 => 20,
             Hash::Sha256 => 32,
@@ -119,12 +120,12 @@ impl Aes {
 
     /// CBC decryption in place (`data` a whole number of blocks).
     pub fn cbc_decrypt(&self, iv: &[u8], data: &mut [u8]) -> Result<(), Error> {
-        if iv.len() != 16 || data.len() % 16 != 0 {
+        if iv.len() != 16 || !data.len().is_multiple_of(16) {
             return Err(damaged("AES-CBC block size"));
         }
         let mut prev = [0u8; 16];
         prev.copy_from_slice(iv);
-        for chunk in data.chunks_exact_mut(16) {
+        for chunk in data.as_chunks_mut::<16>().0 {
             let mut c = [0u8; 16];
             c.copy_from_slice(chunk);
             self.dec(chunk);
@@ -138,10 +139,10 @@ impl Aes {
 
     /// CBC encryption in place (`data` a whole number of blocks).
     pub fn cbc_encrypt(&self, iv: &[u8], data: &mut [u8]) {
-        debug_assert!(iv.len() == 16 && data.len() % 16 == 0);
+        debug_assert!(iv.len() == 16 && data.len().is_multiple_of(16));
         let mut prev = [0u8; 16];
         prev.copy_from_slice(&iv[..16]);
-        for chunk in data.chunks_exact_mut(16) {
+        for chunk in data.as_chunks_mut::<16>().0 {
             for (x, p) in chunk.iter_mut().zip(prev) {
                 *x ^= p;
             }
@@ -152,10 +153,10 @@ impl Aes {
 
     /// ECB decryption in place (`data` a whole number of blocks).
     pub fn ecb_decrypt(&self, data: &mut [u8]) -> Result<(), Error> {
-        if data.len() % 16 != 0 {
+        if !data.len().is_multiple_of(16) {
             return Err(damaged("AES-ECB block size"));
         }
-        for chunk in data.chunks_exact_mut(16) {
+        for chunk in data.as_chunks_mut::<16>().0 {
             self.dec(chunk);
         }
         Ok(())

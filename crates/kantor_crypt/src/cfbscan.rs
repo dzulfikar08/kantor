@@ -108,15 +108,17 @@ fn scan<R: Read + Seek>(r: &mut R) -> Option<bool> {
             break;
         }
         cfb.sector(sect, &mut buf)?;
-        for e in buf.chunks_exact(128) {
+        for e in buf.as_chunks::<128>().0 {
             let len = usize::from(u16::from_le_bytes([e[64], e[65]]));
             // Streams only (type 2); names are UTF-16LE with a terminator.
             if e[66] != 2 || !(2..=64).contains(&len) {
                 continue;
             }
             let name: Vec<u16> = e[..len - 2]
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes(*c))
                 .collect();
             let name = String::from_utf16_lossy(&name);
             info |= name == "EncryptionInfo";

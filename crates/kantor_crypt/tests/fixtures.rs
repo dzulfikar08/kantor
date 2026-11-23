@@ -31,10 +31,10 @@ fn entry(zip: &[u8], name: &str) -> String {
 
 const OOXML: [(&str, &str); 8] = [
     ("agile.docx", "word/document.xml"),
-    ("agile.xlsx", "xl/sharedStrings.xml"),
+    ("agile.xlsx", "xl/worksheets/sheet1.xml"),
     ("agile.pptx", "ppt/slides/slide1.xml"),
     ("standard.docx", "word/document.xml"),
-    ("standard.xlsx", "xl/sharedStrings.xml"),
+    ("standard.xlsx", "xl/worksheets/sheet1.xml"),
     ("lo.docx", "word/document.xml"),
     ("lo.xlsx", "xl/sharedStrings.xml"),
     ("lo.pptx", "ppt/slides/slide1.xml"),

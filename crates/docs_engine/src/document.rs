@@ -751,6 +751,7 @@ impl Document {
             field_codes: None,
             mail_merge: self.mail_merge.clone(),
             merge_view: None,
+            password: self.password.clone(),
         }
     }
 

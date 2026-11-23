@@ -202,7 +202,7 @@ impl Enc {
         match self.algorithm {
             Algorithm::BlowfishCfb => prim::blowfish_cfb_decrypt(key, &self.iv, &mut d)?,
             Algorithm::AesCbc => {
-                if d.len() % 16 != 0 {
+                if !d.len().is_multiple_of(16) {
                     return Err(damaged(format!("{}: not whole AES blocks", self.path)));
                 }
                 Aes::new(key)?.cbc_decrypt(&self.iv, &mut d)?;

@@ -242,7 +242,7 @@ impl Agile {
 
     fn decrypt_with(&self, key: &[u8], data: &[u8]) -> Result<Vec<u8>, Error> {
         let mut out = data.to_vec();
-        if out.len() % 16 != 0 {
+        if !out.len().is_multiple_of(16) {
             return Err(damaged("encrypted key size"));
         }
         // The IV is the encryptor's salt (MS-OFFCRYPTO 2.3.4.11).
@@ -278,7 +278,7 @@ impl Agile {
             return Ok(());
         };
         let aes = Aes::new(key)?;
-        let n = self.key_data.hash.len();
+        let n = self.key_data.hash.size();
         let mut hk = ek.clone();
         aes.cbc_decrypt(&self.key_data.iv(&BLK_HMAC_KEY), &mut hk)?;
         let mut hv = ev.clone();
@@ -385,7 +385,9 @@ impl Standard {
     /// verifier.
     fn key(&self, password: &str) -> Result<Vec<u8>, Error> {
         let h = spin_hash(Hash::Sha1, &self.salt, password, 50_000);
-        let hfinal = prim::sha1(&[&h[..], &0u32.to_le_bytes()].concat());
+        let mut hfinal_in = h.clone();
+        hfinal_in.extend(0u32.to_le_bytes());
+        let hfinal = prim::sha1(&hfinal_in);
         let derive = |pad: u8| {
             let mut buf = [pad; 64];
             for (b, x) in buf.iter_mut().zip(&hfinal) {
@@ -427,7 +429,7 @@ fn lp_p4(s: &str) -> Vec<u8> {
     let u = prim::utf16le(s);
     let mut v = (u.len() as u32).to_le_bytes().to_vec();
     v.extend(&u);
-    while v.len() % 4 != 0 {
+    while !v.len().is_multiple_of(4) {
         v.push(0);
     }
     v
@@ -485,7 +487,7 @@ fn data_spaces() -> Vec<(&'static str, Vec<u8>)> {
 }
 
 fn pad16(mut v: Vec<u8>) -> Vec<u8> {
-    while v.len() % 16 != 0 {
+    while !v.len().is_multiple_of(16) {
         v.push(0);
     }
     v
@@ -516,7 +518,7 @@ pub fn encrypt(zip: &[u8], password: &str, spin: u32) -> Result<Vec<u8>, Error> 
     }
 
     // Data integrity: an HMAC of the encrypted package.
-    let hmac_key = prim::random(hash.len());
+    let hmac_key = prim::random(hash.size());
     let hmac_value = hash.hmac(&hmac_key, &package);
     let mut enc_hmac_key = hmac_key;
     aes.cbc_encrypt(&key_data.iv(&BLK_HMAC_KEY), &mut enc_hmac_key);
