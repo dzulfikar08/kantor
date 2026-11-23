@@ -26,6 +26,8 @@ gpui-kit.workspace = true
 kantor_ai.workspace = true
 kantor_cloud.workspace = true
 kantor_core.workspace = true
+# Password-protected Office files (kantor convert --password).
+kantor_crypt.workspace = true
 # `kantor pdf emeterai` / `sign --provider` / `providers`.
 kantor_esign.workspace = true
 kantor_merge.workspace = true

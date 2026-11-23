@@ -358,6 +358,9 @@ pub struct Workbook {
     cf_x14: cf_x14::CfX14,
     /// The user's custom lists (Kantor's settings), for fills.
     custom_lists: Vec<Vec<String>>,
+    /// The password the file was opened with: `.xlsx` saves are encrypted
+    /// with it (see `kantor_crypt`).
+    password: Option<String>,
 }
 
 /// See [`Workbook::cached`].
@@ -689,6 +692,7 @@ impl Workbook {
             note_extras: Default::default(),
             cf_x14: Default::default(),
             custom_lists: Vec::new(),
+            password: None,
         })
     }
 
@@ -696,8 +700,79 @@ impl Workbook {
     /// (delimiter detected for `.csv`), or a read-only import of
     /// `.ods`/`.xls`/`.xlsb`. The workbook starts clean with no undo history.
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        lazy_conditional_formatting();
+        Self::open_with_password(path, None)
+    }
+
+    /// [`Self::open`] for a password-protected file: `password` decrypts it
+    /// (an encrypted `.xlsx`/`.xlsm`/`.xlsb` or `.ods`), and the workbook
+    /// keeps it so `.xlsx` saves are encrypted again. A protected file opened
+    /// with no password fails with [`kantor_crypt::Error::PasswordNeeded`],
+    /// a wrong password with [`kantor_crypt::Error::WrongPassword`] (both
+    /// reachable with `err.downcast_ref::<kantor_crypt::Error>()`). An
+    /// `.xlsx` encrypted with Excel's default password opens without one.
+    pub fn open_with_password(path: impl AsRef<Path>, password: Option<&str>) -> Result<Self> {
         let path = path.as_ref();
+        let Some(kind) = kantor_crypt::file_protection(path) else {
+            return Self::open_file(path, None);
+        };
+        let bytes = fs::read(path).with_context(|| format!("opening {}", path.display()))?;
+        let unlocked = kantor_crypt::unlock(bytes, password)
+            .map_err(|e| anyhow::Error::new(e).context(format!("opening {}", path.display())))?;
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let mut book = if kind == kantor_crypt::Protection::Ooxml
+            && SourceFormat::from_extension(&ext) == Some(SourceFormat::Xlsx)
+        {
+            // Read from memory: the plain package never touches the disk.
+            Self::open_file(path, Some(unlocked.bytes))?
+        } else {
+            // The importers (.ods, .xlsb) read files: a private temporary
+            // copy, removed as soon as it's read.
+            let suffix = match kind {
+                kantor_crypt::Protection::Odf => ".ods".to_owned(),
+                kantor_crypt::Protection::Ooxml => format!(".{ext}"),
+            };
+            let mut tmp = tempfile::Builder::new()
+                .prefix("kantor-")
+                .suffix(&suffix)
+                .tempfile()
+                .context("making a temporary copy")?;
+            std::io::Write::write_all(&mut tmp, &unlocked.bytes)
+                .and_then(|()| std::io::Write::flush(&mut tmp))
+                .context("making a temporary copy")?;
+            let mut book = Self::open_file(tmp.path(), None)?;
+            drop(tmp);
+            book.origin.path = Some(path.to_path_buf());
+            if book.path.is_some() {
+                book.path = Some(path.to_path_buf());
+            }
+            book
+        };
+        if unlocked.protected {
+            book.password = password.map(str::to_owned);
+        }
+        Ok(book)
+    }
+
+    /// The password `.xlsx` saves are encrypted with (the one the file was
+    /// opened with), if any.
+    pub fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+
+    /// Encrypt `.xlsx` saves with `password` from now on (`None`: save
+    /// unencrypted).
+    pub fn set_password(&mut self, password: Option<String>) {
+        self.password = password.filter(|p| !p.is_empty());
+    }
+
+    /// Open `path`, or with `plain` the decrypted package of the `.xlsx` at
+    /// `path`.
+    fn open_file(path: &Path, plain: Option<Vec<u8>>) -> Result<Self> {
+        lazy_conditional_formatting();
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -714,8 +789,9 @@ impl Workbook {
         // the cells, which took ~0.9 s of a 90k-row file's open.
         // A Strict Open XML package is read (and later saved) as the
         // Transitional package it maps to.
-        let strict = match format {
-            SourceFormat::Xlsx => no_panic(path, || strict_as_transitional(path))?,
+        let strict = match (format, plain) {
+            (SourceFormat::Xlsx, Some(plain)) => Some(no_panic(path, || transitional(plain))?),
+            (SourceFormat::Xlsx, None) => no_panic(path, || strict_as_transitional(path))?,
             _ => None,
         };
         let extras = (format == SourceFormat::Xlsx).then(|| {
@@ -906,6 +982,7 @@ impl Workbook {
             note_extras,
             cf_x14,
             custom_lists: Vec::new(),
+            password: None,
         };
         book.apply_read_panes(&panes);
         book.set_saved_pictures(pictures);
@@ -2027,6 +2104,20 @@ fn strict_as_transitional(path: &Path) -> Result<Option<Vec<u8>>> {
         Ok(Some(bytes))
     };
     read().with_context(|| format!("opening {}", path.display()))
+}
+
+/// A decrypted package as [`strict_as_transitional`] would give it: always
+/// the bytes (there is no file to read them from).
+fn transitional(mut bytes: Vec<u8>) -> Result<Vec<u8>> {
+    let strict = kantor_ooxml::is_strict_package(Cursor::new(&bytes[..]));
+    let layout = kantor_ooxml::needs_spreadsheet_layout(Cursor::new(&bytes[..]));
+    if strict {
+        bytes = kantor_ooxml::to_transitional(&bytes)?;
+    }
+    if layout && let Some(moved) = kantor_ooxml::spreadsheet_layout(&bytes)? {
+        bytes = moved;
+    }
+    Ok(bytes)
 }
 
 /// Run a file reader, turning a panic in it (a parser that didn't expect

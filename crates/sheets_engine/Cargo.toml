@@ -10,6 +10,10 @@ repository.workspace = true
 # Saving inside the App Sandbox (kantor_core::fsx).
 kantor_core.workspace = true
 anyhow.workspace = true
+# Password-protected .xlsx and .ods files.
+kantor_crypt.workspace = true
+# A private temporary copy of a decrypted .ods/.xlsb for the importers.
+tempfile.workspace = true
 ironcalc.workspace = true
 ironcalc_base.workspace = true
 kantor_numfmt.workspace = true

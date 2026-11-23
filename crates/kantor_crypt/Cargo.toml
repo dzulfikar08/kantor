@@ -1,0 +1,33 @@
+[package]
+name = "kantor_crypt"
+description = "Password-protected Office files: MS-OFFCRYPTO (Agile, Standard) for .docx/.xlsx/.pptx and OpenDocument encryption, read and (OOXML Agile) write"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# RustCrypto (MIT/Apache, pure Rust), the cipher 0.5 / digest 0.11 family
+# already in the tree through lopdf and secret-service.
+aes = "0.9"
+aes-gcm = { version = "0.11", default-features = false, features = ["aes", "alloc"] }
+argon2 = { version = "0.6", default-features = false, features = ["alloc"] }
+blowfish = "0.10"
+hmac = "0.13"
+pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
+sha1 = "0.11"
+sha2 = "0.11"
+# Compound files (the container of encrypted .docx/.xlsx/.pptx).
+cfb.workspace = true
+zip.workspace = true
+flate2 = "1"
+roxmltree.workspace = true
+base64.workspace = true
+# Random salts and keys.
+ring.workspace = true
+
+[dev-dependencies]
