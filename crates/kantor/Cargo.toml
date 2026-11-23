@@ -33,8 +33,6 @@ kantor_esign.workspace = true
 kantor_merge.workspace = true
 # File access in the App Sandbox (store build; no-ops elsewhere).
 kantor_sandbox.workspace = true
-# Password-protected Office files (MCP open_document checks the password).
-kantor_crypt.workspace = true
 kantor_pdf.workspace = true
 kantor_theme.workspace = true
 kantor_ui.workspace = true

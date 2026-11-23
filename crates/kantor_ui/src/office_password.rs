@@ -44,14 +44,20 @@ pub fn take(path: &Path) -> Option<String> {
 
 /// Whether a password is waiting for `path`.
 pub fn known(path: &Path) -> bool {
-    KNOWN
-        .lock()
-        .is_ok_and(|k| k.iter().any(|(p, _)| p == path))
+    KNOWN.lock().is_ok_and(|k| k.iter().any(|(p, _)| p == path))
 }
 
-/// Whether `path` is a password-protected Office or OpenDocument file.
+/// Whether `path` is a password-protected Office or OpenDocument file that
+/// needs the user's password (a workbook protected with Excel's default
+/// password, "read-only recommended", opens without asking, as in Excel).
 pub fn is_protected(path: &Path) -> bool {
-    kantor_crypt::file_protection(path).is_some()
+    match kantor_crypt::file_protection(path) {
+        None => false,
+        Some(kantor_crypt::Protection::Odf) => true,
+        Some(kantor_crypt::Protection::Ooxml) => std::fs::read(path).map_or(true, |bytes| {
+            kantor_crypt::check_password(&bytes, kantor_crypt::DEFAULT_EXCEL_PASSWORD).is_err()
+        }),
+    }
 }
 
 /// The answer: the checked password, `None` if the user cancelled.
