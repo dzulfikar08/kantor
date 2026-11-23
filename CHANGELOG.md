@@ -9,6 +9,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-11-23
+
+Kantor opens OpenDocument text and presentations from LibreOffice, OpenOffice and Google Docs/Slides, and can be
+built for the Mac App Store (not on the store yet).
+
 ### Added
 
 - Docs opens OpenDocument text (`.odt`, `.ott`, `.fodt`) and Slides opens OpenDocument
@@ -2336,7 +2341,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.21.1...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/dzulfikar08/kantor/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/dzulfikar08/kantor/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/dzulfikar08/kantor/compare/v0.20.0...v0.21.0
 [0.20.0]: https://github.com/dzulfikar08/kantor/compare/v0.19.0...v0.20.0
