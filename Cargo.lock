@@ -4395,6 +4395,7 @@ dependencies = [
  "gpui-pre-macos",
  "gpui-pre-wgpu",
  "kantor_core",
+ "kantor_crypt",
  "kantor_metafile",
  "kantor_numfmt",
  "kantor_sandbox",
