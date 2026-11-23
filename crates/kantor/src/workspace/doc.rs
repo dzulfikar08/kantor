@@ -183,6 +183,17 @@ impl DocView {
         both!(self, cx, |v| v.revision(cx))
     }
 
+    /// Opened with a password (Docs, Sheets, Slides; a protected PDF keeps
+    /// its own): no recovery copies, which would be unprotected.
+    pub fn has_password(&self, cx: &App) -> bool {
+        match self {
+            Self::Sheets(e) => e.read(cx).has_password(cx),
+            Self::Docs(e) => e.read(cx).has_password(cx),
+            Self::Slides(e) => e.read(cx).has_password(cx),
+            Self::Pdf(_) => false,
+        }
+    }
+
     /// The document's state for a recovery copy (`None` while busy).
     pub fn recovery_snapshot(&self, cx: &App) -> Option<(Snapshot, SnapshotInfo)> {
         match self {

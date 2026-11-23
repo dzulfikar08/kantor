@@ -596,7 +596,12 @@ fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
 
 impl DocsView {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (doc, status) = match path.as_deref().map(Document::open) {
+        // A protected file's password, checked by the workspace before this
+        // tab opened (kantor_ui::office_password).
+        let open = |p: &std::path::Path| {
+            Document::open_with_password(p, kantor_ui::office_password::take(p).as_deref())
+        };
+        let (doc, status) = match path.as_deref().map(open) {
             Some(Ok(doc)) => {
                 let s = opened_status(&doc);
                 (doc, s)
@@ -1271,6 +1276,16 @@ impl DocsView {
             Some(s) => s.main.is_dirty() || s.main.part_changed(&s.edit, &self.doc),
             None => self.doc.is_dirty(),
         }
+    }
+
+    /// The document was opened with a password (and saves protected): it
+    /// gets no recovery copies, which would be unprotected.
+    pub fn has_password(&self, _: &App) -> bool {
+        self.part
+            .as_ref()
+            .map_or(&self.doc, |s| &s.main)
+            .password()
+            .is_some()
     }
 
     /// Changes with every edit, undo and redo.

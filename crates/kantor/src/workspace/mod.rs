@@ -411,6 +411,23 @@ impl Workspace {
             );
             return;
         }
+        // A password-protected Office or OpenDocument file: ask for its
+        // password first; the new view takes it (kantor_ui::office_password).
+        if let Some(path) = &file
+            && matches!(app, AppKind::Docs | AppKind::Sheets | AppKind::Slides)
+            && !kantor_ui::office_password::known(path)
+            && kantor_ui::office_password::is_protected(path)
+        {
+            let ws = cx.entity().downgrade();
+            let path = path.clone();
+            kantor_ui::office_password::ask(path.clone(), window, cx, move |pw, window, cx| {
+                if let Some(pw) = pw {
+                    kantor_ui::office_password::remember(&path, pw);
+                    let _ = ws.update(cx, |ws, cx| ws.launch(app, Some(path), window, cx));
+                }
+            });
+            return;
+        }
         let Some(pane) = self.new_doc(app, file, window, cx) else {
             self.not_yet(app, cx);
             return;

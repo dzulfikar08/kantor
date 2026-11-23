@@ -417,7 +417,12 @@ fn cm(emu: i64) -> String {
 
 impl SlidesView {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let (pres, status) = match path.as_deref().map(Presentation::open) {
+        // A protected file's password, checked by the workspace before this
+        // tab opened (kantor_ui::office_password).
+        let open = |p: &std::path::Path| {
+            Presentation::open_with_password(p, kantor_ui::office_password::take(p).as_deref())
+        };
+        let (pres, status) = match path.as_deref().map(open) {
             Some(Ok(p)) => {
                 let s = if p.is_imported() {
                     let mut s = tf(
@@ -1719,6 +1724,12 @@ impl SlidesView {
     /// Changes with every edit, undo and redo.
     pub fn revision(&self, _: &App) -> Option<u64> {
         Some(self.pres.revision())
+    }
+
+    /// The presentation was opened with a password (and saves protected):
+    /// it gets no recovery copies, which would be unprotected.
+    pub fn has_password(&self, _: &App) -> bool {
+        self.pres.password().is_some()
     }
 
     /// The presentation as Save would write it (for a recovery copy), and
