@@ -566,7 +566,10 @@ encryptedVerifierHashValue=\"{}\" encryptedKeyValue=\"{}\"/>\
     info.extend(xml.as_bytes());
 
     let io = |e: std::io::Error| damaged(format!("writing the compound file: {e}"));
-    let mut c = cfb::CompoundFile::create(Cursor::new(Vec::new())).map_err(io)?;
+    // Version 3 (512-byte sectors), as Office writes it: LibreOffice can't open
+    // encrypted packages in version 4 compound files.
+    let mut c = cfb::CompoundFile::create_with_version(cfb::Version::V3, Cursor::new(Vec::new()))
+        .map_err(io)?;
     for storage in [
         "/\u{6}DataSpaces",
         "/\u{6}DataSpaces/DataSpaceInfo",
@@ -614,6 +617,8 @@ mod tests {
         // A low spin count keeps the test fast; the format is the same.
         let enc = encrypt(&zip, "kantor", 1000).unwrap();
         assert_eq!(crate::protection(&enc), Some(crate::Protection::Ooxml));
+        // A version 3 compound file, as Office writes (LibreOffice needs it).
+        assert_eq!(&enc[0x1A..0x1C], &[3, 0]);
         assert_eq!(decrypt(&enc, "kantor").unwrap(), zip);
         assert_eq!(decrypt(&enc, "Kantor"), Err(Error::WrongPassword));
         assert_eq!(check(&enc, "kantor"), Ok(()));
