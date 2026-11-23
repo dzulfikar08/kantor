@@ -2,9 +2,9 @@
 //!
 //! ```text
 //! kantor convert report.docx report.pdf
-//! kantor convert letter.rtf letter.docx   (also .doc / .dot)
+//! kantor convert letter.rtf letter.docx   (also .doc / .dot / .odt / .ott)
 //! kantor convert deck.pptx deck.pdf
-//! kantor convert old.ppt old.pptx
+//! kantor convert old.ppt old.pptx       (also .pps / .pot / .odp / .otp)
 //! kantor convert --fit-width --landscape book.xlsx book.pdf
 //! kantor convert budget.ods budget.xlsx
 //! kantor convert --sheet Summary book.xlsx summary.csv
@@ -24,10 +24,10 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \n\
     Supported conversions:\n\
     \x20 .docx                                      -> .pdf\n\
-    \x20 .rtf .doc .dot (Word 97-2003)              -> .docx .pdf\n\
-    \x20 .pptx .ppt .pps .pot                       -> .pdf (one page per slide,\n\
+    \x20 .rtf .doc .dot (Word 97-2003) .odt .ott    -> .docx .pdf\n\
+    \x20 .pptx .ppt .pps .pot .odp .otp             -> .pdf (one page per slide,\n\
     \x20                                               hidden slides left out)\n\
-    \x20 .ppt .pps .pot                             -> .pptx\n\
+    \x20 .ppt .pps .pot .odp .otp                   -> .pptx\n\
     \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .xlsx .csv .tsv\n\
     \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .pdf (printed as Excel prints:\n\
     \x20                                               every visible sheet and chart\n\
@@ -104,15 +104,15 @@ const SHEET_INPUTS: &[&str] = &[
     "xlsx", "xlsm", "xls", "xla", "xlt", "xlsb", "ods", "csv", "tsv", "tab",
 ];
 const SHEET_OUTPUTS: &[&str] = &["xlsx", "csv", "tsv"];
-const SLIDES_INPUTS: &[&str] = &["pptx", "ppt", "pps", "pot"];
+const SLIDES_INPUTS: &[&str] = &["pptx", "ppt", "pps", "pot", "odp", "otp"];
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Kind {
     DocxToPdf,
-    /// An imported document (.rtf, .doc, .dot) written as .docx.
+    /// An imported document (.rtf, .doc, .dot, .odt, .ott) written as .docx.
     DocsToDocx,
     PptxToPdf,
-    /// PowerPoint 97-2003 to `.pptx`.
+    /// PowerPoint 97-2003 or OpenDocument to `.pptx`.
     PptToPptx,
     SheetsToPdf,
     Sheets,
@@ -131,7 +131,7 @@ fn kind(input: &Path, output: &Path) -> Result<Kind, Usage> {
     if i == "docx" && o == "pdf" {
         return Ok(Kind::DocxToPdf);
     }
-    if matches!(i.as_str(), "rtf" | "doc" | "dot") {
+    if matches!(i.as_str(), "rtf" | "doc" | "dot" | "odt" | "ott") {
         match o.as_str() {
             "pdf" => return Ok(Kind::DocxToPdf),
             "docx" => return Ok(Kind::DocsToDocx),
@@ -660,7 +660,7 @@ mod tests {
             Kind::PptxToPdf
         );
         assert!(err(&["a.pptx", "a.png"]).contains(".pptx to .png is not supported ("));
-        for ext in ["ppt", "PPS", "pot"] {
+        for ext in ["ppt", "PPS", "pot", "odp", "OTP"] {
             let input = format!("old.{ext}");
             assert_eq!(
                 kind(Path::new(&input), Path::new("old.pdf")).unwrap(),
@@ -706,5 +706,17 @@ mod tests {
             Kind::DocsToDocx
         );
         assert!(err(&["a.docx", "b.doc"]).contains("not supported ("));
+        for ext in ["odt", "OTT"] {
+            let input = format!("a.{ext}");
+            assert_eq!(
+                kind(Path::new(&input), Path::new("b.pdf")).unwrap(),
+                Kind::DocxToPdf
+            );
+            assert_eq!(
+                kind(Path::new(&input), Path::new("b.docx")).unwrap(),
+                Kind::DocsToDocx
+            );
+        }
+        assert!(err(&["a.docx", "b.odt"]).contains("not supported ("));
     }
 }

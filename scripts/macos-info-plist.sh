@@ -60,9 +60,9 @@ ${mas_keys}
 $(doc_type "Spreadsheet" Editor org.openxmlformats.spreadsheetml.sheet org.openxmlformats.spreadsheetml.sheet.macroenabled public.comma-separated-values-text public.tab-separated-values-text)
 $(doc_type "Spreadsheet (import)" Viewer com.microsoft.excel.xls com.microsoft.excel.xlt com.microsoft.excel.sheet.binary.macroenabled org.oasis-open.opendocument.spreadsheet)
 $(doc_type "Document" Editor org.openxmlformats.wordprocessingml.document)
-$(doc_type "Document (import)" Viewer public.rtf com.microsoft.word.doc com.microsoft.word.dot)
+$(doc_type "Document (import)" Viewer public.rtf com.microsoft.word.doc com.microsoft.word.dot org.oasis-open.opendocument.text org.oasis-open.opendocument.text-template)
 $(doc_type "Presentation" Editor org.openxmlformats.presentationml.presentation)
-$(doc_type "Presentation (import)" Viewer com.microsoft.powerpoint.ppt com.microsoft.powerpoint.pps com.microsoft.powerpoint.pot)
+$(doc_type "Presentation (import)" Viewer com.microsoft.powerpoint.ppt com.microsoft.powerpoint.pps com.microsoft.powerpoint.pot org.oasis-open.opendocument.presentation org.oasis-open.opendocument.presentation-template)
 $(doc_type "PDF document" Viewer com.adobe.pdf)
   </array>
   <key>UTImportedTypeDeclarations</key>
@@ -75,6 +75,10 @@ $(imported public.tab-separated-values-text "Tab-Separated Values" public.delimi
 $(imported com.microsoft.word.dot "Word 97-2003 Template" public.data application/msword dot)
 $(imported com.microsoft.powerpoint.pps "PowerPoint 97-2003 Slide Show" public.data application/vnd.ms-powerpoint pps)
 $(imported com.microsoft.powerpoint.pot "PowerPoint 97-2003 Template" public.data application/vnd.ms-powerpoint pot)
+$(imported org.oasis-open.opendocument.text "OpenDocument Text" public.zip-archive application/vnd.oasis.opendocument.text odt)
+$(imported org.oasis-open.opendocument.text-template "OpenDocument Text Template" public.zip-archive application/vnd.oasis.opendocument.text-template ott)
+$(imported org.oasis-open.opendocument.presentation "OpenDocument Presentation" public.zip-archive application/vnd.oasis.opendocument.presentation odp)
+$(imported org.oasis-open.opendocument.presentation-template "OpenDocument Presentation Template" public.zip-archive application/vnd.oasis.opendocument.presentation-template otp)
   </array>
 </dict>
 </plist>

@@ -44,7 +44,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Open File…"),
-        detail: ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .xls, .ppt",
+        detail: ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .odt, .odp, .xls, .ppt",
         keys: "Ctrl O",
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
@@ -3162,7 +3162,7 @@ mod tests {
                 "Slides",
                 "Omarchy, Ghostty",
                 "SF Pro, Inter, …",
-                ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .xls, .ppt",
+                ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .odt, .odp, .xls, .ppt",
             ];
             if !same.contains(&c.detail) {
                 assert!(indonesian(c.detail).is_some(), "detail {:?}", c.detail);

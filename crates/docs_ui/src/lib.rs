@@ -1475,7 +1475,7 @@ impl DocsView {
             let Ok(Ok(Some(mut path))) = path.await else {
                 return false;
             };
-            // Kantor writes .docx only (an .rtf or .doc name would get
+            // Kantor writes .docx only (an .rtf, .doc or .odt name would get
             // .docx contents).
             if path.extension().is_none() || docs_engine::is_import_path(&path) {
                 path.set_extension("docx");

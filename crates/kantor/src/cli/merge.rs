@@ -292,7 +292,7 @@ pub fn run(app: App, req: &Request, engine: &mut Option<docs_pdf::Engine>) -> Re
         App::Docs => {
             if !matches!(
                 ext.as_str(),
-                "docx" | "docm" | "dotx" | "doc" | "dot" | "rtf"
+                "docx" | "docm" | "dotx" | "doc" | "dot" | "rtf" | "odt" | "ott"
             ) {
                 bail!("{} is not a Word document", req.template.display());
             }

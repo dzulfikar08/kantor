@@ -51,7 +51,8 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
     \x20      kantor sheets merge TEMPLATE.xlsx DATA -o DIR [options]\n\
     \n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
-    Docs opens .docx (and imports .rtf and .doc), Sheets .xlsx/.csv/.ods, Slides .pptx/.ppt,\n\
+    Docs opens .docx (and imports .rtf, .doc and .odt), Sheets .xlsx/.csv/.ods,\n\
+    Slides .pptx (and imports .ppt and .odp),\n\
     and .pdf files open in the PDF viewer (see plan.md).\n\
     `kantor mcp` lets AI agents edit the open documents (kantor mcp --help).\n\
     `kantor pdf` merges, splits, rotates, watermarks and numbers PDFs (kantor pdf --help).\n\
