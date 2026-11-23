@@ -1709,7 +1709,7 @@ dependencies = [
 
 [[package]]
 name = "docs_engine"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1729,7 +1729,7 @@ dependencies = [
 
 [[package]]
 name = "docs_layout"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "gpui-pre",
  "gpui-pre-wgpu",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "docs_pdf"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1764,7 +1764,7 @@ dependencies = [
 
 [[package]]
 name = "docs_ui"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4151,7 +4151,7 @@ dependencies = [
 
 [[package]]
 name = "kantor"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -4192,7 +4192,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_ai"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "apple-native-keyring-store",
  "kantor_core",
@@ -4209,7 +4209,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_cloud"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4231,11 +4231,11 @@ dependencies = [
 
 [[package]]
 name = "kantor_console"
-version = "0.22.0"
+version = "0.23.0"
 
 [[package]]
 name = "kantor_core"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "log",
@@ -4247,7 +4247,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_crypt"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "aes 0.9.4",
  "aes-gcm",
@@ -4267,7 +4267,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_esign"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "base64 0.22.1",
  "kantor_ai",
@@ -4285,7 +4285,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_keystore"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "kantor_core",
  "libloading",
@@ -4295,11 +4295,11 @@ dependencies = [
 
 [[package]]
 name = "kantor_mem"
-version = "0.22.0"
+version = "0.23.0"
 
 [[package]]
 name = "kantor_merge"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4315,7 +4315,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_metafile"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -4326,14 +4326,14 @@ dependencies = [
 
 [[package]]
 name = "kantor_numfmt"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "chrono",
 ]
 
 [[package]]
 name = "kantor_ooxml"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "quick-xml 0.41.0",
@@ -4342,7 +4342,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_pdf"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "calamine",
  "image",
@@ -4355,7 +4355,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_sandbox"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "base64 0.22.1",
  "kantor_core",
@@ -4368,7 +4368,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_spell"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "kantor_core",
  "log",
@@ -4379,7 +4379,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_theme"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -4389,7 +4389,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_ui"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "gpui-kit",
  "gpui-pre-macos",
@@ -4408,7 +4408,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_update"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "base64 0.22.1",
  "kantor_core",
@@ -5570,7 +5570,7 @@ dependencies = [
 
 [[package]]
 name = "office_fidelity"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5833,7 +5833,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_engine"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "aes 0.8.4",
  "cbc 0.1.2",
@@ -5854,7 +5854,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_ui"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -7329,7 +7329,7 @@ dependencies = [
 
 [[package]]
 name = "sheets_engine"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "calamine",
@@ -7355,7 +7355,7 @@ dependencies = [
 
 [[package]]
 name = "sheets_pdf"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7376,7 +7376,7 @@ dependencies = [
 
 [[package]]
 name = "sheets_scene"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "docs_layout",
  "kantor_ooxml",
@@ -7388,7 +7388,7 @@ dependencies = [
 
 [[package]]
 name = "sheets_ui"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "docs_ui",
@@ -7541,7 +7541,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slides_engine"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "cfb",
@@ -7558,7 +7558,7 @@ dependencies = [
 
 [[package]]
 name = "slides_pdf"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "docs_layout",
@@ -7574,7 +7574,7 @@ dependencies = [
 
 [[package]]
 name = "slides_scene"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "base64 0.22.1",
  "docs_engine",
@@ -7591,7 +7591,7 @@ dependencies = [
 
 [[package]]
 name = "slides_ui"
-version = "0.22.0"
+version = "0.23.0"
 dependencies = [
  "anyhow",
  "docs_engine",

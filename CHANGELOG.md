@@ -9,6 +9,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-11-23
+
+Password-protected Office and OpenDocument files open, and stay protected when saved.
+
 ### Added
 
 - Password-protected Office and OpenDocument files open: Kantor asks for the password of an encrypted `.docx`,
@@ -18,6 +22,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   documents get no recovery copies (autosave still works). `kantor convert --password` (or
   `KANTOR_OFFICE_PASSWORD`) converts them, with `--keep-password` to keep the output protected, and the MCP
   server's `open_document` takes a `password`. Old `.doc`/`.xls`/`.ppt` encryption isn't supported yet.
+
+### Security
+
+- The `url` dependency is updated to 2.5.9 (RUSTSEC-2026-0592, a stack overflow on nested `blob:` URLs).
 
 ## [0.22.0] - 2026-11-23
 
@@ -2351,7 +2359,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/dzulfikar08/kantor/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/dzulfikar08/kantor/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/dzulfikar08/kantor/compare/v0.21.0...v0.21.1
 [0.21.0]: https://github.com/dzulfikar08/kantor/compare/v0.20.0...v0.21.0
