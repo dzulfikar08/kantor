@@ -256,19 +256,21 @@ struct Imported {
 
 /// Whether Kantor opens `path` as a read-only import (Save writes a new
 /// `.docx`) rather than a `.docx` file: `.rtf`, Word 97-2003 `.doc` and
-/// `.dot`, and any file that is a Word 97-2003 compound file inside.
+/// `.dot`, OpenDocument text (`.odt`, `.ott`, `.fodt`), and any file that
+/// is a Word 97-2003 compound file or an OpenDocument text package inside.
 pub fn is_import_path(path: &Path) -> bool {
     let by_name = path.extension().and_then(|e| e.to_str()).is_some_and(|e| {
         ["rtf", "doc", "dot"]
             .iter()
+            .chain(crate::odt::EXTENSIONS.iter())
             .any(|x| e.eq_ignore_ascii_case(x))
     });
     by_name || {
         use std::io::Read as _;
-        let mut head = [0u8; 8];
+        let mut head = Vec::with_capacity(160);
         std::fs::File::open(path)
-            .and_then(|mut f| f.read_exact(&mut head))
-            .is_ok_and(|()| crate::msdoc::is_compound(&head))
+            .and_then(|f| f.take(160).read_to_end(&mut head))
+            .is_ok_and(|_| crate::msdoc::is_compound(&head) || crate::odt::is_odt(&head))
     }
 }
 
@@ -325,14 +327,19 @@ impl Document {
         doc
     }
 
-    /// Open a `.docx` file, or import an `.rtf`, `.doc` or `.dot` one (see
-    /// [`is_import_path`]). Imports are told apart by content: a `.doc`
-    /// that is really RTF opens as RTF.
+    /// Open a `.docx` file, or import an `.rtf`, `.doc`, `.dot`, `.odt`,
+    /// `.ott` or `.fodt` one (see [`is_import_path`]). Imports are told
+    /// apart by content: a `.doc` that is really RTF opens as RTF, an
+    /// OpenDocument text package under any name as OpenDocument.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("Can't read {}: {e}", path.display()))?;
         if crate::msdoc::is_compound(&bytes) {
             return Self::import_doc(&bytes, path)
+                .map_err(|e| anyhow::anyhow!("Can't open {}: {e:#}", path.display()));
+        }
+        if crate::odt::is_odt(&bytes) {
+            return Self::import_odt(&bytes, path)
                 .map_err(|e| anyhow::anyhow!("Can't open {}: {e:#}", path.display()));
         }
         if is_import_path(path) {
@@ -373,6 +380,19 @@ impl Document {
     /// that remembers `source` (for its name and Save As).
     pub fn import_doc(bytes: &[u8], source: &Path) -> anyhow::Result<Self> {
         let import = crate::msdoc::import(bytes)?;
+        let read = docx::read(import.docx)?;
+        let mut doc = Self::from_read(read, None);
+        doc.imported = Some(Imported {
+            source: source.to_path_buf(),
+            notes: import.notes,
+        });
+        Ok(doc)
+    }
+
+    /// An OpenDocument text file (`.odt`, `.ott`, `.fodt`) as a new,
+    /// unsaved document that remembers `source` (for its name and Save As).
+    pub fn import_odt(bytes: &[u8], source: &Path) -> anyhow::Result<Self> {
+        let import = crate::odt::to_docx(bytes)?;
         let read = docx::read(import.docx)?;
         let mut doc = Self::from_read(read, None);
         doc.imported = Some(Imported {

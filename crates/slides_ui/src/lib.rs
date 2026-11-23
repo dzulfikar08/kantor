@@ -1996,8 +1996,11 @@ impl SlidesView {
                 return false;
             };
             // Kantor writes .pptx: no extension, or a PowerPoint 97-2003
-            // one (an imported file's), becomes .pptx.
-            if path.extension().is_none() || slides_engine::ppt::is_legacy_path(&path) {
+            // or OpenDocument one (an imported file's), becomes .pptx.
+            if path.extension().is_none()
+                || slides_engine::ppt::is_legacy_path(&path)
+                || slides_engine::odp::is_odp_path(&path)
+            {
                 path.set_extension("pptx");
             }
             this.update_in(cx, |this, window, cx| {

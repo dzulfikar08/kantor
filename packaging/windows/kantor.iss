@@ -5,7 +5,7 @@
 ; Installs to %LOCALAPPDATA%\Programs\Kantor: kantor.exe (the app), kantor.com
 ; (the command line, see crates/kantor_console), licences. Adds a Start menu
 ; shortcut, an optional desktop icon, an uninstall entry under Settings > Apps,
-; and "Open with" entries for .xlsx/.xlsm/.xls/.xlt/.xlsb/.ods/.csv/.tsv, .docx/.rtf/.doc/.dot and .pptx/.ppt/.pps/.pot that
+; and "Open with" entries for .xlsx/.xlsm/.xls/.xlt/.xlsb/.ods/.csv/.tsv, .docx/.rtf/.doc/.dot/.odt/.ott and .pptx/.ppt/.pps/.pot/.odp/.otp that
 ; don't take over the user's default apps.
 ;
 ; The in-app updater (crates/kantor_update) downloads a newer installer and runs
@@ -133,10 +133,14 @@ Root: HKA; Subkey: "Software\Classes\.docx\OpenWithProgids"; ValueType: string; 
 Root: HKA; Subkey: "Software\Classes\.rtf\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.doc\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.dot\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.odt\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.ott\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Document"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.pptx\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.ppt\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.pps\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.pot\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.odp\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
+Root: HKA; Subkey: "Software\Classes\.otp\OpenWithProgids"; ValueType: string; ValueName: "Kantor.Presentation"; ValueData: ""; Flags: uninsdeletevalue
 Root: HKA; Subkey: "Software\Classes\.pdf\OpenWithProgids"; ValueType: string; ValueName: "Kantor.PDF"; ValueData: ""; Flags: uninsdeletevalue
 
 ; "Open with" > "Choose another app" lists kantor.exe for these types.
@@ -154,10 +158,14 @@ Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; Va
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".rtf"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".doc"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".dot"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".odt"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".ott"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".pptx"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".ppt"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".pps"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".pot"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".odp"; ValueData: ""
+Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".otp"; ValueData: ""
 Root: HKA; Subkey: "Software\Classes\Applications\kantor.exe\SupportedTypes"; ValueType: string; ValueName: ".pdf"; ValueData: ""
 
 ; Settings > Apps > Default apps can offer Kantor for these types.
@@ -175,10 +183,14 @@ Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: s
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".rtf"; ValueData: "Kantor.Document"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".doc"; ValueData: "Kantor.Document"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".dot"; ValueData: "Kantor.Document"
+Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".odt"; ValueData: "Kantor.Document"
+Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ott"; ValueData: "Kantor.Document"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pptx"; ValueData: "Kantor.Presentation"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ppt"; ValueData: "Kantor.Presentation"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pps"; ValueData: "Kantor.Presentation"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pot"; ValueData: "Kantor.Presentation"
+Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".odp"; ValueData: "Kantor.Presentation"
+Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".otp"; ValueData: "Kantor.Presentation"
 Root: HKA; Subkey: "Software\Kantor\Capabilities\FileAssociations"; ValueType: string; ValueName: ".pdf"; ValueData: "Kantor.PDF"
 Root: HKA; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "Kantor"; ValueData: "Software\Kantor\Capabilities"; Flags: uninsdeletevalue
 

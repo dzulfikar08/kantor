@@ -11,6 +11,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Added
 
+- Docs opens OpenDocument text (`.odt`, `.ott`, `.fodt`) and Slides opens OpenDocument
+  presentations (`.odp`, `.otp`), as unsaved copies that save as `.docx` / `.pptx`, the way
+  `.doc` and `.ppt` open. Text, styles, lists, tables, sections, headers and footers, pictures,
+  footnotes, comments and tracked changes come over from `.odt`; masters, placeholders, text,
+  shapes, fills, pictures, tables, groups, speaker notes and hidden slides from `.odp`. What is
+  left out shows in the status bar. `kantor convert` takes them too (to `.docx`/`.pptx` or
+  `.pdf`), and the installers register Open With for them.
 - A Mac App Store build of Kantor (`scripts/build-mas.sh`, cargo feature `app-store`; see
   docs/app-store.md). It runs in Apple's App Sandbox: it remembers the files and folders you
   choose so your last session, Recent files, Batch folders, mail-merge data sources and

@@ -406,10 +406,22 @@ impl Presentation {
     }
 
     /// Open a `.pptx`, or import a PowerPoint 97-2003 `.ppt`/`.pps`/`.pot`
-    /// (see [`crate::ppt`]): an import has no [`Self::path`], so Save asks
-    /// for a new `.pptx` name and the original is never overwritten.
+    /// (see [`crate::ppt`]) or an OpenDocument `.odp`/`.otp` (see
+    /// [`crate::odp`]): an import has no [`Self::path`], so Save asks for a
+    /// new `.pptx` name and the original is never overwritten.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+        if crate::odp::is_odp(&bytes)
+            || (crate::odp::is_odp_path(path) && !crate::ppt::is_compound_file(&bytes))
+        {
+            let imported = crate::odp::convert(&bytes)
+                .with_context(|| format!("{} can't be opened", path.display()))?;
+            let mut p = Self::from_bytes(imported.pptx)
+                .with_context(|| format!("{} can't be opened", path.display()))?;
+            p.source = Some(path.to_path_buf());
+            p.import_notes = imported.notes;
+            return Ok(p);
+        }
         if crate::ppt::is_legacy_path(path) || crate::ppt::is_compound_file(&bytes) {
             let imported = crate::ppt::convert(&bytes)
                 .with_context(|| format!("{} can't be opened", path.display()))?;

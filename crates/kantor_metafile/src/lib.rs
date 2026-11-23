@@ -209,6 +209,20 @@ fn rasterise(svg: &str, w: u32, h: u32, text: bool) -> Option<Vec<u8>> {
     map.encode_png().ok()
 }
 
+/// An SVG picture as PNG, its longer side `max_side` pixels (imports keep
+/// the SVG beside it, as Office does).
+pub fn svg_to_png(svg: &[u8], max_side: u32) -> Option<Vec<u8>> {
+    let text = std::str::from_utf8(svg).ok()?;
+    let tree = parse(text, true)?;
+    let (w, h) = (tree.size().width() as f64, tree.size().height() as f64);
+    if !(w > 0.0 && h > 0.0) {
+        return None;
+    }
+    let k = max_side.max(1) as f64 / w.max(h);
+    let (pw, ph) = ((w * k).round().max(1.0), (h * k).round().max(1.0));
+    rasterise(text, pw as u32, ph as u32, true)
+}
+
 /// Play a WMF, EMF or PICT into SVG.
 pub fn render(bytes: &[u8]) -> Option<Picture> {
     match kind(bytes)? {

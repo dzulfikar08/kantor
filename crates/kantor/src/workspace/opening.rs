@@ -229,6 +229,8 @@ mod tests {
         assert_eq!(app_for(None, Path::new("a.tsv")), Some(AppKind::Sheets));
         assert_eq!(app_for(None, Path::new("a.dot")), Some(AppKind::Docs));
         assert_eq!(app_for(None, Path::new("a.pps")), Some(AppKind::Slides));
+        assert_eq!(app_for(None, Path::new("a.odp")), Some(AppKind::Slides));
+        assert_eq!(app_for(None, Path::new("a.odt")), Some(AppKind::Docs));
         assert_eq!(app_for(None, Path::new("Report.PDF")), Some(AppKind::Pdf));
         assert_eq!(app_for(None, Path::new("a.zip")), None);
         assert_eq!(app_for(None, Path::new("README")), None);

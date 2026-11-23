@@ -25,6 +25,7 @@ pub mod geom;
 pub mod group;
 mod history;
 pub mod model;
+pub mod odp;
 pub mod omml;
 pub mod ppt;
 pub mod presentation;

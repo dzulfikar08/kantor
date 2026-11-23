@@ -40,6 +40,10 @@ EXPECTED = {
     "ppt": "com.microsoft.powerpoint.ppt",
     "pps": "com.microsoft.powerpoint.pps",
     "pot": "com.microsoft.powerpoint.pot",
+    "odt": "org.oasis-open.opendocument.text",
+    "ott": "org.oasis-open.opendocument.text-template",
+    "odp": "org.oasis-open.opendocument.presentation",
+    "otp": "org.oasis-open.opendocument.presentation-template",
     "pdf": "com.adobe.pdf",
 }
 # Declared by macOS itself: no import needed.
@@ -87,6 +91,10 @@ MIME = {
     "ppt": "application/vnd.ms-powerpoint",
     "pps": "application/vnd.ms-powerpoint",
     "pot": "application/vnd.ms-powerpoint",
+    "odt": "application/vnd.oasis.opendocument.text",
+    "ott": "application/vnd.oasis.opendocument.text-template",
+    "odp": "application/vnd.oasis.opendocument.presentation",
+    "otp": "application/vnd.oasis.opendocument.presentation-template",
     "pdf": "application/pdf",
 }
 SHEETS = {"xlsx", "xlsm", "xls", "xlt", "xlsb", "ods", "csv", "tsv"}

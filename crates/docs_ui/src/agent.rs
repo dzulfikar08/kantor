@@ -57,7 +57,7 @@ impl DocsView {
                     )
                 }
                 if self.doc.is_imported() {
-                    bail!("this document was imported (.rtf, .doc); give a .docx path")
+                    bail!("this document was imported (.rtf, .doc, .odt); give a .docx path")
                 }
                 bail!("this document has no file yet; give a path")
             }

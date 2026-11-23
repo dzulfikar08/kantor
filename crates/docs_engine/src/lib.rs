@@ -11,6 +11,8 @@
 //! - [`numbering`]: lists; [`table`]: tables; [`object`]: inline pictures
 //!   and opaque elements.
 //! - [`rtf`]: importing `.rtf` files (read-only; Save writes `.docx`).
+//! - [`odt`]: importing OpenDocument text (`.odt`, `.ott`, `.fodt`;
+//!   read-only, Save writes `.docx`).
 
 pub mod address;
 pub mod agent;
@@ -33,6 +35,7 @@ mod msdoc;
 pub mod notes;
 pub mod numbering;
 pub mod object;
+pub mod odt;
 pub mod page;
 pub mod part_edit;
 pub mod review;

@@ -185,7 +185,7 @@ pub fn mail_merge(args: &Value) -> Result<Value, String> {
         {
             "pptx" => App::Slides,
             "xlsx" => App::Sheets,
-            "docx" | "docm" | "dotx" | "doc" | "dot" | "rtf" => App::Docs,
+            "docx" | "docm" | "dotx" | "doc" | "dot" | "rtf" | "odt" | "ott" => App::Docs,
             _ => bail!("the template must be a .docx, .pptx or .xlsx file"),
         };
         let strings = |k: &str| -> Vec<String> {
