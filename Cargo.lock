@@ -1649,6 +1649,7 @@ dependencies = [
  "kantor_ooxml",
  "log",
  "quick-xml 0.41.0",
+ "roxmltree 0.21.2",
  "tempfile",
  "unicode-segmentation",
  "zip 9.4.1",
