@@ -62,6 +62,8 @@ pub fn is_protected(path: &Path) -> bool {
 
 /// The answer: the checked password, `None` if the user cancelled.
 type Answer = Box<dyn FnOnce(Option<String>, &mut Window, &mut App)>;
+/// Check the typed password (the Open button and Enter).
+type Submit = Rc<dyn Fn(&mut Window, &mut App)>;
 
 #[derive(Default)]
 struct Prompt {
@@ -101,7 +103,7 @@ pub fn ask(
             .masked(true)
             .placeholder(tr("Password", "Kata sandi"))
     });
-    let submit: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new({
+    let submit: Submit = Rc::new({
         let (state, input, path) = (state.clone(), input.clone(), path.clone());
         move |window, cx| submit(&state, &input, &path, window, cx)
     });
