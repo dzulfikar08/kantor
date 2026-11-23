@@ -16,6 +16,17 @@ fn pixel(png: &[u8], x: f64, y: f64) -> [u8; 4] {
     [c.red(), c.green(), c.blue(), c.alpha()]
 }
 
+#[test]
+fn svg_to_png_keeps_the_aspect() {
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="20" height="20" fill="#ff0000"/><rect x="20" width="20" height="20" fill="#0000ff"/></svg>"##;
+    let png = kantor_metafile::svg_to_png(svg, 200).expect("png");
+    let map = resvg::tiny_skia::Pixmap::decode_png(&png).unwrap();
+    assert_eq!((map.width(), map.height()), (200, 100));
+    assert!(near(pixel(&png, 0.25, 0.5), [255, 0, 0, 255]));
+    assert!(near(pixel(&png, 0.75, 0.5), [0, 0, 255, 255]));
+    assert!(kantor_metafile::svg_to_png(b"not svg", 100).is_none());
+}
+
 fn near(a: [u8; 4], b: [u8; 4]) -> bool {
     a.iter()
         .zip(b)
