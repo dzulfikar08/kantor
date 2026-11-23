@@ -53,6 +53,11 @@ TIFF pictures not imported	gambar TIFF tidak diimpor
 hidden text left out	teks tersembunyi tidak disertakan
 embedded objects not imported	objek tersemat tidak diimpor
 nested tables flattened	tabel bersarang diratakan
+drawing shapes were left out	bentuk gambar tidak disertakan
+pictures in formats Kantor can't show (SVG, TIFF) were left out	gambar berformat yang tidak bisa ditampilkan Kantor (SVG, TIFF) tidak disertakan
+embedded objects without a preview picture were left out	objek tersemat tanpa gambar pratinjau tidak disertakan
+tracked formatting changes were left out (shown as made)	perubahan format yang dilacak tidak disertakan (ditampilkan sudah diterapkan)
+form controls were left out	kontrol formulir tidak disertakan
 1 TIFF picture shown as a box	1 gambar TIFF ditampilkan sebagai kotak
 {} TIFF pictures shown as boxes	{} gambar TIFF ditampilkan sebagai kotak
 Group{}	Grup{}

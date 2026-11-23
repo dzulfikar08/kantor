@@ -74,7 +74,7 @@ pub const CONTENT_ITEMS: &[&str] = &[
     tk("slide sections (dropped when slides are added, removed or reordered)"),
     tk("custom slide shows (dropped when slides are added, removed or reordered)"),
     // Import notes: .rtf (docs_engine::rtf), .doc (docs_engine::msdoc),
-    // .ppt (slides_engine::ppt).
+    // .ppt (slides_engine::ppt), .odt (docs_engine::odt).
     tk("footnotes were left out"),
     tk("comments were left out"),
     tk("text boxes and drawings were left out"),
@@ -90,6 +90,11 @@ pub const CONTENT_ITEMS: &[&str] = &[
     tk("embedded objects not imported"),
     tk("nested tables flattened"),
     tk("1 TIFF picture shown as a box"),
+    tk("drawing shapes were left out"),
+    tk("pictures in formats Kantor can't show (SVG, TIFF) were left out"),
+    tk("embedded objects without a preview picture were left out"),
+    tk("tracked formatting changes were left out (shown as made)"),
+    tk("form controls were left out"),
 ];
 
 /// Phrases with a detail in them (an XML element or part name, kept as is).
