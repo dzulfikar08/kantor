@@ -95,6 +95,13 @@ pub const CONTENT_ITEMS: &[&str] = &[
     tk("embedded objects without a preview picture were left out"),
     tk("tracked formatting changes were left out (shown as made)"),
     tk("form controls were left out"),
+    // .odp (slides_engine::odp).
+    tk("1 chart left out"),
+    tk("1 embedded object left out"),
+    tk("1 video or sound left out"),
+    tk("1 picture in a format Kantor can't show left out"),
+    tk("1 shape Kantor can't read left out"),
+    tk("slide transitions and animations were left out"),
 ];
 
 /// Phrases with a detail in them (an XML element or part name, kept as is).
@@ -104,6 +111,12 @@ pub const CONTENT_TEMPLATES: &[&str] = &[
     tk("speaker notes that can't be read ({})"),
     // A count (slides_engine::ppt).
     tk("{} TIFF pictures shown as boxes"),
+    // A count (slides_engine::odp).
+    tk("{} charts left out"),
+    tk("{} embedded objects left out"),
+    tk("{} videos and sounds left out"),
+    tk("{} pictures in a format Kantor can't show left out"),
+    tk("{} shapes Kantor can't read left out"),
 ];
 
 /// One phrase in the interface language (as it is when unknown, e.g. an
