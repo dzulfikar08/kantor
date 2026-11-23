@@ -245,6 +245,9 @@ pub struct Document {
     /// Merge fields showing a record's values (Preview Results: a view
     /// setting, not saved, not undone), by field start mark.
     pub(crate) merge_view: Option<Arc<HashMap<usize, String>>>,
+    /// The password the file was opened with: saves are encrypted with it
+    /// (see `kantor_crypt`).
+    password: Option<String>,
 }
 
 /// Where an imported document came from.
@@ -270,7 +273,12 @@ pub fn is_import_path(path: &Path) -> bool {
         let mut head = Vec::with_capacity(160);
         std::fs::File::open(path)
             .and_then(|f| f.take(160).read_to_end(&mut head))
-            .is_ok_and(|_| crate::msdoc::is_compound(&head) || crate::odt::is_odt(&head))
+            .is_ok_and(|_| {
+                (crate::msdoc::is_compound(&head)
+                    && kantor_crypt::file_protection(path) != Some(kantor_crypt::Protection::Ooxml))
+                    || crate::odt::is_odt(&head)
+                    || kantor_crypt::file_protection(path) == Some(kantor_crypt::Protection::Odf)
+            })
     }
 }
 
@@ -315,6 +323,7 @@ impl Document {
             field_codes: None,
             mail_merge: None,
             merge_view: None,
+            password: None,
         }
     }
 
@@ -332,8 +341,28 @@ impl Document {
     /// apart by content: a `.doc` that is really RTF opens as RTF, an
     /// OpenDocument text package under any name as OpenDocument.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
+        Self::open_with_password(path, None)
+    }
+
+    /// [`Self::open`] for a password-protected file: `password` decrypts it
+    /// (an encrypted `.docx` or `.odt`), and the document keeps it so saves
+    /// are encrypted again. A protected file opened with no password fails
+    /// with [`kantor_crypt::Error::PasswordNeeded`], a wrong password with
+    /// [`kantor_crypt::Error::WrongPassword`] (both reachable with
+    /// `err.downcast_ref::<kantor_crypt::Error>()`).
+    pub fn open_with_password(path: &Path, password: Option<&str>) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path)
             .map_err(|e| anyhow::anyhow!("Can't read {}: {e}", path.display()))?;
+        let unlocked = kantor_crypt::unlock(bytes, password)
+            .map_err(|e| anyhow::Error::new(e).context(format!("Can't open {}", path.display())))?;
+        let mut doc = Self::open_bytes(path, unlocked.bytes)?;
+        if unlocked.protected {
+            doc.password = password.map(str::to_owned);
+        }
+        Ok(doc)
+    }
+
+    fn open_bytes(path: &Path, bytes: Vec<u8>) -> anyhow::Result<Self> {
         if crate::msdoc::is_compound(&bytes) {
             return Self::import_doc(&bytes, path)
                 .map_err(|e| anyhow::anyhow!("Can't open {}: {e:#}", path.display()));
@@ -462,6 +491,7 @@ impl Document {
             field_codes: None,
             mail_merge: read.mail_merge,
             merge_view: None,
+            password: None,
         };
         let mut paras = std::mem::take(&mut doc.paragraphs);
         crate::float::share_parts(&mut paras, &doc);
@@ -1512,9 +1542,23 @@ impl Document {
         Ok(())
     }
 
+    /// The password saves are encrypted with (the one the file was opened
+    /// with), if any.
+    pub fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+
+    /// Encrypt saves with `password` from now on (`None`: save unencrypted).
+    pub fn set_password(&mut self, password: Option<String>) {
+        self.password = password.filter(|p| !p.is_empty());
+    }
+
     fn write(&mut self, path: &Path) -> anyhow::Result<()> {
         let bytes = docx::write(self, self.package.as_ref())?;
-        atomic_write(path, &bytes)?;
+        match &self.password {
+            Some(pw) => atomic_write(path, &kantor_crypt::encrypt(&bytes, pw)?)?,
+            None => atomic_write(path, &bytes)?,
+        }
         // The written file is the template for the next save.
         let read = docx::read(bytes)?;
         self.package = Some(read.package);

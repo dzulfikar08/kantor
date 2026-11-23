@@ -96,6 +96,8 @@ impl XlsxSnapshot {
 pub struct SaveJob {
     path: PathBuf,
     kind: SaveKind,
+    /// Encrypt the `.xlsx` with this password.
+    password: Option<String>,
 }
 
 enum SaveKind {
@@ -141,9 +143,18 @@ impl SaveJob {
         let kind = match self.kind {
             SaveKind::Xlsx(snapshot) => {
                 let mut out = snapshot.render()?;
-                write_file_atomic(&path, &out.bytes)?;
                 let bytes = std::mem::take(&mut out.bytes);
-                let xlsx = XlsxSource::kept(&path, bytes);
+                let xlsx = match &self.password {
+                    Some(pw) => {
+                        write_file_atomic(&path, &kantor_crypt::encrypt(&bytes, pw)?)?;
+                        // The file is encrypted: keep the plain package.
+                        XlsxSource::Bytes(bytes)
+                    }
+                    None => {
+                        write_file_atomic(&path, &bytes)?;
+                        XlsxSource::kept(&path, bytes)
+                    }
+                };
                 SavedKind::Xlsx {
                     out: Box::new(out),
                     xlsx,
@@ -222,7 +233,12 @@ impl Workbook {
     /// workbook's file): record it as saved. Edits made since the snapshot
     /// stay unsaved.
     pub fn commit_autosave(&mut self, path: &Path, mut out: XlsxOutput) {
-        let xlsx = XlsxSource::kept(path, std::mem::take(&mut out.bytes));
+        let bytes = std::mem::take(&mut out.bytes);
+        let xlsx = if self.password.is_some() {
+            XlsxSource::Bytes(bytes)
+        } else {
+            XlsxSource::kept(path, bytes)
+        };
         self.commit_xlsx(path, xlsx, &out);
         self.saved_at(out.revision, out.view_changes);
     }
@@ -300,9 +316,15 @@ impl Workbook {
             }
             _ => bail!("Kantor saves .xlsx or .csv, not .{ext}"),
         };
+        // A CSV can't be encrypted: it's written plain, as Excel does.
+        let password = match kind {
+            SaveKind::Xlsx(_) => self.password.clone(),
+            SaveKind::Csv { .. } => None,
+        };
         Ok(SaveJob {
             path: path.to_path_buf(),
             kind,
+            password,
         })
     }
 

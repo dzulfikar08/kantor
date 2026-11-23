@@ -50,6 +50,11 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \x20 Presentation to PDF:\n\
     \x20     --notes            notes pages: each slide above its speaker notes (A4)\n\
     \x20     --handouts N       N slides per A4 page: 1, 2, 3 (with lines), 4, 6 or 9\n\
+    \x20 Password-protected files (.docx .xlsx .pptx, .odt .ods .odp):\n\
+    \x20     --password PW      the password that opens them (or set\n\
+    \x20                        KANTOR_OFFICE_PASSWORD); the output has none\n\
+    \x20     --keep-password    encrypt .docx, .xlsx and .pptx output with the\n\
+    \x20                        same password (PDF and CSV output never are)\n\
     \x20 -f, --force            overwrite existing output files\n\
     \x20 -h, --help             show this help\n\
     \n\
@@ -66,6 +71,10 @@ struct Options {
     print: Print,
     /// Presentation → PDF layout (notes pages, handouts).
     slides: Option<slides_pdf::PrintLayout>,
+    /// Opens password-protected inputs.
+    password: Option<String>,
+    /// Encrypt OOXML output with [`Self::password`] too.
+    keep_password: bool,
 }
 
 /// Page setup given on the command line for spreadsheet → PDF.
@@ -202,6 +211,8 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
             "--portrait" => opts.print.landscape = Some(false),
             "--no-print-area" => opts.print.no_print_area = true,
             "--notes" => opts.slides = Some(slides_pdf::PrintLayout::Notes),
+            "--password" => opts.password = Some(value(flag)?),
+            "--keep-password" => opts.keep_password = true,
             "--handouts" => {
                 let v = value(flag)?;
                 match v.parse::<u8>() {
@@ -294,13 +305,28 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
     if opts.print.fit.is_some() && opts.print.scale.is_some() {
         return usage("--scale and --fit-width / --fit-page don't go together");
     }
+    if opts.keep_password
+        && !opts
+            .jobs
+            .iter()
+            .any(|(_, o)| matches!(ext(o).as_str(), "docx" | "xlsx" | "xlsm" | "pptx"))
+    {
+        return usage("--keep-password only applies to .docx, .xlsx and .pptx output");
+    }
     Ok(Some(opts))
 }
 
 /// Run `kantor convert ARGS…`; returns the exit status.
 pub fn main(args: &[OsString]) -> i32 {
     let opts = match parse(args) {
-        Ok(Some(o)) => o,
+        Ok(Some(mut o)) => {
+            if o.password.is_none() {
+                o.password = std::env::var("KANTOR_OFFICE_PASSWORD")
+                    .ok()
+                    .filter(|p| !p.is_empty());
+            }
+            o
+        }
         Ok(None) => {
             println!("{USAGE}");
             return 0;
@@ -350,13 +376,42 @@ fn convert(
         bail!("folder {} doesn't exist", dir.display());
     }
     let kind = kind(input, output).map_err(|Usage(m)| anyhow!(m))?;
+    let pw = Pw {
+        open: opts.password.as_deref(),
+        keep: opts.keep_password,
+    };
     match kind {
-        Kind::DocxToPdf => docx_to_pdf(input, output, engine),
-        Kind::DocsToDocx => docs_to_docx(input, output),
-        Kind::PptxToPdf => pptx_to_pdf(input, output, engine, opts.slides),
-        Kind::PptToPptx => ppt_to_pptx(input, output),
-        Kind::Sheets => sheets(input, output, opts.sheet.as_deref()),
-        Kind::SheetsToPdf => sheets_to_pdf(input, output, opts),
+        Kind::DocxToPdf => docx_to_pdf(input, output, engine, pw),
+        Kind::DocsToDocx => docs_to_docx(input, output, pw),
+        Kind::PptxToPdf => pptx_to_pdf(input, output, engine, opts.slides, pw),
+        Kind::PptToPptx => ppt_to_pptx(input, output, pw),
+        Kind::Sheets => sheets(input, output, opts.sheet.as_deref(), pw),
+        Kind::SheetsToPdf => sheets_to_pdf(input, output, opts, pw),
+    }
+}
+
+/// The password options, for one conversion.
+#[derive(Clone, Copy)]
+struct Pw<'a> {
+    open: Option<&'a str>,
+    keep: bool,
+}
+
+impl Pw<'_> {
+    /// Say how to give a password, or that it was wrong.
+    fn opened<T>(self, what: &str, r: Result<T>) -> Result<T> {
+        r.map_err(|e| match e.downcast_ref::<kantor_crypt::Error>() {
+            Some(kantor_crypt::Error::PasswordNeeded) => anyhow!(
+                "it is password-protected: give the password with --password or KANTOR_OFFICE_PASSWORD"
+            ),
+            Some(kantor_crypt::Error::WrongPassword) => anyhow!("the password is incorrect"),
+            _ => e.context(format!("can't open the {what}")),
+        })
+    }
+
+    /// The password OOXML output is encrypted with.
+    fn kept(self) -> Option<String> {
+        self.keep.then(|| self.open.map(str::to_owned)).flatten()
     }
 }
 
@@ -371,8 +426,12 @@ fn docx_to_pdf(
     input: &Path,
     output: &Path,
     engine: &mut Option<docs_pdf::Engine>,
+    pw: Pw,
 ) -> Result<String> {
-    let doc = docs_engine::Document::open(input).context("can't open the document")?;
+    let doc = pw.opened(
+        "document",
+        docs_engine::Document::open_with_password(input, pw.open),
+    )?;
     import_notes(input, &doc);
     // The font scan happens once, for the first document.
     let engine = engine.get_or_insert_with(docs_pdf::Engine::new);
@@ -393,9 +452,13 @@ fn import_notes(input: &Path, doc: &docs_engine::Document) {
     }
 }
 
-fn docs_to_docx(input: &Path, output: &Path) -> Result<String> {
-    let mut doc = docs_engine::Document::open(input).context("can't open the document")?;
+fn docs_to_docx(input: &Path, output: &Path, pw: Pw) -> Result<String> {
+    let mut doc = pw.opened(
+        "document",
+        docs_engine::Document::open_with_password(input, pw.open),
+    )?;
     import_notes(input, &doc);
+    doc.set_password(pw.kept());
     doc.save_as(output)?;
     let written = std::fs::metadata(output).map(|m| m.len() as usize)?;
     let n = doc.len();
@@ -411,8 +474,12 @@ fn pptx_to_pdf(
     output: &Path,
     engine: &mut Option<docs_pdf::Engine>,
     layout: Option<slides_pdf::PrintLayout>,
+    pw: Pw,
 ) -> Result<String> {
-    let pres = slides_engine::Presentation::open(input).context("can't open the presentation")?;
+    let pres = pw.opened(
+        "presentation",
+        slides_engine::Presentation::open_with_password(input, pw.open),
+    )?;
     for note in pres.import_notes() {
         eprintln!("kantor convert: note: {}: {note}", input.display());
     }
@@ -446,12 +513,15 @@ fn pptx_to_pdf(
     ))
 }
 
-fn ppt_to_pptx(input: &Path, output: &Path) -> Result<String> {
-    let mut pres =
-        slides_engine::Presentation::open(input).context("can't open the presentation")?;
+fn ppt_to_pptx(input: &Path, output: &Path, pw: Pw) -> Result<String> {
+    let mut pres = pw.opened(
+        "presentation",
+        slides_engine::Presentation::open_with_password(input, pw.open),
+    )?;
     for note in pres.import_notes() {
         eprintln!("kantor convert: note: {}: {note}", input.display());
     }
+    pres.set_password(pw.kept());
     pres.save_as(output)?;
     let written = std::fs::metadata(output).map(|m| m.len() as usize)?;
     let n = pres.len();
@@ -462,10 +532,14 @@ fn ppt_to_pptx(input: &Path, output: &Path) -> Result<String> {
     ))
 }
 
-fn sheets(input: &Path, output: &Path, sheet: Option<&str>) -> Result<String> {
+fn sheets(input: &Path, output: &Path, sheet: Option<&str>, pw: Pw) -> Result<String> {
     // Opening keeps the file's cached formula values (no recalculation of
     // large workbooks); imports are evaluated by the importer.
-    let mut book = sheets_engine::Workbook::open(input).context("can't open the workbook")?;
+    let mut book = pw.opened(
+        "workbook",
+        sheets_engine::Workbook::open_with_password(input, pw.open),
+    )?;
+    book.set_password(pw.kept());
     for note in book.import_notes() {
         eprintln!("kantor convert: note: {}: {note}", input.display());
     }
@@ -524,8 +598,11 @@ fn sheet_index(names: &[String], want: &str) -> Result<u32> {
         })
 }
 
-fn sheets_to_pdf(input: &Path, output: &Path, opts: &Options) -> Result<String> {
-    let mut book = sheets_engine::Workbook::open(input).context("can't open the workbook")?;
+fn sheets_to_pdf(input: &Path, output: &Path, opts: &Options, pw: Pw) -> Result<String> {
+    let mut book = pw.opened(
+        "workbook",
+        sheets_engine::Workbook::open_with_password(input, pw.open),
+    )?;
     for note in book.import_notes() {
         eprintln!("kantor convert: note: {}: {note}", input.display());
     }
@@ -647,6 +724,26 @@ mod tests {
         assert!(
             err(&["-o", "d", "-t", "odt", "a.docx"]).contains("pdf, docx, xlsx, pptx, csv or tsv")
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn password_options() {
+        let o = parse(&args(&["--password", "rahasia", "a.docx", "b.pdf"]))
+            .unwrap()
+            .unwrap();
+        assert_eq!(o.password.as_deref(), Some("rahasia"));
+        assert!(!o.keep_password);
+        let o = parse(&args(&[
+            "--password=x",
+            "--keep-password",
+            "a.xlsx",
+            "b.xlsx",
+        ]))
+        .unwrap()
+        .unwrap();
+        assert!(o.keep_password);
+        assert!(err(&["--keep-password", "a.docx", "b.pdf"]).contains("--keep-password only"));
+        assert!(err(&["--password"]).contains("--password needs a value"));
     }
 
     #[std::prelude::v1::test]

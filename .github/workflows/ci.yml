@@ -55,6 +55,33 @@ jobs:
           cache-on-failure: true
       - run: cargo test --workspace
 
+  # Files Kantor encrypts open in other software: msoffcrypto-tool decrypts them to the
+  # same package, LibreOffice opens them with the password.
+  office-encryption:
+    name: encrypted files open elsewhere
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - name: Kantor encrypts the corpus
+        run: KANTOR_CRYPT_OUT=$PWD/enc-out cargo test -p kantor_crypt --test fixtures
+      - name: LibreOffice and msoffcrypto-tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends python3-uno python3-venv \
+            libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui
+          python3 -m venv --system-site-packages ~/venv
+          ~/venv/bin/pip install msoffcrypto-tool==5.4.2
+          ~/venv/bin/python tests/corpus/encrypted/check_output.py enc-out
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kantor-encrypted
+          path: enc-out
+
   # Windows 10/11 x64: clippy (the cfg(windows) code) and every test. The installer and the
   # silent install / uninstall smoke test run in build.yml and release.yml.
   windows:

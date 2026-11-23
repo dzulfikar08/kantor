@@ -50,6 +50,7 @@ kantor_ai = { path = "crates/kantor_ai" }
 kantor_cloud = { path = "crates/kantor_cloud" }
 kantor_esign = { path = "crates/kantor_esign" }
 kantor_core = { path = "crates/kantor_core" }
+kantor_crypt = { path = "crates/kantor_crypt" }
 kantor_spell = { path = "crates/kantor_spell" }
 kantor_mem = { path = "crates/kantor_mem" }
 kantor_merge = { path = "crates/kantor_merge" }
@@ -111,3 +112,8 @@ gpui-pre-macos = { path = "vendor/gpui-pre-macos" }
 ironcalc_base = { path = "vendor/ironcalc_base" }
 # IronCalc's xlsx reader/writer with fidelity fixes (see vendor/ironcalc/KANTOR_PATCHES.md).
 ironcalc = { path = "vendor/ironcalc" }
+
+# Key derivation (100,000 SHA-512 rounds, Argon2) is slow unoptimised: keep
+# opening password-protected files quick in debug builds and tests.
+[profile.dev.package.kantor_crypt]
+opt-level = 2
