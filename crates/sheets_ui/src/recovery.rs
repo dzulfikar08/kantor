@@ -15,6 +15,12 @@ use crate::calc::{Busy, Job};
 use crate::{SaveAs, SheetsView};
 
 impl SheetsView {
+    /// The workbook was opened with a password (and saves protected): it
+    /// gets no recovery copies, which would be unprotected.
+    pub fn has_password(&self, cx: &App) -> bool {
+        self.table.read(cx).delegate().book.password().is_some()
+    }
+
     /// Identifies the workbook's state (`None` while it's opening or
     /// recalculating in the background).
     pub fn revision(&self, cx: &App) -> Option<u64> {

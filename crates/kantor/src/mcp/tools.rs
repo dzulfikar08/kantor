@@ -65,8 +65,13 @@ const SPECS: &[Spec] = &[
     (
         "open_document",
         "Open a file",
-        "Open a file in Kantor in a new tab (or bring it to front if already open) and return its id. Sheets opens .xlsx/.xlsm/.csv/.tsv (and .ods/.xls/.xlt/.xlsb read-only, saved as .xlsx), Docs .docx (and .rtf/.doc/.dot/.odt/.ott read-only, saved as .docx), Slides .pptx (and .ppt/.pps/.pot/.odp/.otp read-only, saved as .pptx).",
-        || json!({"path": {"type": "string", "description": "Absolute path (~ allowed)."}}),
+        "Open a file in Kantor in a new tab (or bring it to front if already open) and return its id. Sheets opens .xlsx/.xlsm/.csv/.tsv (and .ods/.xls/.xlt/.xlsb read-only, saved as .xlsx), Docs .docx (and .rtf/.doc/.dot/.odt/.ott read-only, saved as .docx), Slides .pptx (and .ppt/.pps/.pot/.odp/.otp read-only, saved as .pptx). A password-protected file needs `password` (ask the user for it); it stays protected when saved.",
+        || {
+            json!({
+                "path": {"type": "string", "description": "Absolute path (~ allowed)."},
+                "password": {"type": "string", "description": "The password of a password-protected .docx/.xlsx/.pptx/.odt/.ods/.odp file."}
+            })
+        },
         &["path"],
         false,
     ),

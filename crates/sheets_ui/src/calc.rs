@@ -127,10 +127,13 @@ impl SheetsView {
             || path.display().to_string(),
             |n| n.to_string_lossy().into_owned(),
         );
+        // A protected file's password, checked by the workspace before
+        // this tab opened (kantor_ui::office_password).
+        let password = kantor_ui::office_password::take(&path);
         let parse = cx.background_spawn({
             let path = path.clone();
             async move {
-                let book = Workbook::open(&path);
+                let book = Workbook::open_with_password(&path, password.as_deref());
                 // Parsing freed what it read the file with.
                 kantor_mem::release_free_memory();
                 book

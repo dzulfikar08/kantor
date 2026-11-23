@@ -302,6 +302,9 @@ pub struct Presentation {
     pub(crate) source: Option<PathBuf>,
     /// What an import could not bring over (empty for `.pptx`).
     pub(crate) import_notes: Vec<String>,
+    /// The password the file was opened with: saves are encrypted with it
+    /// (see `kantor_crypt`).
+    pub(crate) password: Option<String>,
     pub(crate) history: History,
     pub(crate) unsupported: Vec<String>,
     /// The last ungrouped group, for Regroup.
@@ -410,7 +413,28 @@ impl Presentation {
     /// [`crate::odp`]): an import has no [`Self::path`], so Save asks for a
     /// new `.pptx` name and the original is never overwritten.
     pub fn open(path: &Path) -> anyhow::Result<Self> {
+        Self::open_with_password(path, None)
+    }
+
+    /// [`Self::open`] for a password-protected file: `password` decrypts it
+    /// (an encrypted `.pptx` or `.odp`), and the presentation keeps it so
+    /// saves are encrypted again. A protected file opened with no password
+    /// fails with [`kantor_crypt::Error::PasswordNeeded`], a wrong password
+    /// with [`kantor_crypt::Error::WrongPassword`] (both reachable with
+    /// `err.downcast_ref::<kantor_crypt::Error>()`).
+    pub fn open_with_password(path: &Path, password: Option<&str>) -> anyhow::Result<Self> {
         let bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+        let unlocked = kantor_crypt::unlock(bytes, password).map_err(|e| {
+            anyhow::Error::new(e).context(format!("{} can't be opened", path.display()))
+        })?;
+        let mut p = Self::open_bytes(path, unlocked.bytes)?;
+        if unlocked.protected {
+            p.password = password.map(str::to_owned);
+        }
+        Ok(p)
+    }
+
+    fn open_bytes(path: &Path, bytes: Vec<u8>) -> anyhow::Result<Self> {
         if crate::odp::is_odp(&bytes)
             || (crate::odp::is_odp_path(path) && !crate::ppt::is_compound_file(&bytes))
         {
@@ -654,6 +678,7 @@ impl Presentation {
             path: None,
             source: None,
             import_notes: Vec::new(),
+            password: None,
             history: History::default(),
             unsupported,
             regroup: None,
@@ -854,8 +879,22 @@ impl Presentation {
         Ok(())
     }
 
+    /// The password saves are encrypted with (the one the file was opened
+    /// with), if any.
+    pub fn password(&self) -> Option<&str> {
+        self.password.as_deref()
+    }
+
+    /// Encrypt saves with `password` from now on (`None`: save unencrypted).
+    pub fn set_password(&mut self, password: Option<String>) {
+        self.password = password.filter(|p| !p.is_empty());
+    }
+
     fn write_to(&mut self, path: &Path) -> anyhow::Result<()> {
-        let bytes = self.to_bytes()?;
+        let mut bytes = self.to_bytes()?;
+        if let Some(pw) = &self.password {
+            bytes = kantor_crypt::encrypt(&bytes, pw)?;
+        }
         atomic_write(path, &bytes)?;
         self.history.mark_saved();
         Ok(())

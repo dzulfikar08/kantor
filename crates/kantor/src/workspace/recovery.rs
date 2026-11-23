@@ -13,6 +13,8 @@
 //!   documents with a file in their own format are saved after
 //!   `idle_seconds` without changes. Imported files (.csv, .ods, .odt, .odp, .xls, .ppt) and
 //!   files with content Kantor can't keep only ever get recovery copies.
+//!   Password-protected documents get no recovery copies (they would be
+//!   unprotected); autosave, which writes them protected, still applies.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -315,7 +317,9 @@ impl Workspace {
                 continue;
             }
             st.was_dirty = true;
-            if st.copied != Some(rev) && !st.copying {
+            // A password-protected document gets no recovery copy: it
+            // would sit unprotected in the recovery store.
+            if st.copied != Some(rev) && !st.copying && !view.has_password(cx) {
                 let first = *st.first_uncopied.get_or_insert(t);
                 let paused = t.duration_since(st.changed_at) >= PAUSE;
                 if now || (t.duration_since(first) >= interval && paused) {

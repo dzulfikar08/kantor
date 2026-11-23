@@ -9,6 +9,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Password-protected Office and OpenDocument files open: Kantor asks for the password of an encrypted `.docx`,
+  `.xlsx`, `.pptx` (Office's Agile and Standard encryption) or `.odt`, `.ods`, `.odp` (LibreOffice's AES and
+  Argon2id encryption, and OpenOffice's Blowfish), and saves the document protected with the same password
+  (Office 2013+ encryption, which Office and LibreOffice open). The password is kept only in memory; protected
+  documents get no recovery copies (autosave still works). `kantor convert --password` (or
+  `KANTOR_OFFICE_PASSWORD`) converts them, with `--keep-password` to keep the output protected, and the MCP
+  server's `open_document` takes a `password`. Old `.doc`/`.xls`/`.ppt` encryption isn't supported yet.
+
 ## [0.22.0] - 2026-11-23
 
 Kantor opens OpenDocument text and presentations from LibreOffice, OpenOffice and Google Docs/Slides, and can be

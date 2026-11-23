@@ -293,6 +293,27 @@ impl Workspace {
                 path.display()
             );
         };
+        // A protected file opens only with its password (checked here, so a
+        // wrong one never opens a dialog or an empty tab).
+        if matches!(kind, AppKind::Docs | AppKind::Sheets | AppKind::Slides)
+            && self.find_path(&path, cx).is_none()
+            && kantor_ui::office_password::is_protected(&path)
+        {
+            let Some(password) = args.get("password").and_then(Value::as_str) else {
+                bail!(
+                    "{} is password-protected: ask the user for the password and pass it as `password`",
+                    path.display()
+                );
+            };
+            let bytes = std::fs::read(&path)?;
+            match kantor_crypt::check_password(&bytes, password) {
+                Ok(()) => kantor_ui::office_password::remember(&path, password.to_owned()),
+                Err(kantor_crypt::Error::WrongPassword | kantor_crypt::Error::PasswordNeeded) => {
+                    bail!("the password for {} is incorrect", path.display())
+                }
+                Err(e) => bail!("couldn't open {}: {e}", path.display()),
+            }
+        }
         self.launch(kind, Some(path.clone()), window, cx);
         let pane = self.focused_pane().context("the document didn't open")?;
         let opened = self.docs.get(&pane).and_then(|d| d.view.path(cx));
