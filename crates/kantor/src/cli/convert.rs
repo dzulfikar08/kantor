@@ -14,7 +14,7 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 
 pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \x20      kantor convert [options] -o DIR --to FORMAT INPUT...\n\

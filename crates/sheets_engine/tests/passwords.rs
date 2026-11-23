@@ -45,7 +45,7 @@ fn encrypted_xlsx_opens_with_its_password() {
 #[test]
 fn saves_stay_encrypted() {
     let dir = tempfile::tempdir().unwrap();
-    let mut book = Workbook::open_with_password(&corpus("agile.xlsx"), Some("kantor")).unwrap();
+    let mut book = Workbook::open_with_password(corpus("agile.xlsx"), Some("kantor")).unwrap();
     book.set_input(0, 2, 0, "baru").unwrap();
     let out = dir.path().join("copy.xlsx");
     book.save_as(&out).unwrap();
@@ -75,7 +75,7 @@ fn saves_stay_encrypted() {
     plain.save_as(&unprotected).unwrap();
     assert_eq!(kantor_crypt::file_protection(&unprotected), None);
     assert_eq!(
-        Workbook::open(&unprotected).unwrap().input(0, 0, 0),
+        Workbook::open(unprotected).unwrap().input(0, 0, 0),
         "Rahasia Kantor"
     );
 }

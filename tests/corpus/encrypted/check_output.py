@@ -72,7 +72,7 @@ try:
             print(f"LibreOffice {f.name}: DIDN'T OPEN")
             failed += 1
             continue
-        dst = out / (f.stem + "-lo.od" + f.suffix[2])
+        dst = out / (f.stem + "-lo." + {".docx": "odt", ".xlsx": "ods", ".pptx": "odp"}[f.suffix])
         doc.storeToURL(dst.as_uri(), (pv("FilterName", filters[f.suffix]),))
         doc.close(True)
         text = zipfile.ZipFile(dst).read("content.xml").decode()

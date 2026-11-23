@@ -148,7 +148,7 @@ fn kantor_encrypts_what_it_reads() {
         std::fs::create_dir_all(&dir).unwrap();
         for (name, _) in OOXML.iter().filter(|(n, _)| n.starts_with("agile")) {
             let plain = kantor_crypt::decrypt(&read(name), "kantor").unwrap();
-            let out = format!("{dir}/kantor-{}", name.trim_start_matches("agile."));
+            let out = format!("{dir}/kantor-{name}");
             std::fs::write(&out, kantor_crypt::encrypt(&plain, "kantor").unwrap()).unwrap();
             std::fs::write(format!("{out}.plain"), &plain).unwrap();
         }
