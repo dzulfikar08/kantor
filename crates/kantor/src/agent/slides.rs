@@ -77,6 +77,17 @@ pub fn list(pres: &Presentation, current: usize) -> Value {
                     if let Some(ph) = &s.ph {
                         v["placeholder"] = json!(ph.ty());
                     }
+                    if s.is_chart() {
+                        if let Some(kind) = pres.chart_kind(i, ix) {
+                            v["chart"] = json!(kind);
+                        }
+                        if let Some(d) = pres.chart_data(i, ix) {
+                            let names: Vec<&str> =
+                                d.series.iter().map(|s| s.name.as_str()).collect();
+                            v["series"] = json!(names);
+                            v["categories"] = json!(d.categories.len());
+                        }
+                    }
                     if let Some(text) = text {
                         v["text"] = json!(text);
                         if !s.text_editable() {

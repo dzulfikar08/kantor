@@ -73,6 +73,8 @@ embed-resource = "3"
 
 [dev-dependencies]
 tempfile.workspace = true
+# Comparing a built deck with its corpus file part by part.
+zip.workspace = true
 
 [lints]
 workspace = true

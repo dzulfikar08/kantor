@@ -982,131 +982,7 @@ impl Workbook {
     pub(crate) fn chart_xml(&self, sheet: u32, spec: &ChartSpec) -> String {
         let data_sheet = self.data_sheet_index(sheet, spec);
         let series = self.series_xml(data_sheet, spec);
-        // A combo starts as a column chart (`styled` regroups its series).
-        let kind = match spec.kind {
-            ChartType::Combo => ChartType::Column,
-            k => k,
-        };
-        let mut sers = String::new();
-        let take = if kind == ChartType::Pie {
-            1
-        } else {
-            usize::MAX
-        };
-        for (i, s) in series.iter().take(take).enumerate() {
-            sers.push_str(&format!(
-                "<c:ser><c:idx val=\"{i}\"/><c:order val=\"{i}\"/>"
-            ));
-            if let Some(n) = &s.tx {
-                sers.push_str(&format!("<c:tx>{n}</c:tx>"));
-            }
-            match kind {
-                ChartType::Scatter => {
-                    sers.push_str(
-                        "<c:spPr><a:ln w=\"19050\" cap=\"rnd\"><a:noFill/><a:round/></a:ln></c:spPr><c:marker><c:symbol val=\"circle\"/><c:size val=\"5\"/></c:marker>",
-                    );
-                    if let Some(x) = &s.cat {
-                        sers.push_str(&format!("<c:xVal>{x}</c:xVal>"));
-                    }
-                    sers.push_str(&format!("<c:yVal>{}</c:yVal><c:smooth val=\"0\"/>", s.val));
-                }
-                _ => {
-                    match kind {
-                        ChartType::Column
-                        | ChartType::StackedColumn
-                        | ChartType::Bar
-                        | ChartType::StackedBar => {
-                            sers.push_str("<c:invertIfNegative val=\"0\"/>");
-                        }
-                        ChartType::Line | ChartType::StackedLine => {
-                            sers.push_str("<c:marker><c:symbol val=\"none\"/></c:marker>");
-                        }
-                        _ => {}
-                    }
-                    if let Some(c) = &s.cat {
-                        sers.push_str(&format!("<c:cat>{c}</c:cat>"));
-                    }
-                    sers.push_str(&format!("<c:val>{}</c:val>", s.val));
-                    if matches!(kind, ChartType::Line | ChartType::StackedLine) {
-                        sers.push_str("<c:smooth val=\"0\"/>");
-                    }
-                }
-            }
-            sers.push_str("</c:ser>");
-        }
-        let grouping = if kind.stacked() {
-            "stacked"
-        } else {
-            "standard"
-        };
-        let axes_ids = "<c:axId val=\"500000001\"/><c:axId val=\"500000002\"/>";
-        let plot = match kind {
-            ChartType::Column
-            | ChartType::StackedColumn
-            | ChartType::Bar
-            | ChartType::StackedBar => {
-                let dir = if matches!(kind, ChartType::Bar | ChartType::StackedBar) {
-                    "bar"
-                } else {
-                    "col"
-                };
-                let (g, overlap) = if kind.stacked() {
-                    ("stacked", "<c:overlap val=\"100\"/>")
-                } else {
-                    ("clustered", "")
-                };
-                format!(
-                    "<c:barChart><c:barDir val=\"{dir}\"/><c:grouping val=\"{g}\"/><c:varyColors val=\"0\"/>{sers}<c:gapWidth val=\"150\"/>{overlap}{axes_ids}</c:barChart>"
-                )
-            }
-            ChartType::Line | ChartType::StackedLine => format!(
-                "<c:lineChart><c:grouping val=\"{grouping}\"/><c:varyColors val=\"0\"/>{sers}<c:marker val=\"1\"/>{axes_ids}</c:lineChart>"
-            ),
-            ChartType::Area | ChartType::StackedArea => format!(
-                "<c:areaChart><c:grouping val=\"{grouping}\"/><c:varyColors val=\"0\"/>{sers}{axes_ids}</c:areaChart>"
-            ),
-            ChartType::Pie => format!(
-                "<c:pieChart><c:varyColors val=\"1\"/>{sers}<c:firstSliceAng val=\"0\"/></c:pieChart>"
-            ),
-            ChartType::Scatter => format!(
-                "<c:scatterChart><c:scatterStyle val=\"lineMarker\"/><c:varyColors val=\"0\"/>{sers}{axes_ids}</c:scatterChart>"
-            ),
-            _ => unreachable!("only Insert Chart's types are made from a spec"),
-        };
-        let horizontal = matches!(kind, ChartType::Bar | ChartType::StackedBar);
-        let (cat_pos, val_pos) = if horizontal { ("l", "b") } else { ("b", "l") };
-        let axis_tail = "<c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>";
-        let axes = match kind {
-            ChartType::Pie => String::new(),
-            ChartType::Scatter => format!(
-                "<c:valAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{axis_tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/></c:valAx>\
-<c:valAx><c:axId val=\"500000002\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"l\"/><c:majorGridlines/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{axis_tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/></c:valAx>"
-            ),
-            _ => format!(
-                "<c:catAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{axis_tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>\
-<c:valAx><c:axId val=\"500000002\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/><c:majorGridlines/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{axis_tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/></c:valAx>"
-            ),
-        };
-        let title = if spec.title.trim().is_empty() {
-            "<c:autoTitleDeleted val=\"1\"/>".to_owned()
-        } else {
-            format!(
-                "<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:r><a:t>{}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val=\"0\"/></c:title><c:autoTitleDeleted val=\"0\"/>",
-                esc(spec.title.trim())
-            )
-        };
-        let legend = match spec.legend.code() {
-            Some(p) => {
-                format!("<c:legend><c:legendPos val=\"{p}\"/><c:overlay val=\"0\"/></c:legend>")
-            }
-            None => String::new(),
-        };
-        let xml = format!(
-            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
-<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
-<c:roundedCorners val=\"0\"/><c:chart>{title}<c:plotArea><c:layout/>{plot}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart></c:chartSpace>"
-        );
-        styled(xml, spec)
+        chart_space(spec, &series)
     }
 
     /// Charts made in Kantor that a save adds (or updates or removes where
@@ -1156,6 +1032,134 @@ impl Workbook {
             });
         }
     }
+}
+
+/// The `c:chartSpace` part for `spec` showing `series` (references with
+/// their cached values): Insert Chart's part, and the start of a chart
+/// made from data ([`crate::chart_style::from_data`]).
+pub(crate) fn chart_space(spec: &ChartSpec, series: &[NewSeries]) -> String {
+    // A combo starts as a column chart (`styled` regroups its series).
+    let kind = match spec.kind {
+        ChartType::Combo => ChartType::Column,
+        k => k,
+    };
+    let mut sers = String::new();
+    let take = if kind == ChartType::Pie {
+        1
+    } else {
+        usize::MAX
+    };
+    for (i, s) in series.iter().take(take).enumerate() {
+        sers.push_str(&format!(
+            "<c:ser><c:idx val=\"{i}\"/><c:order val=\"{i}\"/>"
+        ));
+        if let Some(n) = &s.tx {
+            sers.push_str(&format!("<c:tx>{n}</c:tx>"));
+        }
+        match kind {
+            ChartType::Scatter => {
+                sers.push_str(
+                    "<c:spPr><a:ln w=\"19050\" cap=\"rnd\"><a:noFill/><a:round/></a:ln></c:spPr><c:marker><c:symbol val=\"circle\"/><c:size val=\"5\"/></c:marker>",
+                );
+                if let Some(x) = &s.cat {
+                    sers.push_str(&format!("<c:xVal>{x}</c:xVal>"));
+                }
+                sers.push_str(&format!("<c:yVal>{}</c:yVal><c:smooth val=\"0\"/>", s.val));
+            }
+            _ => {
+                match kind {
+                    ChartType::Column
+                    | ChartType::StackedColumn
+                    | ChartType::Bar
+                    | ChartType::StackedBar => {
+                        sers.push_str("<c:invertIfNegative val=\"0\"/>");
+                    }
+                    ChartType::Line | ChartType::StackedLine => {
+                        sers.push_str("<c:marker><c:symbol val=\"none\"/></c:marker>");
+                    }
+                    _ => {}
+                }
+                if let Some(c) = &s.cat {
+                    sers.push_str(&format!("<c:cat>{c}</c:cat>"));
+                }
+                sers.push_str(&format!("<c:val>{}</c:val>", s.val));
+                if matches!(kind, ChartType::Line | ChartType::StackedLine) {
+                    sers.push_str("<c:smooth val=\"0\"/>");
+                }
+            }
+        }
+        sers.push_str("</c:ser>");
+    }
+    let grouping = if kind.stacked() {
+        "stacked"
+    } else {
+        "standard"
+    };
+    let axes_ids = "<c:axId val=\"500000001\"/><c:axId val=\"500000002\"/>";
+    let plot = match kind {
+        ChartType::Column | ChartType::StackedColumn | ChartType::Bar | ChartType::StackedBar => {
+            let dir = if matches!(kind, ChartType::Bar | ChartType::StackedBar) {
+                "bar"
+            } else {
+                "col"
+            };
+            let (g, overlap) = if kind.stacked() {
+                ("stacked", "<c:overlap val=\"100\"/>")
+            } else {
+                ("clustered", "")
+            };
+            format!(
+                "<c:barChart><c:barDir val=\"{dir}\"/><c:grouping val=\"{g}\"/><c:varyColors val=\"0\"/>{sers}<c:gapWidth val=\"150\"/>{overlap}{axes_ids}</c:barChart>"
+            )
+        }
+        ChartType::Line | ChartType::StackedLine => format!(
+            "<c:lineChart><c:grouping val=\"{grouping}\"/><c:varyColors val=\"0\"/>{sers}<c:marker val=\"1\"/>{axes_ids}</c:lineChart>"
+        ),
+        ChartType::Area | ChartType::StackedArea => format!(
+            "<c:areaChart><c:grouping val=\"{grouping}\"/><c:varyColors val=\"0\"/>{sers}{axes_ids}</c:areaChart>"
+        ),
+        ChartType::Pie => format!(
+            "<c:pieChart><c:varyColors val=\"1\"/>{sers}<c:firstSliceAng val=\"0\"/></c:pieChart>"
+        ),
+        ChartType::Scatter => format!(
+            "<c:scatterChart><c:scatterStyle val=\"lineMarker\"/><c:varyColors val=\"0\"/>{sers}{axes_ids}</c:scatterChart>"
+        ),
+        _ => unreachable!("only Insert Chart's types are made from a spec"),
+    };
+    let horizontal = matches!(kind, ChartType::Bar | ChartType::StackedBar);
+    let (cat_pos, val_pos) = if horizontal { ("l", "b") } else { ("b", "l") };
+    let axis_tail = "<c:majorTickMark val=\"out\"/><c:minorTickMark val=\"none\"/><c:tickLblPos val=\"nextTo\"/>";
+    let axes = match kind {
+        ChartType::Pie => String::new(),
+        ChartType::Scatter => format!(
+            "<c:valAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"b\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{axis_tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/></c:valAx>\
+<c:valAx><c:axId val=\"500000002\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"l\"/><c:majorGridlines/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{axis_tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"midCat\"/></c:valAx>"
+        ),
+        _ => format!(
+            "<c:catAx><c:axId val=\"500000001\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"{cat_pos}\"/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{axis_tail}<c:crossAx val=\"500000002\"/><c:crosses val=\"autoZero\"/><c:auto val=\"1\"/><c:lblAlgn val=\"ctr\"/><c:lblOffset val=\"100\"/><c:noMultiLvlLbl val=\"0\"/></c:catAx>\
+<c:valAx><c:axId val=\"500000002\"/><c:scaling><c:orientation val=\"minMax\"/></c:scaling><c:delete val=\"0\"/><c:axPos val=\"{val_pos}\"/><c:majorGridlines/><c:numFmt formatCode=\"General\" sourceLinked=\"1\"/>{axis_tail}<c:crossAx val=\"500000001\"/><c:crosses val=\"autoZero\"/><c:crossBetween val=\"between\"/></c:valAx>"
+        ),
+    };
+    let title = if spec.title.trim().is_empty() {
+        "<c:autoTitleDeleted val=\"1\"/>".to_owned()
+    } else {
+        format!(
+            "<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr/></a:pPr><a:r><a:t>{}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val=\"0\"/></c:title><c:autoTitleDeleted val=\"0\"/>",
+            esc(spec.title.trim())
+        )
+    };
+    let legend = match spec.legend.code() {
+        Some(p) => {
+            format!("<c:legend><c:legendPos val=\"{p}\"/><c:overlay val=\"0\"/></c:legend>")
+        }
+        None => String::new(),
+    };
+    let xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
+<c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
+<c:roundedCorners val=\"0\"/><c:chart>{title}<c:plotArea><c:layout/>{plot}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart></c:chartSpace>"
+    );
+    styled(xml, spec)
 }
 
 /// `xml` with `spec`'s axis titles and series colours (a chart made in

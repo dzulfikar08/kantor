@@ -160,6 +160,68 @@ pub fn table_props() -> Map<String, Value> {
     m
 }
 
+/// Keys of a chart (see [`super::slides_chart`]).
+pub fn chart_props() -> Map<String, Value> {
+    let labels = json!({
+        "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+        "anyOf": [{"type": "boolean"}, {"type": "object", "additionalProperties": false, "properties": {
+            "show": {"anyOf": [{"type": "string", "enum": ["value", "percent", "category", "series"]}, {"type": "array", "items": {"type": "string", "enum": ["value", "percent", "category", "series"]}}]},
+            "position": {"type": "string", "enum": ["center", "inside_end", "inside_base", "outside_end", "left", "right", "above", "below", "best_fit"]},
+            "format": {"type": "string"},
+            "size": {"type": ["number", "string"]},
+            "bold": {"type": "boolean"},
+            "italic": {"type": "boolean"},
+            "color": {"type": "string"},
+        }}],
+    });
+    let axis = |what: &str| {
+        json!({"type": "object", "additionalProperties": false, "description": what, "properties": {
+            "title": {"type": "string"},
+            "min": {"type": "number"},
+            "max": {"type": "number"},
+            "major_unit": {"type": "number", "description": "Distance between gridlines / tick labels."},
+            "gridlines": {"type": "boolean", "description": "Value axis: major gridlines (default true)."},
+            "number_format": {"type": "string", "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."},
+            "reverse": {"type": "boolean", "description": "Values (categories) in reverse order."},
+        }})
+    };
+    let mut m = box_props("chart");
+    for k in ["rotation", "flip_h", "flip_v"] {
+        m.remove(k);
+    }
+    m.extend(obj(json!({
+        "chart": {"type": "string", "enum": super::slides_chart::CHART_TYPES, "description": "Chart type. combo: columns with lines/areas (series `type`, `axis`)."},
+        "stacked": {"anyOf": [{"type": "boolean"}, {"type": "string", "enum": ["stacked", "percent"]}], "description": "Column, bar, line, area: stack the series (true / \"stacked\") or stack to 100% (\"percent\")."},
+        "categories": {"type": "array", "items": {"type": ["string", "number"]}, "description": "Labels along the category axis (scatter: the x values, numbers)."},
+        "series": {"type": "array", "minItems": 1, "items": {"type": "object", "additionalProperties": false, "required": ["values"], "properties": {
+            "name": {"type": "string"},
+            "values": {"type": "array", "items": {"type": ["number", "null"]}, "description": "One per category; null leaves a gap."},
+            "color": r("color"),
+            "colors": {"type": "array", "items": {"anyOf": [r("color"), {"type": "null"}]}, "description": "Bars or slices of their own colour, one per category (null: the series colour)."},
+            "type": {"type": "string", "enum": ["column", "line", "area"], "description": "Combo (or column/line/area chart): this series' type (combo default: first column, others line)."},
+            "axis": {"type": "string", "enum": ["primary", "secondary"]},
+            "line": {"description": "A line series' line: width, dash, colour.", "allOf": [r("line")]},
+            "data_labels": labels.clone(),
+        }}},
+        "title": {"type": "string"},
+        "legend": {"type": "string", "enum": ["none", "bottom", "top", "right", "left"], "description": "Default: bottom with several series or a pie, else none."},
+        "data_labels": labels,
+        "number_format": {"type": "string", "description": "Excel number format of the values (labels and value axis), written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."},
+        "axis": axis("The value axis (horizontal in a bar chart)."),
+        "category_axis": axis("The category axis: title, reverse (scatter: the x axis, with min/max/major_unit)."),
+        "gap_width": {"type": "number", "minimum": 0, "maximum": 500, "description": "Column/bar: gap between categories, % of a bar (default 150)."},
+        "overlap": {"type": "number", "minimum": -100, "maximum": 100, "description": "Column/bar: overlap of a category's bars in % (stacked: 100)."},
+        "hole": {"type": "number", "minimum": 10, "maximum": 90, "description": "Doughnut hole size in % (default 50)."},
+        "font": {"type": "object", "additionalProperties": false, "description": "The chart's text (default: the deck's typeface and colour).", "properties": {
+            "font": {"type": "string"}, "size": {"type": ["number", "string"]}, "color": r("color"), "bold": {"type": "boolean"}, "italic": {"type": "boolean"}}},
+        "colors": {"type": "array", "items": {"anyOf": [r("color"), {"type": "null"}]}, "description": "A one-series column, bar, pie or doughnut chart: each bar's or slice's colour (null: automatic), e.g. to highlight bars below target."},
+        "target_line": {"description": "A dashed horizontal line at a value (column, line, area, combo): a number or {value, label (default Target), color, width, dash}. It is a line series, so it shows in the legend and in Edit Data.",
+            "anyOf": [{"type": "number"}, {"type": "object", "additionalProperties": false, "required": ["value"], "properties": {
+                "value": {"type": "number"}, "label": {"type": "string"}, "color": r("color"), "width": r("length"), "dash": {"type": "string", "enum": slides_engine::author::DASHES}}}]},
+    })));
+    m
+}
+
 fn closed(ty: &str, props: Map<String, Value>, required: &[&str], description: &str) -> Value {
     let mut props = props;
     props.insert("type".into(), json!({"const": ty}));
@@ -285,9 +347,10 @@ fn defs() -> Value {
         "line_element": closed("line", line_props(), &["x1", "y1", "x2", "y2"], "A straight line from (x1, y1) to (x2, y2), optionally with arrowheads."),
         "picture": closed("picture", picture_props(), &["path"], "A picture from a PNG or JPEG file, optionally cropped and cut to a shape."),
         "table": closed("table", table_props(), &["rows"], "A table."),
+        "chart": closed("chart", chart_props(), &["chart", "w", "h", "categories", "series"], "A real, editable chart (PowerPoint's Edit Data opens its data): column, bar, line, area, pie, doughnut, scatter or combo."),
         "element": {
             "description": "Something on a slide, by `type`.",
-            "oneOf": [r("shape"), r("text_box"), r("line_element"), r("picture"), r("table")],
+            "oneOf": [r("shape"), r("text_box"), r("line_element"), r("picture"), r("table"), r("chart")],
         },
         "background": {
             "description": "A colour, a gradient, {\"picture\": path}, or \"inherit\" (the layout's).",
@@ -391,7 +454,7 @@ fn compact() -> Vec<(&'static str, Value)> {
         ),
         (
             "element",
-            json!({"type": "object", "description": "An element with its `type`: shape, text, line (keys as slides_add_shape), picture (as slides_add_picture) or table (as slides_add_table)."}),
+            json!({"type": "object", "description": "An element with its `type`: shape, text, line (keys as slides_add_shape), picture (as slides_add_picture), table (as slides_add_table) or chart (as slides_add_chart)."}),
         ),
         (
             "background",

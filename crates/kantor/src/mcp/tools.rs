@@ -353,7 +353,7 @@ const SPECS: &[Spec] = &[
     (
         "slides_add_slide",
         "Add a slide",
-        "Add a slide with a title and bullet points (bullets are strings or {text, level} objects, level 0-8), and optionally a background, elements (shapes, text boxes, lines, pictures, tables; as slides_add_elements) and speaker notes. One undo step; the new slide is shown.",
+        "Add a slide with a title and bullet points (bullets are strings or {text, level} objects, level 0-8), and optionally a background, elements (shapes, text boxes, lines, pictures, tables, charts; as slides_add_elements) and speaker notes. One undo step; the new slide is shown.",
         || {
             let mut v = json!({
                 "document": document(),
@@ -459,10 +459,21 @@ const SPECS: &[Spec] = &[
         false,
     ),
     (
+        "slides_add_chart",
+        "Add a chart",
+        concat!(
+            "Add a real, editable chart from data (PowerPoint's Edit Data and Kantor's chart panel open its data): chart column, bar, line, area, pie, doughnut, scatter or combo; categories and series [{name, values, color, type, axis}]; stacked (true or \"percent\"); title, legend, data_labels, number_format (Excel codes such as \"#,##0.0\"), axis {min, max, major_unit, title, gridlines, number_format}, gap_width, overlap, font, per-bar colors, target_line. Never draw charts from shapes. ",
+            elements_help!()
+        ),
+        || on_slide(schema::chart_props()),
+        &["slide", "chart", "w", "h", "categories", "series"],
+        false,
+    ),
+    (
         "slides_add_elements",
         "Add several elements",
         concat!(
-            "Add several shapes, text boxes, lines, pictures and tables to a slide at once (each with its `type`; the same objects as slides_add_shape, slides_add_picture and slides_add_table, and as the elements of slides_build). Later ones are on top. ",
+            "Add several shapes, text boxes, lines, pictures, tables and charts to a slide at once (each with its `type`; the same objects as slides_add_shape, slides_add_picture, slides_add_table and slides_add_chart, and as the elements of slides_build). Later ones are on top. ",
             elements_help!()
         ),
         || {

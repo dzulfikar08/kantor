@@ -7,6 +7,7 @@ pub mod docs;
 pub mod sheets;
 pub mod slides;
 pub mod slides_author;
+pub mod slides_chart;
 pub mod slides_check;
 pub mod slides_schema;
 

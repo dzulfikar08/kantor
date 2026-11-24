@@ -4190,6 +4190,7 @@ dependencies = [
  "slides_scene",
  "slides_ui",
  "tempfile",
+ "zip 9.4.1",
 ]
 
 [[package]]

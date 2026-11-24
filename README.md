@@ -226,7 +226,7 @@ instead). Tools: `list_documents`, `open_document`, `new_document`, `save_docume
 Slides `slides_list`, `slides_add_slide`, `slides_set_shape_text`, `slides_delete_slide`,
 `slides_set_notes`, `slides_go_to`, and for designing slides `slides_add_shape` (any preset
 shape, text box or line, with fill, outline, arrowheads and formatted text), `slides_add_picture`
-(crop, fit, cut to a shape), `slides_add_table`, `slides_add_elements`, `slides_set_background`,
+(crop, fit, cut to a shape), `slides_add_table`, `slides_add_chart` (real, editable charts from data), `slides_add_elements`, `slides_set_background`,
 `slides_update_shape`, `slides_delete_shape`, `slides_order_shape`, `slides_group_shapes`, and
 `slides_build`, which writes a whole `.pptx` from the same JSON as `kantor slides build`, and
 `slides_check`, which reports layout problems (as `kantor slides check`) in the open deck or a file

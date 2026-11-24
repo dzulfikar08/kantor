@@ -15,7 +15,7 @@ kantor convert deck.pptx -o shots/ --to png    # each slide as a PNG
 
 The MCP server (`kantor mcp`) offers the same as tools on the presentation
 open in Kantor: `slides_add_shape`, `slides_add_picture`, `slides_add_table`,
-`slides_add_elements`, `slides_set_background`, `slides_update_shape`,
+`slides_add_chart`, `slides_add_elements`, `slides_set_background`, `slides_update_shape`,
 `slides_delete_shape`, `slides_order_shape`, `slides_group_shapes`, and
 `slides_add_slide` with `background`, `elements` and `notes`. `slides_build`
 takes a whole deck and writes a `.pptx` (`open: true` opens it). An element is
@@ -91,6 +91,7 @@ Every element has a `type` and optionally a `name`.
   `row_height`/`row_heights`, `header` (default true: bold `header_color` on
   `header_fill`), `banded` with `band_fill`, `fill`, `border` (default 1 pt
   grey), `cell_margins`, `style_id`, and text formatting for every cell.
+- **chart** — a real PowerPoint chart made from data (see [Charts](#charts)).
 
 ### Text
 
@@ -106,6 +107,70 @@ runs. On shapes and text boxes: `anchor` (top, middle, bottom), `insets`
 `autofit: "shrink"` is written as PowerPoint's “shrink text on overflow”;
 PowerPoint works out the scale when it lays the text out, Kantor shows the
 text at full size until then.
+
+## Charts
+
+A `chart` element is a real, editable chart: a chart part with its data in an
+embedded workbook, as PowerPoint makes it. PowerPoint's *Edit Data* and
+Kantor's chart data panel open the data; `kantor convert` and Kantor draw it.
+Don't draw charts from shapes.
+
+```json
+{"type": "chart", "chart": "column", "x": 0.6, "y": 1.6, "w": 6, "h": 5.4,
+ "title": "Revenue, IDR bn",
+ "categories": ["Q1", "Q2", "Q3", "Q4"],
+ "series": [{"name": "2025", "values": [41.2, 44.8, 39.5, 52.1], "color": "accent1"},
+            {"name": "2026", "values": [45.0, 49.3, 47.7, null]}],
+ "number_format": "#,##0.0",
+ "data_labels": {"show": "value", "position": "outside_end"},
+ "axis": {"min": 0, "max": 60, "major_unit": 10, "title": "IDR bn"},
+ "legend": "bottom", "target_line": {"value": 45, "label": "Target"}}
+```
+
+| Key | Meaning |
+|---|---|
+| `chart` | `column`, `bar` (horizontal), `line`, `area`, `pie`, `doughnut`, `scatter`, `combo` |
+| `x`, `y`, `w`, `h` | position and size (`w`, `h` required) |
+| `categories` | labels along the category axis: strings or numbers (years). Scatter: the x values (numbers) |
+| `series` | `[{name, values, color, colors, type, axis, line, data_labels}]`: one value per category, `null` for a gap. `color` is the series' fill (bars, areas, slices) or line colour; `colors` colours single bars or slices; `line` (`{width, dash, color}`) a line series' line |
+| `stacked` | `true`/`"stacked"`, or `"percent"` (100 % stacked; value axis `0%`): column, bar, line, area |
+| `type`, `axis` (per series) | a combo's series: `column`, `line` or `area`, on the `primary` or `secondary` axis. In a column, line or area chart they make it a combo. Combo default: the first series column, the rest lines |
+| `title` | the chart title (none by default) |
+| `legend` | `none`, `bottom`, `top`, `right`, `left` (default: bottom with several series or a pie, else none) |
+| `data_labels` | `true` (values; pie and doughnut: percentages) or `{show, position, format, size, bold, italic, color}`: `show` is `value`, `percent` (pie, doughnut), `category`, `series` or a list; `position` `center`, `inside_end`, `inside_base`, `outside_end` (bars, pies), `left`, `right`, `above`, `below` (lines, scatter), `best_fit` (pies); `format` a number format; `color` #RRGGBB. Per series too |
+| `number_format` | the values' Excel number format (labels and value axis follow it), see below |
+| `axis` | the value axis (horizontal in a bar chart): `title`, `min`, `max`, `major_unit`, `gridlines` (default true), `number_format`, `reverse` |
+| `category_axis` | `title`, `reverse`; scatter (its x axis): also `min`, `max`, `major_unit`, `number_format` |
+| `gap_width`, `overlap` | column/bar/combo: the gap between categories (% of a bar, default 150) and the overlap of a category's bars (-100 to 100) |
+| `hole` | doughnut: hole size in % (default 50) |
+| `font` | `{font, size, color, bold, italic}` for all the chart's text; the title is 1.2 × `size` (default: the deck's `text` typeface and colour, PowerPoint's size) |
+| `colors` | a one-series column, bar, pie or doughnut chart: each bar's or slice's colour, `null` for automatic, e.g. `[null, "#C00000", null]` to mark the one below target |
+| `target_line` | column, line, area, combo: a number or `{value, label, color, width, dash}`: a dashed line across the chart at that value (default label "Target", colour `tx1`). It is a line series of the chart, so it shows in the legend and in Edit Data |
+
+Colours are `#RRGGBB` or theme colours (`accent1`, ...) as everywhere; without
+one, series take the theme's accents in order.
+
+**Number formats** are written as Excel stores them, whatever the language:
+`,` groups thousands and `.` is the decimal point in the code (`"#,##0.0"`,
+`"0%"`, `"0.0%"`, `"\"Rp\" #,##0"`). PowerPoint and Excel show the numbers
+in the viewer's locale, so on an Indonesian system `"#,##0.0"` shows
+`1.234,5`.
+
+The embedded workbook has one sheet, `Sheet1`: series names in row 1 from
+column B, categories in column A from row 2, each series' values under its
+name. Same JSON, same bytes.
+
+`kantor slides list` shows a chart as `"kind": "chart"` with `"chart"` (its
+type: `column`, `stacked bar`, `100% stacked column`, `doughnut`, `combo`...),
+`"series"` (names) and `"categories"` (how many). Add one to an existing file
+with `kantor slides edit deck.pptx add_chart '{"slide": 2, ...}'` (or the MCP
+tool `slides_add_chart`, or in `add_elements`). A complete example with every
+type is [examples/slides/charts.json](examples/slides/charts.json).
+
+Limits: pie and doughnut charts show one series; a horizontal bar chart can't
+mix series types; the secondary axis takes its numbers' format from
+`number_format` too (no options of its own); no 3-D, radar, stock or bubble
+charts, trendlines or error bars.
 
 ## Decks
 

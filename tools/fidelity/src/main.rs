@@ -1195,6 +1195,32 @@ fn main() -> Result<()> {
         Ok(None)
     });
 
+    // Charts Kantor makes from data (`kantor slides build`, see
+    // docs/examples/slides/charts.json), with a series added as the chart
+    // data panel does: checked on their own (no original to compare with).
+    run.scenario("kantor_charts.pptx", |o| {
+        let src = corpus.join("pptx/kantor_charts.pptx");
+        let mut p = Presentation::open(&src)?;
+        let k = (0..p.slide(0).shapes.len())
+            .find(|&k| p.slide(0).shapes[k].chart_part().is_some())
+            .context("chart")?;
+        p.insert_chart_series(0, k, 1, "2027")?;
+        p.save_as(&o.join("kantor_charts.pptx"))?;
+        Ok(None)
+    });
+
+    // The workbook embedded with each of those charts (Edit Data opens it).
+    run.scenario("kantor_chart_data.xlsx", |o| {
+        use std::io::Read as _;
+        let src = corpus.join("pptx/kantor_charts.pptx");
+        let mut z = zip::ZipArchive::new(std::fs::File::open(&src)?)?;
+        let mut bytes = Vec::new();
+        z.by_name("ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx")?
+            .read_to_end(&mut bytes)?;
+        std::fs::write(o.join("kantor_chart_data.xlsx"), bytes)?;
+        Ok(None)
+    });
+
     let mut f = std::fs::File::create(out.join("manifest.tsv"))?;
     f.write_all(run.manifest.as_bytes())?;
     println!("{} scenarios failed", run.failed);
