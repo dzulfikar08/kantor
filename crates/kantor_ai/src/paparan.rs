@@ -298,6 +298,30 @@ pub fn note_response(resp: &HttpResponse) {
     }
 }
 
+/// Remember the final balance a Paparan stream reports in its closing SSE
+/// comment (`: paparan-credits-remaining N`, sent just before `data: [DONE]`;
+/// the response header only has the balance minus the request's reserve).
+/// Returns whether the line was that comment.
+pub fn note_stream_comment(line: &str) -> bool {
+    let Some(remaining) = stream_comment_credits(line) else {
+        return false;
+    };
+    if let Ok(mut last) = LAST_CREDITS.lock() {
+        let low = last.and_then(|c| c.low);
+        *last = Some(CreditsSeen { remaining, low });
+    }
+    true
+}
+
+/// The balance in a `: paparan-credits-remaining N` SSE comment.
+fn stream_comment_credits(line: &str) -> Option<f64> {
+    let n = line
+        .strip_prefix(':')?
+        .trim()
+        .strip_prefix("paparan-credits-remaining")?;
+    n.trim().parse::<f64>().ok()
+}
+
 /// The balance reported since the last call, if any.
 pub fn take_credits() -> Option<CreditsSeen> {
     LAST_CREDITS.lock().ok().and_then(|mut l| l.take())
@@ -952,5 +976,19 @@ mod tests {
             })
         ));
         assert_eq!(t.seen().len(), 2, "retried only once");
+    }
+
+    #[test]
+    fn stream_comment_credits_parse() {
+        assert_eq!(stream_comment_credits("data: {}"), None);
+        assert_eq!(stream_comment_credits(": keep-alive"), None);
+        assert_eq!(
+            stream_comment_credits(": paparan-credits-remaining x"),
+            None
+        );
+        assert_eq!(
+            stream_comment_credits(": paparan-credits-remaining 12297.5"),
+            Some(12297.5)
+        );
     }
 }

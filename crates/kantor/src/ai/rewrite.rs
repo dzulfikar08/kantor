@@ -82,7 +82,10 @@ impl RewritePanel {
         }
         self.mode = Some(mode);
         let req = match prompt::rewrite_request(mode, texts) {
-            Ok(r) => r.task("rewrite"),
+            Ok(r) => r.task(match mode {
+                RewriteMode::ToEnglish | RewriteMode::ToIndonesian => "translate_id_en",
+                _ => "rewrite",
+            }),
             Err(e) => {
                 self.state = State::Failed(e.to_string());
                 cx.notify();

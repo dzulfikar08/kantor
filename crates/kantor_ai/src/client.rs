@@ -365,7 +365,10 @@ pub fn read_reply(
             // the payload's own `type`).
             match line.strip_prefix("data:") {
                 Some(p) => p.trim(),
-                None => continue,
+                None => {
+                    crate::paparan::note_stream_comment(line);
+                    continue;
+                }
             }
         };
         if payload == "[DONE]" {
