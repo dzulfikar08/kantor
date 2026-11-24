@@ -318,7 +318,10 @@ impl SettingsPanel {
         self.status = Status::Busy(i18n::t("Connecting to Paparan AI…").into());
         paparan::run_steps(
             cx,
-            move |step: &dyn Fn(DeviceStart)| {
+            move |step: &dyn Fn(DeviceStart)| -> Result<
+                (paparan_api::Account, KeyLocation),
+                SignInError,
+            > {
                 let api = paparan::api();
                 let done = paparan_api::sign_in(
                     &api,
@@ -329,7 +332,7 @@ impl SettingsPanel {
                 )?;
                 let location = paparan_api::save_token(&done.token)
                     .map_err(|e| SignInError::Ai(kantor_ai::AiError::Network(e)))?;
-                Ok::<_, SignInError>((done.account, location))
+                Ok((done.account, location))
             },
             |this: &mut Self, start: DeviceStart, cx| {
                 // Still waiting for this sign-in (not cancelled meanwhile)?
@@ -392,10 +395,10 @@ impl SettingsPanel {
         super::run(
             cx,
             |_, _| {
-                if let Some(token) = paparan_api::load_token() {
-                    if let Err(e) = paparan::api().revoke(&token) {
-                        log::info!("Paparan AI sign-out not confirmed by the server: {e}");
-                    }
+                if let Some(token) = paparan_api::load_token()
+                    && let Err(e) = paparan::api().revoke(&token)
+                {
+                    log::info!("Paparan AI sign-out not confirmed by the server: {e}");
                 }
                 paparan_api::delete_token();
                 Ok(())

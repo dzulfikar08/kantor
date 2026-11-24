@@ -158,7 +158,7 @@ impl Credits {
 /// `1250.0` → `1,250`; `3.5` → `3.5`.
 pub fn format_amount(n: f64) -> String {
     let neg = n < 0.0;
-    let n = n.abs();
+    let n = (n.abs() * 100.0).round() / 100.0;
     let whole = n.trunc() as u64;
     let frac = n - n.trunc();
     let digits = whole.to_string();
@@ -689,7 +689,7 @@ mod tests {
         let cancel = Cancel::default();
         let cancelled = api(vec![ok(START), ok(pending)]);
         let mut slept = Vec::new();
-        let mut sleep = |d, c: &Cancel| {
+        let mut sleep = |d: Duration, c: &Cancel| -> Result<(), AiError> {
             slept.push(d);
             c.cancel();
             Ok(())
