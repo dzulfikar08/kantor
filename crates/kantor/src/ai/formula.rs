@@ -13,12 +13,13 @@ use gpui_kit::*;
 use kantor_ai::prompt::{self, FormulaReply, Lang};
 use kantor_ai::sample::{SheetSample, sample_sheet};
 use kantor_ai::{AiError, Cancel};
-use kantor_core::settings::Settings;
+use kantor_core::settings::{AiSettings, Settings};
 use kantor_ui::i18n::{self, tf};
 use kantor_ui::metrics::*;
 use sheets_engine::check::{FormulaPreview, evaluate_in_copy};
 use sheets_ui::{AiTarget, SheetsView};
 
+use super::paparan::{self, FailAction};
 use super::widgets::{Status, card, footer, note, result_box, status_line};
 use super::{AI_PANEL, ClosePanel, PanelEvent};
 
@@ -67,8 +68,12 @@ pub struct FormulaPanel {
     cancel: Option<Cancel>,
     enabled: bool,
     provider: &'static str,
+    ai: AiSettings,
+    /// Top up / Sign in, offered with a failure.
+    fail_action: Option<FailAction>,
     focus: FocusHandle,
     _subscription: Subscription,
+    _paparan: Subscription,
 }
 
 impl EventEmitter<PanelEvent> for FormulaPanel {}
@@ -116,9 +121,13 @@ impl FormulaPanel {
             cancel: None,
             enabled: super::client_allowed(&ai),
             provider: super::provider_label(&ai),
+            ai: ai.clone(),
+            fail_action: None,
             focus: cx.focus_handle(),
             _subscription: subscription,
+            _paparan: cx.observe_global::<paparan::PaparanState>(|_, cx| cx.notify()),
         };
+        paparan::refresh_if_unknown(&ai, cx);
         if mode == FormulaMode::Explain && this.enabled {
             this.explain(cx);
         }
@@ -154,7 +163,9 @@ impl FormulaPanel {
         }
         self.stop();
         let ai = Settings::load().ai;
-        let req = prompt::formula_request(&query, &self.sample);
+        self.ai = ai.clone();
+        self.fail_action = None;
+        let req = prompt::formula_request(&query, &self.sample).task("formula");
         self.asked = Some(query);
         self.state = State::Asking { chars: 0 };
         self.cancel = Some(super::run(
@@ -179,7 +190,10 @@ impl FormulaPanel {
             return;
         }
         let ai = Settings::load().ai;
-        let req = prompt::explain_request(&self.formula, &self.sample, Lang::from_env());
+        self.ai = ai.clone();
+        self.fail_action = None;
+        let req =
+            prompt::explain_request(&self.formula, &self.sample, Lang::from_env()).task("formula");
         self.state = State::Asking { chars: 0 };
         self.cancel = Some(super::run(
             cx,
@@ -193,10 +207,14 @@ impl FormulaPanel {
                 this.cancel = None;
                 this.state = match r {
                     Ok(text) => State::Explained(text),
-                    Err(e) => State::Failed {
-                        message: e.to_string(),
-                        formula: None,
-                    },
+                    Err(e) => {
+                        let (message, action) = paparan::failure(&e, cx);
+                        this.fail_action = action;
+                        State::Failed {
+                            message,
+                            formula: None,
+                        }
+                    }
                 };
                 cx.notify();
             },
@@ -217,8 +235,10 @@ impl FormulaPanel {
         let reply = match r {
             Ok(reply) => reply,
             Err(e) => {
+                let (message, action) = paparan::failure(&e, cx);
+                self.fail_action = action;
                 self.state = State::Failed {
-                    message: e.to_string(),
+                    message,
                     formula: None,
                 };
                 cx.notify();
@@ -387,6 +407,7 @@ impl Render for FormulaPanel {
                 }
                 _ => {}
             }
+            body = body.children(paparan::low_credit_hint(&self.ai, cx));
         }
 
         let mut buttons =
@@ -400,6 +421,13 @@ impl Render for FormulaPanel {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(PanelEvent::OpenSettings))),
             );
         } else {
+            let failed = matches!(self.state, State::Failed { .. });
+            if let Some(action) = self.fail_action.as_ref().filter(|_| failed) {
+                let view = cx.entity().downgrade();
+                buttons = buttons.child(paparan::action_button(action, move |cx| {
+                    let _ = view.update(cx, |_, cx| cx.emit(PanelEvent::OpenSettings));
+                }));
+            }
             buttons = buttons.child(
                 Button::new("ai-close")
                     .ghost()

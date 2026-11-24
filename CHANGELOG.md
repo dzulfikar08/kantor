@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Paparan AI, a hosted AI provider: sign in with a Paparan account (a code confirmed in the browser), see the plan and
+  credits left in *AI Settings*, and use every AI feature without an API key; *Top up* opens the payment page when
+  credits run out or low. Your own API key and Ollama stay free with every feature.
+
 ## [0.23.0] - 2026-11-23
 
 Password-protected Office and OpenDocument files open, and stay protected when saved.

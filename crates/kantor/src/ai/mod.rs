@@ -5,6 +5,7 @@
 //! switched off, and each feature sends only what its privacy line says.
 
 mod formula;
+pub(crate) mod paparan;
 mod rewrite;
 mod settings;
 pub(crate) mod widgets;
@@ -24,6 +25,7 @@ pub const AI_PANEL: &str = "AiPanel";
 actions!(kantor_ai_panel, [ClosePanel]);
 
 pub fn init(cx: &mut App) {
+    cx.set_global(paparan::PaparanState::default());
     refresh_enabled(&Settings::load().ai, cx);
     cx.bind_keys([KeyBinding::new("escape", ClosePanel, Some(AI_PANEL))]);
 }
@@ -85,6 +87,7 @@ pub fn run<V: 'static, T: Send + 'static>(
             let alive = this.update(cx, |view, cx| match msg {
                 Msg::Text(t) => on_text(view, &t, cx),
                 Msg::Done(result) => {
+                    paparan::after_call(result.as_ref().err(), cx);
                     if let Some(f) = on_done.take() {
                         f(view, result, cx);
                     }

@@ -177,12 +177,50 @@ API key	Kunci API
 Base URL	URL dasar
 Model	Model
 Any model id the provider offers; empty uses the default shown.	ID model apa pun yang ditawarkan penyedia; kosongkan untuk memakai model bawaan yang ditampilkan.
-Kantor has no AI service of its own: requests go straight from this computer to the provider chosen here, and only when you use an AI command. Each command sends only what it needs: for formulas, the column headers, up to 20 sample rows near the selection and the active cell's address; for rewriting, the selected paragraphs. Nothing is sent while AI features are off. API keys are kept in the system keychain, never in the settings file.	Kantor tidak memiliki layanan AI sendiri: permintaan langsung dikirim dari komputer ini ke penyedia yang dipilih di sini, dan hanya saat Anda memakai perintah AI. Setiap perintah hanya mengirim yang diperlukan: untuk rumus, judul kolom, hingga 20 baris contoh di dekat pilihan dan alamat sel aktif; untuk menulis ulang, paragraf yang dipilih. Tidak ada yang dikirim selama fitur AI nonaktif. Kunci API disimpan di keychain sistem, tidak pernah di berkas pengaturan.
+With your own API key, requests go straight from this computer to the provider chosen here, and only when you use an AI command. Each command sends only what it needs: for formulas, the column headers, up to 20 sample rows near the selection and the active cell's address; for rewriting, the selected paragraphs. Nothing is sent while AI features are off. API keys are kept in the system keychain, never in the settings file.	Dengan kunci API Anda sendiri, permintaan langsung dikirim dari komputer ini ke penyedia yang dipilih di sini, dan hanya saat Anda memakai perintah AI. Setiap perintah hanya mengirim yang diperlukan: untuk rumus, judul kolom, hingga 20 baris contoh di dekat pilihan dan alamat sel aktif; untuk menulis ulang, paragraf yang dipilih. Tidak ada yang dikirim selama fitur AI nonaktif. Kunci API disimpan di keychain sistem, tidak pernah di berkas pengaturan.
 AI Settings	Pengaturan AI
 Testing…	Menguji…
 Test connection	Uji koneksi
 Ollama (local)	Ollama (lokal)
 Other (OpenAI-compatible)	Lainnya (kompatibel OpenAI)
+# Paparan AI (hosted credits)
+Auto (recommended)	Otomatis (disarankan)
+Auto picks a model for each task; Fast costs fewer credits; Smart is best for long documents.	Otomatis memilih model untuk tiap tugas; Cepat memakai lebih sedikit kredit; Cerdas paling baik untuk dokumen panjang.
+Checking your Paparan AI sign-in…	Memeriksa login Paparan AI Anda…
+Connecting to Paparan AI…	Menghubungkan ke Paparan AI…
+Credits left	Sisa kredit
+Fast	Cepat
+Loading your account…	Memuat akun Anda…
+Manage account	Kelola akun
+No API key needed: sign in with your Paparan account and buy credits by QRIS or virtual account.	Tanpa kunci API: masuk dengan akun Paparan Anda dan beli kredit lewat QRIS atau virtual account.
+No API key: sign in with your Paparan account and pay for credits by QRIS or virtual account	Tanpa kunci API: masuk dengan akun Paparan Anda dan bayar kredit lewat QRIS atau virtual account
+Not enough Paparan AI credits. Top up to continue.	Kredit Paparan AI tidak cukup. Isi ulang untuk melanjutkan.
+Open the page again	Buka halamannya lagi
+Paparan AI credits are running low: {} left.	Kredit Paparan AI hampir habis: sisa {}.
+Plan: {}	Paket: {}
+Refresh	Muat ulang
+Refreshing…	Memuat ulang…
+Running low	Hampir habis
+Sign in to Paparan AI	Masuk ke Paparan AI
+Sign in…	Masuk…
+Sign out	Keluar
+Signed in as {}.	Masuk sebagai {}.
+Signed in as {}. No system keychain was found, so the sign-in is kept in ai-keys.toml next to settings.toml (readable only by you).	Masuk sebagai {}. Keychain sistem tidak ditemukan, jadi login disimpan di ai-keys.toml di samping settings.toml (hanya bisa dibaca oleh Anda).
+Signed in, but the balance couldn't be loaded: {}	Sudah masuk, tetapi saldo tidak dapat dimuat: {}
+Signed out of Paparan AI.	Keluar dari Paparan AI.
+Signed out of Paparan AI. Sign in again in AI Settings.	Anda keluar dari Paparan AI. Masuk lagi di Pengaturan AI.
+Signing out…	Sedang keluar…
+Smart	Cerdas
+Starting the sign-in…	Memulai proses masuk…
+The sign-in code expired. Sign in again.	Kode masuk kedaluwarsa. Masuk lagi.
+The sign-in was declined.	Proses masuk ditolak.
+Too many requests. Try again in a moment.	Terlalu banyak permintaan. Coba lagi sebentar lagi.
+Too many requests. Try again in {} s.	Terlalu banyak permintaan. Coba lagi dalam {} detik.
+Top up	Isi ulang
+Use your own API key (free)	Pakai kunci API sendiri (gratis)
+Waiting for you to confirm in the browser…	Menunggu Anda mengonfirmasi di browser…
+With Paparan AI, requests go to Paparan's servers (app.paparanai.id), which pass them to the AI model, and only when you use an AI command. Each command sends only what it needs, as with your own key. The sign-in is kept in the system keychain, never in the settings file.	Dengan Paparan AI, permintaan dikirim ke server Paparan (app.paparanai.id), yang meneruskannya ke model AI, dan hanya saat Anda memakai perintah AI. Setiap perintah hanya mengirim yang diperlukan, sama seperti dengan kunci sendiri. Login disimpan di keychain sistem, tidak pernah di berkas pengaturan.
+Your browser opened {}. Check that it shows this code, then confirm:	Browser Anda membuka {}. Pastikan halaman itu menampilkan kode ini, lalu konfirmasi:
 Create a key at console.anthropic.com	Buat kunci di console.anthropic.com
 Create a key at platform.openai.com	Buat kunci di platform.openai.com
 Create a key at openrouter.ai/keys	Buat kunci di openrouter.ai/keys

@@ -11,7 +11,7 @@ your documents anywhere. It talks to the network in only these cases:
    Turn this off with `[update] enabled = false` in `settings.toml`; Kantor then makes no
    update requests at all. Details: [README, Updates](README.md#updates).
 2. **AI features, only if you turn them on.** AI is off by default. If you choose a provider
-   (Anthropic, OpenAI, Google and others, or Ollama on your own computer) and run an AI
+   (Paparan AI, Anthropic, OpenAI, Google and others, or Ollama on your own computer) and run an AI
    command, Kantor sends only what that command needs to the provider you chose, under that
    provider's terms. Details: [README, AI features and privacy](README.md#ai-features-optional-and-privacy).
 3. **Formulas that download, in Sheets.** A workbook's `IMAGE` and `WEBSERVICE` formulas name

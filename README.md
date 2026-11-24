@@ -235,13 +235,15 @@ Use the full path in MCP configs, e.g. `"command": "C:\\Users\\you\\AppData\\Loc
 
 The short version for the whole app is in [PRIVACY.md](PRIVACY.md).
 
-AI is **off** until you turn it on in `Ctrl K` → *AI Settings* and choose a provider: Anthropic, OpenAI, OpenRouter, Groq, DeepSeek, Google Gemini, any OpenAI-compatible server, or **Ollama** running on your own computer (nothing leaves it). Kantor has no AI service of its own: your data goes **only to the provider you chose**, and only when you run an AI command. Each command sends only what it needs:
+AI is **off** until you turn it on in `Ctrl K` → *AI Settings* and choose a provider: **Paparan AI** (Kantor's hosted service: sign in with a Paparan account and buy credits by QRIS or virtual account, no API key), or, free with every feature, your own key for Anthropic, OpenAI, OpenRouter, Groq, DeepSeek, Google Gemini, any OpenAI-compatible server, or **Ollama** running on your own computer (nothing leaves it). Your data goes **only to the provider you chose**, and only when you run an AI command. Each command sends only what it needs:
 
 - *Ask AI for a Formula…* (Sheets): the column headers, up to 20 sample rows near the selection and the active cell's address — never the whole sheet;
 - *Explain This Formula* (Sheets): the formula and the column headers;
 - *Rewrite / Translate Selection…* (Docs): the selected paragraphs' text.
 
 API keys are stored in the system keychain (Secret Service on Linux, Keychain on macOS, Credential Manager on Windows); if none is available Kantor says so and keeps the key in `~/.config/kantor/ai-keys.toml`, readable only by you. Keys are never written to `settings.toml` or logs. What the provider does with your requests is governed by its own terms.
+
+With Paparan AI, *AI Settings* shows *Sign in to Paparan AI*: the browser opens a page showing a code, which Kantor shows too; confirm it there. The settings then show the account, its plan and the credits left (refreshed after each AI command), with *Top up* and *Manage account*; AI results say when credits run low. The sign-in is kept in the keychain like an API key, and *Sign out* ends it on the server too. `KANTOR_PAPARAN_URL` points Kantor at another Paparan server (for testing).
 
 ## Cloud storage
 

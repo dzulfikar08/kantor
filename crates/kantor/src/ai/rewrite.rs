@@ -12,10 +12,11 @@ use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ai::prompt::{self, RewriteMode};
 use kantor_ai::{AiError, Cancel};
-use kantor_core::settings::Settings;
+use kantor_core::settings::{AiSettings, Settings};
 use kantor_ui::i18n::{self, tf};
 use kantor_ui::metrics::*;
 
+use super::paparan::{self, FailAction};
 use super::widgets::{PREVIEW_MAX_HEIGHT, Status, card, footer, note, result_box, status_line};
 use super::{AI_PANEL, ClosePanel, PanelEvent};
 
@@ -39,7 +40,11 @@ pub struct RewritePanel {
     cancel: Option<Cancel>,
     enabled: bool,
     provider: &'static str,
+    ai: AiSettings,
+    /// Top up / Sign in, offered with a failure.
+    fail_action: Option<FailAction>,
     focus: FocusHandle,
+    _paparan: Subscription,
 }
 
 impl EventEmitter<PanelEvent> for RewritePanel {}
@@ -48,6 +53,7 @@ impl RewritePanel {
     pub fn new(docs: Entity<DocsView>, cx: &mut Context<Self>) -> Self {
         let ai = Settings::load().ai;
         let source = docs.read(cx).rewrite_source();
+        paparan::refresh_if_unknown(&ai, cx);
         Self {
             docs: docs.downgrade(),
             source,
@@ -56,7 +62,10 @@ impl RewritePanel {
             cancel: None,
             enabled: super::client_allowed(&ai),
             provider: super::provider_label(&ai),
+            ai,
+            fail_action: None,
             focus: cx.focus_handle(),
+            _paparan: cx.observe_global::<paparan::PaparanState>(|_, cx| cx.notify()),
         }
     }
 
@@ -73,7 +82,7 @@ impl RewritePanel {
         }
         self.mode = Some(mode);
         let req = match prompt::rewrite_request(mode, texts) {
-            Ok(r) => r,
+            Ok(r) => r.task("rewrite"),
             Err(e) => {
                 self.state = State::Failed(e.to_string());
                 cx.notify();
@@ -81,6 +90,8 @@ impl RewritePanel {
             }
         };
         let ai = Settings::load().ai;
+        self.ai = ai.clone();
+        self.fail_action = None;
         self.state = State::Working { chars: 0 };
         self.cancel = Some(super::run(
             cx,
@@ -99,7 +110,11 @@ impl RewritePanel {
                 this.cancel = None;
                 this.state = match r {
                     Ok(p) => State::Ready(p),
-                    Err(e) => State::Failed(e.to_string()),
+                    Err(e) => {
+                        let (message, action) = paparan::failure(&e, cx);
+                        this.fail_action = action;
+                        State::Failed(message)
+                    }
                 };
                 cx.notify();
             },
@@ -213,6 +228,7 @@ impl Render for RewritePanel {
                         ),
                 );
             }
+            body = body.children(paparan::low_credit_hint(&self.ai, cx));
         }
 
         let mut buttons =
@@ -226,6 +242,13 @@ impl Render for RewritePanel {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(PanelEvent::OpenSettings))),
             );
         } else {
+            let failed = matches!(self.state, State::Failed(_));
+            if let Some(action) = self.fail_action.as_ref().filter(|_| failed) {
+                let view = cx.entity().downgrade();
+                buttons = buttons.child(paparan::action_button(action, move |cx| {
+                    let _ = view.update(cx, |_, cx| cx.emit(PanelEvent::OpenSettings));
+                }));
+            }
             buttons = buttons
                 .child(
                     Button::new("ai-close")
