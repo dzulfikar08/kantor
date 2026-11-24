@@ -1838,9 +1838,13 @@ mod tests {
         for name in PRESETS {
             let d = json!({"preset": name});
             let l = Look::build(&p, d.as_object().unwrap(), &Ctx::default()).unwrap();
-            let bg = l.rgb("background").0;
-            for k in ["accent", "highlight", "muted"] {
-                assert!(contrast(l.rgb(k).0, bg) >= 4.5, "{name} {k}");
+            // (A bare presentation keeps its own theme, so the accent is
+            // read from the preset.)
+            let v = preset(name).unwrap();
+            let hex = |s: &Value| Rgb::parse(s.as_str().unwrap().trim_start_matches('#')).unwrap();
+            let bg = hex(&v["palette"]["background"]).0;
+            for c in [&v["theme"]["colors"]["accent1"], &v["palette"]["muted"]] {
+                assert!(contrast(hex(c).0, bg) >= 4.5, "{name} {c}");
             }
             let dark = l.on_dark("dark");
             for k in [
