@@ -238,10 +238,28 @@ pub fn mail_merge(args: &Value) -> Result<Value, String> {
     go().map_err(|e| format!("{e:#}"))
 }
 
+/// `slides_check` with a `path`: check the file without the app.
+fn check_file(args: &Value) -> Result<Value, String> {
+    let go = || -> anyhow::Result<Value> {
+        let path = crate::agent::path_arg(crate::agent::req_str(args, "path")?)?;
+        if !path.is_file() {
+            anyhow::bail!("{} is not a file", path.display());
+        }
+        let pres = slides_engine::Presentation::open(&path)?;
+        let mut out = crate::agent::slides_check::tool(&pres, args)?;
+        out["file"] = json!(path.display().to_string());
+        Ok(out)
+    };
+    go().map_err(|e| format!("{e:#}"))
+}
+
 impl Backend for AppClient {
     fn call(&mut self, tool: &str, args: Value) -> Result<Value, String> {
         if tool == "mail_merge" {
             return mail_merge(&args);
+        }
+        if tool == "slides_check" && args.get("path").is_some_and(|p| !p.is_null()) {
+            return check_file(&args);
         }
         if tool == "slides_build" {
             let mut out = build_deck(&args)?;
@@ -297,5 +315,29 @@ mod tests {
             assert!(super::super::tools::exists(t), "{t}");
         }
         assert!(super::super::tools::exists("slides_build"));
+        assert!(super::super::tools::exists("slides_check"));
+    }
+
+    #[std::prelude::v1::test]
+    fn slides_check_reads_a_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("deck.pptx");
+        build_deck(&json!({
+            "path": path,
+            "deck": {"units": "in", "slides": [{"title": "Hi", "elements": [
+                {"type": "text", "x": 20, "y": 1, "w": 2, "h": 1, "text": "Lost"}
+            ]}]},
+        }))
+        .unwrap();
+        let out = check_file(&json!({"path": path})).unwrap();
+        assert!(out["errors"].as_u64().unwrap() >= 1, "{out}");
+        assert!(
+            out["findings"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f["check"] == "off_slide")
+        );
+        assert!(check_file(&json!({"path": path, "slide": 3})).is_err());
     }
 }

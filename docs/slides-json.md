@@ -9,6 +9,8 @@ kantor slides list deck.pptx                   # slides and shapes as JSON
 kantor slides edit deck.pptx add_shape '{"slide": 2, "type": "shape", "x": "1in", "y": "1in", "w": "3in", "h": "1in", "text": "Hello"}'
 kantor slides edit deck.pptx -o out.pptx --ops ops.json   # [{"tool": "add_table", "args": {...}}, ...]
 kantor slides schema > slides-deck.schema.json
+kantor slides check deck.pptx                  # layout problems (see "Checking your deck")
+kantor convert deck.pptx -o shots/ --to png    # each slide as a PNG
 ```
 
 The MCP server (`kantor mcp`) offers the same as tools on the presentation
@@ -139,3 +141,66 @@ and text. Use the ids with `slides_update_shape` (move, resize, turn),
 `slides_delete_shape`, `slides_order_shape` (`front`, `back`, `forward`,
 `backward`, or a position from 1 at the back), `slides_group_shapes` and
 `slides_set_shape_text`. Each call is one undo step in Kantor.
+
+## Checking your deck
+
+A deck can look right in JSON and wrong on the slide: a title that wraps to
+a second line runs into the text below it, a box placed past the edge is
+cut off, pale text vanishes on a pale card. Two tools show what the slides
+really look like, laid out with Kantor's own text layout (the same as the
+app, the PDF and the PNGs):
+
+```sh
+kantor slides check deck.pptx                  # findings for people; exit 1 on errors
+kantor slides check deck.pptx --json           # for programs and agents
+kantor slides check deck.pptx --slide 3        # one slide
+kantor slides build deck.json -o deck.pptx --check    # build, then check
+kantor convert deck.pptx -o shots/ --to png    # shots/deck-01.png, deck-02.png, …
+kantor convert deck.pptx -o shots/ --to png --contact-sheet   # shots/deck-sheet.png
+kantor convert deck.pptx slide3.png --slide 3 --width 1920
+```
+
+`check` reports, per slide and shape (id and name as in `slides_list`):
+
+| check | severity | what |
+|---|---|---|
+| `text_overflow` | error | text taller (or a line wider) than its box: lines needed, lines that fit, how much spills out |
+| `text_wraps` | error | text wrapping in a box made for one line (and spilling out) |
+| `title_wraps` | info | a title-like single paragraph (title placeholder, a name with "title", or 24 pt and up) that wraps but fits |
+| `autofit_shrink` | warning (error under 60 %) | a shrink-on-overflow box (`"autofit": "shrink"`) whose text doesn't fit, and the scale it needs; the file, PDF and PNG show it at full size until PowerPoint shrinks it |
+| `autofit_resize` | info | a box that grows to fit its text (`"autofit": "resize"`): how tall it gets |
+| `off_slide` | error / warning / info | entirely off the slide, or its text past the edge (error); its box but not its text past the edge (warning); a shape without text bleeding off (info) |
+| `text_overlap` | error | text running into another shape's text |
+| `covers_text` | warning | a shape drawn on top of part of a text |
+| `text_crosses_edge` | warning | text partly over the shape behind it (text wholly inside a card, picture or band is fine) |
+| `low_contrast` | warning (error under 2:1) | text colour against the colour behind it under 4.5:1 (3:1 for 18 pt bold or 24 pt and up); text over pictures isn't checked |
+| `font_missing` | warning / info | a font not installed here: text falls back to another font, so line breaks can differ (info when a font with the same metrics stands in, e.g. Carlito for Calibri) |
+| `small_text` | warning | text under 10 pt (footers excluded) |
+| `empty_placeholder` | warning | a placeholder with no text (shows a prompt in editors, nothing in the show) |
+| `no_title` | warning / info | a slide without a title placeholder (info when big text near the top looks like one: give the slide a `title`) |
+| `no_notes` | info | no speaker notes |
+
+The text output lists the findings by slide. `--json` gives
+`{"slides", "checked", "size", "errors", "warnings", "info", "findings": [...]}`;
+each finding has `severity`, `check`, `slide` (from 1; `null` for the whole
+deck), `shape` and `other` (`{"id", "name", "kind"}`), `message`, `rect`
+(where the problem is: `x`, `y`, `w`, `h` in EMU and the same in inches
+under `in`) and the numbers behind it (`lines`, `lines_that_fit`,
+`overflow`/`overflow_in`, `scale_needed`, `ratio`, `color`, `background`,
+`font`…). The exit status is 0 without errors, 1 with errors and 2 for
+usage errors. The MCP tool `slides_check` returns the same JSON for the
+presentation open in Kantor, or for a file (`path`).
+
+`kantor convert … --to png` draws the slides through the PDF export, so the
+PNGs show what the PDF shows (pictures, gradients, tables, charts, text).
+`--width` sets each picture's width in pixels (default 1600; 480 per slide
+in a contact sheet), `--slide` picks slides (`3`, `2-5`, `1,3,7-9`, `4-`;
+hidden slides are left out unless named). With `-o DIR` the files are
+`DIR/NAME-01.png`…; `INPUT OUTPUT.png` with one slide writes `OUTPUT.png`.
+`--contact-sheet` writes one picture of all the slides in a numbered grid.
+
+A good loop for an agent: build, `check --json`, fix the errors, then look
+at the contact sheet (or single slides) for what checks can't judge:
+balance, alignment, whether a picture fits the story. Not checked yet: text
+in tables, groups, charts and SmartArt, and turned (vertical) text's
+overflow.

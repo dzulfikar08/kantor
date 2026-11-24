@@ -337,6 +337,20 @@ const SPECS: &[Spec] = &[
         true,
     ),
     (
+        "slides_check",
+        "Check slides for layout problems",
+        "Lay a presentation's slides out as Kantor draws them and report problems an author can't see without looking: text overflowing its box or wrapping in a one-line box (lines needed vs lines that fit), shrink-to-fit boxes and the scale they need, shapes off the slide, text running into other text or crossing a shape's edge, low contrast, fonts not installed, text under 10 pt, empty placeholders, slides without a title or notes. Each finding has a severity (error, warning, info), the slide, the shape's id and name, and a rect in EMU and inches. Checks the open presentation (`document`), or a .pptx file without opening it (`path`). Run it after building or editing a deck and fix the errors.",
+        || {
+            json!({
+                "document": document(),
+                "path": {"type": "string", "description": "Absolute path of a .pptx to check without opening it (~ allowed); instead of document."},
+                "slide": {"type": "integer", "minimum": 1, "description": "Only this slide."},
+            })
+        },
+        &[],
+        true,
+    ),
+    (
         "slides_add_slide",
         "Add a slide",
         "Add a slide with a title and bullet points (bullets are strings or {text, level} objects, level 0-8), and optionally a background, elements (shapes, text boxes, lines, pictures, tables; as slides_add_elements) and speaker notes. One undo step; the new slide is shown.",

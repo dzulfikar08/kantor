@@ -533,6 +533,15 @@ pub(crate) fn body_props(n: Node) -> BodyProps {
     });
     b.no_wrap = n.attribute("wrap").map(|w| w == "none");
     b.vert = crate::frame::Vert::parse(n.attribute("vert"));
+    b.fit = if child(n, NS_A, "normAutofit").is_some() {
+        Some(crate::model::TextFit::Shrink)
+    } else if child(n, NS_A, "spAutoFit").is_some() {
+        Some(crate::model::TextFit::Resize)
+    } else if child(n, NS_A, "noAutofit").is_some() {
+        Some(crate::model::TextFit::None)
+    } else {
+        None
+    };
     let fit = child(n, NS_A, "normAutofit");
     b.font_scale = fit
         .and_then(|a| attr_i64(a, "fontScale"))

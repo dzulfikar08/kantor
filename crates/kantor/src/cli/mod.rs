@@ -4,4 +4,6 @@
 pub mod convert;
 pub mod merge;
 pub mod pdf;
+pub mod render_png;
 pub mod slides;
+pub mod slides_check;

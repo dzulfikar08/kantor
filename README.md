@@ -173,6 +173,8 @@ kantor convert --sheet Sales --fit-width --landscape --paper f4 book.xlsx sales.
                                                # also --fit-page, --scale N, --portrait,
                                                # --no-print-area (the sheet's page setup otherwise)
 kantor convert -o out/ --to pdf a.docx b.docx
+kantor convert deck.pptx -o shots/ --to png     # shots/deck-01.png … as the PDF draws them;
+                                               # --slide 2-4, --width 1600, --contact-sheet
 kantor pdf merge a.pdf b.pdf -o both.pdf       # also split, extract, delete, reorder, rotate,
                                                # info, images, watermark, page-numbers, compress
 kantor pdf verify signed.pdf                   # signature report; exit 0 if all valid,
@@ -189,6 +191,10 @@ kantor pdf sign kontrak-emeterai.pdf --provider xignature --signer MY-XIGNATURE-
 kantor slides build deck.json -o deck.pptx     # a .pptx from JSON: theme, shapes, pictures,
                                                # tables, backgrounds, notes (docs/slides-json.md)
 kantor slides list deck.pptx                   # slides and shapes (ids, geometry, text) as JSON
+kantor slides check deck.pptx                  # overflowing or wrapping text, shapes off the
+                                               # slide, collisions, low contrast, missing fonts…
+                                               # --json, --slide N; exit 1 on errors
+kantor slides build deck.json -o deck.pptx --check   # build, then check
 kantor slides edit deck.pptx add_shape '{"slide": 1, "type": "shape", "x": "1in", "y": "1in", "w": "3in", "h": "1in", "text": "Hi"}'
 ```
 
@@ -222,7 +228,8 @@ Slides `slides_list`, `slides_add_slide`, `slides_set_shape_text`, `slides_delet
 shape, text box or line, with fill, outline, arrowheads and formatted text), `slides_add_picture`
 (crop, fit, cut to a shape), `slides_add_table`, `slides_add_elements`, `slides_set_background`,
 `slides_update_shape`, `slides_delete_shape`, `slides_order_shape`, `slides_group_shapes`, and
-`slides_build`, which writes a whole `.pptx` from the same JSON as `kantor slides build`
+`slides_build`, which writes a whole `.pptx` from the same JSON as `kantor slides build`, and
+`slides_check`, which reports layout problems (as `kantor slides check`) in the open deck or a file
 ([docs/slides-json.md](docs/slides-json.md), schema in
 [docs/slides-deck.schema.json](docs/slides-deck.schema.json)). The app listens only on a private Unix socket
 (`$XDG_RUNTIME_DIR/kantor/`, on macOS `~/Library/Application Support/Kantor/run/`), readable by

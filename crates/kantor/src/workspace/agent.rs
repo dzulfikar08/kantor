@@ -679,6 +679,11 @@ impl Workspace {
         };
         let (what, out) = match tool {
             "slides_list" => return Ok(e.read(cx).agent_read(slides::list)),
+            "slides_check" => {
+                return e
+                    .read(cx)
+                    .agent_read(|p, _| crate::agent::slides_check::tool(p, args));
+            }
             "slides_go_to" => {
                 let i = e
                     .read(cx)

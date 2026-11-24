@@ -3,6 +3,7 @@
 //! ```text
 //! kantor slides build deck.json -o deck.pptx
 //! kantor slides list deck.pptx
+//! kantor slides check deck.pptx [--json] [--slide N]
 //! kantor slides edit deck.pptx add_shape '{"slide": 2, "type": "shape", ...}'
 //! kantor slides edit deck.pptx -o out.pptx --ops ops.json
 //! kantor slides schema > slides-deck.schema.json
@@ -21,8 +22,9 @@ use slides_engine::Presentation;
 
 use crate::agent::{slides, slides_author, slides_schema};
 
-pub const USAGE: &str = "usage: kantor slides build DECK.json -o OUT.pptx [-f]\n\
+pub const USAGE: &str = "usage: kantor slides build DECK.json -o OUT.pptx [-f] [--check [--json]]\n\
     \x20      kantor slides list FILE.pptx\n\
+    \x20      kantor slides check FILE.pptx [--json] [--slide N]\n\
     \x20      kantor slides edit FILE.pptx [-o OUT.pptx] [-f] TOOL ARGS\n\
     \x20      kantor slides edit FILE.pptx [-o OUT.pptx] [-f] --ops OPS.json\n\
     \x20      kantor slides schema\n\
@@ -36,9 +38,21 @@ pub const USAGE: &str = "usage: kantor slides build DECK.json -o OUT.pptx [-f]\n
     \x20          background, elements (shapes, text boxes, lines, pictures,\n\
     \x20          tables) and notes. DECK.json may be - (standard input);\n\
     \x20          relative picture paths start from its folder. The same deck\n\
-    \x20          always gives the same file.\n\
+    \x20          always gives the same file. --check then checks it (as\n\
+    \x20          check; exit status 1 when it finds errors).\n\
     \x20 list     print the slides and their shapes (id, name, kind, geometry,\n\
     \x20          position and size in EMU, text) as JSON\n\
+    \x20 check    lay the slides out as Kantor draws them (PDF, PNG) and\n\
+    \x20          report problems: text overflowing its box or wrapping in a\n\
+    \x20          one-line box (lines needed vs lines that fit), shrink-to-fit\n\
+    \x20          boxes and the scale they need, shapes off the slide, text\n\
+    \x20          running into text or crossing a shape's edge, low contrast,\n\
+    \x20          fonts not installed, text under 10 pt, empty placeholders,\n\
+    \x20          slides without a title or notes. Each finding is an error,\n\
+    \x20          warning or info, with the slide, shape id and name, and where\n\
+    \x20          (EMU and inches in --json). Exit status 1 when there are\n\
+    \x20          errors. See the slides as pictures with kantor convert FILE\n\
+    \x20          -o DIR --to png (--contact-sheet for one picture).\n\
     \x20 edit     run slides tools on a file and save it (in place unless -o).\n\
     \x20          TOOL is a tool name with or without slides_ (add_shape,\n\
     \x20          add_picture, add_table, add_elements, add_slide,\n\
@@ -55,6 +69,9 @@ pub const USAGE: &str = "usage: kantor slides build DECK.json -o OUT.pptx [-f]\n
     Options:\n\
     \x20 -o, --output FILE   the .pptx to write\n\
     \x20 -f, --force         overwrite an existing output file\n\
+    \x20     --check         build: check the deck it wrote\n\
+    \x20     --json          check: findings as JSON\n\
+    \x20     --slide N       check: only slide N\n\
     \x20 -h, --help          show this help\n\
     \n\
     Exit status: 0 on success, 1 when the work failed, 2 for usage errors.";
@@ -113,6 +130,9 @@ struct Opts {
     output: Option<PathBuf>,
     force: bool,
     ops: Option<String>,
+    check: bool,
+    json: bool,
+    slide: Option<String>,
     rest: Vec<String>,
 }
 
@@ -129,6 +149,12 @@ fn parse(args: &[OsString]) -> Result<Opts, Usage> {
                 o.output = Some(PathBuf::from(v));
             }
             "-f" | "--force" => o.force = true,
+            "--check" => o.check = true,
+            "--json" => o.json = true,
+            "--slide" => {
+                let v = it.next().ok_or(Usage::from("--slide needs a number"))?;
+                o.slide = Some(v.to_string_lossy().into_owned());
+            }
             "--ops" => {
                 let v = it.next().ok_or(Usage::from("--ops needs a file"))?;
                 o.ops = Some(v.to_string_lossy().into_owned());
@@ -163,6 +189,17 @@ pub fn main(args: &[OsString]) -> i32 {
             return 2;
         }
     };
+    if cmd == "check" {
+        let [file] = opts.rest.as_slice() else {
+            eprintln!("kantor slides check: check takes one FILE.pptx\n\n{USAGE}");
+            return 2;
+        };
+        return super::slides_check::run(Path::new(file), opts.json, opts.slide.as_deref());
+    }
+    if (opts.json || opts.slide.is_some()) && !(cmd == "build" && opts.check) {
+        eprintln!("kantor slides {cmd}: --json and --slide go with check\n\n{USAGE}");
+        return 2;
+    }
     let result = match cmd {
         "build" => build(&opts),
         "list" => list(&opts),
@@ -177,6 +214,10 @@ pub fn main(args: &[OsString]) -> i32 {
         other => Ok(Err(Usage(format!("unknown command {other}")))),
     };
     match result {
+        Ok(Ok(())) if cmd == "build" && opts.check => match &opts.output {
+            Some(out) => super::slides_check::run(out, opts.json, opts.slide.as_deref()),
+            None => 0,
+        },
         Ok(Ok(())) => 0,
         Ok(Err(Usage(msg))) => {
             eprintln!("kantor slides {cmd}: {msg}\n\n{USAGE}");
@@ -216,7 +257,13 @@ fn build(o: &Opts) -> Outcome {
     let p = slides_author::build(&json, base.as_deref())?;
     let bytes = p.to_bytes()?;
     write_file(out, &bytes)?;
-    println!("{deck} -> {} ({} slides)", out.display(), p.len());
+    let line = format!("{deck} -> {} ({} slides)", out.display(), p.len());
+    if o.check && o.json {
+        // Standard output is the JSON.
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
+    }
     Ok(Ok(()))
 }
 

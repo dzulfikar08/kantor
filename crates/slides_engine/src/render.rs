@@ -576,6 +576,12 @@ impl Presentation {
         l.and_then(|s| s.xfrm).or(m.and_then(|s| s.xfrm))
     }
 
+    /// The body properties (insets, anchoring, autofit...) a slide
+    /// shape's text has: its own over its layout's and master's.
+    pub fn body_props(&self, slide: usize, shape: &Shape) -> BodyProps {
+        self.text_chain(slide, shape).1
+    }
+
     /// The list style and body properties a slide shape's text inherits.
     fn text_chain(&self, slide: usize, shape: &Shape) -> (ListStyle, BodyProps) {
         let master = self.master_of(slide);

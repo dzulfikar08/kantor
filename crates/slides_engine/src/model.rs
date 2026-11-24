@@ -528,6 +528,19 @@ pub struct BodyProps {
     pub line_reduction: Option<u32>,
     /// `vert`: text turned a quarter (display only).
     pub vert: Option<crate::frame::Vert>,
+    /// How text fits the shape (`noAutofit` / `normAutofit` / `spAutoFit`).
+    pub fit: Option<TextFit>,
+}
+
+/// How a text body fits its shape (`a:bodyPr`'s autofit element).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum TextFit {
+    /// `a:noAutofit`: text may overflow.
+    None,
+    /// `a:normAutofit`: text shrinks on overflow.
+    Shrink,
+    /// `a:spAutoFit`: the shape grows to fit its text.
+    Resize,
 }
 
 impl BodyProps {
@@ -551,6 +564,9 @@ impl BodyProps {
         }
         if o.vert.is_some() {
             self.vert = o.vert;
+        }
+        if o.fit.is_some() {
+            self.fit = o.fit;
         }
     }
 }

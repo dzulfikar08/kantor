@@ -4161,6 +4161,7 @@ dependencies = [
  "docs_ui",
  "embed-resource",
  "env_logger",
+ "flate2",
  "futures",
  "gpui-kit",
  "gpui-pre-macos",
@@ -4186,6 +4187,7 @@ dependencies = [
  "signal-hook",
  "slides_engine",
  "slides_pdf",
+ "slides_scene",
  "slides_ui",
  "tempfile",
 ]

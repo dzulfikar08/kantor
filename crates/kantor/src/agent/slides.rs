@@ -20,7 +20,7 @@ pub fn slide_arg(pres: &Presentation, args: &Value, key: &str) -> Result<usize> 
     Ok(n as usize - 1)
 }
 
-fn shape_kind(s: &slides_engine::Shape) -> String {
+pub(crate) fn shape_kind(s: &slides_engine::Shape) -> String {
     match &s.kind {
         ShapeKind::Shape { text_box: true, .. } => "text box".into(),
         ShapeKind::Shape {
