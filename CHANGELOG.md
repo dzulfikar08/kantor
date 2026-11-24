@@ -9,6 +9,20 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- Slides: a real slide show. `F5` / `Shift F5` open a borderless fullscreen window with only the slides
+  (letterboxed on black); with two or more displays it goes on the one that isn't the editor's, and a presenter view
+  fills the editor's display: the current slide, the next one, speaker notes (scrollable, larger or smaller text), an
+  elapsed timer with pause and reset, the clock, "Slide X of Y", a strip of every slide to jump to, black and white
+  screen, pointer tools, *Swap displays* and *End show*. With one display, `Alt F5` starts in the presenter view and
+  switches between it and the slides during the show. PowerPoint's keys work (next / previous, `Home` / `End`, a slide
+  number then `Enter`, `B` / `W`, `G` for all slides, `Esc`), hidden slides are skipped, and a black "End of slide
+  show" screen follows the last slide. Pointer tools: laser pointer (`Ctrl L`, or hold `Ctrl` and drag), pen
+  (`Ctrl P`, six colours), highlighter (`Ctrl I`), eraser (`Ctrl E`, removes whole strokes) and `E` to erase the
+  slide's ink; ink drawn in either window shows in both and stays on its slide until the show ends. A toolbar appears
+  at the bottom left of the slides when the mouse moves.
+
 ## [0.23.0] - 2026-11-23
 
 Password-protected Office and OpenDocument files open, and stay protected when saved.

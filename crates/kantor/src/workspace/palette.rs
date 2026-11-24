@@ -2394,6 +2394,14 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.present_doc(false, w, cx)),
     },
     Command {
+        title: tk("Present in Presenter View"),
+        detail: tk("Slides · notes, timer and next slide"),
+        keys: "Alt F5",
+        run: |ws, window, cx| {
+            ws.with_slides(window, cx, |v, w, cx| v.present_presenter_view_doc(w, cx))
+        },
+    },
+    Command {
         title: tk("AI Settings"),
         detail: tk("Provider, API key, model · off by default"),
         keys: "",

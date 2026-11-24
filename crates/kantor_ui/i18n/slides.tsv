@@ -172,3 +172,27 @@ Select an Organization Chart shape	Pilih bentuk Bagan Organisasi
 Only an Organization Chart has assistants	Hanya Bagan Organisasi yang punya asisten
 Only an Organization Chart's shapes have a hanging layout	Hanya bentuk Bagan Organisasi yang punya tata letak menggantung
 SmartArt layout changed	Tata letak SmartArt diubah
+# Slide show and presenter view (slides_ui/src/show).
+Pointer and pen tools	Alat penunjuk dan pena
+See all slides	Lihat semua slide
+Presenter view	Tampilan penyaji
+End show	Akhiri tayangan
+{} (hidden)	{} (disembunyikan)
+End of slide show, click to exit.	Akhir tayangan slide, klik untuk keluar.
+Go to slide {}	Ke slide {}
+Laser pointer	Penunjuk laser
+Pen	Pena
+Highlighter	Stabilo
+Eraser	Penghapus
+Erase all ink on this slide	Hapus semua coretan di slide ini
+Resume timer	Lanjutkan pengatur waktu
+Pause timer	Jeda pengatur waktu
+Reset timer	Atur ulang pengatur waktu
+End of slide show	Akhir tayangan slide
+Black screen	Layar hitam
+White screen	Layar putih
+Swap displays	Tukar layar
+Show slides	Tampilkan slide
+No notes	Tidak ada catatan
+Smaller notes text	Perkecil teks catatan
+Larger notes text	Perbesar teks catatan

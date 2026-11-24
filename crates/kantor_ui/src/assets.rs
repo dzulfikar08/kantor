@@ -121,6 +121,10 @@ icon_assets!(
         ShieldCheck,
         ShieldX,
         ShieldQuestionMark,
+        // Slide show: pointer tools, presenter view
+        Eraser,
+        CircleDot,
+        ArrowLeftRight,
     ]
 );
 
