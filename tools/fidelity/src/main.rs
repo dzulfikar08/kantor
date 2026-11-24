@@ -1209,6 +1209,18 @@ fn main() -> Result<()> {
         Ok(None)
     });
 
+    // The workbook embedded with each of those charts (Edit Data opens it).
+    run.scenario("kantor_chart_data.xlsx", |o| {
+        use std::io::Read as _;
+        let src = corpus.join("pptx/kantor_charts.pptx");
+        let mut z = zip::ZipArchive::new(std::fs::File::open(&src)?)?;
+        let mut bytes = Vec::new();
+        z.by_name("ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx")?
+            .read_to_end(&mut bytes)?;
+        std::fs::write(o.join("kantor_chart_data.xlsx"), bytes)?;
+        Ok(None)
+    });
+
     let mut f = std::fs::File::create(out.join("manifest.tsv"))?;
     f.write_all(run.manifest.as_bytes())?;
     println!("{} scenarios failed", run.failed);
