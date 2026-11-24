@@ -66,6 +66,16 @@ impl ShowWindow {
             self.strip_scroll.scroll_to_item(i);
         }
 
+        // Pointer tools (and the pen's colours) over the slide on screen.
+        let tools = h_flex()
+            .flex_none()
+            .gap(SPACE_4)
+            .child(tool_row(tool, cx, false))
+            .when(tool == Tool::Pen || tool == Tool::Highlighter, |d| {
+                d.child(separator(t.border))
+                    .child(color_row(pen, hl, tool, cx, false))
+            });
+
         let top = h_flex()
             .flex_none()
             .h(px(56.))
@@ -123,11 +133,6 @@ impl ShowWindow {
                     }),
             )
             .child(div().flex_1())
-            .child(tool_row(tool, cx, false))
-            .when(tool == Tool::Pen || tool == Tool::Highlighter, |d| {
-                d.child(color_row(pen, hl, tool, cx, false))
-            })
-            .child(separator(t.border))
             .child(theme_button(
                 "presenter-black",
                 Lucide::Square,
@@ -297,14 +302,22 @@ impl ShowWindow {
             .gap(SPACE_7)
             .p(SPACE_7)
             .child(
-                div()
+                v_flex()
                     .flex_1()
                     .h_full()
                     .min_w_0()
-                    .rounded(RADIUS_LG)
-                    .overflow_hidden()
-                    .bg(black())
-                    .child(current_area),
+                    .gap(SPACE_4)
+                    .child(tools)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .w_full()
+                            .rounded(RADIUS_LG)
+                            .overflow_hidden()
+                            .bg(black())
+                            .child(current_area),
+                    ),
             )
             .child(side);
 
