@@ -428,12 +428,12 @@ pub enum ToolKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ToolStatus {
-    #[default]
-    #[serde(other)]
-    Pending,
     InProgress,
     Completed,
     Failed,
+    #[default]
+    #[serde(other)]
+    Pending,
 }
 
 /// What a tool call shows.
@@ -575,20 +575,20 @@ impl ToolCallUpdate {
 #[serde(rename_all = "snake_case")]
 pub enum PlanPriority {
     High,
+    Low,
     #[default]
     #[serde(other)]
     Medium,
-    Low,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanStatus {
+    InProgress,
+    Completed,
     #[default]
     #[serde(other)]
     Pending,
-    InProgress,
-    Completed,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
