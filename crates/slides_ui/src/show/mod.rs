@@ -117,7 +117,7 @@ pub enum Cover {
 
 /// Which window a [`ShowWindow`] is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Role {
+pub(crate) enum ShowRole {
     /// The slides, for the audience (a presenter window is on another display).
     Audience,
     /// The presenter view, on the presenter's display.
@@ -259,7 +259,7 @@ fn open_windows(show: &Entity<SlideShow>, cx: &mut App) {
         (s.audience_display, s.presenter_display)
     };
     let mut opened = Vec::new();
-    let mut open = |role: Role, display: Option<DisplayId>, cx: &mut App| {
+    let mut open = |role: ShowRole, display: Option<DisplayId>, cx: &mut App| {
         let bounds = display
             .and_then(|id| cx.find_display(id))
             .map(|d| d.bounds())
@@ -269,7 +269,7 @@ fn open_windows(show: &Entity<SlideShow>, cx: &mut App) {
             titlebar: None,
             window_bounds: Some(WindowBounds::Fullscreen(bounds)),
             display_id: display,
-            focus: role != Role::Audience || presenter.is_none(),
+            focus: role != ShowRole::Audience || presenter.is_none(),
             window_background: WindowBackgroundAppearance::Opaque,
             ..Default::default()
         };
@@ -286,10 +286,10 @@ fn open_windows(show: &Entity<SlideShow>, cx: &mut App) {
     };
     match presenter {
         Some(p) => {
-            open(Role::Audience, audience, cx);
-            open(Role::Presenter, Some(p), cx);
+            open(ShowRole::Audience, audience, cx);
+            open(ShowRole::Presenter, Some(p), cx);
         }
-        None => open(Role::Single, audience, cx),
+        None => open(ShowRole::Single, audience, cx),
     }
     let failed = opened.is_empty();
     show.update(cx, |s, cx| {

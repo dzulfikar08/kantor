@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::assets::IconName as Lucide;
-use gpui_kit::component::{Icon, h_flex, tooltip::Tooltip, v_flex};
+use gpui_kit::component::{Icon, Sizable as _, h_flex, tooltip::Tooltip, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::i18n::{self, tf};
@@ -15,14 +15,19 @@ use kantor_ui::{metrics::*, tokens};
 
 use super::ink::{self, Tool};
 use super::state::Pos;
-use super::*;
+use super::{
+    ArrowTool, Cover, EraseAll, EraserTool, HighlighterTool, LaserTool, NotesBigger, NotesSmaller,
+    PenTool, SHOW_CONTEXT, ShowEnd, ShowEnter, ShowEscape, ShowFirst, ShowLast, ShowNext, ShowPrev,
+    ShowRole, SlideFrame, SlideShow, ToggleBlack, ToggleGrid, TogglePresenterView, ToggleWhite,
+    aspect, paint_show_slide, rect_of,
+};
 
 /// The corner toolbar and the cursor hide after this long without moving.
 const IDLE: Duration = Duration::from_secs(2);
 
 pub(crate) struct ShowWindow {
     pub(super) show: Entity<SlideShow>,
-    pub(super) role: Role,
+    pub(super) role: ShowRole,
     pub(crate) focus: FocusHandle,
     /// Where the drawable slide was painted last (window px).
     pub(super) placed: Rc<Cell<Bounds<Pixels>>>,
@@ -44,7 +49,7 @@ pub(crate) struct ShowWindow {
 impl ShowWindow {
     pub(super) fn new(
         show: Entity<SlideShow>,
-        role: Role,
+        role: ShowRole,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -58,7 +63,7 @@ impl ShowWindow {
             true
         });
         // The presenter's clocks.
-        let ticker = (role != Role::Audience).then(|| {
+        let ticker = (role != ShowRole::Audience).then(|| {
             cx.spawn(async move |this, cx| {
                 loop {
                     cx.background_executor()
@@ -96,9 +101,9 @@ impl ShowWindow {
     /// This window shows the presenter view now.
     pub(super) fn shows_presenter(&self, cx: &App) -> bool {
         match self.role {
-            Role::Presenter => true,
-            Role::Audience => false,
-            Role::Single => self.show.read(cx).presenter_view,
+            ShowRole::Presenter => true,
+            ShowRole::Audience => false,
+            ShowRole::Single => self.show.read(cx).presenter_view,
         }
     }
 

@@ -13,9 +13,10 @@ use gpui_kit::*;
 use kantor_ui::i18n::{self, tf};
 use kantor_ui::{metrics::*, tokens};
 
+use super::ink::Tool;
 use super::state::{Pos, format_elapsed};
 use super::window::{ShowWindow, color_row, number_badge, theme_button, tip, tool_row};
-use super::*;
+use super::{Cover, SlideFrame, paint_show_slide};
 
 /// Thumbnails in the slide strip, px.
 const THUMB_W: f32 = 128.;

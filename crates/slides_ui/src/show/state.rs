@@ -255,7 +255,7 @@ impl NumberEntry {
 }
 
 /// A display as the show sees it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Screen<Id> {
     pub id: Id,
     /// Top-left corner, to tell the displays apart in a stable order.
