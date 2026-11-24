@@ -845,6 +845,23 @@ fn check_fit(
                     details,
                 );
             }
+            // Under a fifth of a line: the line box's leading, not glyphs.
+            _ if over > SLACK && over <= m.first_line * 0.2 => {
+                cx.add(
+                    Severity::Warning,
+                    "text_overflow",
+                    Some(who),
+                    None,
+                    Some(rect),
+                    format!(
+                        "text is {} tall, {} more than the box holds ({}): mostly line spacing, but anything just below gets crowded; make the box a little taller",
+                        px_in(m.height),
+                        px_in(over),
+                        px_in(m.inner_h)
+                    ),
+                    details,
+                );
+            }
             _ if over > SLACK => {
                 cx.add(
                     Severity::Error,
@@ -1010,7 +1027,11 @@ fn check_contrast(
 }
 
 fn check_off_slide(cx: &mut Ctx, o: &Obj, slide: R) {
-    let gone = area(meet(o.rect, slide)) <= 0.0;
+    // Lines have no width or height: compare edges, not areas.
+    let gone = o.rect[2] < slide[0]
+        || o.rect[0] > slide[2]
+        || o.rect[3] < slide[1]
+        || o.rect[1] > slide[3];
     if gone {
         cx.add(
             Severity::Error,
@@ -1345,6 +1366,8 @@ mod tests {
             {"type": "text", "name": "Gone", "x": 14, "y": 2, "w": 2, "h": 1, "text": "Lost"},
             {"type": "text", "name": "Half", "x": 12.5, "y": 4, "w": 3, "h": 1, "text": "Half of this is past the edge", "size": 20},
             {"type": "shape", "name": "Bleed", "x": -0.5, "y": 6, "w": 3, "h": 2, "fill": "#AA0000"},
+            {"type": "line", "name": "Rule", "x1": 1, "y1": 5, "x2": 6, "y2": 5},
+            {"type": "line", "name": "Lost rule", "x1": 1, "y1": 9, "x2": 6, "y2": 9},
         ]))]));
         let r = run(&p);
         let off: Vec<_> = r
@@ -1360,6 +1383,8 @@ mod tests {
         assert_eq!(by("Gone").unwrap().severity, Severity::Error);
         assert_eq!(by("Half").unwrap().severity, Severity::Error);
         assert_eq!(by("Bleed").unwrap().severity, Severity::Info);
+        assert!(by("Rule").is_none(), "{}", r.text("t"));
+        assert_eq!(by("Lost rule").unwrap().severity, Severity::Error);
         let gone = by("Gone").unwrap();
         assert_eq!(gone.rect.unwrap()[0], 14 * 914_400);
     }
