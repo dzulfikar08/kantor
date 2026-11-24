@@ -182,17 +182,57 @@
     "preset": {
       "type": "string",
       "enum": [
-        "consulting-navy",
-        "warm",
-        "mono",
-        "teal"
+        "editorial",
+        "swiss",
+        "mono"
       ],
-      "description": "A built-in look: theme colours and fonts, palette, text styles, header and footer. The deck's own settings go over it."
+      "description": "A built-in look: editorial (warm paper, Instrument Serif titles and numbers, hairline rules, no boxes), swiss (white, Inter bold titles under a thick rule, mono labels, solid square panels, one strong blue) or mono (swiss in black, white and one red). Sets the theme colours and fonts, palette, text styles, card style, header, footer, covers and the slide background; the deck's own settings go over it (its theme accent recolours the preset's tints)."
+    },
+    "card_style": {
+      "type": "string",
+      "enum": [
+        "rule",
+        "fill"
+      ],
+      "description": "How cards, stats, comparisons, callouts and clean tables are drawn: rule (no boxes, a rule on top, numbers in the heading font) or fill (square panels, the highlighted one in the accent colour). Default from the preset; fill without one."
     },
     "palette": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "accent": {
+          "type": "string"
+        },
+        "accent_soft": {
+          "type": "string"
+        },
+        "background": {
+          "type": "string"
+        },
+        "panel": {
+          "type": "string"
+        },
+        "line": {
+          "type": "string"
+        },
+        "bar": {
+          "type": "string"
+        },
+        "good": {
+          "type": "string"
+        },
+        "bad": {
+          "type": "string"
+        },
+        "on_accent": {
+          "type": "string"
+        },
+        "on_dark": {
+          "type": "string"
+        },
+        "on_dark_accent": {
+          "type": "string"
+        },
         "primary": {
           "type": "string"
         },
@@ -245,14 +285,14 @@
           "type": "string"
         }
       },
-      "description": "Named colours used by styles and components (and allowed wherever a colour is): #RRGGBB or a theme colour. Default from the theme: primary accent1, highlight accent2, ink tx1, dark tx2, paper bg2, white bg1, muted/divider/tint mixed from them."
+      "description": "Named colours used by styles and components (and allowed wherever a colour is): #RRGGBB or a theme colour. Default from the theme: accent / primary accent1, highlight accent2, ink tx1, dark tx2, panel / paper bg2, background / white / on_accent / on_dark bg1, muted, line / divider, bar, accent_soft / tint, on_dark_accent mixed from them; good / success, bad / danger fixed."
     },
     "styles": {
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/text_style"
       },
-      "description": "Named text styles (used with `style`): eyebrow, title, subtitle, body, small, note, label, card_title, stat, number, badge, callout, table, table_header, footer, cover_eyebrow, cover_title, cover_subtitle, and any of your own. Keys given here go over the preset's."
+      "description": "Named text styles (used with `style`): eyebrow, page_number, title, subtitle, body, small, note, label, card_title, stat, number, numeral, badge, callout, table, table_header, footer, cover_brand, cover_eyebrow, cover_title, cover_subtitle, cover_meta, cover_mark, cover_mark_label, section_eyebrow, section_title, section_subtitle, and any of your own. Keys given here go over the preset's."
     },
     "header": {
       "description": "Where a slide's eyebrow, title and subtitle go (a preset turns it on; false: none). Slides with a header put `title` in a title placeholder, and components default to the area under it.",
@@ -290,11 +330,10 @@
               ]
             },
             "rule": {
-              "description": "An accent bar above the eyebrow: {color, w, h}, or false.",
+              "description": "A rule above the eyebrow, or beside it (position left): {color, w (a length or \"full\"), h, position, gap}, or false.",
               "anyOf": [
                 {
-                  "type": "boolean",
-                  "const": false
+                  "type": "boolean"
                 },
                 {
                   "type": "object",
@@ -304,10 +343,33 @@
                       "$ref": "#/$defs/color"
                     },
                     "w": {
-                      "$ref": "#/$defs/length"
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "full"
+                        },
+                        {
+                          "$ref": "#/$defs/length"
+                        }
+                      ]
                     },
                     "h": {
                       "$ref": "#/$defs/length"
+                    },
+                    "position": {
+                      "type": "string",
+                      "enum": [
+                        "above",
+                        "left"
+                      ]
+                    },
+                    "gap": {
+                      "description": "Space under a rule above the eyebrow.",
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/length"
+                        }
+                      ]
                     }
                   }
                 }
@@ -318,6 +380,21 @@
               "enum": [
                 "left",
                 "center"
+              ]
+            },
+            "page_number": {
+              "type": "boolean",
+              "description": "The page number (02) before the eyebrow."
+            },
+            "separator": {
+              "type": "string",
+              "description": "Between the page number and the eyebrow (default \" / \")."
+            },
+            "text": {
+              "description": "Text at the right of the eyebrow row; true: the footer's text (then not in the footer).",
+              "type": [
+                "string",
+                "boolean"
               ]
             }
           }
@@ -340,7 +417,7 @@
             },
             "page_numbers": {
               "type": "boolean",
-              "description": "A slide number field at the right (default true)."
+              "description": "A slide number field (02) at the right (default true)."
             },
             "logo": {
               "type": "string",
@@ -373,6 +450,52 @@
               "type": "boolean",
               "description": "Show slides' `footer_note` (default true)."
             },
+            "rule": {
+              "description": "A hairline across the content width above the footer: {color, width}, or false.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "color": {
+                      "$ref": "#/$defs/color"
+                    },
+                    "width": {
+                      "$ref": "#/$defs/length"
+                    },
+                    "size": {
+                      "$ref": "#/$defs/length"
+                    }
+                  }
+                }
+              ]
+            },
+            "mark": {
+              "description": "A small square at the bottom right: {color, size}, or false.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "color": {
+                      "$ref": "#/$defs/color"
+                    },
+                    "width": {
+                      "$ref": "#/$defs/length"
+                    },
+                    "size": {
+                      "$ref": "#/$defs/length"
+                    }
+                  }
+                }
+              ]
+            },
             "y": {
               "$ref": "#/$defs/length"
             },
@@ -397,15 +520,22 @@
         "x": {
           "$ref": "#/$defs/length"
         },
+        "y": {
+          "description": "Top of the cover's text (default: centred).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
         "w": {
           "$ref": "#/$defs/length"
         },
         "rule": {
-          "description": "An accent bar above the eyebrow: {color, w, h}, or false.",
+          "description": "A rule above the eyebrow, or beside it (position left): {color, w (a length or \"full\"), h, position, gap}, or false.",
           "anyOf": [
             {
-              "type": "boolean",
-              "const": false
+              "type": "boolean"
             },
             {
               "type": "object",
@@ -415,17 +545,41 @@
                   "$ref": "#/$defs/color"
                 },
                 "w": {
-                  "$ref": "#/$defs/length"
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "full"
+                    },
+                    {
+                      "$ref": "#/$defs/length"
+                    }
+                  ]
                 },
                 "h": {
                   "$ref": "#/$defs/length"
+                },
+                "position": {
+                  "type": "string",
+                  "enum": [
+                    "above",
+                    "left"
+                  ]
+                },
+                "gap": {
+                  "description": "Space under a rule above the eyebrow.",
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/length"
+                    }
+                  ]
                 }
               }
             }
           ]
         },
         "logo": {
-          "type": "string"
+          "type": "string",
+          "description": "A picture at the top left."
         },
         "logo_h": {
           "$ref": "#/$defs/length"
@@ -435,6 +589,33 @@
           "enum": [
             "left",
             "center"
+          ]
+        },
+        "motif": {
+          "type": "string",
+          "enum": [
+            "none",
+            "block",
+            "grid"
+          ],
+          "description": "block: an accent block down the right carrying the slide's `mark`; grid: a 4×4 grid of squares."
+        },
+        "block_w": {
+          "$ref": "#/$defs/length"
+        },
+        "brand": {
+          "type": "boolean",
+          "description": "The footer's text at the top left (when there is no logo)."
+        },
+        "section_background": {
+          "$ref": "#/$defs/background"
+        },
+        "section_y": {
+          "description": "Top of a section slide's text (default: centred).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
           ]
         }
       }
@@ -1972,7 +2153,7 @@
             "cover",
             "section"
           ],
-          "description": "cover / section: a dark slide with a big title (see the deck's `cover`)."
+          "description": "cover: a big title with the cover's motif; section: a dark slide with a big title, components under it (see the deck's `cover`)."
         },
         "eyebrow": {
           "type": "string",
@@ -1989,6 +2170,21 @@
           "type": "string",
           "description": "Text in the footer, e.g. a source."
         },
+        "meta": {
+          "type": "string",
+          "description": "A cover's small line at the bottom, e.g. who presents."
+        },
+        "mark": {
+          "type": [
+            "string",
+            "number"
+          ],
+          "description": "A cover's big number in the accent block (cover motif block)."
+        },
+        "mark_label": {
+          "type": "string",
+          "description": "A small line at the top of the accent block."
+        },
         "transition": {
           "$ref": "#/$defs/transition"
         }
@@ -1996,7 +2192,7 @@
     },
     "stat_cards": {
       "type": "object",
-      "description": "A row of stat cards (big value, label, detail) spread across the box; one may be highlighted.",
+      "description": "A row of stats (big value, label, detail) spread across the box: under a rule (rule card style) or on square panels (fill); one may be highlighted.",
       "properties": {
         "name": {
           "type": "string",
@@ -2047,7 +2243,7 @@
               },
               "highlight": {
                 "type": "boolean",
-                "description": "Filled with the primary colour."
+                "description": "Stands out: an accent rule (rule card style) or an accent fill (fill card style)."
               }
             }
           }
@@ -2064,7 +2260,7 @@
     },
     "cards": {
       "type": "object",
-      "description": "A grid of cards: badge or icon, heading, text or bullets. Short cards put the badge beside the text.",
+      "description": "A grid of cards: number or icon, heading, text or bullets; under a rule (rule card style) or on square panels (fill). Short cards put the number beside the text.",
       "properties": {
         "name": {
           "type": "string",
@@ -2131,7 +2327,7 @@
         },
         "numbered": {
           "type": "boolean",
-          "description": "A numbered badge on each card (default true; an item's icon replaces it)."
+          "description": "A number on each card (default true; an item's icon replaces it)."
         },
         "numbers": {
           "type": "string",
@@ -2146,12 +2342,17 @@
           "minimum": 0
         },
         "fill": {
-          "$ref": "#/$defs/fill"
+          "description": "The cards' fill in the fill card style (default the palette's panel).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/fill"
+            }
+          ]
         },
         "highlight": {
           "type": "integer",
           "minimum": 1,
-          "description": "This card (from 1) filled with the primary colour."
+          "description": "This card (from 1) stands out: an accent rule or an accent fill."
         },
         "type": {
           "const": "cards"
@@ -2165,7 +2366,7 @@
     },
     "steps": {
       "type": "object",
-      "description": "Numbered steps down the box, joined by a line.",
+      "description": "Numbered steps down the box: big numerals with hairlines between (rule card style) or square number badges (fill).",
       "properties": {
         "name": {
           "type": "string",
@@ -2228,7 +2429,7 @@
         "current": {
           "type": "integer",
           "minimum": 0,
-          "description": "Steps up to this one (from 1) are filled (default 1)."
+          "description": "The highlighted step, from 1 (default 1; 0: none)."
         },
         "numbers": {
           "type": "string",
@@ -2254,7 +2455,7 @@
     },
     "timeline": {
       "type": "object",
-      "description": "Phases across the box: dots on a line or chevrons, with a label, title and text under each.",
+      "description": "Phases across the box: square markers on a line (done ink, current accent, later outlined) or chevrons, with a label, title and text under each.",
       "properties": {
         "name": {
           "type": "string",
@@ -2308,10 +2509,6 @@
                     "items": {
                       "type": "string"
                     }
-                  },
-                  "badge": {
-                    "type": "string",
-                    "description": "The dot's text (default the number)."
                   }
                 }
               }
@@ -2326,10 +2523,10 @@
         "style": {
           "type": "string",
           "enum": [
-            "dots",
+            "track",
             "chevrons"
           ],
-          "description": "Dots on a line (default) or chevrons."
+          "description": "Square markers on a line (default) or chevrons."
         },
         "numbers": {
           "type": "string",
@@ -2355,7 +2552,7 @@
     },
     "callout": {
       "type": "object",
-      "description": "A tinted box with a bold lead-in and text; by default across the bottom of the content area.",
+      "description": "The one sentence to remember, with a lead-in: a pull quote beside an accent rule (rule card style) or a solid bar (fill); by default across the bottom of the content area.",
       "properties": {
         "name": {
           "type": "string",
@@ -2484,11 +2681,11 @@
             "badge",
             "number"
           ],
-          "description": "A filled round badge (default) or a big number."
+          "description": "badge (default): a numeral (rule card style) or a square badge (fill); number: a big 01, 02."
         },
         "boxed": {
           "type": "boolean",
-          "description": "Each row on a soft rounded box (default true)."
+          "description": "A hairline above each row (rule card style) or a panel behind it (fill); default true."
         },
         "numbers": {
           "type": "string",
@@ -2584,7 +2781,7 @@
     },
     "badge": {
       "type": "object",
-      "description": "A round badge with a number, short text or icon.",
+      "description": "A square badge with a number, short text or icon.",
       "properties": {
         "name": {
           "type": "string"
@@ -2596,7 +2793,7 @@
           "$ref": "#/$defs/length"
         },
         "size": {
-          "description": "Diameter (default 0.5in).",
+          "description": "Side (default 0.46in).",
           "allOf": [
             {
               "$ref": "#/$defs/length"
@@ -2617,6 +2814,10 @@
         },
         "color": {
           "$ref": "#/$defs/color"
+        },
+        "geometry": {
+          "type": "string",
+          "description": "A preset shape (default rect; ellipse for a circle)."
         },
         "type": {
           "const": "badge"

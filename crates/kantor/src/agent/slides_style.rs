@@ -247,6 +247,8 @@ pub struct Look {
     pub card_style: CardStyle,
     /// Every slide's background unless the deck or slide has one.
     pub background: Option<Value>,
+    /// The theme's heading and body fonts (for guessing text widths).
+    pub fonts: [String; 2],
 }
 
 /// Palette names (besides theme colour names, which always work).
@@ -474,7 +476,11 @@ impl Look {
             None => CardStyle::Fill,
         };
         let background = preset.get("background").cloned();
+        let theme = deck_theme(deck)?.unwrap_or(Value::Null);
+        let font = |k: &str| theme["fonts"][k].as_str().unwrap_or("Calibri").to_owned();
+        let fonts = [font("heading"), font("body")];
         Ok(Look {
+            fonts,
             card_style,
             background,
             styles,
@@ -506,7 +512,7 @@ impl Look {
         for k in ["line", "divider"] {
             set(&mut l, k, mix(dark, light, 0.28));
         }
-        for k in ["panel", "paper", "tint", "accent_soft"] {
+        for k in ["panel", "paper"] {
             set(&mut l, k, mix(dark, light, 0.1));
         }
         set(&mut l, "bar", mix(dark, light, 0.4));
@@ -540,11 +546,6 @@ impl Look {
             .unwrap_or(Rgb([0x80, 0x80, 0x80]))
     }
 
-    /// `#RRGGBB` of `a` mixed with `b` (palette names) by `t`.
-    pub fn mixed(&self, a: &str, b: &str, t: f64) -> Value {
-        json!(format!("#{}", mix(self.rgb(a), self.rgb(b), t).hex()))
-    }
-
     /// A style's font size in points (default `d`).
     pub fn size_of(&self, style: &str, d: f64) -> f64 {
         self.styles
@@ -574,7 +575,24 @@ impl Look {
             .and_then(|s| s.get("bold"))
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        let per_char = size * if bold { 0.56 } else { 0.5 } * PT as f64;
+        let font = match self
+            .styles
+            .get(style)
+            .and_then(|s| s.get("font"))
+            .and_then(Value::as_str)
+        {
+            Some("heading") => self.fonts[0].as_str(),
+            Some("body") | None => self.fonts[1].as_str(),
+            Some(f) => f,
+        };
+        // Condensed display faces fit more on a line.
+        let narrow = font.contains("Instrument Serif");
+        let per_char =
+            size * match (narrow, bold) {
+                (true, _) => 0.4,
+                (false, true) => 0.56,
+                (false, false) => 0.5,
+            } * PT as f64;
         let per_line = (w.max(1) as f64 / per_char).floor().max(1.0);
         text.split('\n')
             .map(|l| {
