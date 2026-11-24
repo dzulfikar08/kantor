@@ -907,9 +907,12 @@ fn check_fit(
         }
         return;
     }
-    // Fits, but a title-like single paragraph broke into lines.
+    // Fits, but a title (or one line of big text) broke into more lines
+    // than its paragraphs and line breaks ask for. A subtitle is not a
+    // title: `kantor slides build` sizes its box for the lines it wraps to.
+    let name = r.shape.name.to_lowercase();
     let title_like = r.shape.ph.as_ref().is_some_and(|p| p.is_title())
-        || r.shape.name.to_lowercase().contains("title");
+        || (name.contains("title") && !name.contains("subtitle"));
     let big = t
         .paras
         .iter()
@@ -917,17 +920,40 @@ fn check_fit(
         .fold(0.0, f32::max)
         >= 24.0;
     let paras = t.paras.iter().filter(|p| !p.text.trim().is_empty()).count();
-    if (title_like || big) && paras == 1 && wrapped {
+    let meant: usize = t.paras.iter().map(explicit_lines).sum();
+    let wraps = t
+        .paras
+        .iter()
+        .zip(&m.lines)
+        .any(|(p, &n)| n > explicit_lines(p));
+    if (title_like || (big && paras == 1)) && wraps {
+        let what = if title_like { "the title" } else { "the text" };
+        let msg = if meant > 1 {
+            format!(
+                "{what} wraps to {lines} lines where its line breaks make {meant} (it fits the box; check it reads well)"
+            )
+        } else {
+            format!("{what} wraps to {lines} lines (it fits the box; check it reads well)")
+        };
         cx.add(
             Severity::Info,
             "title_wraps",
             Some(who),
             None,
             Some(rect),
-            format!("the title wraps to {lines} lines (it fits the box; check it reads well)"),
+            msg,
             details,
         );
     }
+}
+
+/// The lines a paragraph's own line breaks make (1 without any).
+fn explicit_lines(p: &slides_engine::render::RenderPara) -> usize {
+    1 + p
+        .text
+        .chars()
+        .filter(|&c| matches!(c, '\n' | '\u{b}' | '\u{2028}'))
+        .count()
 }
 
 /// The footer text boxes `kantor slides build` draws for a deck `footer`
@@ -1437,6 +1463,42 @@ mod tests {
         assert!(over.details["lines_that_fit"].as_u64().unwrap() < 6);
         assert!(over.details["overflow"].as_i64().unwrap() > 0);
         assert!(r.has_errors());
+    }
+
+    #[std::prelude::v1::test]
+    fn title_line_breaks_are_not_wraps() {
+        // A cover title broken on purpose, and a subtitle the builder sized
+        // for the lines it wraps to: neither is a wrapping title.
+        let json = json!({"units": "in", "preset": "editorial", "slides": [
+            {"kind": "cover", "eyebrow": "Laporan", "title": "Uji coba Kantor:\ntiga bulan,\nsatu direktorat",
+             "subtitle": "Hasil uji coba di satu direktorat selama tiga bulan, dan usulan untuk memperluasnya ke seluruh kantor pusat tahun depan",
+             "notes": "n"}]});
+        let p = crate::agent::slides_author::build(&json, None).unwrap();
+        let r = run(&p);
+        assert!(find(&r, "title_wraps").is_none(), "{}", r.text("t"));
+
+        let long = "This line is far too long for a narrow box like this one";
+        let p = deck(json!([slide(json!([
+            // Two lines by its break, no wrapping.
+            {"type": "text", "name": "Title one", "x": 1, "y": 2, "w": 5, "h": 2, "text": "Short\nAlso short", "size": 28},
+            // One of its two lines wraps.
+            {"type": "text", "name": "Title two", "x": 7, "y": 1, "w": 3, "h": 5, "text": format!("Short\n{long}"), "size": 28},
+            // A subtitle may wrap.
+            {"type": "text", "name": "Subtitle", "x": 1, "y": 5, "w": 3, "h": 2, "text": long, "size": 16},
+        ]))]));
+        let r = run(&p);
+        let wraps: Vec<_> = r
+            .findings
+            .iter()
+            .filter(|f| f.check == "title_wraps")
+            .collect();
+        assert_eq!(wraps.len(), 1, "{}", r.text("t"));
+        assert_eq!(wraps[0].shape.as_ref().unwrap().name, "Title two");
+        assert!(
+            wraps[0].message.contains("where its line breaks make 2"),
+            "{}",
+            wraps[0].message
+        );
     }
 
     #[std::prelude::v1::test]

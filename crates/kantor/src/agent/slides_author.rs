@@ -2483,6 +2483,22 @@ mod tests {
     }
 
     #[std::prelude::v1::test]
+    fn list_shows_speaker_notes() {
+        let deck = json!({"slides": [
+            {"title": "With notes", "notes": "Open with the numbers.\nThen ask."},
+            {"title": "Without notes"}
+        ]});
+        let p = build(&deck, None).unwrap();
+        let q = Presentation::from_bytes(p.to_bytes().unwrap()).unwrap();
+        let listed = super::super::slides::list(&q, 0);
+        assert_eq!(
+            listed["slides"][0]["notes"],
+            "Open with the numbers.\nThen ask."
+        );
+        assert!(listed["slides"][1]["notes"].is_null(), "{listed}");
+    }
+
+    #[std::prelude::v1::test]
     fn styles_caps_fields_and_notes_alias() {
         let deck = json!({
             "units": "in",

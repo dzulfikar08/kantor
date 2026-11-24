@@ -438,7 +438,9 @@ PowerPoint 2010's `p14:dur` with `spd` for older readers.
 
 ## Editing an open presentation (MCP)
 
-`slides_list` gives each shape's `id`, `name`, `kind` (shape, text box, line,
+`slides_list` (and `kantor slides list`) gives each slide's `layout`,
+`title` and speaker `notes` (their text, `null` when the slide has none),
+and each shape's `id`, `name`, `kind` (shape, text box, line,
 picture, table, group, ...), `geometry`, `x`/`y`/`w`/`h` in EMU, `rotation`
 and text. Use the ids with `slides_update_shape` (move, resize, turn),
 `slides_delete_shape`, `slides_order_shape` (`front`, `back`, `forward`,
@@ -470,7 +472,7 @@ kantor convert deck.pptx slide3.png --slide 3 --width 1920
 |---|---|---|
 | `text_overflow` | error | text taller (or a line wider) than its box: lines needed, lines that fit, how much spills out |
 | `text_wraps` | error | text wrapping in a box made for one line (and spilling out) |
-| `title_wraps` | info | a title-like single paragraph (title placeholder, a name with "title", or 24 pt and up) that wraps but fits |
+| `title_wraps` | info | a title (title placeholder, or a name with "title" but not "subtitle") or a single paragraph of 24 pt and up that wraps into more lines than its paragraphs and line breaks make, but fits |
 | `autofit_shrink` | warning (error under 60 %) | a shrink-on-overflow box (`"autofit": "shrink"`) whose text doesn't fit, and the scale it needs; the file, PDF and PNG show it at full size until PowerPoint shrinks it |
 | `autofit_resize` | info | a box that grows to fit its text (`"autofit": "resize"`): how tall it gets |
 | `off_slide` | error / warning / info | entirely off the slide, or its text past the edge (error); its box but not its text past the edge (warning); a shape without text bleeding off (info) |

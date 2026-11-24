@@ -97,12 +97,15 @@ pub fn list(pres: &Presentation, current: usize) -> Value {
                     v
                 })
                 .collect();
+            // The speaker notes' text; null when the slide has none.
+            let notes = pres.notes_text(i);
+            let notes = (!notes.trim().is_empty()).then_some(notes);
             let mut v = json!({
                 "slide": i + 1,
                 "layout": pres.layout_of(i).name,
                 "title": title,
                 "shapes": shapes,
-                "notes": pres.notes_text(i),
+                "notes": notes,
             });
             if let Some(why) = &slide.locked {
                 v["locked"] = json!(why);

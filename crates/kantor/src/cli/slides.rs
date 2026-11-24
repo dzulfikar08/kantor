@@ -40,7 +40,8 @@ pub const USAGE: &str = "usage: kantor slides build DECK.json -o OUT.pptx [-f] [
     \x20          relative picture paths start from its folder. The same deck\n\
     \x20          always gives the same file. --check then checks it (as\n\
     \x20          check; exit status 1 when it finds errors).\n\
-    \x20 list     print the slides and their shapes (id, name, kind, geometry,\n\
+    \x20 list     print the slides (layout, title, speaker notes: \"notes\",\n\
+    \x20          null when none) and their shapes (id, name, kind, geometry,\n\
     \x20          position and size in EMU, text; charts: type, series) as JSON\n\
     \x20 check    lay the slides out as Kantor draws them (PDF, PNG) and\n\
     \x20          report problems: text overflowing its box or wrapping in a\n\

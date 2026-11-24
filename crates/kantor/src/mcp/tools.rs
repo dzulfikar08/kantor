@@ -331,7 +331,7 @@ const SPECS: &[Spec] = &[
     (
         "slides_list",
         "List slides",
-        "List a presentation's slides (numbered from 1): layout, title, each shape's id, name, kind, placeholder type and text, and the speaker notes. Also the layouts new slides can use.",
+        "List a presentation's slides (numbered from 1): layout, title, each shape's id, name, kind, placeholder type and text, and the speaker notes (`notes`, null when the slide has none). Also the layouts new slides can use.",
         || json!({"document": document()}),
         &[],
         true,
