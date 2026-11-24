@@ -124,6 +124,10 @@ pub struct WaylandWindowState {
     decorations: WindowDecorations,
     background_appearance: WindowBackgroundAppearance,
     fullscreen: bool,
+    /// KANTOR PATCH (2): the output the window was asked to open on
+    /// (`WindowParams::display_id`); fullscreen goes there, so a slide show
+    /// fills the projector rather than the screen the compositor picks.
+    fullscreen_output: Option<wl_output::WlOutput>,
     maximized: bool,
     /// `Hidden` while the `xdg_toplevel` `suspended` state (xdg-shell v6) is set.
     visibility: WindowVisibility,
@@ -626,6 +630,7 @@ impl WaylandWindowState {
             decorations: WindowDecorations::Client,
             background_appearance: WindowBackgroundAppearance::Opaque,
             fullscreen: false,
+            fullscreen_output: None,
             maximized: false,
             visibility: WindowVisibility::Visible,
             tiling: Tiling::default(),
@@ -851,6 +856,8 @@ impl WaylandWindow {
         target_output: Option<wl_output::WlOutput>,
     ) -> anyhow::Result<(Self, ObjectId)> {
         let surface = globals.compositor.create_surface(&globals.qh, ());
+        // KANTOR PATCH (2): kept for fullscreen on that output.
+        let fullscreen_output = target_output.clone();
         let surface_state = WaylandSurfaceState::new(
             &surface,
             &globals,
@@ -889,6 +896,7 @@ impl WaylandWindow {
             frame_ping,
             scheduled_frame_at: Rc::new(Cell::new(None)),
         });
+        this.0.state.borrow_mut().fullscreen_output = fullscreen_output;
 
         // Kick things off
         surface.commit();
@@ -1959,7 +1967,8 @@ impl PlatformWindow for WaylandWindow {
         let state = self.borrow();
         if let Some(toplevel) = state.surface_state.toplevel() {
             if !state.fullscreen {
-                toplevel.set_fullscreen(None);
+                // KANTOR PATCH (2): on the requested output, if any.
+                toplevel.set_fullscreen(state.fullscreen_output.as_ref());
             } else {
                 toplevel.unset_fullscreen();
             }

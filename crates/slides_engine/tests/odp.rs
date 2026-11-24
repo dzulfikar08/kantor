@@ -411,7 +411,7 @@ fn native() -> Vec<u8> {
     let content = format!(
         r##"<office:document-content {NSS}><office:automatic-styles>
 <style:style style:name="dp1" style:family="drawing-page"><style:drawing-page-properties presentation:display-page-number="true" presentation:display-footer="true"/></style:style>
-<style:style style:name="dp2" style:family="drawing-page"><style:drawing-page-properties presentation:visibility="hidden" draw:fill="solid" draw:fill-color="#000000" smil:type="fade"/></style:style>
+<style:style style:name="dp2" style:family="drawing-page"><style:drawing-page-properties presentation:visibility="hidden" draw:fill="solid" draw:fill-color="#000000" smil:type="pushWipe" smil:subtype="fromBottom" presentation:transition-speed="slow" presentation:transition-type="automatic" presentation:duration="PT00H00M05S"/></style:style>
 <style:style style:name="gr1" style:family="graphic"><style:graphic-properties draw:fill="gradient" draw:fill-gradient-name="G" draw:stroke="dash" svg:stroke-color="#00ff00" draw:shadow="visible" draw:shadow-offset-x="0.2cm" draw:shadow-offset-y="0.2cm"/></style:style>
 <style:style style:name="T1" style:family="text"><style:text-properties fo:font-weight="bold" style:text-position="super 58%"/></style:style>
 </office:automatic-styles><office:body><office:presentation>
@@ -455,15 +455,17 @@ fn native() -> Vec<u8> {
 fn native_masters_lists_and_decorations() {
     let imported = odp::convert(&native()).unwrap();
     assert_valid(&imported.pptx);
-    assert_eq!(
-        imported.notes,
-        [
-            "1 chart left out",
-            "slide transitions and animations were left out"
-        ]
-    );
+    // The transition is kept, so nothing about it is listed.
+    assert_eq!(imported.notes, ["1 chart left out"]);
     let p = Presentation::from_bytes(imported.pptx.clone()).unwrap();
     assert_eq!(p.len(), 2);
+    let t = p.slide(1).show_fx().transition.unwrap();
+    assert_eq!(
+        t.kind,
+        slides_engine::anim::TransitionKind::Push(slides_engine::anim::Dir::Up)
+    );
+    assert_eq!((t.duration_ms, t.advance_after_ms), (1000, Some(5000)));
+    assert!(p.slide(0).show_fx().transition.is_none());
     assert_eq!((p.size.cx, p.size.cy), (10_080_000, 5_670_000));
     assert_eq!(p.masters[0].bg.map(|c| c.hex()), Some("E0F0FF".into()));
     assert!(p.slides()[1].hidden);

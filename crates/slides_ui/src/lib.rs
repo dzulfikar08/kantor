@@ -13,7 +13,10 @@
 //! 15°). A second click on a group (or SmartArt) selects the shape inside
 //! it under the pointer, Esc goes back to the group; Shift or Ctrl click
 //! selects several shapes ([`groups`]: Group, Ungroup, Regroup). Under the canvas, a resizable speaker-notes pane ([`notes`]).
-//! F5 presents in the pane, with the notes under the slide (S hides them).
+//! F5 / Shift+F5 start the slide show ([`show`]): a fullscreen window with
+//! only the slides (on another display if there is one), a presenter view
+//! with notes, timer and the next slide on the editor's display, and pen,
+//! highlighter and laser pointer tools. Alt+F5 starts in the presenter view.
 //!
 //! Text input, including IME composition, goes through GPUI's
 //! [`EntityInputHandler`] (see [`input`]).
@@ -31,6 +34,8 @@ mod input;
 mod notes;
 mod object_editor;
 mod paint_menu;
+mod show;
+pub mod show_fx;
 mod spell;
 mod toolbar;
 // Turned text is drawn by Docs' shared rasteriser (also used for turned
@@ -66,8 +71,8 @@ use fit::{
 
 /// Key context of the editor.
 pub const KEY_CONTEXT: &str = "SlidesEditor";
-/// Key context while presenting.
-pub const PRESENTER_CONTEXT: &str = "SlidesPresenter";
+/// Key context of the slide show windows.
+pub use show::SHOW_CONTEXT;
 
 actions!(
     slides,
@@ -120,12 +125,7 @@ actions!(
         ExportPdf,
         Present,
         PresentFromCurrent,
-        PresentNext,
-        PresentPrev,
-        PresentFirst,
-        PresentLast,
-        PresentExit,
-        PresentToggleNotes,
+        PresentPresenterView,
         ToggleNotes,
         GroupShapes,
         UngroupShapes,
@@ -150,10 +150,9 @@ pub fn init(cx: &mut App) {
     cx.bind_keys(key_bindings());
 }
 
-/// The editor's and the presenter's own key bindings.
+/// The editor's and the slide show's own key bindings.
 fn key_bindings() -> Vec<KeyBinding> {
     let c = Some(KEY_CONTEXT);
-    let p = Some(PRESENTER_CONTEXT);
     let mut keys = vec![
         KeyBinding::new("left", Left, c),
         KeyBinding::new("right", Right, c),
@@ -179,24 +178,9 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("alt-shift-left", PromoteList, c),
         KeyBinding::new("f5", Present, c),
         KeyBinding::new("shift-f5", PresentFromCurrent, c),
-        // Presenting.
-        KeyBinding::new("right", PresentNext, p),
-        KeyBinding::new("down", PresentNext, p),
-        KeyBinding::new("space", PresentNext, p),
-        KeyBinding::new("enter", PresentNext, p),
-        KeyBinding::new("pagedown", PresentNext, p),
-        KeyBinding::new("n", PresentNext, p),
-        KeyBinding::new("left", PresentPrev, p),
-        KeyBinding::new("up", PresentPrev, p),
-        KeyBinding::new("pageup", PresentPrev, p),
-        KeyBinding::new("backspace", PresentPrev, p),
-        KeyBinding::new("p", PresentPrev, p),
-        KeyBinding::new("home", PresentFirst, p),
-        KeyBinding::new("end", PresentLast, p),
-        KeyBinding::new("escape", PresentExit, p),
-        KeyBinding::new("f5", PresentExit, p),
-        KeyBinding::new("s", PresentToggleNotes, p),
+        KeyBinding::new("alt-f5", PresentPresenterView, c),
     ];
+    keys.extend(show::key_bindings());
     macro_rules! primary {
         ($($key:literal => $action:expr),* $(,)?) => {
             $(keys.extend(kantor_ui::keys::primary_pair(concat!("ctrl-", $key), $action, c));)*
@@ -376,7 +360,8 @@ pub struct SlidesView {
     strip_scroll: UniformListScrollHandle,
     /// The strip was clicked last (Delete then removes the slide).
     strip_focused: bool,
-    presenting: Option<usize>,
+    /// The slide show, while one runs.
+    show: Option<Entity<show::SlideShow>>,
     /// Canvas zoom relative to fit (1.0 = the slide fits the pane).
     zoom: f32,
     /// Canvas scroll in screen px, used only while zoomed past the pane.
@@ -392,8 +377,6 @@ pub struct SlidesView {
     paint_menu_closed: Option<std::time::Instant>,
     /// The table / chart data editor.
     object_editor: Option<object_editor::ObjectEditor>,
-    /// Speaker notes under the slide while presenting.
-    present_notes: bool,
     /// The print layout chosen last (Ctrl+P repeats it).
     print_layout: slides_pdf::PrintLayout,
     /// Spell checking in the edited text box.
@@ -487,7 +470,7 @@ impl SlidesView {
             strip_drop: None,
             strip_scroll: UniformListScrollHandle::new(),
             strip_focused: false,
-            presenting: None,
+            show: None,
             zoom: 1.0,
             scroll: point(0., 0.),
             hover_cursor: CursorStyle::Arrow,
@@ -498,7 +481,6 @@ impl SlidesView {
             paint_menu: None,
             paint_menu_closed: None,
             object_editor: None,
-            present_notes: true,
             print_layout: slides_pdf::PrintLayout::Slides,
             spell: spell::SpellState::default(),
         }
@@ -1656,41 +1638,26 @@ impl SlidesView {
         self.inserted(res, false, window, cx);
     }
 
+    /// Start the slide show from the first slide (F5) or this one
+    /// (Shift+F5). A running show comes to the front instead.
     pub fn present_doc(&mut self, from_start: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pres.is_empty() {
-            return;
-        }
-        self.editing = None;
-        self.presenting = Some(if from_start { 0 } else { self.current });
-        window.focus(&self.focus, cx);
-        cx.notify();
-    }
-
-    fn present_step(&mut self, delta: i64, cx: &mut Context<Self>) {
-        let Some(cur) = self.presenting else {
-            return;
+        let at = if from_start {
+            show::StartAt::First
+        } else {
+            show::StartAt::Current
         };
-        let next = cur as i64 + delta;
-        if next < 0 {
-            return;
-        }
-        if next as usize >= self.pres.len() {
-            self.stop_presenting(cx);
-            return;
-        }
-        self.presenting = Some(next as usize);
-        cx.notify();
+        self.start_show(at, false, window, cx);
     }
 
-    fn stop_presenting(&mut self, cx: &mut Context<Self>) {
-        if let Some(p) = self.presenting.take() {
-            self.go_to(p, cx);
-        }
-        cx.notify();
+    /// Start the slide show from this slide in the presenter view, even
+    /// on one display (Alt+F5).
+    pub fn present_presenter_view_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.start_show(show::StartAt::Current, true, window, cx);
     }
 
+    /// A slide show of this presentation is running.
     pub fn is_presenting(&self) -> bool {
-        self.presenting.is_some()
+        self.show.is_some()
     }
 
     pub fn doc_name(&self, _: &App) -> String {
@@ -2690,62 +2657,6 @@ impl SlidesView {
                 })),
         )
     }
-
-    fn render_presenter(&mut self, slide: usize, cx: &mut Context<Self>) -> Stateful<Div> {
-        let notes = self.render_presenter_notes(slide, cx);
-        let painted = self
-            .painter
-            .painted(&self.pres, slide, Default::default(), cx);
-        let bridge = self.painter.bridge.clone();
-        let size = self.pres.size;
-        let other = tokens(cx).fg_muted;
-        let c = canvas(
-            |_, _, _| {},
-            move |bounds, _, window, _| {
-                let (v, b) = fit_slide(bounds, size);
-                let surface = Surface {
-                    other,
-                    editor: false,
-                };
-                paint_slide(&painted, b, v, surface, &bridge, window);
-            },
-        )
-        .size_full();
-        div()
-            .id("slides-presenter")
-            .key_context(PRESENTER_CONTEXT)
-            .track_focus(&self.focus)
-            .size_full()
-            // Letterbox around the slide, as in every slide show.
-            .bg(black())
-            .on_action(cx.listener(|v, _: &PresentNext, _, cx| v.present_step(1, cx)))
-            .on_action(cx.listener(|v, _: &PresentPrev, _, cx| v.present_step(-1, cx)))
-            .on_action(cx.listener(|v, _: &PresentFirst, _, cx| {
-                v.presenting = Some(0);
-                cx.notify()
-            }))
-            .on_action(cx.listener(|v, _: &PresentLast, _, cx| {
-                v.presenting = Some(v.pres.len().saturating_sub(1));
-                cx.notify()
-            }))
-            .on_action(cx.listener(|v, _: &PresentExit, _, cx| v.stop_presenting(cx)))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|v, _: &MouseDownEvent, _, cx| v.present_step(1, cx)),
-            )
-            .on_action(cx.listener(|v, _: &PresentToggleNotes, _, cx| {
-                v.present_notes = !v.present_notes;
-                cx.notify()
-            }))
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(|v, _: &MouseDownEvent, _, cx| v.present_step(-1, cx)),
-            )
-            .flex()
-            .flex_col()
-            .child(div().flex_1().min_h_0().child(c))
-            .children(notes)
-    }
 }
 
 fn display_name(path: &std::path::Path) -> String {
@@ -2760,7 +2671,7 @@ fn size_px(w: f32, h: f32) -> Size<Pixels> {
 }
 
 /// A slide of `slide` size scaled to fill `bounds` and centred
-/// (thumbnails, presenter mode).
+/// (thumbnails, the slide show).
 fn fit_slide(bounds: Bounds<Pixels>, slide: SlideSize) -> (View, Bounds<Pixels>) {
     let (v, b, _) = place_slide(bounds, slide, 0.0, 1.0, point(0., 0.));
     (v, b)
@@ -2801,13 +2712,6 @@ struct Frame {
 impl Render for SlidesView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = tokens(cx);
-        if let Some(slide) = self.presenting {
-            if slide >= self.pres.len() {
-                self.presenting = None;
-            } else {
-                return self.render_presenter(slide, cx).into_any_element();
-            }
-        }
         if self.current >= self.pres.len() {
             self.current = self.pres.len().saturating_sub(1);
         }
@@ -2999,6 +2903,7 @@ impl Render for SlidesView {
             ExportPdf => |v, w, cx| v.export_pdf_doc(w, cx),
             Present => |v, w, cx| v.present_doc(true, w, cx),
             PresentFromCurrent => |v, w, cx| v.present_doc(false, w, cx),
+            PresentPresenterView => |v, w, cx| v.present_presenter_view_doc(w, cx),
             ZoomIn => |v, _w, cx| v.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |v, _w, cx| v.zoom_by(1.0 / ZOOM_STEP, cx),
             ZoomFit => |v, _w, cx| v.zoom_to_fit(cx),

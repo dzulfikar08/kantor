@@ -62,7 +62,7 @@ impl SlidesView {
             return true;
         }
         match self.selected {
-            Some(i) if self.presenting.is_none() => self.begin_editing(
+            Some(i) if self.show.is_none() => self.begin_editing(
                 slides_engine::ShapeRef(self.current, i, self.inner),
                 None,
                 cx,

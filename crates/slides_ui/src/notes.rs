@@ -1,5 +1,5 @@
 //! The speaker-notes pane under the canvas (a resizable text area showing
-//! the current slide's notes) and the notes strip in presenter mode.
+//! the current slide's notes).
 //!
 //! The text area holds plain text; each change is handed to
 //! [`Presentation::set_notes_text`](slides_engine::Presentation::set_notes_text),
@@ -180,38 +180,6 @@ impl SlidesView {
                             .child(tf("The notes can't be edited: {}", &[&why])),
                     )
                 }),
-        )
-    }
-
-    /// Notes under the slide while presenting (S shows / hides them).
-    pub(crate) fn render_presenter_notes(&self, slide: usize, cx: &App) -> Option<Stateful<Div>> {
-        if !self.present_notes {
-            return None;
-        }
-        let text = self.pres.notes_text(slide);
-        if text.trim().is_empty() {
-            return None;
-        }
-        let t = tokens(cx);
-        Some(
-            div()
-                .id("slides-presenter-notes")
-                .flex_none()
-                .max_h(relative(0.3))
-                .overflow_y_scroll()
-                .w_full()
-                .px(SPACE_10)
-                .py(SPACE_6)
-                .bg(t.chrome)
-                .border_t_1()
-                .border_color(t.border)
-                .text_size(FONT_TITLE)
-                .text_color(t.fg)
-                .children(
-                    text.lines()
-                        .map(|l| div().child(l.to_owned()))
-                        .collect::<Vec<_>>(),
-                ),
         )
     }
 }

@@ -13,6 +13,7 @@
 //! - [`ppt`]: PowerPoint 97-2003 import (read as an equivalent `.pptx`).
 
 pub mod agent;
+pub mod anim;
 pub mod author;
 pub mod chart_edit;
 pub mod clip;

@@ -17,4 +17,10 @@ in the workspace `Cargo.toml`. Changes (search for `KANTOR PATCH`):
    Upstream (zed-industries/zed `crates/gpui_linux/src/linux/x11/client.rs`, unchanged on main
    as of 2026-11-18) can take the same patch.
 
-Drop this vendor copy once upstream ships the fix.
+2. Wayland: a window opened with `WindowParams::display_id` goes fullscreen on that output.
+   `xdg_toplevel.set_fullscreen` was always sent with no output, so the compositor chose one
+   (usually the focused screen) and a slide show opened for the projector covered the laptop
+   screen instead. `WaylandWindowState.fullscreen_output` keeps the requested output and
+   `toggle_fullscreen` passes it. Windows without a `display_id` are unchanged.
+
+Drop this vendor copy once upstream ships the fixes.

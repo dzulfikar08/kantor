@@ -1,6 +1,6 @@
 [package]
 name = "slides_ui"
-description = "Kantor Slides UI: slide canvas, thumbnail strip, text editing, presenter mode (GPUI)"
+description = "Kantor Slides UI: slide canvas, thumbnail strip, text editing, slide show and presenter view (GPUI)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -8,6 +8,8 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+# The presenter view's wall clock.
+chrono = { workspace = true, features = ["clock"] }
 docs_engine.workspace = true
 docs_layout.workspace = true
 # Shares Docs' parley engine and fontique → GPUI font bridge (ADR 0001).
