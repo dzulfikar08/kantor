@@ -113,6 +113,16 @@ fn contrasting(p: &Palette, on: &[Rgb], ratio: f32) -> Rgb {
         .unwrap_or(p.foreground)
 }
 
+/// `color` moved toward the palette's foreground until it reaches `ratio`
+/// against every colour of `on`, for status colours used as text and icons
+/// (a light theme's bright yellow is unreadable on white).
+fn readable(p: &Palette, color: Rgb, on: &[Rgb], ratio: f32) -> Rgb {
+    (0..=20)
+        .map(|k| mix(color, p.foreground, k as f32 / 20.0))
+        .find(|c| on.iter().all(|s| contrast(*c, *s) >= ratio))
+        .unwrap_or(p.foreground)
+}
+
 fn luminance(rgb: Rgb) -> f32 {
     let ch = |s: u32| ((rgb >> s) & 0xff) as f32 / 255.0;
     0.2126 * ch(16) + 0.7152 * ch(8) + 0.0722 * ch(0)
@@ -143,6 +153,8 @@ impl Tokens {
                 .collect()
         };
         let control_border = c(contrasting(p, &surfaces, 3.1));
+        // Status colours are drawn as text and icons on the same surfaces.
+        let status = |color: Rgb| c(readable(p, color, &surfaces, 3.0));
         // Sheets headers sit between chrome and surface, a step above the cells.
         let header = mix(
             p.background,
@@ -187,10 +199,10 @@ impl Tokens {
             } else {
                 c(0xffffff)
             },
-            success: c(p.green),
-            warning: c(p.yellow),
-            danger: c(p.red),
-            info: c(p.blue),
+            success: status(p.green),
+            warning: status(p.yellow),
+            danger: status(p.red),
+            info: status(p.blue),
             docs: c(0x4f8ff7),
             sheets: c(0x2fbf71),
             slides: c(0xf47a3a),
@@ -418,5 +430,64 @@ mod tests {
             // Still quieter than text.
             assert!(contrast(border, p.background) < contrast(p.foreground, p.background));
         }
+    }
+
+    /// Equal but for rounding through `Hsla`.
+    fn close(a: Rgb, b: Rgb) -> bool {
+        [16, 8, 0]
+            .iter()
+            .all(|s| ((a >> s) & 0xff).abs_diff((b >> s) & 0xff) <= 1)
+    }
+
+    /// Status colours (the warning banner, unsaved dots, sync status) stay
+    /// readable on light themes whose yellow is meant for dark terminals,
+    /// and Kantor's own palettes keep theirs as they are.
+    #[std::prelude::v1::test]
+    fn status_colours_readable_on_light() {
+        let bright = Palette {
+            yellow: 0xf9e2af,
+            green: 0xa6e3a1,
+            ..light()
+        };
+        for p in [
+            bright,
+            Palette::kantor_light(),
+            Palette::kantor_dark(),
+            Palette::default(),
+        ] {
+            let t = Tokens::from_palette(&p);
+            for (name, h) in [
+                ("warning", t.warning),
+                ("success", t.success),
+                ("danger", t.danger),
+                ("info", t.info),
+            ] {
+                for (on, s) in [("bg", t.bg), ("chrome", t.chrome), ("surface", t.surface)] {
+                    let r = contrast(rgb_of(h), rgb_of(s));
+                    assert!(r >= 2.95, "{name} on {on} {r:.2}, dark={}", p.dark);
+                }
+            }
+        }
+        let k = Palette::kantor_light();
+        let t = Tokens::from_palette(&k);
+        assert!(close(rgb_of(t.warning), k.yellow));
+        assert!(close(rgb_of(t.accent), k.accent));
+    }
+
+    /// Kantor Light gets the light recipe: white document and menus, chrome
+    /// and headers a little darker, gridlines visible, text 4.5:1 on them.
+    #[std::prelude::v1::test]
+    fn kantor_light_tokens() {
+        let p = Palette::kantor_light();
+        let t = Tokens::from_palette(&p);
+        assert!(!t.dark);
+        assert!(close(rgb_of(t.bg), 0xffffff));
+        assert!(close(rgb_of(t.elevated), 0xffffff));
+        assert!(t.chrome.l < t.bg.l && t.grid_header.l < t.bg.l && t.desk.l < t.bg.l);
+        assert!(contrast(rgb_of(t.grid_line), 0xffffff) > 1.15);
+        for s in [t.bg, t.chrome, t.surface, t.grid_header, t.desk] {
+            assert!(contrast(p.foreground, rgb_of(s)) >= 4.5);
+        }
+        assert!(close(rgb_of(t.accent_fg), 0xffffff));
     }
 }

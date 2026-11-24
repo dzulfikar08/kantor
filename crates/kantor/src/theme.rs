@@ -1,5 +1,6 @@
 //! Appearance: theme and font choice, persisted in settings, applied through
-//! `kantor_ui`. "Follow Omarchy" live-reloads when `omarchy theme set` runs.
+//! `kantor_ui`. "Follow Omarchy" live-reloads when `omarchy theme set` runs,
+//! "Follow system" when the OS switches between light and dark.
 
 use std::time::Duration;
 
@@ -21,30 +22,71 @@ pub fn current(cx: &App) -> &Appearance {
     cx.global::<Appearance>()
 }
 
+/// Is the OS (or, on macOS, the app's forced appearance) dark? On Linux
+/// this comes from the desktop portal's colour scheme; without an answer
+/// the vendored GPUI reports dark (see vendor/gpui-pre-linux).
+pub fn system_dark(cx: &App) -> bool {
+    matches!(
+        cx.window_appearance(),
+        WindowAppearance::Dark | WindowAppearance::VibrantDark
+    )
+}
+
+/// Resolve a theme against the current OS appearance.
+pub fn resolve(id: &ThemeId, cx: &App) -> Palette {
+    catalog::resolve(id, system_dark(cx))
+}
+
+/// Match the native window chrome (macOS title bar and border) to the
+/// theme: follow the OS for "Follow system", else force light or dark.
+/// A no-op on other platforms.
+fn sync_native_appearance(id: &ThemeId, palette: &Palette, cx: &App) {
+    cx.set_window_appearance(if id.follows_system() {
+        None
+    } else if palette.dark {
+        Some(WindowAppearance::Dark)
+    } else {
+        Some(WindowAppearance::Light)
+    });
+}
+
 pub fn init(cx: &mut App) {
     let settings = Settings::load();
     let appearance = Appearance {
         theme: ThemeId::parse(&settings.theme),
         ui_font: settings.ui_font,
     };
-    apply_palette(&catalog::resolve(&appearance.theme), cx);
+    // Clear any forced appearance before reading the system's.
+    cx.set_window_appearance(None);
+    let palette = resolve(&appearance.theme, cx);
+    sync_native_appearance(&appearance.theme, &palette, cx);
+    apply_palette(&palette, cx);
     fonts::apply(appearance.ui_font.as_deref(), cx);
     cx.set_global(appearance);
 
     cx.spawn(async move |cx| {
         let mut last = kantor_theme::theme_stamp();
+        let mut last_dark = cx.update(|cx| system_dark(cx));
         loop {
             cx.background_executor().timer(Duration::from_secs(1)).await;
             let stamp = kantor_theme::theme_stamp();
-            if stamp != last {
-                last = stamp;
-                cx.update(|cx| {
-                    if current(cx).theme == ThemeId::FollowOmarchy {
-                        log::info!("Omarchy theme changed; reloading");
-                        preview_palette(&Palette::current(), cx);
-                    }
-                });
-            }
+            let omarchy_changed = stamp != last;
+            last = stamp;
+            cx.update(|cx| {
+                let theme = current(cx).theme.clone();
+                let dark = system_dark(cx);
+                let system_changed = dark != last_dark;
+                last_dark = dark;
+                let reload = match theme {
+                    ThemeId::FollowOmarchy => omarchy_changed,
+                    ThemeId::System => system_changed,
+                    _ => false,
+                };
+                if reload {
+                    log::info!("{} changed; reloading the theme", theme.name());
+                    preview_palette(&resolve(&theme, cx), cx);
+                }
+            });
         }
     })
     .detach();
@@ -74,7 +116,11 @@ pub fn preview_palette(p: &Palette, cx: &mut App) {
 
 /// Commit and save a theme.
 pub fn set_theme(id: ThemeId, cx: &mut App) {
-    let palette = catalog::resolve(&id);
+    if id.follows_system() {
+        cx.set_window_appearance(None);
+    }
+    let palette = resolve(&id, cx);
+    sync_native_appearance(&id, &palette, cx);
     cx.global_mut::<Appearance>().theme = id;
     preview_palette(&palette, cx);
     save(cx);
@@ -82,7 +128,7 @@ pub fn set_theme(id: ThemeId, cx: &mut App) {
 
 /// Undo previews: re-apply the committed theme and font.
 pub fn restore(cx: &mut App) {
-    let palette = catalog::resolve(&current(cx).theme);
+    let palette = resolve(&current(cx).theme, cx);
     preview_palette(&palette, cx);
 }
 

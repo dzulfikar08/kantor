@@ -152,13 +152,13 @@ On macOS, use `⌘` where this table says `Ctrl` (`Ctrl Tab` stays).
 | Close pane / close tab | `Ctrl W` / `Ctrl Shift W` |
 | Split right / down | `Ctrl \` / `Ctrl Alt \` (drag the divider to resize) |
 | Sidebar / inspector | `Ctrl Shift E` / `Ctrl Shift I` (drag the edge to resize) |
-| Theme / UI font | `Ctrl K` → *Choose Theme…* / *Choose UI Font…* |
+| Theme / UI font | `Ctrl K` → *Theme: Light*, *Theme: Dark*, *Theme: Follow System*, or *Choose Theme…* / *Choose UI Font…* |
 | Next / previous tab | `Ctrl Tab` / `Ctrl Shift Tab` |
 | Quit | `Ctrl Q` |
 
 Edits happen in the cell itself (synced live with the formula bar). With an input method such as fcitx5, press `Enter` first, then compose.
 
-By default the UI follows your Omarchy theme (live-reloading on `omarchy theme set`); *Choose Theme…* offers your Omarchy themes plus 900+ Ghostty themes. The UI font is SF Pro when installed (never bundled), else Inter / Adwaita Sans. Open tabs, splits and panel sizes are restored on the next launch. Settings: `~/.config/kantor/settings.toml`; session: `~/.local/state/kantor/workspace.json`.
+By default the UI follows your system's light or dark setting (Windows, macOS, and Linux desktops that report a colour scheme through the XDG desktop portal; dark when nothing is reported), switching live when the system does. With [Omarchy](https://omarchy.org) installed it follows your Omarchy theme instead (live-reloading on `omarchy theme set`). `Ctrl K` → *Theme: Light* or *Theme: Dark* picks Kantor's own light or dark theme, *Theme: Follow System* goes back; *Choose Theme…* lists those, *Follow Omarchy* when Omarchy is installed, your Omarchy themes and 900+ Ghostty themes, with a live preview. On macOS the title bar takes the theme's light or dark look. The UI font is SF Pro when installed (never bundled), else Inter / Adwaita Sans. Open tabs, splits and panel sizes are restored on the next launch. Settings: `~/.config/kantor/settings.toml`; session: `~/.local/state/kantor/workspace.json`.
 
 ## Command line
 

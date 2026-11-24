@@ -6,7 +6,7 @@ use gpui_kit::component::{h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_core::fuzzy;
-use kantor_theme::catalog::{self, ThemeEntry};
+use kantor_theme::catalog::{self, Group, ThemeEntry, ThemeId};
 use kantor_ui::components::kbd;
 use kantor_ui::i18n::{self, fill, indonesian, t, t_dyn, tf, tk};
 use kantor_ui::metrics::*;
@@ -2427,9 +2427,27 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Choose Theme…"),
-        detail: "Omarchy, Ghostty",
+        detail: tk("Light, dark, follow system, Omarchy, Ghostty"),
         keys: "",
-        run: |ws, window, cx| ws.open_palette(PaletteMode::themes(), window, cx),
+        run: |ws, window, cx| ws.open_palette(PaletteMode::themes(cx), window, cx),
+    },
+    Command {
+        title: tk("Theme: Light"),
+        detail: tk("Appearance · Kantor Light"),
+        keys: "",
+        run: |ws, _, cx| ws.choose_theme(ThemeId::Light, cx),
+    },
+    Command {
+        title: tk("Theme: Dark"),
+        detail: tk("Appearance · Kantor Dark"),
+        keys: "",
+        run: |ws, _, cx| ws.choose_theme(ThemeId::Dark, cx),
+    },
+    Command {
+        title: tk("Theme: Follow System"),
+        detail: tk("Appearance · light or dark as your system is set"),
+        keys: "",
+        run: |ws, _, cx| ws.choose_theme(ThemeId::System, cx),
     },
     Command {
         title: tk("Choose UI Font…"),
@@ -2469,6 +2487,26 @@ pub(super) const COMMANDS: &[Command] = &[
     },
 ];
 
+/// A theme's name in the interface language.
+pub(super) fn theme_label(id: &ThemeId) -> &str {
+    match id {
+        ThemeId::System => t("Follow System"),
+        ThemeId::Light => t("Kantor Light"),
+        ThemeId::Dark => t("Kantor Dark"),
+        ThemeId::FollowOmarchy => t("Follow Omarchy"),
+        ThemeId::Omarchy(n) | ThemeId::Ghostty(n) => n,
+    }
+}
+
+impl Workspace {
+    /// Commit a theme from a palette command (no picker).
+    pub(super) fn choose_theme(&mut self, id: ThemeId, cx: &mut Context<Self>) {
+        self.message = tf("Theme: {}", &[&theme_label(&id)]).into();
+        theme::set_theme(id, cx);
+        cx.notify();
+    }
+}
+
 /// What the palette is listing.
 pub(super) enum PaletteMode {
     Commands,
@@ -2478,8 +2516,14 @@ pub(super) enum PaletteMode {
 }
 
 impl PaletteMode {
-    pub(super) fn themes() -> Self {
-        Self::Themes(catalog::all())
+    pub(super) fn themes(cx: &App) -> Self {
+        let mut all = catalog::all(theme::system_dark(cx));
+        for e in &mut all {
+            if e.group == Group::System {
+                e.name = theme_label(&e.id).to_owned();
+            }
+        }
+        Self::Themes(all)
     }
 
     pub(super) fn fonts(cx: &App) -> Self {
@@ -2890,10 +2934,12 @@ impl Workspace {
                                             .child(e.name.clone()),
                                     )
                                     .child(
-                                        div()
-                                            .text_size(FONT_CAPTION)
-                                            .text_color(t.fg_dim)
-                                            .child(e.group.label()),
+                                        div().text_size(FONT_CAPTION).text_color(t.fg_dim).child(
+                                            match e.group {
+                                                Group::System => i18n::t("System"),
+                                                g => g.label(),
+                                            },
+                                        ),
                                     )
                                     .child(check(e.id == active_theme)),
                             )
@@ -3156,6 +3202,38 @@ mod tests {
         assert_eq!(first_title("bekukan panel"), "Freeze Panes");
         assert_eq!(first_title("sisipkan bagan"), "Insert Chart");
         assert_eq!(first_title("buka dari cloud"), "Open from Cloud…");
+    }
+
+    /// Issue #1: light mode is one search away.
+    #[std::prelude::v1::test]
+    fn theme_commands_are_found() {
+        let top = |q: &str| -> Vec<&'static str> {
+            rank_commands(q)
+                .into_iter()
+                .take(3)
+                .map(|ix| COMMANDS[ix].title)
+                .collect()
+        };
+        assert!(
+            top("theme light").contains(&"Theme: Light"),
+            "{:?}",
+            top("theme light")
+        );
+        assert!(
+            top("tema terang").contains(&"Theme: Light"),
+            "{:?}",
+            top("tema terang")
+        );
+        assert!(
+            top("theme dark").contains(&"Theme: Dark"),
+            "{:?}",
+            top("theme dark")
+        );
+        assert!(
+            top("follow system").contains(&"Theme: Follow System"),
+            "{:?}",
+            top("follow system")
+        );
     }
 
     #[std::prelude::v1::test]

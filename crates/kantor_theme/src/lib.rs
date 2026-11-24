@@ -38,8 +38,15 @@ pub struct Palette {
 }
 
 impl Default for Palette {
-    /// A neutral dark palette used when no Omarchy theme is found.
+    /// Kantor Dark, used when no theme is found.
     fn default() -> Self {
+        Self::kantor_dark()
+    }
+}
+
+impl Palette {
+    /// Kantor's built-in dark theme ("Kantor Dark").
+    pub fn kantor_dark() -> Self {
         Self {
             dark: true,
             background: 0x1e1e2e,
@@ -56,6 +63,38 @@ impl Default for Palette {
             blue: 0x89b4fa,
             magenta: 0xcba6f7,
             cyan: 0x94e2d5,
+        }
+    }
+
+    /// Kantor's built-in light theme ("Kantor Light"): white surfaces,
+    /// neutral greys and a blue accent; status colours dark enough to read
+    /// as text on white.
+    pub fn kantor_light() -> Self {
+        Self {
+            dark: false,
+            background: 0xffffff,
+            dark_background: 0xf3f4f6,
+            lighter_background: 0xf6f7f9,
+            foreground: 0x1f2328,
+            dark_foreground: 0x8c959f,
+            accent: 0x0969da,
+            selection: 0xcfe2fb,
+            muted: 0x656d76,
+            red: 0xcf222e,
+            green: 0x1a7f37,
+            yellow: 0x9a6700,
+            blue: 0x0969da,
+            magenta: 0x8250df,
+            cyan: 0x1b7c83,
+        }
+    }
+
+    /// Kantor Light or Kantor Dark.
+    pub fn kantor(dark: bool) -> Self {
+        if dark {
+            Self::kantor_dark()
+        } else {
+            Self::kantor_light()
         }
     }
 }

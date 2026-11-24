@@ -23,4 +23,10 @@ in the workspace `Cargo.toml`. Changes (search for `KANTOR PATCH`):
    screen instead. `WaylandWindowState.fullscreen_output` keeps the requested output and
    `toggle_fullscreen` passes it. Windows without a `display_id` are unchanged.
 
-Drop this vendor copy once upstream ships the fixes.
+3. The window appearance starts as dark instead of light (`LinuxCommon::new`). It changes
+   as soon as the XDG desktop portal reports a colour scheme (`prefer-light` and
+   `no-preference` give light, `prefer-dark` dark), so only a desktop without the portal's
+   Settings interface keeps it. Kantor's "Follow system" theme uses it, and a desktop that
+   can't say what it prefers gets Kantor's usual dark look.
+
+Drop this vendor copy once upstream ships the fixes (patch 3 is Kantor's choice, not a fix).
