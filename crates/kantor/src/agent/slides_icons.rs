@@ -330,6 +330,9 @@ impl Path {
     fn data(&mut self, d: &str) -> Result<()> {
         let mut t = Tokens::new(d);
         let mut cmd = ' ';
+        // Each `path` element starts again from the origin.
+        self.at = (0.0, 0.0);
+        self.start = (0.0, 0.0);
         while !t.done() {
             match t.command() {
                 Some(c) => cmd = c,
@@ -661,6 +664,12 @@ mod tests {
         let c = cust_geom(r#"<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 12 2 2 4-4M3 3h2v2zA1 1 0 0 1 4 4"/><polyline points="1 2 3 4"/></svg>"#).unwrap();
         assert!(c.contains("<a:pt x=\"22000\" y=\"12000\"/>"), "{c}");
         assert!(c.contains("<a:close/>"));
+        // A relative move in a second path starts from the origin.
+        let two = cust_geom(r#"<svg><path d="M20 13z"/><path d="m9 12 2 2"/></svg>"#).unwrap();
+        assert!(
+            two.contains("<a:moveTo><a:pt x=\"9000\" y=\"12000\"/></a:moveTo>"),
+            "{two}"
+        );
         assert!(svg("no-such-icon-anywhere").is_err());
         assert!(svg("../secrets").is_err());
         let el = icon_element(

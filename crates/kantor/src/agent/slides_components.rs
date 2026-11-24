@@ -382,18 +382,44 @@ fn cards(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
     let rows = n.div_ceil(cols);
     let gap = gap(o, cx, look)?;
     let cw = (w - gap * (cols as Emu - 1)) / cols as Emu;
-    let mut ch = (h - gap * (rows as Emu - 1)) / rows as Emu;
-    if !given[3] {
-        ch = ch.min(inch(2.4));
-    }
+    let full = (h - gap * (rows as Emu - 1)) / rows as Emu;
     let numbered = opt_bool(o, "numbered")?.unwrap_or(true);
+    let pad = inch(0.3);
+    let mut ch = full;
+    if !given[3] {
+        // As tall as the fullest card needs, at least 2.4in, at most the box.
+        let tw = cw - 2 * pad;
+        let mut need = 0;
+        for it in list {
+            let mut owned = Map::new();
+            let io = item(it, "a card", ITEM_KEYS, &mut owned)?;
+            let mut hgt = 2 * pad + inch(0.72);
+            if let Some(t) = text_of(io, "title")? {
+                hgt +=
+                    look.line_h("card_title", 16.0) * look.lines("card_title", 16.0, &t, tw) as Emu;
+            }
+            if let Some(t) = text_of(io, "text")? {
+                hgt += look.line_h("small", 12.0) * look.lines("small", 12.0, &t, tw) as Emu
+                    + inch(0.06);
+            }
+            if let Some(Value::Array(b)) = io.get("bullets") {
+                for x in b {
+                    let t = x.as_str().unwrap_or("");
+                    hgt += look.line_h("small", 12.0)
+                        * look.lines("small", 12.0, t, tw - inch(0.3)) as Emu
+                        + inch(0.06);
+                }
+            }
+            need = need.max(hgt);
+        }
+        ch = need.max(inch(2.4)).min(full);
+    }
     let fill = o.get("fill").cloned().unwrap_or(json!("white"));
     let hi_at = o
         .get("highlight")
         .and_then(Value::as_u64)
         .map(|k| k as usize);
     let vertical = ch >= inch(1.6);
-    let pad = inch(0.3);
     let mut out = Vec::new();
     for (i, it) in list.iter().enumerate() {
         let mut owned = Map::new();

@@ -858,7 +858,7 @@ pub fn cover(so: &Map<String, Value>, cx: &Ctx, look: &Look, section: bool) -> R
     let size = look.size;
     let margin = (0.75 * IN as f64) as Emu;
     let x = len_or(c, "x", cx, margin)?;
-    let w = len_or(c, "w", cx, ((size.cx - 2 * x) as f64 * 0.62) as Emu)?;
+    let w = len_or(c, "w", cx, ((size.cx - 2 * x) as f64 * 0.75) as Emu)?;
     let align = opt_str(c, "align")?;
     let eyebrow = opt_str(so, "eyebrow")?;
     let title = opt_str(so, "title")?;
