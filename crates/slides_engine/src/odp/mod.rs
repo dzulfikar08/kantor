@@ -35,8 +35,9 @@
 //! Left out (and listed in [`Imported::notes`]): charts and other embedded
 //! objects without a picture Kantor can show (LibreOffice's replacement
 //! pictures are usually StarView metafiles), sounds and videos (a video's
-//! preview picture is kept), transitions and animations. Malformed files
-//! give an error, never a panic.
+//! preview picture is kept) and animations. Slide transitions become
+//! `p:transition` ([`transition_xml`]). Malformed files give an error,
+//! never a panic.
 
 mod geom;
 mod shape;
@@ -725,12 +726,13 @@ impl<'a, 'i> Writer<'_, 'a, 'i> {
             let dp = p.attribute((NS_DRAW, "style-name"));
             let dchain: Vec<Ref> = dp.map(|d| ("drawing-page", d)).into_iter().collect();
             let dprop = |ns: &str, a: &str| st.prop(&dchain, "drawing-page-properties", ns, a);
-            animated |= p
-                .children()
-                .any(|c| c.tag_name().namespace() == Some(NS_ANIM))
-                || dprop(NS_PRES, "transition-type").is_some_and(|t| t != "none")
-                || dprop(NS_SMIL, "type").is_some()
-                || dprop(NS_PRES, "transition-style").is_some_and(|t| t != "none");
+            // Transitions are kept (`p:transition`); effects on shapes aren't.
+            animated |= p.descendants().any(|d| {
+                d.tag_name().namespace() == Some(NS_ANIM)
+                    && (d.attribute((NS_PRES, "preset-class")).is_some()
+                        || d.attribute((NS_PRES, "node-type")) == Some("main-sequence"))
+            });
+            let transition = transition_xml(&dprop);
             let hidden = dprop(NS_PRES, "visibility") == Some("hidden");
             let bg_visible = dprop(NS_PRES, "background-visible") != Some("false");
             let objects_visible = dprop(NS_PRES, "background-objects-visible") != Some("false");
@@ -928,7 +930,7 @@ impl<'a, 'i> Writer<'_, 'a, 'i> {
                 .unwrap_or_default();
             let xml = format!(
                 "{DECL}<p:sld {NS}{attrs}><p:cSld{name}>{bg}<p:spTree>{GRP}{shapes_xml}</p:spTree></p:cSld>\
-                 <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"
+                 <p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>{transition}</p:sld>"
             );
             let srels = std::mem::take(&mut part.rels);
             drop(part);
@@ -1106,9 +1108,104 @@ impl<'a, 'i> Writer<'_, 'a, 'i> {
             ));
         }
         if animated {
-            notes.push("slide transitions and animations were left out".into());
+            notes.push("slide animations were left out".into());
         }
         Ok(Imported { pptx, notes })
+    }
+}
+
+/// An ODF duration (`PT00H00M05S`, `PT5.5S`) in ms.
+fn odf_duration_ms(v: &str) -> Option<u32> {
+    let rest = v.trim().strip_prefix("PT")?;
+    let mut total = 0.0f64;
+    let mut num = String::new();
+    for ch in rest.chars() {
+        match ch {
+            'H' | 'M' | 'S' => {
+                let n: f64 = num.parse().ok()?;
+                num.clear();
+                total += n * match ch {
+                    'H' => 3_600_000.0,
+                    'M' => 60_000.0,
+                    _ => 1000.0,
+                };
+            }
+            _ => num.push(ch),
+        }
+    }
+    num.is_empty().then_some(total.round() as u32)
+}
+
+/// A drawing page's transition (its style's `smil:*` and
+/// `presentation:transition-*` / `duration` properties) as PowerPoint's
+/// `p:transition`, or nothing. Directions follow PowerPoint's (the way
+/// the new slide moves); effects PowerPoint has no match for fade.
+fn transition_xml<'a>(prop: &impl Fn(&str, &str) -> Option<&'a str>) -> String {
+    let ty = prop(NS_SMIL, "type");
+    let sub = prop(NS_SMIL, "subtype").unwrap_or("");
+    let reverse = prop(NS_SMIL, "direction") == Some("reverse");
+    let style = prop(NS_PRES, "transition-style").filter(|s| *s != "none");
+    // The way the new slide moves when it comes from `sub`'s side.
+    let from = |rev: bool| {
+        let d = match sub {
+            "fromRight" | "rightToLeft" => "l",
+            "fromTop" | "topToBottom" => "d",
+            "fromBottom" | "bottomToTop" => "u",
+            _ => "r",
+        };
+        let flip = |d: &'static str| match d {
+            "l" => "r",
+            "r" => "l",
+            "u" => "d",
+            _ => "u",
+        };
+        if rev { flip(d) } else { d }
+    };
+    let effect = match ty {
+        Some("fade") if matches!(sub, "fadeOverColor" | "fadeToColor" | "fadeFromColor") => {
+            "<p:fade thruBlk=\"1\"/>".to_owned()
+        }
+        Some("fade") => "<p:fade/>".to_owned(),
+        Some("pushWipe") if sub.starts_with("comb") => "<p:comb/>".to_owned(),
+        Some("pushWipe") => format!("<p:push dir=\"{}\"/>", from(reverse)),
+        Some("slideWipe") if reverse => format!("<p:pull dir=\"{}\"/>", from(true)),
+        Some("slideWipe") => format!("<p:cover dir=\"{}\"/>", from(false)),
+        Some("barWipe") => format!("<p:wipe dir=\"{}\"/>", from(reverse)),
+        Some("barnDoorWipe") => format!(
+            "<p:split orient=\"{}\" dir=\"{}\"/>",
+            if sub == "horizontal" { "horz" } else { "vert" },
+            if reverse { "in" } else { "out" }
+        ),
+        Some("irisWipe") if sub == "diamond" => "<p:diamond/>".to_owned(),
+        Some("irisWipe") => "<p:zoom/>".to_owned(),
+        Some("ellipseWipe") => "<p:circle/>".to_owned(),
+        Some("dissolve") => "<p:dissolve/>".to_owned(),
+        Some("randomBarWipe") => "<p:randomBar/>".to_owned(),
+        Some("checkerBoardWipe") => "<p:checker/>".to_owned(),
+        Some("blindsWipe") => "<p:blinds/>".to_owned(),
+        Some("clockWipe") => "<p:wheel/>".to_owned(),
+        Some(_) => "<p:fade/>".to_owned(),
+        None if style.is_some() => "<p:fade/>".to_owned(),
+        None => String::new(),
+    };
+    let speed = match prop(NS_PRES, "transition-speed") {
+        Some("slow") => " spd=\"slow\"",
+        Some("medium") => " spd=\"med\"",
+        _ => "",
+    };
+    let automatic = prop(NS_PRES, "transition-type") == Some("automatic");
+    let advance = prop(NS_PRES, "duration")
+        .filter(|_| automatic)
+        .and_then(odf_duration_ms)
+        .map(|ms| format!(" advTm=\"{ms}\""))
+        .unwrap_or_default();
+    if effect.is_empty() && advance.is_empty() {
+        return String::new();
+    }
+    if effect.is_empty() {
+        format!("<p:transition{speed}{advance}/>")
+    } else {
+        format!("<p:transition{speed}{advance}>{effect}</p:transition>")
     }
 }
 

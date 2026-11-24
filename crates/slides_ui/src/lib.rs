@@ -31,6 +31,7 @@ mod input;
 mod notes;
 mod object_editor;
 mod paint_menu;
+pub mod show_fx;
 mod spell;
 mod toolbar;
 // Turned text is drawn by Docs' shared rasteriser (also used for turned
