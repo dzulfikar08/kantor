@@ -1,112 +1,100 @@
 {
   "size": "16:9",
   "units": "in",
-  "theme": {
-    "name": "Harbor",
-    "fonts": { "heading": "Carlito", "body": "Carlito" },
-    "colors": {
-      "dk2": "#1B2A4A",
-      "lt2": "#EEF2F7",
-      "accent1": "#2F5597",
-      "accent2": "#F28C40",
-      "accent3": "#4BA37B",
-      "accent4": "#8064A2",
-      "accent5": "#4BACC6",
-      "accent6": "#C0504D"
-    }
-  },
-  "text": { "font": "Carlito", "color": "#1B2A4A" },
-  "background": "#FFFFFF",
+  "preset": "editorial",
+  "theme": { "name": "Harbor" },
+  "footer": { "text": "Lumen Logistics · Q3 operations review", "logo": "logo.png" },
+  "transition": { "type": "fade", "duration": 0.6 },
   "slides": [
     {
-      "background": { "picture": "sky.png" },
-      "elements": [
-        {
-          "type": "shape", "name": "Title band",
-          "x": 0, "y": 4.6, "w": 13.333, "h": 2.9,
-          "fill": { "color": "#0D1730", "opacity": 0.82 }, "line": "none",
-          "anchor": "top", "align": "left", "insets": [0.8, 0.4, 0.8, 0.2],
-          "text": [
-            { "text": "Lumen Logistics", "size": 40, "bold": true, "color": "#FFFFFF" },
-            { "text": "Quarterly operations review · made-up sample data", "size": 18, "color": "#F7C59F", "space_before": 6 }
-          ]
-        },
-        {
-          "type": "shape", "name": "Badge", "geometry": "roundRect", "radius": 0.2,
-          "x": 0.8, "y": 0.6, "w": 2.2, "h": 0.5,
-          "fill": "accent2", "line": "none",
-          "text": "Q3 · DRAFT", "size": 14, "bold": true, "color": "#FFFFFF"
-        }
-      ],
+      "kind": "cover",
+      "eyebrow": "Quarterly operations review · Q3",
+      "title": "On time, for the third quarter running",
+      "subtitle": "Lumen Logistics · made-up sample data",
+      "meta": "Operations team · October",
+      "mark": "96%",
+      "mark_label": "On-time delivery in Q3",
       "notes": "Open with the headline: on-time delivery is up for the third quarter running."
     },
     {
+      "eyebrow": "How it works",
       "title": "How a shipment moves",
+      "subtitle": "Four steps from order to doorstep; pick & pack is where time goes",
       "elements": [
-        { "type": "shape", "geometry": "homePlate", "x": 0.8, "y": 2.6, "w": 3.0, "h": 1.2, "fill": "accent1", "line": "none", "text": "Order", "size": 20, "bold": true, "color": "#FFFFFF" },
-        { "type": "shape", "geometry": "chevron", "x": 3.7, "y": 2.6, "w": 3.0, "h": 1.2, "fill": "accent5", "line": "none", "text": "Pick & pack", "size": 20, "bold": true, "color": "#FFFFFF" },
-        { "type": "shape", "geometry": "chevron", "x": 6.6, "y": 2.6, "w": 3.0, "h": 1.2, "fill": "accent3", "line": "none", "text": "Ship", "size": 20, "bold": true, "color": "#FFFFFF" },
-        { "type": "shape", "geometry": "chevron", "x": 9.5, "y": 2.6, "w": 3.0, "h": 1.2, "fill": "accent2", "line": "none", "text": "Deliver", "size": 20, "bold": true, "color": "#FFFFFF" },
         {
-          "type": "text", "x": 0.8, "y": 4.3, "w": 11.7, "h": 1.6,
-          "size": 16, "line_spacing": 1.15,
-          "text": [
-            { "runs": [ { "text": "Average door-to-door: ", "bold": true }, "2.4 days (target 3)" ], "bullet": true },
-            { "runs": [ { "text": "Slowest step: ", "bold": true }, { "text": "pick & pack", "italic": true, "color": "accent6" } ], "bullet": true }
+          "type": "timeline", "style": "chevrons", "current": 2, "h": 2.6,
+          "items": [
+            { "title": "Order", "label": "Day 0", "text": "Booked online or by EDI" },
+            { "title": "Pick & pack", "label": "Day 0–1", "text": "Slowest step: 0.9 days on average" },
+            { "title": "Ship", "label": "Day 1–2", "text": "Line haul between hubs" },
+            { "title": "Deliver", "label": "Day 2–3", "text": "Last mile, signed for" }
+          ]
+        },
+        { "type": "callout", "tone": "info", "icon": "timer", "title": "Average door to door:", "text": "2.4 days against a target of 3." }
+      ]
+    },
+    {
+      "eyebrow": "Results",
+      "title": "Three numbers that matter",
+      "footer_note": "Figures are invented for this example",
+      "elements": [
+        {
+          "type": "stat_cards",
+          "items": [
+            { "value": "96%", "label": "On-time delivery", "detail": "Up from 91% a year ago" },
+            { "value": "−18%", "label": "Cost per parcel", "detail": "Route planning and fuller vans", "highlight": true },
+            { "value": "4.7", "label": "Customer rating", "detail": "Out of 5, from 12,400 reviews" }
           ]
         }
       ]
     },
     {
-      "title": "Three numbers that matter",
-      "elements": [
-        { "type": "shape", "geometry": "roundRect", "radius": 0.15, "x": 0.8, "y": 2.0, "w": 3.7, "h": 2.6, "fill": "lt2", "line": { "color": "accent1", "width": "1.5pt" }, "anchor": "middle", "color": "dk2",
-          "text": [ { "text": "96%", "size": 54, "bold": true, "color": "accent1" }, { "text": "on-time delivery", "size": 18 } ] },
-        { "type": "shape", "geometry": "roundRect", "radius": 0.15, "x": 4.8, "y": 2.0, "w": 3.7, "h": 2.6, "fill": "lt2", "line": { "color": "accent3", "width": "1.5pt" }, "color": "dk2",
-          "text": [ { "text": "−18%", "size": 54, "bold": true, "color": "accent3" }, { "text": "cost per parcel", "size": 18 } ] },
-        { "type": "shape", "geometry": "roundRect", "radius": 0.15, "x": 8.8, "y": 2.0, "w": 3.7, "h": 2.6, "fill": "lt2", "line": { "color": "accent2", "width": "1.5pt" }, "color": "dk2",
-          "text": [ { "text": "4.7", "size": 54, "bold": true, "color": "accent2" }, { "text": "customer rating (of 5)", "size": 18 } ] },
-        { "type": "shape", "geometry": "ellipse", "x": 11.9, "y": 1.7, "w": 0.8, "h": 0.8, "fill": "accent6", "line": { "color": "#FFFFFF", "width": "2pt" }, "text": "!", "size": 20, "bold": true, "color": "#FFFFFF" },
-        { "type": "text", "x": 0.8, "y": 5.0, "w": 11.7, "h": 0.5, "text": "Figures are invented for this example.", "size": 12, "italic": true, "color": "#7F7F7F", "align": "right" }
-      ]
-    },
-    {
+      "eyebrow": "Partners",
       "title": "Carriers compared",
       "elements": [
         {
-          "type": "table", "x": 0.8, "y": 1.9, "w": 11.7, "columns": [4, 2, 2, 2],
-          "row_height": 0.5, "banded": true, "header_fill": "dk2", "size": 16,
-          "border": { "color": "#D9D9D9", "width": "1pt" },
+          "type": "table", "preset": "clean", "columns": [4, 2, 2, 2],
           "rows": [
             ["Carrier", "On time", "Cost / parcel", "Rating"],
             ["Northbound Freight", "97%", "$4.10", "4.8"],
             ["Bluewater Couriers", "94%", "$3.60", "4.5"],
-            ["Ridgeway Express", { "text": "89%", "color": "accent6", "bold": true }, "$3.20", "4.1"],
-            [{ "text": "All carriers", "bold": true, "col_span": 2, "fill": "#FFF2CC" }, null, { "text": "$3.70", "bold": true, "fill": "#FFF2CC" }, { "text": "4.5", "bold": true, "fill": "#FFF2CC" }]
-          ],
-          "align": "center"
+            ["Ridgeway Express", { "text": "89%", "color": "danger", "bold": true }, "$3.20", "4.1"],
+            [{ "text": "All carriers", "style": "card_title" }, "", "$3.70", "4.5"]
+          ]
         }
       ]
     },
     {
+      "eyebrow": "Growth",
       "title": "Volume is growing",
       "elements": [
-        { "type": "picture", "path": "bars.png", "x": 0.8, "y": 1.8, "w": 4.6, "h": 4.6, "geometry": "roundRect", "radius": 0.3, "line": { "color": "accent1", "width": "2pt" }, "alt": "Bar chart: parcels per month, rising" },
-        { "type": "picture", "path": "sky.png", "x": 6.0, "y": 1.8, "w": 3.0, "h": 3.0, "fit": "cover", "geometry": "ellipse" },
-        { "type": "picture", "path": "sky.png", "x": 9.6, "y": 1.8, "w": 2.6, "crop": { "left": 0.25, "right": 0.25 } },
-        { "type": "text", "x": 6.0, "y": 5.1, "w": 6.5, "h": 1.2, "size": 16, "text": "Pictures: rounded and outlined, cut to a circle (fit cover), and cropped." }
+        { "type": "picture", "path": "bars.png", "x": 0.75, "y": 2.2, "w": 4.2, "h": 4.2, "line": { "color": "line", "width": "0.75pt" }, "alt": "Bar chart: parcels per month, rising" },
+        { "type": "picture", "path": "sky.png", "x": 5.4, "y": 2.2, "w": 2.6, "h": 2.6, "fit": "cover", "geometry": "ellipse" },
+        { "type": "picture", "path": "sky.png", "x": 8.4, "y": 2.2, "w": 2.2, "crop": { "left": 0.25, "right": 0.25 } },
+        {
+          "type": "numbered_list", "x": 5.4, "y": 5.1, "w": 7.2, "h": 1.3, "columns": 2, "boxed": false,
+          "items": [
+            { "title": "50,000 parcels", "text": "in September, a record" },
+            { "title": "+22% on last year", "text": "mostly from two new retail clients" }
+          ]
+        }
       ],
       "notes": "Monthly volume passed 50,000 parcels in September."
     },
     {
+      "eyebrow": "Next quarter",
       "title": "What happens next",
+      "transition": { "type": "push", "direction": "left", "duration": 0.8 },
       "elements": [
-        { "type": "shape", "geometry": "roundRect", "radius": 0.1, "x": 0.8, "y": 2.4, "w": 3.2, "h": 1.4, "fill": "accent1", "line": "none", "text": "Pilot new routes", "size": 18, "color": "#FFFFFF" },
-        { "type": "line", "x1": 4.0, "y1": 3.1, "x2": 5.1, "y2": 3.1, "color": "dk2", "width": "2.5pt", "tail": { "type": "triangle", "width": "large", "length": "large" } },
-        { "type": "shape", "geometry": "roundRect", "radius": 0.1, "x": 5.1, "y": 2.4, "w": 3.2, "h": 1.4, "fill": "accent3", "line": "none", "text": "Measure for 6 weeks", "size": 18, "color": "#FFFFFF" },
-        { "type": "line", "x1": 8.3, "y1": 3.1, "x2": 9.4, "y2": 3.1, "color": "dk2", "width": "2.5pt", "dash": "sysDash", "tail": "stealth" },
-        { "type": "shape", "geometry": "roundRect", "radius": 0.1, "x": 9.4, "y": 2.4, "w": 3.2, "h": 1.4, "fill": { "gradient": { "angle": 0, "stops": ["accent2", "accent6"] } }, "line": "none", "text": "Roll out", "size": 18, "bold": true, "color": "#FFFFFF" },
-        { "type": "shape", "geometry": "wedgeRoundRectCallout", "x": 5.6, "y": 4.4, "w": 2.6, "h": 1.0, "fill": "#FFF2CC", "line": { "color": "#BF9000" }, "color": "#7F6000", "text": "Decision point", "size": 14, "adjust": { "adj1": -20000, "adj2": -90000 }, "rotation": 0 }
+        {
+          "type": "cards", "h": 2.6,
+          "items": [
+            { "icon": "route", "title": "Pilot new routes", "text": "Three regional routes with fewer hub stops" },
+            { "icon": "chart-line", "title": "Measure for 6 weeks", "text": "On-time rate, cost per parcel and rating, every week" },
+            { "icon": "rocket", "title": "Roll out", "text": "Every region, if the pilot beats today's numbers" }
+          ]
+        },
+        { "type": "callout", "tone": "warning", "title": "Decision point:", "text": "after week 6, go or stop on the numbers." }
       ],
       "notes": "Ask for approval of the six-week pilot."
     }

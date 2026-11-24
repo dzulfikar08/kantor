@@ -33,7 +33,14 @@ fn style_props() -> Map<String, Value> {
         "underline": {"type": "boolean"},
         "strike": {"type": "boolean", "description": "Strikethrough."},
         "color": r("color"),
+        "caps": {"type": "boolean", "description": "All capitals (the text is written in capitals)."},
+        "letter_spacing": {"type": ["number", "string"], "description": "Character spacing in points, e.g. 1."},
     }))
+}
+
+/// A named text style ([`super::slides_style`]).
+fn style_ref() -> Value {
+    json!({"type": "string", "description": "A text style of the deck (eyebrow, title, subtitle, body, small, label, card_title, stat, ...); keys given beside it win."})
 }
 
 /// Paragraph settings (a whole text, or one paragraph).
@@ -92,6 +99,7 @@ pub fn shape_props() -> Map<String, Value> {
     m.extend(text_layout_props());
     m.extend(para_props());
     m.extend(style_props());
+    m.insert("style".into(), style_ref());
     m
 }
 
@@ -157,6 +165,9 @@ pub fn table_props() -> Map<String, Value> {
     }));
     m.extend(style_props());
     m.remove("strike");
+    m.insert("style".into(), style_ref());
+    m.insert("preset".into(), json!({"type": "string", "enum": ["clean"], "description": "clean: a rounded header bar, soft banded rows, no grid lines, colours from the palette; x, y, w default to the content area."}));
+    m.insert("first_bold".into(), json!({"type": "boolean", "description": "With preset clean: the first column bold (default true)."}));
     m
 }
 
@@ -245,10 +256,13 @@ fn defs() -> Value {
         Value::Object(para_props()),
     );
     para.extend(style_props());
-    let mut run = obj(
-        json!({"text": {"type": "string", "description": "A new line is a line break in the paragraph."}}),
-    );
+    para.insert("style".into(), style_ref());
+    let mut run = obj(json!({
+        "text": {"type": "string", "description": "A new line is a line break in the paragraph."},
+        "field": {"type": "string", "enum": ["slide_number"], "description": "A field PowerPoint keeps up to date (text optional)."},
+    }));
     run.extend(style_props());
+    run.insert("style".into(), style_ref());
     let mut cell = obj(json!({
         "text": r("text"),
         "fill": r("fill"),
@@ -260,7 +274,8 @@ fn defs() -> Value {
     }));
     cell.extend(para_props());
     cell.extend(style_props());
-    json!({
+    cell.insert("style".into(), style_ref());
+    let mut defs = json!({
         "length": {
             "description": "A length: a number in `units` (default emu: 914400 per inch, 12700 per point, 360000 per cm) or a string with a unit: \"1.5in\", \"2.5cm\", \"40mm\", \"18pt\", \"120px\", \"914400emu\".",
             "type": ["number", "string"],
@@ -320,7 +335,7 @@ fn defs() -> Value {
         "run": {
             "anyOf": [
                 {"type": "string"},
-                {"type": "object", "additionalProperties": false, "required": ["text"], "properties": run},
+                {"type": "object", "additionalProperties": false, "properties": run},
             ],
         },
         "paragraph": {
@@ -348,9 +363,11 @@ fn defs() -> Value {
         "picture": closed("picture", picture_props(), &["path"], "A picture from a PNG or JPEG file, optionally cropped and cut to a shape."),
         "table": closed("table", table_props(), &["rows"], "A table."),
         "chart": closed("chart", chart_props(), &["chart", "w", "h", "categories", "series"], "A real, editable chart (PowerPoint's Edit Data opens its data): column, bar, line, area, pie, doughnut, scatter or combo."),
+        "icon": super::slides_icons::schema(),
         "element": {
-            "description": "Something on a slide, by `type`.",
-            "oneOf": [r("shape"), r("text_box"), r("line_element"), r("picture"), r("table"), r("chart")],
+            "description": "Something on a slide, by `type`: an element, or a component that expands into several.",
+            "oneOf": [r("shape"), r("text_box"), r("line_element"), r("picture"), r("table"), r("chart"), r("icon"),
+                r("stat_cards"), r("cards"), r("steps"), r("timeline"), r("callout"), r("numbered_list"), r("comparison"), r("badge")],
         },
         "background": {
             "description": "A colour, a gradient, {\"picture\": path}, or \"inherit\" (the layout's).",
@@ -370,12 +387,22 @@ fn defs() -> Value {
                 "notes": {"type": "string", "description": "Speaker notes."},
             },
         },
-    })
+    });
+    for (k, v) in super::slides_components::schema_defs()
+        .into_iter()
+        .chain(super::slides_style::schema_defs())
+    {
+        defs[k] = v;
+    }
+    if let Some(Value::Object(props)) = defs.pointer_mut("/slide/properties") {
+        props.extend(super::slides_style::slide_props());
+    }
+    defs
 }
 
 /// The deck schema (`kantor slides build`).
 pub fn deck() -> Value {
-    json!({
+    let mut d = json!({
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "$id": "https://kantor.paparanai.id/schema/slides-deck.schema.json",
         "title": "Kantor slide deck",
@@ -396,12 +423,16 @@ pub fn deck() -> Value {
                 "colors": {"type": "object", "additionalProperties": false, "description": "Theme colours as #RRGGBB.",
                     "properties": slides_engine::author::THEME_COLOR_NAMES.iter().map(|n| ((*n).to_owned(), json!({"type": "string"}))).collect::<Map<String, Value>>()},
             }},
-            "text": {"type": "object", "additionalProperties": false, "description": "Default text formatting of every element.", "properties": style_props()},
+            "text": {"type": "object", "additionalProperties": false, "description": "Default text formatting of every element (colours may be palette names, the font heading or body).", "properties": style_props()},
             "background": {"description": "Every slide's background unless the slide has its own.", "allOf": [r("background")]},
             "slides": {"type": "array", "minItems": 1, "items": r("slide")},
         },
         "$defs": defs(),
-    })
+    });
+    if let Some(Value::Object(props)) = d.get_mut("properties") {
+        props.extend(super::slides_style::deck_props());
+    }
+    d
 }
 
 /// The `units` argument.
@@ -454,7 +485,7 @@ fn compact() -> Vec<(&'static str, Value)> {
         ),
         (
             "element",
-            json!({"type": "object", "description": "An element with its `type`: shape, text, line (keys as slides_add_shape), picture (as slides_add_picture), table (as slides_add_table) or chart (as slides_add_chart)."}),
+            json!({"type": "object", "description": "An element with its `type`: shape, text, line (keys as slides_add_shape), picture (as slides_add_picture), table (as slides_add_table), chart (as slides_add_chart), icon {icon, x, y, size, color}, or a component: stat_cards {items: [{value, label, detail, highlight}]}, cards {items: [{title, text, bullets, icon}], columns}, steps {items, current}, timeline {items: [{label, title, text}], current, style: dots|chevrons}, callout {tone: info|warning|success|danger|note, title, text, icon}, numbered_list {items, columns, marker: badge|number}, comparison {columns: [{title, tag, items, highlight}]}, badge {text|icon, x, y, size}. Components take x, y, w, h (default: the content area)."}),
         ),
         (
             "background",

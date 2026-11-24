@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Write the example deck's pictures (synthetic, no inputs): a dusk-sky
-gradient and a chart-like pattern, as PNG, with only the standard library.
+"""Write the example decks' pictures (synthetic, no inputs): a dusk-sky
+gradient, a chart-like pattern and a made-up logo, as PNG, with only the
+standard library.
 
     python3 docs/examples/slides/make_pictures.py
 """
@@ -12,7 +13,7 @@ import zlib
 HERE = pathlib.Path(__file__).resolve().parent
 
 
-def png(path, w, h, pixel):
+def png(path, w, h, pixel, alpha=False):
     rows = b"".join(
         b"\x00" + b"".join(bytes(pixel(x, y)) for x in range(w)) for y in range(h)
     )
@@ -22,7 +23,7 @@ def png(path, w, h, pixel):
         return c + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
 
     data = b"\x89PNG\r\n\x1a\n"
-    data += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+    data += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6 if alpha else 2, 0, 0, 0))
     data += chunk(b"IDAT", zlib.compress(rows, 9))
     data += chunk(b"IEND", b"")
     path.write_bytes(data)
@@ -57,5 +58,22 @@ def bars(x, y):
     return bg
 
 
+def logo(x, y, navy=(0, 79, 167, 255)):
+    # A ring and three bars of a made-up "wordmark", on transparent.
+    clear = (0, 0, 0, 0)
+    d = ((x - 36) ** 2 + (y - 36) ** 2) ** 0.5
+    if 18 <= d <= 30:
+        return navy
+    if d < 10:
+        return (242, 157, 30, 255)
+    for i, length in enumerate([150, 110, 130]):
+        top = 14 + i * 18
+        if 84 <= x < 84 + length and top <= y < top + 10:
+            return navy
+    return clear
+
+
 png(HERE / "sky.png", 480, 270, sky)
 png(HERE / "bars.png", 320, 320, bars)
+png(HERE / "logo.png", 240, 72, logo, alpha=True)
+png(HERE / "logo-white.png", 240, 72, lambda x, y: logo(x, y, (255, 255, 255, 255)), alpha=True)

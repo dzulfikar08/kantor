@@ -9,7 +9,10 @@ pub mod slides;
 pub mod slides_author;
 pub mod slides_chart;
 pub mod slides_check;
+pub mod slides_components;
+pub mod slides_icons;
 pub mod slides_schema;
+pub mod slides_style;
 
 use std::path::PathBuf;
 

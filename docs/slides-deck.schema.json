@@ -122,7 +122,7 @@
     "text": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Default text formatting of every element.",
+      "description": "Default text formatting of every element (colours may be palette names, the font heading or body).",
       "properties": {
         "font": {
           "type": "string",
@@ -150,6 +150,17 @@
         },
         "color": {
           "$ref": "#/$defs/color"
+        },
+        "caps": {
+          "type": "boolean",
+          "description": "All capitals (the text is written in capitals)."
+        },
+        "letter_spacing": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Character spacing in points, e.g. 1."
         }
       }
     },
@@ -167,6 +178,477 @@
       "items": {
         "$ref": "#/$defs/slide"
       }
+    },
+    "preset": {
+      "type": "string",
+      "enum": [
+        "editorial",
+        "swiss",
+        "mono"
+      ],
+      "description": "A built-in look: editorial (warm paper, Instrument Serif titles and numbers, hairline rules, no boxes), swiss (white, Inter bold titles under a thick rule, mono labels, solid square panels, one strong blue) or mono (swiss in black, white and one red). Sets the theme colours and fonts, palette, text styles, card style, header, footer, covers and the slide background; the deck's own settings go over it (its theme accent recolours the preset's tints)."
+    },
+    "card_style": {
+      "type": "string",
+      "enum": [
+        "rule",
+        "fill"
+      ],
+      "description": "How cards, stats, comparisons, callouts and clean tables are drawn: rule (no boxes, a rule on top, numbers in the heading font) or fill (square panels, the highlighted one in the accent colour). Default from the preset; fill without one."
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "accent": {
+          "type": "string"
+        },
+        "accent_soft": {
+          "type": "string"
+        },
+        "background": {
+          "type": "string"
+        },
+        "panel": {
+          "type": "string"
+        },
+        "line": {
+          "type": "string"
+        },
+        "bar": {
+          "type": "string"
+        },
+        "good": {
+          "type": "string"
+        },
+        "bad": {
+          "type": "string"
+        },
+        "on_accent": {
+          "type": "string"
+        },
+        "on_dark": {
+          "type": "string"
+        },
+        "on_dark_accent": {
+          "type": "string"
+        },
+        "primary": {
+          "type": "string"
+        },
+        "highlight": {
+          "type": "string"
+        },
+        "ink": {
+          "type": "string"
+        },
+        "muted": {
+          "type": "string"
+        },
+        "divider": {
+          "type": "string"
+        },
+        "paper": {
+          "type": "string"
+        },
+        "tint": {
+          "type": "string"
+        },
+        "dark": {
+          "type": "string"
+        },
+        "white": {
+          "type": "string"
+        },
+        "accent_light": {
+          "type": "string"
+        },
+        "on_dark_muted": {
+          "type": "string"
+        },
+        "info": {
+          "type": "string"
+        },
+        "success": {
+          "type": "string"
+        },
+        "warning": {
+          "type": "string"
+        },
+        "danger": {
+          "type": "string"
+        },
+        "black": {
+          "type": "string"
+        },
+        "on_primary": {
+          "type": "string"
+        }
+      },
+      "description": "Named colours used by styles and components (and allowed wherever a colour is): #RRGGBB or a theme colour. Default from the theme: accent / primary accent1, highlight accent2, ink tx1, dark tx2, panel / paper bg2, background / white / on_accent / on_dark bg1, muted, line / divider, bar, accent_soft / tint, on_dark_accent mixed from them; good / success, bad / danger fixed."
+    },
+    "styles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/text_style"
+      },
+      "description": "Named text styles (used with `style`): eyebrow, page_number, title, subtitle, body, small, note, label, card_title, stat, number, numeral, badge, callout, table, table_header, footer, cover_brand, cover_eyebrow, cover_title, cover_subtitle, cover_meta, cover_mark, cover_mark_label, section_eyebrow, section_title, section_subtitle, and any of your own. Keys given here go over the preset's."
+    },
+    "header": {
+      "description": "Where a slide's eyebrow, title and subtitle go (a preset turns it on; false: none). Slides with a header put `title` in a title placeholder, and components default to the area under it.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "x": {
+              "$ref": "#/$defs/length"
+            },
+            "y": {
+              "description": "Top of the header (default 0.55in).",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/length"
+                }
+              ]
+            },
+            "w": {
+              "$ref": "#/$defs/length"
+            },
+            "gap": {
+              "$ref": "#/$defs/length"
+            },
+            "content_gap": {
+              "description": "Space between the header and the content area.",
+              "allOf": [
+                {
+                  "$ref": "#/$defs/length"
+                }
+              ]
+            },
+            "rule": {
+              "description": "A rule above the eyebrow, or beside it (position left): {color, w (a length or \"full\"), h, position, gap}, or false.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "color": {
+                      "$ref": "#/$defs/color"
+                    },
+                    "w": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "const": "full"
+                        },
+                        {
+                          "$ref": "#/$defs/length"
+                        }
+                      ]
+                    },
+                    "h": {
+                      "$ref": "#/$defs/length"
+                    },
+                    "position": {
+                      "type": "string",
+                      "enum": [
+                        "above",
+                        "left"
+                      ]
+                    },
+                    "gap": {
+                      "description": "Space under a rule above the eyebrow.",
+                      "allOf": [
+                        {
+                          "$ref": "#/$defs/length"
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "align": {
+              "type": "string",
+              "enum": [
+                "left",
+                "center"
+              ]
+            },
+            "page_number": {
+              "type": "boolean",
+              "description": "The page number (02) before the eyebrow."
+            },
+            "separator": {
+              "type": "string",
+              "description": "Between the page number and the eyebrow (default \" / \")."
+            },
+            "text": {
+              "description": "Text at the right of the eyebrow row; true: the footer's text (then not in the footer).",
+              "type": [
+                "string",
+                "boolean"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "footer": {
+      "description": "Each slide's footer (cover and section slides have none unless `footer: true`).",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "text": {
+              "type": "string",
+              "description": "e.g. \"Prepared for …\"."
+            },
+            "page_numbers": {
+              "type": "boolean",
+              "description": "A slide number field (02) at the right (default true)."
+            },
+            "logo": {
+              "type": "string",
+              "description": "A PNG or JPEG at the left."
+            },
+            "logo_h": {
+              "$ref": "#/$defs/length"
+            },
+            "bar": {
+              "description": "A bar along the bottom edge: {color, height}, or false.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "color": {
+                      "$ref": "#/$defs/color"
+                    },
+                    "height": {
+                      "$ref": "#/$defs/length"
+                    }
+                  }
+                }
+              ]
+            },
+            "note_field": {
+              "type": "boolean",
+              "description": "Show slides' `footer_note` (default true)."
+            },
+            "rule": {
+              "description": "A hairline across the content width above the footer: {color, width}, or false.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "color": {
+                      "$ref": "#/$defs/color"
+                    },
+                    "width": {
+                      "$ref": "#/$defs/length"
+                    },
+                    "size": {
+                      "$ref": "#/$defs/length"
+                    }
+                  }
+                }
+              ]
+            },
+            "mark": {
+              "description": "A small square at the bottom right: {color, size}, or false.",
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "color": {
+                      "$ref": "#/$defs/color"
+                    },
+                    "width": {
+                      "$ref": "#/$defs/length"
+                    },
+                    "size": {
+                      "$ref": "#/$defs/length"
+                    }
+                  }
+                }
+              ]
+            },
+            "y": {
+              "$ref": "#/$defs/length"
+            },
+            "style": {
+              "type": "string"
+            },
+            "note_style": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    },
+    "cover": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Cover and section slides (`kind`).",
+      "properties": {
+        "background": {
+          "$ref": "#/$defs/background"
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "description": "Top of the cover's text (default: centred).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "rule": {
+          "description": "A rule above the eyebrow, or beside it (position left): {color, w (a length or \"full\"), h, position, gap}, or false.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "color": {
+                  "$ref": "#/$defs/color"
+                },
+                "w": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "const": "full"
+                    },
+                    {
+                      "$ref": "#/$defs/length"
+                    }
+                  ]
+                },
+                "h": {
+                  "$ref": "#/$defs/length"
+                },
+                "position": {
+                  "type": "string",
+                  "enum": [
+                    "above",
+                    "left"
+                  ]
+                },
+                "gap": {
+                  "description": "Space under a rule above the eyebrow.",
+                  "allOf": [
+                    {
+                      "$ref": "#/$defs/length"
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "logo": {
+          "type": "string",
+          "description": "A picture at the top left."
+        },
+        "logo_h": {
+          "$ref": "#/$defs/length"
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center"
+          ]
+        },
+        "motif": {
+          "type": "string",
+          "enum": [
+            "none",
+            "block",
+            "grid"
+          ],
+          "description": "block: an accent block down the right carrying the slide's `mark`; grid: a 4×4 grid of squares."
+        },
+        "block_w": {
+          "$ref": "#/$defs/length"
+        },
+        "brand": {
+          "type": "boolean",
+          "description": "The footer's text at the top left (when there is no logo)."
+        },
+        "section_background": {
+          "$ref": "#/$defs/background"
+        },
+        "section_y": {
+          "description": "Top of a section slide's text (default: centred).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        }
+      }
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The content area under the header (default 0.75in margins, from 2.2in to 0.85in above the bottom) and the gap between cards.",
+      "properties": {
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "gap": {
+          "$ref": "#/$defs/length"
+        }
+      }
+    },
+    "transition": {
+      "description": "Every slide's transition unless it has its own.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/transition"
+        }
+      ]
     }
   },
   "$defs": {
@@ -395,13 +877,17 @@
         {
           "type": "object",
           "additionalProperties": false,
-          "required": [
-            "text"
-          ],
           "properties": {
             "text": {
               "type": "string",
               "description": "A new line is a line break in the paragraph."
+            },
+            "field": {
+              "type": "string",
+              "enum": [
+                "slide_number"
+              ],
+              "description": "A field PowerPoint keeps up to date (text optional)."
             },
             "font": {
               "type": "string",
@@ -429,6 +915,21 @@
             },
             "color": {
               "$ref": "#/$defs/color"
+            },
+            "caps": {
+              "type": "boolean",
+              "description": "All capitals (the text is written in capitals)."
+            },
+            "letter_spacing": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Character spacing in points, e.g. 1."
+            },
+            "style": {
+              "type": "string",
+              "description": "A text style of the deck (eyebrow, title, subtitle, body, small, label, card_title, stat, ...); keys given beside it win."
             }
           }
         }
@@ -521,6 +1022,21 @@
             },
             "color": {
               "$ref": "#/$defs/color"
+            },
+            "caps": {
+              "type": "boolean",
+              "description": "All capitals (the text is written in capitals)."
+            },
+            "letter_spacing": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Character spacing in points, e.g. 1."
+            },
+            "style": {
+              "type": "string",
+              "description": "A text style of the deck (eyebrow, title, subtitle, body, small, label, card_title, stat, ...); keys given beside it win."
             }
           }
         }
@@ -662,6 +1178,21 @@
             },
             "color": {
               "$ref": "#/$defs/color"
+            },
+            "caps": {
+              "type": "boolean",
+              "description": "All capitals (the text is written in capitals)."
+            },
+            "letter_spacing": {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Character spacing in points, e.g. 1."
+            },
+            "style": {
+              "type": "string",
+              "description": "A text style of the deck (eyebrow, title, subtitle, body, small, label, card_title, stat, ...); keys given beside it win."
             }
           }
         }
@@ -841,6 +1372,21 @@
         },
         "color": {
           "$ref": "#/$defs/color"
+        },
+        "caps": {
+          "type": "boolean",
+          "description": "All capitals (the text is written in capitals)."
+        },
+        "letter_spacing": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Character spacing in points, e.g. 1."
+        },
+        "style": {
+          "type": "string",
+          "description": "A text style of the deck (eyebrow, title, subtitle, body, small, label, card_title, stat, ...); keys given beside it win."
         },
         "type": {
           "const": "shape"
@@ -1027,6 +1573,21 @@
         },
         "color": {
           "$ref": "#/$defs/color"
+        },
+        "caps": {
+          "type": "boolean",
+          "description": "All capitals (the text is written in capitals)."
+        },
+        "letter_spacing": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Character spacing in points, e.g. 1."
+        },
+        "style": {
+          "type": "string",
+          "description": "A text style of the deck (eyebrow, title, subtitle, body, small, label, card_title, stat, ...); keys given beside it win."
         },
         "type": {
           "const": "text"
@@ -1364,8 +1925,34 @@
         "underline": {
           "type": "boolean"
         },
+        "letter_spacing": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Character spacing in points, e.g. 1."
+        },
         "color": {
           "$ref": "#/$defs/color"
+        },
+        "caps": {
+          "type": "boolean",
+          "description": "All capitals (the text is written in capitals)."
+        },
+        "style": {
+          "type": "string",
+          "description": "A text style of the deck (eyebrow, title, subtitle, body, small, label, card_title, stat, ...); keys given beside it win."
+        },
+        "preset": {
+          "type": "string",
+          "enum": [
+            "clean"
+          ],
+          "description": "clean: a rounded header bar, soft banded rows, no grid lines, colours from the palette; x, y, w default to the content area."
+        },
+        "first_bold": {
+          "type": "boolean",
+          "description": "With preset clean: the first column bold (default true)."
         },
         "type": {
           "const": "table"
@@ -1377,13 +1964,24 @@
       ],
       "additionalProperties": false
     },
-    "chart": {
+    "icon": {
       "type": "object",
-      "description": "A real, editable chart (PowerPoint's Edit Data opens its data): column, bar, line, area, pie, doughnut, scatter or combo.",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "icon"
+      ],
+      "description": "A Lucide icon (https://lucide.dev/icons) as an editable outline shape: recolour it like a line.",
       "properties": {
+        "type": {
+          "const": "icon"
+        },
         "name": {
+          "type": "string"
+        },
+        "icon": {
           "type": "string",
-          "description": "The chart's name (shown in the selection pane)."
+          "description": "The icon's name, e.g. shield-check, rocket, chart-line, users."
         },
         "x": {
           "$ref": "#/$defs/length"
@@ -1391,460 +1989,43 @@
         "y": {
           "$ref": "#/$defs/length"
         },
+        "size": {
+          "description": "Width and height (or give w / h).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
         "w": {
           "$ref": "#/$defs/length"
         },
         "h": {
           "$ref": "#/$defs/length"
         },
-        "chart": {
-          "type": "string",
-          "enum": [
-            "column",
-            "bar",
-            "line",
-            "area",
-            "pie",
-            "doughnut",
-            "scatter",
-            "combo"
-          ],
-          "description": "Chart type. combo: columns with lines/areas (series `type`, `axis`)."
-        },
-        "stacked": {
-          "anyOf": [
+        "color": {
+          "description": "Default accent1.",
+          "allOf": [
             {
-              "type": "boolean"
-            },
-            {
-              "type": "string",
-              "enum": [
-                "stacked",
-                "percent"
-              ]
-            }
-          ],
-          "description": "Column, bar, line, area: stack the series (true / \"stacked\") or stack to 100% (\"percent\")."
-        },
-        "categories": {
-          "type": "array",
-          "items": {
-            "type": [
-              "string",
-              "number"
-            ]
-          },
-          "description": "Labels along the category axis (scatter: the x values, numbers)."
-        },
-        "series": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "values"
-            ],
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "values": {
-                "type": "array",
-                "items": {
-                  "type": [
-                    "number",
-                    "null"
-                  ]
-                },
-                "description": "One per category; null leaves a gap."
-              },
-              "color": {
-                "$ref": "#/$defs/color"
-              },
-              "colors": {
-                "type": "array",
-                "items": {
-                  "anyOf": [
-                    {
-                      "$ref": "#/$defs/color"
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                },
-                "description": "Bars or slices of their own colour, one per category (null: the series colour)."
-              },
-              "type": {
-                "type": "string",
-                "enum": [
-                  "column",
-                  "line",
-                  "area"
-                ],
-                "description": "Combo (or column/line/area chart): this series' type (combo default: first column, others line)."
-              },
-              "axis": {
-                "type": "string",
-                "enum": [
-                  "primary",
-                  "secondary"
-                ]
-              },
-              "line": {
-                "description": "A line series' line: width, dash, colour.",
-                "allOf": [
-                  {
-                    "$ref": "#/$defs/line"
-                  }
-                ]
-              },
-              "data_labels": {
-                "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
-                "anyOf": [
-                  {
-                    "type": "boolean"
-                  },
-                  {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "properties": {
-                      "show": {
-                        "anyOf": [
-                          {
-                            "type": "string",
-                            "enum": [
-                              "value",
-                              "percent",
-                              "category",
-                              "series"
-                            ]
-                          },
-                          {
-                            "type": "array",
-                            "items": {
-                              "type": "string",
-                              "enum": [
-                                "value",
-                                "percent",
-                                "category",
-                                "series"
-                              ]
-                            }
-                          }
-                        ]
-                      },
-                      "position": {
-                        "type": "string",
-                        "enum": [
-                          "center",
-                          "inside_end",
-                          "inside_base",
-                          "outside_end",
-                          "left",
-                          "right",
-                          "above",
-                          "below",
-                          "best_fit"
-                        ]
-                      },
-                      "format": {
-                        "type": "string"
-                      },
-                      "size": {
-                        "type": [
-                          "number",
-                          "string"
-                        ]
-                      },
-                      "bold": {
-                        "type": "boolean"
-                      },
-                      "italic": {
-                        "type": "boolean"
-                      },
-                      "color": {
-                        "type": "string"
-                      }
-                    }
-                  }
-                ]
-              }
-            }
-          }
-        },
-        "title": {
-          "type": "string"
-        },
-        "legend": {
-          "type": "string",
-          "enum": [
-            "none",
-            "bottom",
-            "top",
-            "right",
-            "left"
-          ],
-          "description": "Default: bottom with several series or a pie, else none."
-        },
-        "data_labels": {
-          "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
-          "anyOf": [
-            {
-              "type": "boolean"
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "show": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "enum": [
-                        "value",
-                        "percent",
-                        "category",
-                        "series"
-                      ]
-                    },
-                    {
-                      "type": "array",
-                      "items": {
-                        "type": "string",
-                        "enum": [
-                          "value",
-                          "percent",
-                          "category",
-                          "series"
-                        ]
-                      }
-                    }
-                  ]
-                },
-                "position": {
-                  "type": "string",
-                  "enum": [
-                    "center",
-                    "inside_end",
-                    "inside_base",
-                    "outside_end",
-                    "left",
-                    "right",
-                    "above",
-                    "below",
-                    "best_fit"
-                  ]
-                },
-                "format": {
-                  "type": "string"
-                },
-                "size": {
-                  "type": [
-                    "number",
-                    "string"
-                  ]
-                },
-                "bold": {
-                  "type": "boolean"
-                },
-                "italic": {
-                  "type": "boolean"
-                },
-                "color": {
-                  "type": "string"
-                }
-              }
-            }
-          ]
-        },
-        "number_format": {
-          "type": "string",
-          "description": "Excel number format of the values (labels and value axis), written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."
-        },
-        "axis": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "The value axis (horizontal in a bar chart).",
-          "properties": {
-            "title": {
-              "type": "string"
-            },
-            "min": {
-              "type": "number"
-            },
-            "max": {
-              "type": "number"
-            },
-            "major_unit": {
-              "type": "number",
-              "description": "Distance between gridlines / tick labels."
-            },
-            "gridlines": {
-              "type": "boolean",
-              "description": "Value axis: major gridlines (default true)."
-            },
-            "number_format": {
-              "type": "string",
-              "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
-            },
-            "reverse": {
-              "type": "boolean",
-              "description": "Values (categories) in reverse order."
-            }
-          }
-        },
-        "category_axis": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "The category axis: title, reverse (scatter: the x axis, with min/max/major_unit).",
-          "properties": {
-            "title": {
-              "type": "string"
-            },
-            "min": {
-              "type": "number"
-            },
-            "max": {
-              "type": "number"
-            },
-            "major_unit": {
-              "type": "number",
-              "description": "Distance between gridlines / tick labels."
-            },
-            "gridlines": {
-              "type": "boolean",
-              "description": "Value axis: major gridlines (default true)."
-            },
-            "number_format": {
-              "type": "string",
-              "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
-            },
-            "reverse": {
-              "type": "boolean",
-              "description": "Values (categories) in reverse order."
-            }
-          }
-        },
-        "gap_width": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 500,
-          "description": "Column/bar: gap between categories, % of a bar (default 150)."
-        },
-        "overlap": {
-          "type": "number",
-          "minimum": -100,
-          "maximum": 100,
-          "description": "Column/bar: overlap of a category's bars in % (stacked: 100)."
-        },
-        "hole": {
-          "type": "number",
-          "minimum": 10,
-          "maximum": 90,
-          "description": "Doughnut hole size in % (default 50)."
-        },
-        "font": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "The chart's text (default: the deck's typeface and colour).",
-          "properties": {
-            "font": {
-              "type": "string"
-            },
-            "size": {
-              "type": [
-                "number",
-                "string"
-              ]
-            },
-            "color": {
               "$ref": "#/$defs/color"
-            },
-            "bold": {
-              "type": "boolean"
-            },
-            "italic": {
-              "type": "boolean"
-            }
-          }
-        },
-        "colors": {
-          "type": "array",
-          "items": {
-            "anyOf": [
-              {
-                "$ref": "#/$defs/color"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "description": "A one-series column, bar, pie or doughnut chart: each bar's or slice's colour (null: automatic), e.g. to highlight bars below target."
-        },
-        "target_line": {
-          "description": "A dashed horizontal line at a value (column, line, area, combo): a number or {value, label (default Target), color, width, dash}. It is a line series, so it shows in the legend and in Edit Data.",
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "object",
-              "additionalProperties": false,
-              "required": [
-                "value"
-              ],
-              "properties": {
-                "value": {
-                  "type": "number"
-                },
-                "label": {
-                  "type": "string"
-                },
-                "color": {
-                  "$ref": "#/$defs/color"
-                },
-                "width": {
-                  "$ref": "#/$defs/length"
-                },
-                "dash": {
-                  "type": "string",
-                  "enum": [
-                    "solid",
-                    "dot",
-                    "dash",
-                    "lgDash",
-                    "dashDot",
-                    "lgDashDot",
-                    "lgDashDotDot",
-                    "sysDash",
-                    "sysDot",
-                    "sysDashDot",
-                    "sysDashDotDot"
-                  ]
-                }
-              }
             }
           ]
         },
-        "type": {
-          "const": "chart"
+        "stroke": {
+          "description": "Line width (default a twelfth of the size, as Lucide's).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "rotation": {
+          "type": "number"
         }
-      },
-      "required": [
-        "type",
-        "chart",
-        "w",
-        "h",
-        "categories",
-        "series"
-      ],
-      "additionalProperties": false
+      }
     },
     "element": {
-      "description": "Something on a slide, by `type`.",
+      "description": "Something on a slide, by `type`: an element, or a component that expands into several.",
       "oneOf": [
         {
           "$ref": "#/$defs/shape"
@@ -1862,7 +2043,31 @@
           "$ref": "#/$defs/table"
         },
         {
-          "$ref": "#/$defs/chart"
+          "$ref": "#/$defs/icon"
+        },
+        {
+          "$ref": "#/$defs/stat_cards"
+        },
+        {
+          "$ref": "#/$defs/cards"
+        },
+        {
+          "$ref": "#/$defs/steps"
+        },
+        {
+          "$ref": "#/$defs/timeline"
+        },
+        {
+          "$ref": "#/$defs/callout"
+        },
+        {
+          "$ref": "#/$defs/numbered_list"
+        },
+        {
+          "$ref": "#/$defs/comparison"
+        },
+        {
+          "$ref": "#/$defs/badge"
         }
       ]
     },
@@ -1940,8 +2145,831 @@
         "notes": {
           "type": "string",
           "description": "Speaker notes."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "content",
+            "cover",
+            "section"
+          ],
+          "description": "cover: a big title with the cover's motif; section: a dark slide with a big title, components under it (see the deck's `cover`)."
+        },
+        "eyebrow": {
+          "type": "string",
+          "description": "The small label above the title (needs a header or preset)."
+        },
+        "subtitle": {
+          "type": "string"
+        },
+        "footer": {
+          "type": "boolean",
+          "description": "false hides the deck's footer on this slide."
+        },
+        "footer_note": {
+          "type": "string",
+          "description": "Text in the footer, e.g. a source."
+        },
+        "meta": {
+          "type": "string",
+          "description": "A cover's small line at the bottom, e.g. who presents."
+        },
+        "mark": {
+          "type": [
+            "string",
+            "number"
+          ],
+          "description": "A cover's big number in the accent block (cover motif block)."
+        },
+        "mark_label": {
+          "type": "string",
+          "description": "A small line at the top of the accent block."
+        },
+        "transition": {
+          "$ref": "#/$defs/transition"
         }
       }
+    },
+    "stat_cards": {
+      "type": "object",
+      "description": "A row of stats (big value, label, detail) spread across the box: under a rule (rule card style) or on square panels (fill); one may be highlighted.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Prefix of the shapes' names."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "gap": {
+          "description": "Space between cards (default the deck's content gap, 0.24in).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "value"
+            ],
+            "properties": {
+              "value": {
+                "type": [
+                  "string",
+                  "number"
+                ]
+              },
+              "label": {
+                "type": "string"
+              },
+              "detail": {
+                "type": "string"
+              },
+              "highlight": {
+                "type": "boolean",
+                "description": "Stands out: an accent rule (rule card style) or an accent fill (fill card style)."
+              }
+            }
+          }
+        },
+        "type": {
+          "const": "stat_cards"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "cards": {
+      "type": "object",
+      "description": "A grid of cards: number or icon, heading, text or bullets; under a rule (rule card style) or on square panels (fill). Short cards put the number beside the text.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Prefix of the shapes' names."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "gap": {
+          "description": "Space between cards (default the deck's content gap, 0.24in).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 24,
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "bullets": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "icon": {
+                    "type": "string",
+                    "description": "A Lucide icon name (instead of the number)."
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "numbered": {
+          "type": "boolean",
+          "description": "A number on each card (default true; an item's icon replaces it)."
+        },
+        "numbers": {
+          "type": "string",
+          "enum": [
+            "01",
+            "1"
+          ],
+          "description": "Number style (default 01)."
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "fill": {
+          "description": "The cards' fill in the fill card style (default the palette's panel).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/fill"
+            }
+          ]
+        },
+        "highlight": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "This card (from 1) stands out: an accent rule or an accent fill."
+        },
+        "type": {
+          "const": "cards"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "steps": {
+      "type": "object",
+      "description": "Numbered steps down the box: big numerals with hairlines between (rule card style) or square number badges (fill).",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Prefix of the shapes' names."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "gap": {
+          "description": "Space between cards (default the deck's content gap, 0.24in).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "bullets": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "icon": {
+                    "type": "string",
+                    "description": "A Lucide icon name (instead of the number)."
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "current": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The highlighted step, from 1 (default 1; 0: none)."
+        },
+        "numbers": {
+          "type": "string",
+          "enum": [
+            "01",
+            "1"
+          ],
+          "description": "Number style (default 01)."
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "steps"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "timeline": {
+      "type": "object",
+      "description": "Phases across the box: square markers on a line (done ink, current accent, later outlined) or chevrons, with a label, title and text under each.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Prefix of the shapes' names."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "gap": {
+          "description": "Space between cards (default the deck's content gap, 0.24in).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "label": {
+                    "type": "string",
+                    "description": "Small caps tag such as \"Phase 1\"."
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "bullets": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "current": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The current phase, from 1 (default 1)."
+        },
+        "style": {
+          "type": "string",
+          "enum": [
+            "track",
+            "chevrons"
+          ],
+          "description": "Square markers on a line (default) or chevrons."
+        },
+        "numbers": {
+          "type": "string",
+          "enum": [
+            "01",
+            "1"
+          ],
+          "description": "Number style (default 01)."
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "timeline"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "callout": {
+      "type": "object",
+      "description": "The one sentence to remember, with a lead-in: a pull quote beside an accent rule (rule card style) or a solid bar (fill); by default across the bottom of the content area.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Prefix of the shapes' names."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "gap": {
+          "description": "Space between cards (default the deck's content gap, 0.24in).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "tone": {
+          "type": "string",
+          "enum": [
+            "info",
+            "warning",
+            "success",
+            "danger",
+            "note"
+          ]
+        },
+        "title": {
+          "type": "string",
+          "description": "Bold lead-in."
+        },
+        "text": {
+          "type": "string"
+        },
+        "icon": {
+          "type": "string",
+          "description": "A Lucide icon name."
+        },
+        "type": {
+          "const": "callout"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "numbered_list": {
+      "type": "object",
+      "description": "Rows of a number and text, centred on each other.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Prefix of the shapes' names."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "gap": {
+          "description": "Space between cards (default the deck's content gap, 0.24in).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 24,
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "bullets": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "icon": {
+                    "type": "string",
+                    "description": "A Lucide icon name (instead of the number)."
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "marker": {
+          "type": "string",
+          "enum": [
+            "badge",
+            "number"
+          ],
+          "description": "badge (default): a numeral (rule card style) or a square badge (fill); number: a big 01, 02."
+        },
+        "boxed": {
+          "type": "boolean",
+          "description": "A hairline above each row (rule card style) or a panel behind it (fill); default true."
+        },
+        "numbers": {
+          "type": "string",
+          "enum": [
+            "01",
+            "1"
+          ],
+          "description": "Number style (default 01)."
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "type": {
+          "const": "numbered_list"
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "comparison": {
+      "type": "object",
+      "description": "Two to four columns side by side (before/after, options), each with a tag, title and bullets.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Prefix of the shapes' names."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "gap": {
+          "description": "Space between cards (default the deck's content gap, 0.24in).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "columns": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "tag": {
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "icon": {
+                "type": "string"
+              },
+              "highlight": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "type": {
+          "const": "comparison"
+        }
+      },
+      "required": [
+        "type",
+        "columns"
+      ],
+      "additionalProperties": false
+    },
+    "badge": {
+      "type": "object",
+      "description": "A square badge with a number, short text or icon.",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "size": {
+          "description": "Side (default 0.46in).",
+          "allOf": [
+            {
+              "$ref": "#/$defs/length"
+            }
+          ]
+        },
+        "text": {
+          "type": [
+            "string",
+            "number"
+          ]
+        },
+        "icon": {
+          "type": "string"
+        },
+        "fill": {
+          "$ref": "#/$defs/fill"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "geometry": {
+          "type": "string",
+          "description": "A preset shape (default rect; ellipse for a circle)."
+        },
+        "type": {
+          "const": "badge"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "additionalProperties": false
+    },
+    "text_style": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A named text style: character and paragraph formatting. `font` may be heading or body (the theme's fonts), `color` a palette name.",
+      "properties": {
+        "font": {
+          "type": "string"
+        },
+        "size": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "strike": {
+          "type": "boolean"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "caps": {
+          "type": "boolean"
+        },
+        "letter_spacing": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justify"
+          ]
+        },
+        "line_spacing": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "space_before": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "space_after": {
+          "type": [
+            "number",
+            "string"
+          ]
+        }
+      }
+    },
+    "transition": {
+      "description": "How the slide comes in: a type, \"none\", or {type, duration (seconds or \"700ms\"), direction (left, right, up, down: the way slides move; in, out for split and zoom), orientation (horizontal, vertical: split), through_black (fade, cut), advance_after (seconds)}.",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "none",
+            "cut",
+            "fade",
+            "push",
+            "wipe",
+            "split",
+            "cover",
+            "uncover",
+            "zoom"
+          ]
+        },
+        {
+          "type": "boolean",
+          "const": false
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "none",
+                "cut",
+                "fade",
+                "push",
+                "wipe",
+                "split",
+                "cover",
+                "uncover",
+                "zoom"
+              ]
+            },
+            "duration": {
+              "type": [
+                "number",
+                "string"
+              ]
+            },
+            "direction": {
+              "type": "string",
+              "enum": [
+                "left",
+                "right",
+                "up",
+                "down",
+                "in",
+                "out"
+              ]
+            },
+            "orientation": {
+              "type": "string",
+              "enum": [
+                "horizontal",
+                "vertical"
+              ]
+            },
+            "through_black": {
+              "type": "boolean"
+            },
+            "advance_after": {
+              "type": [
+                "number",
+                "string"
+              ]
+            }
+          }
+        }
+      ]
     }
   }
 }

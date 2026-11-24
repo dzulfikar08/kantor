@@ -69,6 +69,12 @@ pub struct Ctx {
     pub base: Option<PathBuf>,
     pub size: Option<SlideSize>,
     pub style: RunStyle,
+    /// The deck's styles, palette and furniture ([`super::slides_style`]).
+    pub look: Option<Arc<super::slides_style::Look>>,
+    /// Where components go without a box: the slide's content area.
+    pub area: Option<[Emu; 4]>,
+    /// The slide's number (shown by slide number fields until updated).
+    pub slide_no: Option<usize>,
 }
 
 impl Ctx {
@@ -78,7 +84,8 @@ impl Ctx {
             units: units_arg(args)?,
             base: base.map(Path::to_path_buf),
             size: Some(p.size),
-            style: RunStyle::default(),
+            look: Some(Arc::new(super::slides_style::Look::plain(p))),
+            ..Self::default()
         })
     }
 }
@@ -157,7 +164,7 @@ fn split_unit(s: &str) -> Option<(f64, &str)> {
 
 /// A length: a number in the context's unit, or a string with a unit
 /// (`emu`, `pt`, `in`, `cm`, `mm`, `px`).
-fn length(v: &Value, cx: &Ctx, key: &str) -> Result<Emu> {
+pub(super) fn length(v: &Value, cx: &Ctx, key: &str) -> Result<Emu> {
     let emu = match v {
         Value::Number(n) => n.as_f64().unwrap_or(f64::NAN) * cx.units.emu_per(),
         Value::String(s) => {
@@ -455,6 +462,8 @@ const STYLE_KEYS: &[&str] = &[
     "underline",
     "strike",
     "color",
+    "caps",
+    "letter_spacing",
 ];
 
 /// Character formatting from the style keys of `o`.
@@ -467,7 +476,45 @@ fn run_style(o: &Map<String, Value>) -> Result<RunStyle> {
         underline: opt_bool(o, "underline")?,
         strike: opt_bool(o, "strike")?,
         color: get(o, "color").map(|c| color(c, "color")).transpose()?,
+        caps: opt_bool(o, "caps")?,
+        spacing: get(o, "letter_spacing").map(letter_spacing).transpose()?,
     })
+}
+
+/// Character spacing: points (`1`, `"1.5pt"`) → hundredths of a point.
+fn letter_spacing(v: &Value) -> Result<i32> {
+    let pt = match v {
+        Value::Number(n) => n.as_f64().unwrap_or(f64::NAN),
+        Value::String(s) => match split_unit(s) {
+            Some((n, "" | "pt")) => n,
+            _ => bail!("`letter_spacing` must be in points, e.g. 1"),
+        },
+        _ => bail!("`letter_spacing` must be a number of points"),
+    };
+    if !(-100.0..=400.0).contains(&pt) {
+        bail!("`letter_spacing` must be between -100 and 400 points");
+    }
+    Ok((pt * 100.0).round() as i32)
+}
+
+/// Text whose formatting says all capitals, written in capitals: Kantor
+/// draws text as written, PowerPoint also sees `cap="all"`.
+fn caps_text(paras: &mut [ParaSpec], base: &RunStyle) {
+    for p in paras {
+        for r in &mut p.runs {
+            if r.field.is_none() && base.over(&r.style).caps == Some(true) {
+                r.text = r.text.to_uppercase();
+            }
+        }
+    }
+}
+
+/// A run's field: `slide_number`.
+fn field(v: &str) -> Result<&'static str> {
+    match v {
+        "slide_number" => Ok("slidenum"),
+        other => bail!("run `field` must be slide_number, not \"{other}\""),
+    }
 }
 
 fn align(v: &str) -> Result<Align> {
@@ -589,10 +636,13 @@ const PARA_KEYS: &[&str] = &[
     "underline",
     "strike",
     "color",
+    "caps",
+    "letter_spacing",
 ];
 
 const RUN_KEYS: &[&str] = &[
     "text",
+    "field",
     "font",
     "size",
     "bold",
@@ -600,6 +650,8 @@ const RUN_KEYS: &[&str] = &[
     "underline",
     "strike",
     "color",
+    "caps",
+    "letter_spacing",
 ];
 
 /// Text with `\r\n` and `\r` as `\n`, no other control characters but tabs.
@@ -615,7 +667,7 @@ fn clean(text: &str) -> Result<String> {
 
 /// The paragraphs of `v`: a string (a new line starts a paragraph) or an
 /// array of paragraphs (strings or objects with `text` or `runs`).
-fn paragraphs(v: &Value, defaults: &ParaDefaults) -> Result<Vec<ParaSpec>> {
+fn paragraphs(v: &Value, defaults: &ParaDefaults, cx: &Ctx) -> Result<Vec<ParaSpec>> {
     let plain = |text: &str, d: &ParaDefaults, style: RunStyle| -> Result<Vec<ParaSpec>> {
         Ok(clean(text)?
             .split('\n')
@@ -624,6 +676,7 @@ fn paragraphs(v: &Value, defaults: &ParaDefaults) -> Result<Vec<ParaSpec>> {
                     vec![RunSpec {
                         text: l.to_owned(),
                         style: style.clone(),
+                        field: None,
                     }],
                     style.clone(),
                 )
@@ -647,6 +700,7 @@ fn paragraphs(v: &Value, defaults: &ParaDefaults) -> Result<Vec<ParaSpec>> {
                             vec![RunSpec {
                                 text: clean(s)?,
                                 style: RunStyle::default(),
+                                field: None,
                             }],
                             RunStyle::default(),
                         ));
@@ -662,6 +716,7 @@ fn paragraphs(v: &Value, defaults: &ParaDefaults) -> Result<Vec<ParaSpec>> {
                             (Some(Value::String(t)), None) => vec![RunSpec {
                                 text: clean(t)?,
                                 style: style.clone(),
+                                field: None,
                             }],
                             (Some(_), None) => bail!("a paragraph's `text` must be a string"),
                             (None, Some(Value::Array(runs))) => runs
@@ -670,14 +725,22 @@ fn paragraphs(v: &Value, defaults: &ParaDefaults) -> Result<Vec<ParaSpec>> {
                                     Value::String(t) => Ok(RunSpec {
                                         text: clean(t)?,
                                         style: style.clone(),
+                                        field: None,
                                     }),
                                     _ => {
                                         let ro = object(r, "a run", RUN_KEYS)?;
-                                        let text =
-                                            opt_str(ro, "text")?.context("a run needs `text`")?;
+                                        let fld = opt_str(ro, "field")?.map(field).transpose()?;
+                                        let text = match (opt_str(ro, "text")?, fld) {
+                                            (Some(t), _) => clean(t)?,
+                                            (None, Some(_)) => cx
+                                                .slide_no
+                                                .map_or_else(|| "#".to_owned(), |n| n.to_string()),
+                                            (None, None) => bail!("a run needs `text`"),
+                                        };
                                         Ok(RunSpec {
-                                            text: clean(text)?,
+                                            text,
                                             style: style.over(&run_style(ro)?),
+                                            field: fld.map(str::to_owned),
                                         })
                                     }
                                 })
@@ -722,6 +785,8 @@ const TEXT_KEYS: &[&str] = &[
     "underline",
     "strike",
     "color",
+    "caps",
+    "letter_spacing",
 ];
 
 /// The text of a shape or cell (`None` without `text`), and its default
@@ -737,7 +802,7 @@ fn text_body(
     let anchor_v = opt_str(o, "anchor")?.map(anchor).transpose()?;
     let text_given = get(o, "text").is_some();
     let paras = match get(o, "text") {
-        Some(t) => paragraphs(t, &defaults)?,
+        Some(t) => paragraphs(t, &defaults, cx)?,
         None => vec![defaults.para(Vec::new(), RunStyle::default())],
     };
     let autofit = match opt_str(o, "autofit")? {
@@ -878,16 +943,24 @@ pub fn element(v: &Value, cx: &Ctx) -> Result<Element> {
     let ty = v
         .get("type")
         .and_then(Value::as_str)
-        .context("an element needs `type`: shape, text, line, picture, table or chart")?;
+        .context("an element needs `type`: shape, text, line, picture, table, chart or icon")?;
+    let v = &super::slides_style::resolve(v, cx)?;
     match ty {
         "shape" | "text" => shape_element(v, cx, ty == "text"),
         "line" => line_element(v, cx),
         "picture" => picture_element(v, cx),
         "table" => table_element(v, cx),
         "chart" => super::slides_chart::chart_element(v, cx),
+        "icon" => super::slides_icons::icon_element(v, cx),
+        c if super::slides_components::COMPONENTS.contains(&c) => {
+            bail!(
+                "\"{c}\" is a component: give it in `elements` (a deck slide or slides_add_elements)"
+            )
+        }
         other => {
             bail!(
-                "element `type` must be shape, text, line, picture, table or chart, not \"{other}\""
+                "element `type` must be shape, text, line, picture, table, chart, icon or a component ({}), not \"{other}\"",
+                super::slides_components::COMPONENTS.join(", ")
             )
         }
     }
@@ -927,13 +1000,16 @@ fn shape_element(v: &Value, cx: &Ctx, text_box: bool) -> Result<Element> {
             ..TextSpec::default()
         })
     });
-    let text = text.or_else(|| {
+    let mut text = text.or_else(|| {
         Some(TextSpec {
             paras: vec![ParaSpec::default()],
             wrap: true,
             ..TextSpec::default()
         })
     });
+    if let Some(t) = &mut text {
+        caps_text(&mut t.paras, &style);
+    }
     Ok(Element {
         kind: ElementKind::Shape(ShapeSpec {
             geom,
@@ -942,6 +1018,7 @@ fn shape_element(v: &Value, cx: &Ctx, text_box: bool) -> Result<Element> {
             line: get(o, "line").map(|l| line(l, cx, "line")).transpose()?,
             text,
             style,
+            placeholder: None,
         }),
         name: opt_str(o, "name")?.map(str::to_owned),
         xfrm,
@@ -1117,6 +1194,8 @@ const CELL_KEYS: &[&str] = &[
     "underline",
     "strike",
     "color",
+    "caps",
+    "letter_spacing",
     "fill",
     "border",
     "margins",
@@ -1149,6 +1228,8 @@ fn table_element(v: &Value, cx: &Ctx) -> Result<Element> {
             "italic",
             "underline",
             "color",
+            "caps",
+            "letter_spacing",
         ],
     ]);
     let o = object(v, "a table", &allowed)?;
@@ -1308,7 +1389,7 @@ fn table_element(v: &Value, cx: &Ctx) -> Result<Element> {
             match cell_v {
                 Value::Null => {}
                 Value::String(_) | Value::Number(_) | Value::Array(_) => {
-                    cell.text.paras = paragraphs(cell_v, &base_defaults)?;
+                    cell.text.paras = paragraphs(cell_v, &base_defaults, cx)?;
                 }
                 Value::Object(_) => {
                     let co = object(cell_v, "a table cell", CELL_KEYS)?;
@@ -1370,6 +1451,7 @@ fn table_element(v: &Value, cx: &Ctx) -> Result<Element> {
                     ci + 1
                 );
             }
+            caps_text(&mut cell.text.paras, &cell.style);
             // Margins as [left, top, right, bottom] → the writer's [l, r, t, b].
             cell.margins = cell.margins.map(|[l, t, r, b]| [l, r, t, b]);
             cells.push(cell);
@@ -1428,11 +1510,20 @@ pub fn background(v: &Value, cx: &Ctx) -> Result<BackgroundSpec> {
 /// The keys of a slide in a deck (and of `slides_add_slide`).
 const SLIDE_KEYS: &[&str] = &[
     "layout",
+    "kind",
+    "eyebrow",
     "title",
+    "subtitle",
     "bullets",
     "background",
     "elements",
     "notes",
+    "footer",
+    "footer_note",
+    "transition",
+    "meta",
+    "mark",
+    "mark_label",
 ];
 
 /// Add `elements` (an array) to slide `slide`; returns their ids.
@@ -1448,8 +1539,25 @@ pub fn add_elements(
     if list.len() > MAX_ELEMENTS {
         bail!("more than {MAX_ELEMENTS} elements at once");
     }
-    let mut out = Vec::new();
+    let cx = &Ctx {
+        slide_no: Some(slide + 1),
+        ..cx.clone()
+    };
+    // Components become several elements each.
+    let mut flat = Vec::new();
     for (n, v) in list.iter().enumerate() {
+        match super::slides_components::expand(v, cx)
+            .with_context(|| format!("element {}", n + 1))?
+        {
+            Some(els) => flat.extend(els.into_iter().map(|e| (n, e))),
+            None => flat.push((n, v.clone())),
+        }
+    }
+    if flat.len() > MAX_ELEMENTS * 4 {
+        bail!("the elements make more than {} shapes", MAX_ELEMENTS * 4);
+    }
+    let mut out = Vec::new();
+    for (n, v) in &flat {
         let el = element(v, cx).with_context(|| format!("element {}", n + 1))?;
         let i = p
             .add_element(slide, &el)
@@ -1469,7 +1577,8 @@ fn apply_slide(
     cx: &Ctx,
 ) -> Result<Vec<Value>> {
     if let Some(bg) = o.get("background") {
-        p.set_background(i, &background(bg, cx)?)?;
+        let bg = super::slides_style::resolve_background(bg, cx);
+        p.set_background(i, &background(&bg, cx)?)?;
     }
     let shapes = match get(o, "elements") {
         Some(els) => add_elements(p, i, els, cx)?,
@@ -1497,7 +1606,23 @@ fn deck_layout(p: &Presentation, o: &Map<String, Value>) -> Result<Option<usize>
     Ok(p.layouts.iter().position(|l| l.name == name))
 }
 
-const DECK_KEYS: &[&str] = &["size", "units", "theme", "text", "background", "slides"];
+const DECK_KEYS: &[&str] = &[
+    "size",
+    "units",
+    "preset",
+    "theme",
+    "palette",
+    "styles",
+    "text",
+    "background",
+    "header",
+    "footer",
+    "cover",
+    "content",
+    "card_style",
+    "transition",
+    "slides",
+];
 
 /// Slide sizes by name.
 fn slide_size(v: &Value, cx: &Ctx) -> Result<SlideSize> {
@@ -1577,20 +1702,15 @@ pub fn build(deck: &Value, base: Option<&Path>) -> Result<Presentation> {
     let mut cx = Ctx {
         units: units_arg(deck)?,
         base: base.map(Path::to_path_buf),
-        size: None,
-        style: RunStyle::default(),
+        ..Ctx::default()
     };
     let size = get(o, "size")
         .map(|s| slide_size(s, &cx))
         .transpose()?
         .unwrap_or(SlideSize::WIDE);
     cx.size = Some(size);
-    if let Some(t) = get(o, "text") {
-        let to = object(t, "`text`", STYLE_KEYS)?;
-        cx.style = run_style(to)?;
-    }
-    let theme = get(o, "theme")
-        .map(deck_theme)
+    let theme = super::slides_style::deck_theme(o)?
+        .map(|t| deck_theme(&t))
         .transpose()?
         .unwrap_or_default();
     let mut p = Presentation::new_with(&PackageOptions {
@@ -1599,48 +1719,171 @@ pub fn build(deck: &Value, base: Option<&Path>) -> Result<Presentation> {
         more_layouts: true,
         title_slide: false,
     })?;
+    cx.look = Some(Arc::new(super::slides_style::Look::build(&p, o, &cx)?));
+    if let Some(t) = get(o, "text") {
+        object(t, "`text`", STYLE_KEYS)?;
+        // Palette colours and theme fonts allowed.
+        let mut tv = t.clone();
+        tv["type"] = json!("text");
+        let mut to = super::slides_style::resolve(&tv, &cx)?
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
+        to.remove("type");
+        cx.style = run_style(&to)?;
+    }
     let slides = get(o, "slides")
         .and_then(Value::as_array)
         .context("the deck needs `slides`: an array of slides")?;
     if slides.is_empty() || slides.len() > MAX_SLIDES {
         bail!("a deck has 1 to {MAX_SLIDES} slides");
     }
-    let deck_bg = get(o, "background");
+    let preset_bg = cx.look.as_ref().and_then(|l| l.background.clone());
+    let deck_bg = get(o, "background").or(preset_bg.as_ref());
     for (n, s) in slides.iter().enumerate() {
         add_deck_slide(&mut p, s, deck_bg, &cx).with_context(|| format!("slide {}", n + 1))?;
     }
     Ok(p)
 }
 
-/// Add one deck slide at the end.
+/// Add one deck slide at the end: header (eyebrow, title, subtitle) or a
+/// cover, bullets, elements, footer, notes and transition.
 fn add_deck_slide(
     p: &mut Presentation,
     s: &Value,
     deck_bg: Option<&Value>,
     cx: &Ctx,
 ) -> Result<usize> {
+    use super::slides_style as style;
     let so = object(s, "a slide", SLIDE_KEYS)?;
-    let layout = deck_layout(p, so)?;
-    let plan = super::slides::plan_add(
-        p,
-        &json!({
-            "title": so.get("title").cloned().unwrap_or(Value::Null),
-            "bullets": so.get("bullets").cloned().unwrap_or(Value::Null),
-        }),
-    )?;
+    let mut look = style::look_of(cx);
+    let kind = opt_str(so, "kind")?.unwrap_or("content");
+    let cover = match kind {
+        "content" => false,
+        "cover" | "section" => true,
+        other => bail!("slide `kind` must be content, cover or section, not \"{other}\""),
+    };
+    if !cover {
+        for k in ["meta", "mark", "mark_label"] {
+            if get(so, k).is_some() {
+                bail!("`{k}` is for cover slides (`kind`)");
+            }
+        }
+    }
+    // A dark cover or section: text and rules in the light colours.
+    let mut cx_dark = None;
+    if cover && get(so, "background").is_none() {
+        let bg = style::cover_background_name(&look, kind == "section");
+        if let Some(name) = bg.as_str()
+            && look.is_dark(name)
+        {
+            look = Arc::new(look.on_dark(name));
+            cx_dark = Some(Ctx {
+                look: Some(look.clone()),
+                ..cx.clone()
+            });
+        }
+    }
+    let cx = cx_dark.as_ref().unwrap_or(cx);
+    let header_mode = cover || (look.header.is_some() && get(so, "layout").is_none());
+    if !header_mode {
+        for k in ["eyebrow", "subtitle"] {
+            if get(so, k).is_some() {
+                bail!("`{k}` needs a deck `header` (or a `preset`), and no `layout` on the slide");
+            }
+        }
+    }
+    let layout = if header_mode {
+        p.layouts.iter().position(|l| l.name == "Blank")
+    } else {
+        deck_layout(p, so)?
+    };
+    let plan = if header_mode {
+        super::slides::plan_add(p, &json!({}))?
+    } else {
+        super::slides::plan_add(
+            p,
+            &json!({
+                "title": so.get("title").cloned().unwrap_or(Value::Null),
+                "bullets": so.get("bullets").cloned().unwrap_or(Value::Null),
+            }),
+        )?
+    };
     let i = p.add_slide_with_text(
         p.len().checked_sub(1),
         layout,
         plan.title.as_deref(),
         &plan.body,
     )?;
+    let mut cx = Ctx {
+        slide_no: Some(i + 1),
+        ..cx.clone()
+    };
     let mut so = so.clone();
-    if let Some(bg) = deck_bg
-        && !so.contains_key("background")
-    {
-        so.insert("background".into(), bg.clone());
+    if !so.contains_key("background") {
+        if cover {
+            so.insert(
+                "background".into(),
+                style::cover_background(&look, &cx, kind == "section"),
+            );
+        } else if let Some(bg) = deck_bg {
+            so.insert("background".into(), bg.clone());
+        }
     }
-    apply_slide(p, i, &so, cx)?;
+    let mut area = look.content;
+    if header_mode {
+        let f = if cover {
+            style::cover(&so, &cx, &look, kind == "section")?
+        } else {
+            style::header(&so, &cx, &look)?
+        };
+        for el in &f.elements {
+            p.add_element(i, el)?;
+        }
+        area = f.content;
+        if let Some(b) = get(&so, "bullets") {
+            let list = b.as_array().context("`bullets` must be an array")?;
+            let paras = list
+                .iter()
+                .map(|x| match x {
+                    Value::String(t) => Ok(json!({"text": t})),
+                    Value::Object(_) => {
+                        let bo = object(x, "a bullet", &["text", "level"])?;
+                        let mut q =
+                            json!({"text": opt_str(bo, "text")?.context("a bullet needs `text`")?});
+                        if let Some(l) = get(bo, "level") {
+                            q["level"] = l.clone();
+                        }
+                        Ok(q)
+                    }
+                    _ => bail!("a bullet must be a string or {{text, level}}"),
+                })
+                .collect::<Result<Vec<Value>>>()?;
+            let v = json!({"type": "text", "name": "Content", "style": "body", "bullet": true, "space_before": 8,
+                "x": format!("{}emu", area[0]), "y": format!("{}emu", area[1]),
+                "w": format!("{}emu", area[2]), "h": format!("{}emu", area[3]), "text": paras});
+            p.add_element(i, &element(&v, &cx)?)?;
+        }
+    }
+    cx.area = Some(area);
+    apply_slide(p, i, &so, &cx)?;
+    let footer = match get(&so, "footer") {
+        None => !cover,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => bail!("a slide's `footer` is true or false"),
+    };
+    if footer {
+        for el in style::footer(&so, &cx, &look)? {
+            p.add_element(i, &el)?;
+        }
+    }
+    let transition = match get(&so, "transition") {
+        Some(t) => style::transition(t)?,
+        None => look.transition.clone(),
+    };
+    if let Some(t) = transition {
+        p.set_transition(i, Some(&t))?;
+    }
     Ok(i)
 }
 
@@ -1747,7 +1990,15 @@ pub fn run_tool(
         }
         "slides_set_notes" => {
             let i = slide_of(p, args)?;
-            let text = super::req_str(args, "text")?;
+            // `notes`, as in a deck's slides, or `text`.
+            let text = match (
+                super::opt_str(args, "text")?,
+                super::opt_str(args, "notes")?,
+            ) {
+                (Some(_), Some(_)) => bail!("give `text` or `notes`, not both"),
+                (Some(t), None) | (None, Some(t)) => t,
+                (None, None) => bail!("`text` (or `notes`) is required"),
+            };
             check_len("`text`", text)?;
             p.set_notes_text(i, text)?;
             (
@@ -1772,10 +2023,9 @@ pub fn run_tool(
                     "slides_add_chart" => Some("chart"),
                     _ => None,
                 };
-                let el = element(&element_args(args, ty), &cx)?;
-                let ix = p.add_element(i, &el)?;
-                let s = &p.slide(i).shapes[ix];
-                vec![json!({"id": s.id, "name": s.name})]
+                // One element (a clean table: its header bar too).
+                let one = json!([element_args(args, ty)]);
+                add_elements(p, i, &one, &cx)?
             };
             let last = p.slide(i).shapes.len().saturating_sub(1);
             let focus = if shapes.len() == 1 {
@@ -2084,11 +2334,23 @@ mod tests {
         );
     }
 
-    #[std::prelude::v1::test]
-    fn builds_the_example_deck_the_same_every_time() {
+    fn example(name: &str) -> (Value, PathBuf) {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/examples/slides");
         let deck: Value =
-            serde_json::from_str(&std::fs::read_to_string(dir.join("deck.json")).unwrap()).unwrap();
+            serde_json::from_str(&std::fs::read_to_string(dir.join(name)).unwrap()).unwrap();
+        (deck, dir)
+    }
+
+    fn shapes(listed: &Value, slide: usize) -> Vec<Value> {
+        listed["slides"][slide]["shapes"]
+            .as_array()
+            .unwrap()
+            .clone()
+    }
+
+    #[std::prelude::v1::test]
+    fn builds_the_example_deck_the_same_every_time() {
+        let (deck, dir) = example("deck.json");
         let p = build(&deck, Some(&dir)).unwrap();
         let bytes = p.to_bytes().unwrap();
         assert_eq!(build(&deck, Some(&dir)).unwrap().to_bytes().unwrap(), bytes);
@@ -2098,48 +2360,174 @@ mod tests {
         let q = Presentation::from_bytes(bytes).unwrap();
         assert_eq!(q.len(), deck["slides"].as_array().unwrap().len());
         let listed = super::super::slides::list(&q, 0);
-        let s2 = &listed["slides"][1];
-        assert_eq!(s2["layout"], "Title Only");
-        assert_eq!(s2["title"], "How a shipment moves");
-        let chevron = s2["shapes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|s| s["text"] == "Pick & pack")
-            .unwrap();
-        assert_eq!(chevron["geometry"], "chevron");
-        assert_eq!(chevron["x"], (3.7f64 * 914_400.0).round() as i64);
-        assert_eq!(chevron["w"], 3 * 914_400);
-        let s4 = &listed["slides"][3];
-        assert!(
-            s4["shapes"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|s| s["kind"] == "table")
+        // The cover: the title placeholder, the accent block with its mark.
+        assert_eq!(
+            listed["slides"][0]["title"],
+            "On time, for the third quarter running"
         );
-        let s5 = &listed["slides"][4];
-        let pics: Vec<&Value> = s5["shapes"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter(|s| s["kind"] == "picture")
+        assert!(q.slide(0).background.is_some());
+        let s1 = shapes(&listed, 0);
+        assert!(!s1.iter().any(|s| s["name"] == "Slide number"));
+        assert!(s1.iter().any(|s| s["name"] == "Cover block"));
+        assert!(
+            s1.iter()
+                .any(|s| s["name"] == "Cover mark" && s["text"] == "96%")
+        );
+        assert!(
+            s1.iter().any(|s| s["name"] == "Cover brand"
+                && s["text"] == "Lumen Logistics · Q3 operations review")
+        );
+        // Header: the eyebrow in sentence case beside a rule, the title as
+        // the title placeholder; square corners everywhere.
+        let s2 = &listed["slides"][1];
+        assert_eq!(s2["title"], "How a shipment moves");
+        let s2s = shapes(&listed, 1);
+        assert!(s2s.iter().any(|s| s["text"] == "How it works"));
+        assert!(s2s.iter().any(|s| s["name"] == "Header rule"));
+        let all: Vec<Value> = (0..q.len()).flat_map(|i| shapes(&listed, i)).collect();
+        assert!(!all.iter().any(|s| s["geometry"] == "roundRect"
+            || (s["geometry"] == "ellipse" && s["kind"] != "picture")));
+        assert!(
+            s2s.iter()
+                .any(|s| s["placeholder"] == "title" && s["text"] == "How a shipment moves")
+        );
+        assert_eq!(s2s.iter().filter(|s| s["geometry"] == "chevron").count(), 3);
+        assert!(s2s.iter().any(|s| s["geometry"] == "homePlate"));
+        // Footer: a hairline, logo, text and a slide number field.
+        let number = s2s.iter().find(|s| s["name"] == "Slide number").unwrap();
+        assert_eq!(number["text"], "02");
+        assert!(s2s.iter().any(|s| s["name"] == "Footer rule"));
+        assert!(!s2s.iter().any(|s| s["name"] == "Footer bar"));
+        assert!(
+            s2s.iter()
+                .any(|s| s["name"] == "Logo" && s["kind"] == "picture")
+        );
+        let s3 = shapes(&listed, 2);
+        assert_eq!(
+            s3.iter()
+                .filter(|s| s["name"].as_str().is_some_and(|n| n.ends_with(" value")))
+                .count(),
+            3
+        );
+        assert!(
+            s3.iter()
+                .any(|s| s["text"] == "Figures are invented for this example")
+        );
+        assert!(shapes(&listed, 3).iter().any(|s| s["kind"] == "table"));
+        let pics: Vec<Value> = shapes(&listed, 4)
+            .into_iter()
+            .filter(|s| s["kind"] == "picture" && s["name"] != "Logo")
             .collect();
         assert_eq!(pics.len(), 3);
-        assert_eq!(pics[0]["geometry"], "roundRect");
         assert_eq!(pics[1]["geometry"], "ellipse");
-        let s6 = &listed["slides"][5];
         assert!(
-            s6["shapes"]
-                .as_array()
-                .unwrap()
+            shapes(&listed, 5)
                 .iter()
-                .any(|s| s["kind"] == "line")
+                .any(|s| s["name"] == "Card 3 number icon")
         );
         assert_eq!(q.notes_text(5), "Ask for approval of the six-week pilot.");
-        assert!(q.slide(0).background.is_some());
-        // Theme colours and the slide size.
+        // Transitions: the deck's fade, the last slide's push.
+        let fx = q.slide(1).show_fx().transition.unwrap();
+        assert_eq!(fx.duration_ms, 600);
+        assert!(matches!(
+            q.slide(5).show_fx().transition.unwrap().kind,
+            slides_engine::anim::TransitionKind::Push(_)
+        ));
         assert_eq!(q.size, SlideSize::WIDE);
+    }
+
+    #[std::prelude::v1::test]
+    fn builds_the_proposal_example() {
+        let (deck, dir) = example("proposal.json");
+        let p = build(&deck, Some(&dir)).unwrap();
+        let bytes = p.to_bytes().unwrap();
+        assert!(slides_engine::package_problems(&bytes).is_empty());
+        let q = Presentation::from_bytes(bytes).unwrap();
+        let listed = super::super::slides::list(&q, 0);
+        for (i, s) in deck["slides"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(listed["slides"][i]["title"], s["title"], "slide {}", i + 1);
+        }
+        // Every element is ordinary, editable shapes (page numbers are
+        // slide number fields).
+        let all: Vec<Value> = (0..q.len()).flat_map(|i| shapes(&listed, i)).collect();
+        assert!(all.iter().all(|s| s.get("text_locked").is_none()
+            || s["name"] == "Slide number"
+            || s["name"] == "Eyebrow"));
+        // Swiss: the page number and eyebrow in the header, the footer's
+        // text at its right, a 4×4 grid on the cover.
+        let s2 = shapes(&listed, 1);
+        assert!(
+            s2.iter()
+                .any(|s| s["name"] == "Eyebrow" && s["text"] == "02 / WHO WE ARE TALKING TO")
+        );
+        assert!(
+            s2.iter().any(|s| s["name"] == "Header text"
+                && s["text"] == "Prepared for an example manufacturer")
+        );
+        assert!(s2.iter().any(|s| s["name"] == "Footer mark"));
+        assert_eq!(
+            shapes(&listed, 0)
+                .iter()
+                .filter(|s| s["name"]
+                    .as_str()
+                    .is_some_and(|n| n.starts_with("Cover square")))
+                .count(),
+            16
+        );
+        // The same deck in every preset.
+        for name in super::super::slides_style::PRESETS {
+            let mut d = deck.clone();
+            d["preset"] = json!(name);
+            build(&d, Some(&dir)).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        }
+    }
+
+    #[std::prelude::v1::test]
+    fn styles_caps_fields_and_notes_alias() {
+        let deck = json!({
+            "units": "in",
+            "styles": {"kicker": {"size": 9, "caps": true, "letter_spacing": 2, "color": "highlight"}},
+            "slides": [{"elements": [
+                {"type": "text", "x": 1, "y": 1, "w": 4, "h": 1, "style": "kicker", "text": "Hello"},
+                {"type": "text", "x": 1, "y": 2, "w": 4, "h": 1, "text": [{"runs": ["Page ", {"field": "slide_number", "bold": true}]}]},
+                {"type": "icon", "icon": "rocket", "x": 1, "y": 3, "size": 0.5}
+            ]}]
+        });
+        let mut p = build(&deck, None).unwrap();
+        let listed = super::super::slides::list(&p, 0);
+        let sh = shapes(&listed, 0);
+        assert_eq!(sh[0]["text"], "HELLO");
+        assert_eq!(sh[1]["text"], "Page 1");
+        assert_eq!(sh[2]["name"], "Icon: rocket");
+        let ElementKind::Shape(s) = element(
+            &json!({"type": "text", "w": 1, "h": 1, "letter_spacing": 2, "text": "x"}),
+            &Ctx::default(),
+        )
+        .unwrap()
+        .kind
+        else {
+            panic!()
+        };
+        assert_eq!(s.style.spacing, Some(200));
+        assert!(build(&json!({"slides": [{"eyebrow": "x"}]}), None).is_err());
+        assert!(build(&json!({"slides": [{"footer_note": "x"}]}), None).is_err());
+        run_tool(
+            &mut p,
+            "slides_set_notes",
+            &json!({"slide": 1, "notes": "Hi"}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(p.notes_text(0), "Hi");
+        assert!(run_tool(&mut p, "slides_set_notes", &json!({"slide": 1}), None).is_err());
+        let (_, out, _) = run_tool(
+            &mut p,
+            "slides_add_elements",
+            &json!({"slide": 1, "units": "in", "elements": [{"type": "callout", "title": "Note:", "text": "components work in tools"}]}),
+            None,
+        )
+        .unwrap();
+        assert_eq!(out["shapes"].as_array().unwrap().len(), 1);
     }
 
     #[std::prelude::v1::test]
