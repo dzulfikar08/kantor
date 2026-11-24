@@ -2403,6 +2403,7 @@ pub(crate) fn set_axis_options(xml: &str, horizontal: bool, new: &AxisOptions) -
 
 mod types;
 pub(crate) use types::set_type;
+pub(crate) mod from_data;
 
 #[cfg(test)]
 mod tests;

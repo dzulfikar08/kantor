@@ -331,7 +331,7 @@ type CellWrites = (Ref, Vec<CellValue>);
 
 /// A value to put in a workbook cell.
 #[derive(Clone, Debug, PartialEq)]
-enum CellValue {
+pub enum CellValue {
     Text(String),
     Number(f64),
     Empty,
@@ -1057,6 +1057,157 @@ fn patch_workbook(
     Ok(out.finish()?.into_inner())
 }
 
+/// Excel's built-in number formats a new chart's data may use (id, code).
+const BUILTIN_FORMATS: [(u32, &str); 8] = [
+    (0, "General"),
+    (1, "0"),
+    (2, "0.00"),
+    (3, "#,##0"),
+    (4, "#,##0.00"),
+    (9, "0%"),
+    (10, "0.00%"),
+    (11, "0.00E+00"),
+];
+
+/// The workbook embedded with a chart made from data (PowerPoint's
+/// layout: series names in row 1 from B, categories in column A from row 2,
+/// each series' values below its name), so "Edit Data" opens the chart's
+/// data. `number_format` formats the values. The same data gives the same
+/// bytes.
+pub fn chart_workbook(
+    sheet: &str,
+    categories: &[CellValue],
+    series: &[(String, Vec<Option<f64>>)],
+    number_format: Option<&str>,
+) -> anyhow::Result<Vec<u8>> {
+    const NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+    const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    const PR: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+    let format = number_format.filter(|f| !f.is_empty() && *f != "General");
+    let fmt_id = format.map(|f| {
+        BUILTIN_FORMATS
+            .iter()
+            .find(|(_, c)| *c == f)
+            .map_or(164, |(id, _)| *id)
+    });
+    let value_style = if fmt_id.is_some() { " s=\"1\"" } else { "" };
+    let rows = categories.len() as u32 + 1;
+    let cols = series.len() as u32 + 1;
+    let mut data = String::from("<row r=\"1\">");
+    for (i, (name, _)) in series.iter().enumerate() {
+        let addr = format!("{}1", col_name(i as u32 + 2));
+        data.push_str(&new_cell(&addr, "", &CellValue::Text(name.clone())));
+    }
+    data.push_str("</row>");
+    for (r, cat) in categories.iter().enumerate() {
+        let row = r as u32 + 2;
+        data.push_str(&format!("<row r=\"{row}\">"));
+        if *cat != CellValue::Empty {
+            data.push_str(&new_cell(&format!("A{row}"), "", cat));
+        }
+        for (i, (_, values)) in series.iter().enumerate() {
+            if let Some(v) = values.get(r).copied().flatten().filter(|v| v.is_finite()) {
+                let addr = format!("{}{row}", col_name(i as u32 + 2));
+                data.push_str(&new_cell(&addr, value_style, &CellValue::Number(v)));
+            }
+        }
+        data.push_str("</row>");
+    }
+    let sheet_xml = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<worksheet xmlns=\"{NS}\" xmlns:r=\"{R}\"><dimension ref=\"A1:{}{rows}\"/><sheetViews><sheetView tabSelected=\"1\" workbookViewId=\"0\"/></sheetViews><sheetFormatPr defaultRowHeight=\"15\"/><cols><col min=\"1\" max=\"1\" width=\"18\" customWidth=\"1\"/><col min=\"2\" max=\"{}\" width=\"12\" customWidth=\"1\"/></cols><sheetData>{data}</sheetData><pageMargins left=\"0.7\" right=\"0.7\" top=\"0.75\" bottom=\"0.75\" header=\"0.3\" footer=\"0.3\"/></worksheet>",
+        col_name(cols),
+        cols.max(2)
+    );
+    let num_fmts = match (format, fmt_id) {
+        (Some(f), Some(164)) => format!(
+            "<numFmts count=\"1\"><numFmt numFmtId=\"164\" formatCode=\"{}\"/></numFmts>",
+            esc_attr(f)
+        ),
+        _ => String::new(),
+    };
+    let value_xf = match fmt_id {
+        Some(id) => format!(
+            "<xf numFmtId=\"{id}\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\" applyNumberFormat=\"1\"/>"
+        ),
+        None => String::new(),
+    };
+    let styles = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<styleSheet xmlns=\"{NS}\">{num_fmts}<fonts count=\"1\"><font><sz val=\"11\"/><color theme=\"1\"/><name val=\"Calibri\"/><family val=\"2\"/><scheme val=\"minor\"/></font></fonts><fills count=\"2\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill></fills><borders count=\"1\"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count=\"1\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\"/></cellStyleXfs><cellXfs count=\"{}\"><xf numFmtId=\"0\" fontId=\"0\" fillId=\"0\" borderId=\"0\" xfId=\"0\"/>{value_xf}</cellXfs><cellStyles count=\"1\"><cellStyle name=\"Normal\" xfId=\"0\" builtinId=\"0\"/></cellStyles></styleSheet>",
+        if fmt_id.is_some() { 2 } else { 1 }
+    );
+    let workbook = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<workbook xmlns=\"{NS}\" xmlns:r=\"{R}\"><bookViews><workbookView/></bookViews><sheets><sheet name=\"{}\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>",
+        esc_attr(sheet)
+    );
+    let wb_rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"{PR}\"><Relationship Id=\"rId1\" Type=\"{R}/worksheet\" Target=\"worksheets/sheet1.xml\"/><Relationship Id=\"rId2\" Type=\"{R}/styles\" Target=\"styles.xml\"/></Relationships>"
+    );
+    let root_rels = format!(
+        "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Relationships xmlns=\"{PR}\"><Relationship Id=\"rId1\" Type=\"{R}/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"
+    );
+    let types = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/><Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/></Types>";
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    // A fixed entry time: the same data gives the same bytes.
+    let opts = zip::write::SimpleFileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .last_modified_time(zip::DateTime::default());
+    for (name, text) in [
+        ("[Content_Types].xml", types.to_owned()),
+        ("_rels/.rels", root_rels),
+        ("xl/workbook.xml", workbook),
+        ("xl/_rels/workbook.xml.rels", wb_rels),
+        ("xl/styles.xml", styles),
+        ("xl/worksheets/sheet1.xml", sheet_xml),
+    ] {
+        out.start_file(name, opts)?;
+        out.write_all(text.as_bytes())?;
+    }
+    Ok(out.finish()?.into_inner())
+}
+
+/// What kind of chart a chart part is, as `slides list` says it: "column",
+/// "stacked bar", "100% stacked area", "doughnut", "combo"...
+pub fn chart_kind(xml: &str) -> Option<String> {
+    if ex::is_chartex(xml) {
+        let doc = roxmltree::Document::parse(xml).ok()?;
+        return doc
+            .descendants()
+            .find(|n| n.tag_name().name() == "series")
+            .and_then(|s| s.attribute("layoutId"))
+            .map(str::to_owned);
+    }
+    let doc = roxmltree::Document::parse(xml).ok()?;
+    let plot = doc.descendants().find(|n| is(*n, NS_C, "plotArea"))?;
+    let groups: Vec<Node> = plot
+        .children()
+        .filter(|g| g.is_element() && g.tag_name().name().ends_with("Chart"))
+        .collect();
+    if groups.len() > 1 {
+        return Some("combo".into());
+    }
+    let g = groups.first()?;
+    let tag = g.tag_name().name();
+    let grouping = kid(*g, "grouping").and_then(|n| n.attribute("val"));
+    let base = match tag {
+        "barChart" | "bar3DChart" => match kid(*g, "barDir").and_then(|n| n.attribute("val")) {
+            Some("bar") => "bar",
+            _ => "column",
+        },
+        "doughnutChart" => "doughnut",
+        "pieChart" | "pie3DChart" | "ofPieChart" => "pie",
+        other => other.trim_end_matches("Chart").trim_end_matches("3D"),
+    };
+    let mut out = match grouping {
+        Some("stacked") => format!("stacked {base}"),
+        Some("percentStacked") => format!("100% stacked {base}"),
+        _ => base.to_owned(),
+    };
+    if tag.contains("3D") {
+        out = format!("3-D {out}");
+    }
+    Some(out)
+}
+
 /// The defined names of a workbook (`xl/workbook.xml`): name -> formula.
 fn defined_names(bytes: &[u8]) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
@@ -1087,6 +1238,13 @@ fn defined_names(bytes: &[u8]) -> std::collections::HashMap<String, String> {
 }
 
 impl Presentation {
+    /// What kind of chart shape `shape` of slide `slide` is (see
+    /// [`chart_kind`]).
+    pub fn chart_kind(&self, slide: usize, shape: usize) -> Option<String> {
+        let (_, bytes) = self.chart_bytes(slide, shape)?;
+        chart_kind(std::str::from_utf8(&bytes).ok()?)
+    }
+
     /// The chart part a shape shows and its current bytes (edited in
     /// Kantor, or as read).
     fn chart_bytes(&self, slide: usize, shape: usize) -> Option<(String, Arc<Vec<u8>>)> {

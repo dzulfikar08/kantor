@@ -34,14 +34,14 @@ pub const USAGE: &str = "usage: kantor slides build DECK.json -o OUT.pptx [-f]\n
     \x20 build    write a .pptx from a deck description: slide size, theme\n\
     \x20          fonts and colours, then each slide's layout, title, bullets,\n\
     \x20          background, elements (shapes, text boxes, lines, pictures,\n\
-    \x20          tables) and notes. DECK.json may be - (standard input);\n\
+    \x20          tables, charts) and notes. DECK.json may be - (standard input);\n\
     \x20          relative picture paths start from its folder. The same deck\n\
     \x20          always gives the same file.\n\
     \x20 list     print the slides and their shapes (id, name, kind, geometry,\n\
-    \x20          position and size in EMU, text) as JSON\n\
+    \x20          position and size in EMU, text; charts: type, series) as JSON\n\
     \x20 edit     run slides tools on a file and save it (in place unless -o).\n\
     \x20          TOOL is a tool name with or without slides_ (add_shape,\n\
-    \x20          add_picture, add_table, add_elements, add_slide,\n\
+    \x20          add_picture, add_table, add_chart, add_elements, add_slide,\n\
     \x20          set_background, update_shape, delete_shape, order_shape,\n\
     \x20          group_shapes, set_shape_text, set_notes, delete_slide);\n\
     \x20          ARGS is its JSON arguments, or @FILE. --ops runs a list of\n\

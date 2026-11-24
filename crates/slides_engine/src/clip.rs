@@ -58,6 +58,10 @@ struct PartTree {
     rels: Vec<(Rel, Option<PartTree>)>,
 }
 
+/// Content types of a chart part and of a workbook embedded with it.
+const CT_CHART: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+const CT_XLSX: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
 /// How far a pasted copy is moved when it would land on its original.
 pub const PASTE_OFFSET: Emu = 228_600;
 
@@ -521,6 +525,38 @@ impl Presentation {
                     root,
                 },
             ));
+        }
+        part
+    }
+
+    /// Add a new chart's part and its embedded workbook (see
+    /// [`crate::author::ChartPartSpec`]) as pasted parts; returns the chart
+    /// part's name.
+    pub(crate) fn add_chart_parts(&mut self, c: &crate::author::ChartPartSpec) -> String {
+        let workbook = PartTree {
+            part: "ppt/embeddings/Microsoft_Excel_Worksheet.xlsx".into(),
+            bytes: c.workbook.clone(),
+            ct: Some(CT_XLSX.into()),
+            rels: Vec::new(),
+        };
+        let tree = PartTree {
+            part: "ppt/charts/chart.xml".into(),
+            bytes: c.xml.clone(),
+            ct: Some(CT_CHART.into()),
+            rels: vec![(
+                Rel {
+                    id: "rId1".into(),
+                    ty: rel_type("package"),
+                    target: String::new(),
+                    external: false,
+                },
+                Some(workbook),
+            )],
+        };
+        let mut out = Vec::new();
+        let part = self.add_tree(&tree, None, &mut out);
+        for (p, a) in out {
+            self.parts.insert(p, a);
         }
         part
     }

@@ -75,6 +75,7 @@ pub use chart_options::{
     AxisOptions, AxisType, DataLabels, DisplayUnits, LabelFont, LabelPos, TimeUnit,
 };
 pub use chart_sheet::sheet_name_problem;
+pub use chart_style::from_data::{DataCategory, DataChart, DataSeries, data_chart_part};
 pub use drawing::Tab;
 pub use grid::{
     BREAK_PREVIEW_ZOOM, BUILTIN_LISTS, SHEET_ZOOM_MAX, SHEET_ZOOM_MIN, parse_custom_list,

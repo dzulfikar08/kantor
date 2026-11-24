@@ -13,6 +13,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, bail};
 use docs_engine::Rgb;
 
+use crate::frame::NS_C;
 use crate::history::{Focus, Kind};
 use crate::model::*;
 use crate::presentation::Presentation;
@@ -94,6 +95,13 @@ pub enum GradientKind {
 }
 
 impl FillSpec {
+    /// The fill's DrawingML (`a:solidFill`..., written with `a:`).
+    pub fn xml(&self) -> String {
+        let mut out = String::new();
+        self.write(&mut out);
+        out
+    }
+
     fn write(&self, out: &mut String) {
         match self {
             Self::None => out.push_str("<a:noFill/>"),
@@ -173,6 +181,13 @@ impl LineSpec {
             fill: Some(FillSpec::None),
             ..Self::default()
         }
+    }
+
+    /// The line's DrawingML (`a:ln`).
+    pub fn xml(&self) -> String {
+        let mut out = String::new();
+        self.write_as(&mut out, "a:ln");
+        out
     }
 
     fn write_as(&self, out: &mut String, tag: &str) {
@@ -636,12 +651,23 @@ pub struct TableSpec {
     pub style_id: Option<String>,
 }
 
+/// A chart (`p:graphicFrame` holding `c:chart`): its part and the
+/// workbook embedded with it (made by `sheets_engine::data_chart_part` and
+/// [`crate::chart_edit::chart_workbook`]). The part names the workbook
+/// as relationship `rId1` (`c:externalData`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChartPartSpec {
+    pub xml: Arc<Vec<u8>>,
+    pub workbook: Arc<Vec<u8>>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum ElementKind {
     Shape(ShapeSpec),
     Line(LineShapeSpec),
     Picture(PictureSpec),
     Table(TableSpec),
+    Chart(ChartPartSpec),
 }
 
 /// Something to put on a slide.
@@ -667,6 +693,7 @@ impl Element {
             ElementKind::Line(_) => "Straight Connector",
             ElementKind::Picture(_) => "Picture",
             ElementKind::Table(_) => "Table",
+            ElementKind::Chart(_) => "Chart",
         }
     }
 
@@ -700,6 +727,14 @@ impl Element {
                             t.columns.len()
                         );
                     }
+                }
+                Ok(())
+            }
+            ElementKind::Chart(c) => {
+                let xml = std::str::from_utf8(&c.xml).context("chart part")?;
+                let doc = roxmltree::Document::parse(xml).context("chart part")?;
+                if doc.root_element().tag_name().name() != "chartSpace" {
+                    bail!("not a chart part");
                 }
                 Ok(())
             }
@@ -835,6 +870,25 @@ pub fn element_xml(el: &Element, id: u32, rel: Option<&str>) -> String {
             out.push_str("</p:spPr></p:pic>");
         }
         ElementKind::Table(t) => write_table(&mut out, t, id, &name, &el.xfrm),
+        ElementKind::Chart(_) => {
+            out.push_str("<p:graphicFrame><p:nvGraphicFramePr>");
+            cnv_pr(&mut out, id, &name, None);
+            out.push_str(
+                "<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp=\"1\"/></p:cNvGraphicFramePr><p:nvPr/></p:nvGraphicFramePr>",
+            );
+            let frame = Xfrm {
+                rot: 0,
+                flip_h: false,
+                flip_v: false,
+                ..el.xfrm
+            };
+            write_xfrm(&mut out, "p:xfrm", &frame);
+            let _ = write!(
+                out,
+                "<a:graphic><a:graphicData uri=\"{NS_C}\"><c:chart xmlns:c=\"{NS_C}\" r:id=\"{}\"/></a:graphicData></a:graphic></p:graphicFrame>",
+                esc_attr(rel.unwrap_or("rId1"))
+            );
+        }
     }
     out
 }
@@ -995,24 +1049,40 @@ impl Presentation {
             ElementKind::Picture(p) => Some(self.media_part(&p.bytes)?),
             _ => None,
         };
+        let chart = match &el.kind {
+            ElementKind::Chart(c) => Some(self.add_chart_parts(c)),
+            _ => None,
+        };
         self.record(Kind::Other, None, Focus::slide(slide), false, |p| {
             let s = p.slide_mut(slide)?;
             let id = s.next_shape_id();
             let mut rels = (*s.rels).clone();
-            let rel = media.as_ref().map(|part| {
-                let rel = rels
-                    .iter()
-                    .find(|r| r.kind() == "image" && r.part(&s.part).as_deref() == Some(part))
-                    .map(|r| r.id.clone());
-                rel.unwrap_or_else(|| {
-                    let id = next_rel_id(&rels);
-                    rels.push(Rel {
-                        id: id.clone(),
-                        ty: rel_type("image"),
-                        target: relative(&s.part, part),
-                        external: false,
-                    });
-                    id
+            let chart_rel = chart.as_ref().map(|part| {
+                let id = next_rel_id(&rels);
+                rels.push(Rel {
+                    id: id.clone(),
+                    ty: rel_type("chart"),
+                    target: relative(&s.part, part),
+                    external: false,
+                });
+                id
+            });
+            let rel = chart_rel.or_else(|| {
+                media.as_ref().map(|part| {
+                    let rel = rels
+                        .iter()
+                        .find(|r| r.kind() == "image" && r.part(&s.part).as_deref() == Some(part))
+                        .map(|r| r.id.clone());
+                    rel.unwrap_or_else(|| {
+                        let id = next_rel_id(&rels);
+                        rels.push(Rel {
+                            id: id.clone(),
+                            ty: rel_type("image"),
+                            target: relative(&s.part, part),
+                            external: false,
+                        });
+                        id
+                    })
                 })
             });
             let xml = element_xml(el, id, rel.as_deref());

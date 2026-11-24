@@ -95,7 +95,11 @@ fn units_arg(args: &Value) -> Result<Unit> {
 // ── reading values ─────────────────────────────────────────────────────────
 
 /// `v` as an object whose keys are all in `allowed`.
-fn object<'a>(v: &'a Value, what: &str, allowed: &[&str]) -> Result<&'a Map<String, Value>> {
+pub(super) fn object<'a>(
+    v: &'a Value,
+    what: &str,
+    allowed: &[&str],
+) -> Result<&'a Map<String, Value>> {
     let Some(obj) = v.as_object() else {
         bail!("{what} must be an object");
     };
@@ -110,11 +114,11 @@ fn object<'a>(v: &'a Value, what: &str, allowed: &[&str]) -> Result<&'a Map<Stri
     Ok(obj)
 }
 
-fn get<'a>(obj: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
+pub(super) fn get<'a>(obj: &'a Map<String, Value>, key: &str) -> Option<&'a Value> {
     obj.get(key).filter(|v| !v.is_null())
 }
 
-fn opt_str<'a>(obj: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>> {
+pub(super) fn opt_str<'a>(obj: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>> {
     match get(obj, key) {
         None => Ok(None),
         Some(Value::String(s)) => Ok(Some(s)),
@@ -122,7 +126,7 @@ fn opt_str<'a>(obj: &'a Map<String, Value>, key: &str) -> Result<Option<&'a str>
     }
 }
 
-fn opt_bool(obj: &Map<String, Value>, key: &str) -> Result<Option<bool>> {
+pub(super) fn opt_bool(obj: &Map<String, Value>, key: &str) -> Result<Option<bool>> {
     match get(obj, key) {
         None => Ok(None),
         Some(Value::Bool(b)) => Ok(Some(*b)),
@@ -130,7 +134,7 @@ fn opt_bool(obj: &Map<String, Value>, key: &str) -> Result<Option<bool>> {
     }
 }
 
-fn opt_num(obj: &Map<String, Value>, key: &str) -> Result<Option<f64>> {
+pub(super) fn opt_num(obj: &Map<String, Value>, key: &str) -> Result<Option<f64>> {
     match get(obj, key) {
         None => Ok(None),
         Some(v) => v
@@ -176,7 +180,7 @@ fn length(v: &Value, cx: &Ctx, key: &str) -> Result<Emu> {
     Ok(emu.round() as Emu)
 }
 
-fn opt_len(obj: &Map<String, Value>, key: &str, cx: &Ctx) -> Result<Option<Emu>> {
+pub(super) fn opt_len(obj: &Map<String, Value>, key: &str, cx: &Ctx) -> Result<Option<Emu>> {
     get(obj, key).map(|v| length(v, cx, key)).transpose()
 }
 
@@ -198,7 +202,7 @@ fn four(v: &Value, cx: &Ctx, key: &str) -> Result<[Emu; 4]> {
 }
 
 /// A fraction 0–1 (or `"25%"`).
-fn fraction(v: &Value, key: &str) -> Result<f64> {
+pub(super) fn fraction(v: &Value, key: &str) -> Result<f64> {
     let f = match v {
         Value::Number(n) => n.as_f64().unwrap_or(f64::NAN),
         Value::String(s) => match split_unit(s) {
@@ -215,7 +219,7 @@ fn fraction(v: &Value, key: &str) -> Result<f64> {
 }
 
 /// A font size: points (`18`, `"18pt"`) → hundredths of a point.
-fn font_size(v: &Value) -> Result<u32> {
+pub(super) fn font_size(v: &Value) -> Result<u32> {
     let pt = match v {
         Value::Number(n) => n.as_f64().unwrap_or(f64::NAN),
         Value::String(s) => match split_unit(s) {
@@ -828,7 +832,7 @@ fn turn(o: &Map<String, Value>, x: &mut Xfrm) -> Result<()> {
     Ok(())
 }
 
-fn need_len(o: &Map<String, Value>, key: &str, cx: &Ctx, what: &str) -> Result<Emu> {
+pub(super) fn need_len(o: &Map<String, Value>, key: &str, cx: &Ctx, what: &str) -> Result<Emu> {
     opt_len(o, key, cx)?.with_context(|| format!("{what} needs `{key}`"))
 }
 
@@ -836,7 +840,7 @@ const BOX_KEYS: &[&str] = &[
     "type", "name", "x", "y", "w", "h", "rotation", "flip_h", "flip_v",
 ];
 
-fn keys_with(lists: &[&[&'static str]]) -> Vec<&'static str> {
+pub(super) fn keys_with(lists: &[&[&'static str]]) -> Vec<&'static str> {
     let mut v: Vec<&str> = lists.iter().flat_map(|l| l.iter().copied()).collect();
     v.sort_unstable();
     v.dedup();
@@ -869,19 +873,22 @@ fn read_file(path: &str, cx: &Ctx) -> Result<(PathBuf, Vec<u8>)> {
     Ok((p, bytes))
 }
 
-/// One element (`type`: shape, text, line, picture, table).
+/// One element (`type`: shape, text, line, picture, table, chart).
 pub fn element(v: &Value, cx: &Ctx) -> Result<Element> {
     let ty = v
         .get("type")
         .and_then(Value::as_str)
-        .context("an element needs `type`: shape, text, line, picture or table")?;
+        .context("an element needs `type`: shape, text, line, picture, table or chart")?;
     match ty {
         "shape" | "text" => shape_element(v, cx, ty == "text"),
         "line" => line_element(v, cx),
         "picture" => picture_element(v, cx),
         "table" => table_element(v, cx),
+        "chart" => super::slides_chart::chart_element(v, cx),
         other => {
-            bail!("element `type` must be shape, text, line, picture or table, not \"{other}\"")
+            bail!(
+                "element `type` must be shape, text, line, picture, table or chart, not \"{other}\""
+            )
         }
     }
 }
@@ -1648,6 +1655,7 @@ pub const EDIT_TOOLS: &[&str] = &[
     "slides_add_shape",
     "slides_add_picture",
     "slides_add_table",
+    "slides_add_chart",
     "slides_add_elements",
     "slides_set_background",
     "slides_update_shape",
@@ -1748,7 +1756,11 @@ pub fn run_tool(
                 Focus::slide(i),
             )
         }
-        "slides_add_shape" | "slides_add_picture" | "slides_add_table" | "slides_add_elements" => {
+        "slides_add_shape"
+        | "slides_add_picture"
+        | "slides_add_table"
+        | "slides_add_chart"
+        | "slides_add_elements" => {
             let i = slide_of(p, args)?;
             let shapes = if tool == "slides_add_elements" {
                 let els = args.get("elements").context("`elements` is required")?;
@@ -1757,6 +1769,7 @@ pub fn run_tool(
                 let ty = match tool {
                     "slides_add_picture" => Some("picture"),
                     "slides_add_table" => Some("table"),
+                    "slides_add_chart" => Some("chart"),
                     _ => None,
                 };
                 let el = element(&element_args(args, ty), &cx)?;
