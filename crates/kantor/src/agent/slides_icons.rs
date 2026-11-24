@@ -314,10 +314,10 @@ impl Path {
 
     fn points(&mut self, list: &str, close: bool) {
         let nums = numbers(list);
-        let mut it = nums.chunks_exact(2);
-        if let Some(first) = it.next() {
+        let (pairs, _) = nums.as_chunks::<2>();
+        if let Some((first, rest)) = pairs.split_first() {
             self.move_to((first[0], first[1]));
-            for p in it {
+            for p in rest {
                 self.line_to((p[0], p[1]));
             }
             if close {
@@ -652,8 +652,8 @@ mod tests {
 
     #[std::prelude::v1::test]
     fn icons_become_stroked_custom_shapes() {
-        let svg = svg("ShieldCheck").unwrap();
-        let g = cust_geom(&svg).unwrap();
+        let src = svg("ShieldCheck").unwrap();
+        let g = cust_geom(&src).unwrap();
         assert!(g.starts_with("<a:custGeom>") && g.ends_with("</a:custGeom>"));
         assert!(g.contains("<a:path w=\"24000\" h=\"24000\" fill=\"none\">"));
         assert!(g.contains("<a:cubicBezTo>"));

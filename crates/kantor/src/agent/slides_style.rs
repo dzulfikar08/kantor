@@ -763,7 +763,7 @@ fn len_or(o: &Map<String, Value>, key: &str, cx: &Ctx, d: Emu) -> Result<Emu> {
 /// A text box element (as JSON) for furniture.
 fn text_box(name: &str, x: Emu, y: Emu, w: Emu, h: Emu, style: &str, text: Value) -> Value {
     json!({"type": "text", "name": name, "x": e(x), "y": e(y), "w": e(w), "h": e(h),
-           "insets": 0, "style": style, "text": text})
+           "insets": 0, "anchor": "top", "style": style, "text": text})
 }
 
 /// What a slide's header puts on it, and the content area under it.
