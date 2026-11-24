@@ -17,4 +17,10 @@ in the workspace `Cargo.toml`. Changes (search for `KANTOR PATCH`):
    Upstream (zed-industries/zed `crates/gpui_linux/src/linux/x11/client.rs`, unchanged on main
    as of 2026-11-18) can take the same patch.
 
-Drop this vendor copy once upstream ships the fix.
+2. The window appearance starts as dark instead of light (`LinuxCommon::new`). It changes
+   as soon as the XDG desktop portal reports a colour scheme (`prefer-light` and
+   `no-preference` give light, `prefer-dark` dark), so only a desktop without the portal's
+   Settings interface keeps it. Kantor's "Follow system" theme uses it, and a desktop that
+   can't say what it prefers gets Kantor's usual dark look.
+
+Drop this vendor copy once upstream ships the fix (patch 2 is Kantor's choice, not a fix).

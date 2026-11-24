@@ -269,6 +269,7 @@ impl Workspace {
                 kantor_theme::theme_name().unwrap_or_else(|| "default".to_owned())
             }
             ThemeId::Omarchy(name) | ThemeId::Ghostty(name) => name.clone(),
+            id => super::palette::theme_label(id).to_owned(),
         };
         h_flex()
             .size_full()

@@ -9,6 +9,15 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- **Light mode** (Fixes #1): Kantor Light and Kantor Dark themes, and *Follow System*, which picks one of them from the system's light or dark setting and switches when the system does (Windows, macOS, Linux through the desktop portal). New palette commands *Theme: Light*, *Theme: Dark* and *Theme: Follow System*; the theme picker lists them first.
+
+### Changed
+
+- The default theme is *Follow System* everywhere except Linux with Omarchy, which keeps following the Omarchy theme. A saved *Follow Omarchy* on a machine without Omarchy now follows the system, and *Follow Omarchy* is only offered where Omarchy is installed. On macOS the title bar matches the theme's light or dark look.
+- Status colours (warnings, unsaved dots, sync and signature states) are darkened where a light theme's colour would be hard to read.
+
 ## [0.23.0] - 2026-11-23
 
 Password-protected Office and OpenDocument files open, and stay protected when saved.

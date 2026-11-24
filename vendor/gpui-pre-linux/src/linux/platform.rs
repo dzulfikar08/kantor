@@ -141,7 +141,9 @@ impl LinuxCommon {
             background_executor,
             foreground_executor: ForegroundExecutor::new(dispatcher),
             text_system,
-            appearance: WindowAppearance::Light,
+            // KANTOR PATCH 2: dark until the desktop portal says otherwise
+            // (Kantor's "Follow system" falls back to dark without a portal).
+            appearance: WindowAppearance::Dark,
             auto_hide_scrollbars: false,
             button_layout: WindowButtonLayout::linux_default(),
             callbacks,
