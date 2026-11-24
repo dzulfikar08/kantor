@@ -698,6 +698,11 @@ pub fn plan(v: &Value, cx: &Ctx) -> Result<ChartPlan> {
         overlap: overlap.map(|g| g.round() as i32),
         gridlines: value_axis.gridlines,
         text: text_props(get(o, "font"), cx)?,
+        title_size: get(o, "font")
+            .and_then(|f| f.get("size"))
+            .map(font_size)
+            .transpose()?
+            .map(|s| s * 6 / 5),
         area: None,
         workbook_rel: Some("rId1".into()),
     };
@@ -874,7 +879,10 @@ mod tests {
             .flat_map(|s| s["shapes"].as_array().unwrap())
             .filter(|s| s["kind"] == "chart")
             .collect();
-        let kinds: Vec<&str> = charts.iter().map(|c| c["chart"].as_str().unwrap()).collect();
+        let kinds: Vec<&str> = charts
+            .iter()
+            .map(|c| c["chart"].as_str().unwrap())
+            .collect();
         assert_eq!(
             kinds,
             [

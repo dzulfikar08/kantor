@@ -141,7 +141,7 @@ Don't draw charts from shapes.
 | `category_axis` | `title`, `reverse`; scatter (its x axis): also `min`, `max`, `major_unit`, `number_format` |
 | `gap_width`, `overlap` | column/bar/combo: the gap between categories (% of a bar, default 150) and the overlap of a category's bars (-100 to 100) |
 | `hole` | doughnut: hole size in % (default 50) |
-| `font` | `{font, size, color, bold, italic}` for all the chart's text (default: the deck's `text` typeface and colour, PowerPoint's size) |
+| `font` | `{font, size, color, bold, italic}` for all the chart's text; the title is 1.2 × `size` (default: the deck's `text` typeface and colour, PowerPoint's size) |
 | `colors` | a one-series column, bar, pie or doughnut chart: each bar's or slice's colour, `null` for automatic, e.g. `[null, "#C00000", null]` to mark the one below target |
 | `target_line` | column, line, area, combo: a number or `{value, label, color, width, dash}`: a dashed line across the chart at that value (default label "Target", colour `tx1`). It is a line series of the chart, so it shows in the legend and in Edit Data |
 

@@ -1377,6 +1377,472 @@
       ],
       "additionalProperties": false
     },
+    "chart": {
+      "type": "object",
+      "description": "A real, editable chart (PowerPoint's Edit Data opens its data): column, bar, line, area, pie, doughnut, scatter or combo.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The chart's name (shown in the selection pane)."
+        },
+        "x": {
+          "$ref": "#/$defs/length"
+        },
+        "y": {
+          "$ref": "#/$defs/length"
+        },
+        "w": {
+          "$ref": "#/$defs/length"
+        },
+        "h": {
+          "$ref": "#/$defs/length"
+        },
+        "chart": {
+          "type": "string",
+          "enum": [
+            "column",
+            "bar",
+            "line",
+            "area",
+            "pie",
+            "doughnut",
+            "scatter",
+            "combo"
+          ],
+          "description": "Chart type. combo: columns with lines/areas (series `type`, `axis`)."
+        },
+        "stacked": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "stacked",
+                "percent"
+              ]
+            }
+          ],
+          "description": "Column, bar, line, area: stack the series (true / \"stacked\") or stack to 100% (\"percent\")."
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number"
+            ]
+          },
+          "description": "Labels along the category axis (scatter: the x values, numbers)."
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "values"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "description": "One per category; null leaves a gap."
+              },
+              "color": {
+                "$ref": "#/$defs/color"
+              },
+              "colors": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/color"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "description": "Bars or slices of their own colour, one per category (null: the series colour)."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "column",
+                  "line",
+                  "area"
+                ],
+                "description": "Combo (or column/line/area chart): this series' type (combo default: first column, others line)."
+              },
+              "axis": {
+                "type": "string",
+                "enum": [
+                  "primary",
+                  "secondary"
+                ]
+              },
+              "line": {
+                "description": "A line series' line: width, dash, colour.",
+                "allOf": [
+                  {
+                    "$ref": "#/$defs/line"
+                  }
+                ]
+              },
+              "data_labels": {
+                "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "show": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "value",
+                              "percent",
+                              "category",
+                              "series"
+                            ]
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "value",
+                                "percent",
+                                "category",
+                                "series"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "position": {
+                        "type": "string",
+                        "enum": [
+                          "center",
+                          "inside_end",
+                          "inside_base",
+                          "outside_end",
+                          "left",
+                          "right",
+                          "above",
+                          "below",
+                          "best_fit"
+                        ]
+                      },
+                      "format": {
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": [
+                          "number",
+                          "string"
+                        ]
+                      },
+                      "bold": {
+                        "type": "boolean"
+                      },
+                      "italic": {
+                        "type": "boolean"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string",
+          "enum": [
+            "none",
+            "bottom",
+            "top",
+            "right",
+            "left"
+          ],
+          "description": "Default: bottom with several series or a pie, else none."
+        },
+        "data_labels": {
+          "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "show": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "value",
+                        "percent",
+                        "category",
+                        "series"
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "value",
+                          "percent",
+                          "category",
+                          "series"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "position": {
+                  "type": "string",
+                  "enum": [
+                    "center",
+                    "inside_end",
+                    "inside_base",
+                    "outside_end",
+                    "left",
+                    "right",
+                    "above",
+                    "below",
+                    "best_fit"
+                  ]
+                },
+                "format": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": [
+                    "number",
+                    "string"
+                  ]
+                },
+                "bold": {
+                  "type": "boolean"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "color": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "number_format": {
+          "type": "string",
+          "description": "Excel number format of the values (labels and value axis), written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."
+        },
+        "axis": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The value axis (horizontal in a bar chart).",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            },
+            "major_unit": {
+              "type": "number",
+              "description": "Distance between gridlines / tick labels."
+            },
+            "gridlines": {
+              "type": "boolean",
+              "description": "Value axis: major gridlines (default true)."
+            },
+            "number_format": {
+              "type": "string",
+              "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
+            },
+            "reverse": {
+              "type": "boolean",
+              "description": "Values (categories) in reverse order."
+            }
+          }
+        },
+        "category_axis": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The category axis: title, reverse (scatter: the x axis, with min/max/major_unit).",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            },
+            "major_unit": {
+              "type": "number",
+              "description": "Distance between gridlines / tick labels."
+            },
+            "gridlines": {
+              "type": "boolean",
+              "description": "Value axis: major gridlines (default true)."
+            },
+            "number_format": {
+              "type": "string",
+              "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
+            },
+            "reverse": {
+              "type": "boolean",
+              "description": "Values (categories) in reverse order."
+            }
+          }
+        },
+        "gap_width": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 500,
+          "description": "Column/bar: gap between categories, % of a bar (default 150)."
+        },
+        "overlap": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "Column/bar: overlap of a category's bars in % (stacked: 100)."
+        },
+        "hole": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 90,
+          "description": "Doughnut hole size in % (default 50)."
+        },
+        "font": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The chart's text (default: the deck's typeface and colour).",
+          "properties": {
+            "font": {
+              "type": "string"
+            },
+            "size": {
+              "type": [
+                "number",
+                "string"
+              ]
+            },
+            "color": {
+              "$ref": "#/$defs/color"
+            },
+            "bold": {
+              "type": "boolean"
+            },
+            "italic": {
+              "type": "boolean"
+            }
+          }
+        },
+        "colors": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/color"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "A one-series column, bar, pie or doughnut chart: each bar's or slice's colour (null: automatic), e.g. to highlight bars below target."
+        },
+        "target_line": {
+          "description": "A dashed horizontal line at a value (column, line, area, combo): a number or {value, label (default Target), color, width, dash}. It is a line series, so it shows in the legend and in Edit Data.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "number"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "color": {
+                  "$ref": "#/$defs/color"
+                },
+                "width": {
+                  "$ref": "#/$defs/length"
+                },
+                "dash": {
+                  "type": "string",
+                  "enum": [
+                    "solid",
+                    "dot",
+                    "dash",
+                    "lgDash",
+                    "dashDot",
+                    "lgDashDot",
+                    "lgDashDotDot",
+                    "sysDash",
+                    "sysDot",
+                    "sysDashDot",
+                    "sysDashDotDot"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "type": {
+          "const": "chart"
+        }
+      },
+      "required": [
+        "type",
+        "chart",
+        "w",
+        "h",
+        "categories",
+        "series"
+      ],
+      "additionalProperties": false
+    },
     "element": {
       "description": "Something on a slide, by `type`.",
       "oneOf": [
@@ -1394,6 +1860,9 @@
         },
         {
           "$ref": "#/$defs/table"
+        },
+        {
+          "$ref": "#/$defs/chart"
         }
       ]
     },

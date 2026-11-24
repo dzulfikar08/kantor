@@ -66,6 +66,9 @@ pub struct DataChart {
     pub gridlines: Option<bool>,
     /// The chart's text formatting: an `a:defRPr` element.
     pub text: Option<String>,
+    /// The title's size (hundredths of a point; `None`: from `text`, as
+    /// the application sizes titles).
+    pub title_size: Option<u32>,
     /// The chart area's fill and outline (`c:spPr` content); `None`: none.
     pub area: Option<String>,
     /// The relationship id of the embedded workbook (`c:externalData`).
@@ -347,7 +350,22 @@ fn space_tail(xml: &str, d: &DataChart) -> Result<String> {
         ));
     }
     let at = chart.range().end;
-    Ok(splice(xml, vec![(at..at, tail)]))
+    let mut edits = vec![(at..at, tail)];
+    // The title's own size (its `a:defRPr` as `chart_space` wrote it).
+    if let Some(sz) = d.title_size
+        && let Some(t) = kid(chart, "title")
+    {
+        let r = t.range();
+        let empty = "<a:pPr><a:defRPr/></a:pPr>";
+        if let Some(i) = xml[r.clone()].find(empty) {
+            let s = r.start + i;
+            edits.push((
+                s..s + empty.len(),
+                format!("<a:pPr><a:defRPr sz=\"{sz}\"/></a:pPr>"),
+            ));
+        }
+    }
+    Ok(splice(xml, edits))
 }
 
 /// The `c:chartSpace` part of `d`.
@@ -465,6 +483,7 @@ mod tests {
             overlap: None,
             gridlines: None,
             text: None,
+            title_size: None,
             area: None,
             workbook_rel: Some("rId1".into()),
         }
@@ -505,12 +524,14 @@ mod tests {
             ..DataLabels::default()
         });
         d.text = Some("<a:defRPr sz=\"1200\"/>".into());
+        d.title_size = Some(1440);
         let xml = data_chart_part(&d).unwrap();
         Document::parse(&xml).unwrap();
         assert!(xml.contains("<c:grouping val=\"percentStacked\"/>"));
         assert!(xml.contains("<c:gapWidth val=\"50\"/>"));
         assert!(!xml.contains("majorGridlines"));
         assert!(xml.contains("<a:schemeClr val=\"accent2\"/>"));
+        assert!(xml.contains("<a:defRPr sz=\"1440\"/>"), "{xml}");
         assert!(xml.contains("<c:dPt><c:idx val=\"2\"/>"));
         assert!(xml.contains("<c:dLblPos val=\"ctr\"/>"));
         assert!(
