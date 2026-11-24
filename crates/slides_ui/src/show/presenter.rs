@@ -3,6 +3,12 @@
 //! reset) and the clock, "Slide X of Y", a strip of every slide to jump
 //! to, and the show's buttons (black / white screen, pointer and pens,
 //! swap displays, end).
+//!
+//! Both slides show build states without animating: the current one as the
+//! audience sees it once what's playing ends, the next one as the next
+//! click leaves it (the next build step, or the next slide). The strip is
+//! its own cached view ([`PresenterStrip`]), so the timer's ticks don't
+//! repaint every thumbnail.
 
 use std::time::Instant;
 
@@ -16,7 +22,7 @@ use kantor_ui::{metrics::*, tokens};
 use super::ink::Tool;
 use super::state::{Pos, format_elapsed};
 use super::window::{ShowWindow, color_row, number_badge, theme_button, tip, tool_row};
-use super::{Cover, SlideFrame, paint_show_slide};
+use super::{Cover, SlideFrame, SlideShow, paint_show_slide};
 
 /// Thumbnails in the slide strip, px.
 const THUMB_W: f32 = 128.;
@@ -25,7 +31,7 @@ const THUMB_H: f32 = 72.;
 impl ShowWindow {
     pub(super) fn render_presenter(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let t = tokens(cx);
@@ -42,8 +48,6 @@ impl ShowWindow {
         let number = s.number.text().to_owned();
         let notes_px = s.notes_size_px();
         let current = s.current_frame(cx);
-        let upcoming = s.nav.upcoming();
-        let next = upcoming.and_then(|i| s.frame(i, cx)).map(SlideFrame::plain);
         let notes = match pos {
             Pos::Slide { index, .. } => s
                 .view()
@@ -51,20 +55,17 @@ impl ShowWindow {
                 .unwrap_or_default(),
             Pos::End => String::new(),
         };
-        let current_index = s.nav.slide();
-        let n = s.nav.len();
-        let strip: Vec<_> = (0..n)
-            .map(|i| (i, s.frame(i, cx).map(SlideFrame::plain), s.nav.is_hidden(i)))
-            .collect();
         let clock = chrono::Local::now().format("%H:%M").to_string();
-
-        // Keep the slide on screen in view in the strip.
-        if let Some(i) = current_index
-            && self.strip_at != Some(i)
-        {
-            self.strip_at = Some(i);
-            self.strip_scroll.scroll_to_item(i);
-        }
+        let current_slide = match pos {
+            Pos::Slide { index, step } => self
+                .show
+                .update(cx, |s, cx| s.slide_element(index, step, false, window, cx)),
+            Pos::End => None,
+        };
+        let next = self.show.update(cx, |s, cx| {
+            let (index, done) = s.next_click(cx)?;
+            s.slide_element(index, done, false, window, cx)
+        });
 
         // Pointer tools (and the pen's colours) over the slide on screen.
         let tools = h_flex()
@@ -203,9 +204,11 @@ impl ShowWindow {
         };
         let current_area = match pos {
             Pos::End => self
-                .slide_area("presenter-current", None, Cover::Black, cx)
+                .slide_area("presenter-current", None, None, Cover::Black, cx)
                 .child(centered_note(i18n::t("End of slide show, click to exit."))),
-            Pos::Slide { .. } => self.slide_area("presenter-current", current, Cover::None, cx),
+            Pos::Slide { .. } => {
+                self.slide_area("presenter-current", current_slide, current, Cover::None, cx)
+            }
         }
         .when_some(cover_label, |d, label| {
             d.child(
@@ -222,7 +225,6 @@ impl ShowWindow {
                     .child(label),
             )
         });
-        let other = t.fg_muted;
         let next_area = div()
             .relative()
             .w_full()
@@ -232,12 +234,7 @@ impl ShowWindow {
             .rounded(RADIUS_LG)
             .overflow_hidden()
             .child(match next {
-                Some(f) => canvas(
-                    |_, _, _| {},
-                    move |b, _, window, _| paint_show_slide(&f, b, None, other, window),
-                )
-                .size_full()
-                .into_any_element(),
+                Some(slide) => slide,
                 None => centered_note(i18n::t("End of slide show")).into_any_element(),
             });
         let notes_lines: Vec<Div> = if notes.trim().is_empty() {
@@ -321,82 +318,34 @@ impl ShowWindow {
             )
             .child(side);
 
-        let accent = t.accent;
-        let thumbs = strip.into_iter().map(|(i, frame, hidden)| {
-            let on = current_index == Some(i);
-            v_flex()
-                .id(("presenter-strip", i))
+        let bottom =
+            h_flex()
                 .flex_none()
-                .gap(SPACE_1)
-                .items_center()
-                .cursor_pointer()
-                .when(hidden, |d| d.opacity(0.45))
-                .child(
-                    div()
-                        .w(px(THUMB_W))
-                        .h(px(THUMB_H))
-                        .rounded(RADIUS_SM)
-                        .overflow_hidden()
-                        .bg(black())
-                        .border_2()
-                        .border_color(if on { accent } else { transparent_black() })
-                        .child(
-                            canvas(
-                                |_, _, _| {},
-                                move |b, _, window, _| {
-                                    if let Some(f) = &frame {
-                                        paint_show_slide(f, b, None, other, window);
-                                    }
-                                },
-                            )
-                            .size_full(),
-                        ),
-                )
-                .child(
-                    div()
-                        .text_size(FONT_SMALL)
-                        .text_color(if on { t.fg } else { t.fg_muted })
-                        .child((i + 1).to_string()),
-                )
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.update_show(cx, |s, cx| s.go_to(i, cx))),
-                )
-        });
-        let bottom = h_flex()
-            .flex_none()
-            .h(px(THUMB_H + 44.))
-            .px(SPACE_4)
-            .gap(SPACE_4)
-            .bg(t.chrome)
-            .border_t_1()
-            .border_color(t.border)
-            .child(theme_button(
-                "presenter-prev",
-                Lucide::ChevronLeft,
-                false,
-                tip(i18n::t("Previous"), Some("Left")),
-                cx.listener(|this, _, _, cx| this.update_show(cx, |s, cx| s.retreat(cx))),
-                cx,
-            ))
-            .child(
-                h_flex()
-                    .id("presenter-strip-scroll")
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .gap(SPACE_4)
-                    .overflow_x_scroll()
-                    .track_scroll(&self.strip_scroll)
-                    .children(thumbs),
-            )
-            .child(theme_button(
-                "presenter-next",
-                Lucide::ChevronRight,
-                false,
-                tip(i18n::t("Next"), Some("Right")),
-                cx.listener(|this, _, _, cx| this.update_show(cx, |s, cx| s.advance(cx))),
-                cx,
-            ));
+                .h(px(THUMB_H + 44.))
+                .px(SPACE_4)
+                .gap(SPACE_4)
+                .bg(t.chrome)
+                .border_t_1()
+                .border_color(t.border)
+                .child(theme_button(
+                    "presenter-prev",
+                    Lucide::ChevronLeft,
+                    false,
+                    tip(i18n::t("Previous"), Some("Left")),
+                    cx.listener(|this, _, _, cx| this.update_show(cx, |s, cx| s.retreat(cx))),
+                    cx,
+                ))
+                .children(self.strip.clone().map(|strip| {
+                    strip.cached(StyleRefinement::default().flex_1().min_w_0().h_full())
+                }))
+                .child(theme_button(
+                    "presenter-next",
+                    Lucide::ChevronRight,
+                    false,
+                    tip(i18n::t("Next"), Some("Right")),
+                    cx.listener(|this, _, _, cx| this.update_show(cx, |s, cx| s.advance(cx))),
+                    cx,
+                ));
 
         v_flex()
             .relative()
@@ -436,4 +385,111 @@ fn centered_note(text: &'static str) -> Div {
         .text_size(FONT_TITLE)
         .text_color(white().opacity(0.7))
         .child(text)
+}
+
+/// The presenter view's strip of every slide (click one to go there): its
+/// own view, cached, repainted only when the slide on screen, the hidden
+/// slides or the deck change.
+pub(super) struct PresenterStrip {
+    show: Entity<SlideShow>,
+    scroll: ScrollHandle,
+    /// The slide the strip was last scrolled to.
+    scrolled_to: Option<usize>,
+    /// What the strip shows from the show: the slide on screen, hidden flags.
+    seen: (Option<usize>, Vec<bool>),
+    _subscriptions: Vec<Subscription>,
+}
+
+fn strip_state(s: &SlideShow) -> (Option<usize>, Vec<bool>) {
+    let n = s.nav.len();
+    (s.nav.slide(), (0..n).map(|i| s.nav.is_hidden(i)).collect())
+}
+
+impl PresenterStrip {
+    pub(super) fn new(show: Entity<SlideShow>, cx: &mut Context<Self>) -> Self {
+        let mut subscriptions = vec![cx.observe(&show, |this: &mut Self, show, cx| {
+            let seen = strip_state(show.read(cx));
+            if seen != this.seen {
+                this.seen = seen;
+                cx.notify();
+            }
+        })];
+        if let Some(view) = show.read(cx).view() {
+            subscriptions.push(cx.observe(&view, |_, _, cx| cx.notify()));
+        }
+        Self {
+            seen: strip_state(show.read(cx)),
+            show,
+            scroll: ScrollHandle::new(),
+            scrolled_to: None,
+            _subscriptions: subscriptions,
+        }
+    }
+}
+
+impl Render for PresenterStrip {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = tokens(cx);
+        let other = t.fg_muted;
+        let s = self.show.read(cx);
+        let current_index = s.nav.slide();
+        let strip: Vec<_> = (0..s.nav.len())
+            .map(|i| (i, s.frame(i, cx).map(SlideFrame::plain), s.nav.is_hidden(i)))
+            .collect();
+        // Keep the slide on screen in view.
+        if let Some(i) = current_index
+            && self.scrolled_to != Some(i)
+        {
+            self.scrolled_to = Some(i);
+            self.scroll.scroll_to_item(i);
+        }
+        let accent = t.accent;
+        let thumbs = strip.into_iter().map(|(i, frame, hidden)| {
+            let on = current_index == Some(i);
+            v_flex()
+                .id(("presenter-strip", i))
+                .flex_none()
+                .gap(SPACE_1)
+                .items_center()
+                .cursor_pointer()
+                .when(hidden, |d| d.opacity(0.45))
+                .child(
+                    div()
+                        .w(px(THUMB_W))
+                        .h(px(THUMB_H))
+                        .rounded(RADIUS_SM)
+                        .overflow_hidden()
+                        .bg(black())
+                        .border_2()
+                        .border_color(if on { accent } else { transparent_black() })
+                        .child(
+                            canvas(
+                                |_, _, _| {},
+                                move |b, _, window, _| {
+                                    if let Some(f) = &frame {
+                                        paint_show_slide(f, b, None, other, window);
+                                    }
+                                },
+                            )
+                            .size_full(),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(FONT_SMALL)
+                        .text_color(if on { t.fg } else { t.fg_muted })
+                        .child((i + 1).to_string()),
+                )
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.show.update(cx, |s, cx| s.go_to(i, cx))),
+                )
+        });
+        h_flex()
+            .id("presenter-strip-scroll")
+            .size_full()
+            .gap(SPACE_4)
+            .overflow_x_scroll()
+            .track_scroll(&self.scroll)
+            .children(thumbs)
+    }
 }

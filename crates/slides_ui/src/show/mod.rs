@@ -9,9 +9,13 @@
 //! black / white screen, timer); every show window ([`window::ShowWindow`])
 //! observes it, so a click or key in either window moves both.
 //!
-//! Every slide on screen goes through [`paint_show_slide`] and every step
-//! through [`SlideShow::advance`] / [`SlideShow::retreat`]: transitions and
-//! per-click builds plug in there.
+//! Transitions and builds: the show owns one [`ShowPlayer`]. Every step
+//! goes through [`SlideShow::advance`] / [`SlideShow::retreat`] (which
+//! follow the player's rules: a click during an animation ends it, going
+//! back never animates); the audience's slide is the player's element and
+//! the presenter view shows the same build state without animating.
+//! Ink, the laser and covers are drawn above the slide ([`paint_overlay`]);
+//! thumbnails go through [`paint_show_slide`].
 
 pub mod ink;
 mod presenter;
@@ -20,13 +24,14 @@ mod window;
 
 use std::cell::Cell;
 use std::rc::Rc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use gpui_kit::*;
 use slides_engine::SlideSize;
 
 use crate::SlidesView;
 use crate::draw::{Painted, Surface, paint_slide};
+use crate::show_fx::{ShowPlayer, ShowTick};
 use ink::{Ink, InkKind, Laser, Rect, SlidePoint, Stroke, Tool};
 use state::{Nav, NumberEntry, Pos, Screen, Stopwatch};
 pub(crate) use window::ShowWindow;
@@ -152,6 +157,13 @@ pub struct SlideShow {
     windows: Vec<AnyWindowHandle>,
     ended: bool,
     deck: Option<Subscription>,
+    /// Transitions and builds.
+    pub(crate) player: ShowPlayer,
+    /// Bumped by every manual step: a pending auto-advance from before
+    /// it is dropped.
+    auto_gen: u64,
+    /// An auto-advance timer is pending.
+    auto_pending: bool,
 }
 
 /// How a show starts.
@@ -207,22 +219,31 @@ impl SlidesView {
         let (audience, presenter_display) = state::choose_displays(&screens, primary, editor);
         let view = cx.entity();
         let editor_window = window.window_handle();
+        let mut nav = Nav::new(hidden, start);
+        let mut player = ShowPlayer::new();
+        for i in 0..self.pres.len() {
+            nav.set_steps(i, player.steps(&self.pres, i));
+        }
+        // The first slide comes in from black with its transition.
+        if let Some(first) = nav.slide() {
+            let done = player.start_transition(&self.pres, None, first);
+            nav.set_step(done);
+        }
         let show = cx.new(|cx| {
             let deck = cx.observe(&view, |show: &mut SlideShow, view, cx| {
-                let hidden = view
-                    .read(cx)
-                    .pres
-                    .slides()
-                    .iter()
-                    .map(|s| s.hidden)
-                    .collect();
+                let v = view.read(cx);
+                let hidden = v.pres.slides().iter().map(|s| s.hidden).collect();
                 show.nav.update_slides(hidden);
+                for i in 0..v.pres.len() {
+                    let n = show.player.steps(&v.pres, i);
+                    show.nav.set_steps(i, n);
+                }
                 cx.notify();
             });
             SlideShow {
                 view: view.downgrade(),
                 editor_window,
-                nav: Nav::new(hidden, start),
+                nav,
                 cover: Cover::None,
                 ink: Ink::default(),
                 laser: Laser::default(),
@@ -238,6 +259,9 @@ impl SlidesView {
                 windows: Vec::new(),
                 ended: false,
                 deck: Some(deck),
+                player,
+                auto_gen: 0,
+                auto_pending: false,
             }
         });
         self.show = Some(show.clone());
@@ -310,14 +334,37 @@ impl SlideShow {
         self.presenter_display.is_some()
     }
 
-    /// The next click: a build step, the next slide, the end screen, or
-    /// (on the end screen) the end of the show.
+    /// The next click: end the animation playing, else a build step, the
+    /// next slide (with its transition), the end screen, or (on the end
+    /// screen) the end of the show.
     pub(crate) fn advance(&mut self, cx: &mut Context<Self>) {
         self.ink.finish();
         self.number.clear();
+        self.cancel_auto();
         if self.cover != Cover::None {
             self.cover = Cover::None;
-        } else if !self.nav.advance() {
+        } else if self.player.is_animating() {
+            // A click ends an animation at once, as in PowerPoint.
+            self.player.finish();
+        } else if let Pos::Slide { index, step } = self.nav.pos() {
+            let view = self.view.upgrade();
+            let pres = view.as_ref().map(|v| &v.read(cx).pres);
+            if step < self.nav.steps(index) {
+                if let Some(pres) = pres {
+                    self.player.start_step(pres, index, step);
+                }
+                self.nav.advance();
+            } else {
+                self.nav.advance();
+                match (self.nav.pos(), pres) {
+                    (Pos::Slide { index: next, .. }, Some(pres)) => {
+                        let done = self.player.start_transition(pres, Some(index), next);
+                        self.nav.set_step(done);
+                    }
+                    _ => self.player.finish(),
+                }
+            }
+        } else {
             self.end(cx);
             return;
         }
@@ -325,10 +372,26 @@ impl SlideShow {
         cx.notify();
     }
 
-    /// Back one build step or slide.
+    /// A click on the slide: [`Self::advance`], unless the slide's
+    /// transition says clicks don't advance it (keys still do).
+    pub(crate) fn advance_on_click(&mut self, cx: &mut Context<Self>) {
+        if self.cover == Cover::None
+            && !self.player.is_animating()
+            && let Some(slide) = self.nav.slide()
+            && let Some(view) = self.view.upgrade()
+            && !self.player.advances_on_click(&view.read(cx).pres, slide)
+        {
+            return;
+        }
+        self.advance(cx);
+    }
+
+    /// Back one build step or slide, without animating.
     pub(crate) fn retreat(&mut self, cx: &mut Context<Self>) {
         self.ink.finish();
         self.number.clear();
+        self.cancel_auto();
+        self.player.finish();
         if self.cover != Cover::None {
             self.cover = Cover::None;
         } else {
@@ -338,11 +401,29 @@ impl SlideShow {
         cx.notify();
     }
 
+    /// After a jump: no transition, but a first build step that starts by
+    /// itself plays.
+    fn arrived(&mut self, cx: &mut Context<Self>) {
+        self.cancel_auto();
+        self.player.finish();
+        if let Some(slide) = self.nav.slide()
+            && let Some(view) = self.view.upgrade()
+        {
+            let pres = &view.read(cx).pres;
+            if self.player.starts_by_itself(pres, slide) {
+                self.player.start_step(pres, slide, 0);
+                self.nav.set_step(1);
+            }
+        }
+    }
+
     pub(crate) fn go_to(&mut self, index: usize, cx: &mut Context<Self>) {
         self.ink.finish();
         self.number.clear();
         self.cover = Cover::None;
-        self.nav.go_to(index);
+        if self.nav.go_to(index) {
+            self.arrived(cx);
+        }
         self.laser.hide();
         cx.notify();
     }
@@ -351,6 +432,7 @@ impl SlideShow {
         self.ink.finish();
         self.cover = Cover::None;
         self.nav.first();
+        self.arrived(cx);
         cx.notify();
     }
 
@@ -358,7 +440,101 @@ impl SlideShow {
         self.ink.finish();
         self.cover = Cover::None;
         self.nav.last();
+        self.arrived(cx);
         cx.notify();
+    }
+
+    /// Drop a pending auto-advance (a manual step happened).
+    fn cancel_auto(&mut self) {
+        self.auto_gen = self.auto_gen.wrapping_add(1);
+        self.auto_pending = false;
+    }
+
+    /// Move the player's clock on (each frame of a show window, before
+    /// drawing): ends finished animations and handles "advance after"
+    /// timings with a timer that a manual step cancels. Returns whether
+    /// something is animating (the caller keeps frames coming).
+    pub(crate) fn tick(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(slide) = self.nav.slide() else {
+            return false;
+        };
+        let Some(view) = self.view.upgrade() else {
+            return false;
+        };
+        let t = self.player.tick(&view.read(cx).pres, slide);
+        if self.ended || self.cover != Cover::None {
+            return t == ShowTick::Animating;
+        }
+        let generation = self.auto_gen;
+        match t {
+            ShowTick::Advance => {
+                self.auto_pending = true;
+                cx.spawn(async move |this, cx| {
+                    let _ = this.update(cx, |s, cx| {
+                        if s.auto_gen == generation {
+                            s.advance(cx);
+                        }
+                    });
+                })
+                .detach();
+            }
+            ShowTick::Wait(d) if !self.auto_pending => {
+                self.auto_pending = true;
+                cx.spawn(async move |this, cx| {
+                    cx.background_executor()
+                        .timer(d + Duration::from_millis(5))
+                        .await;
+                    let _ = this.update(cx, |s, cx| {
+                        if s.auto_gen == generation {
+                            s.auto_pending = false;
+                            cx.notify();
+                        }
+                    });
+                })
+                .detach();
+            }
+            _ => {}
+        }
+        t == ShowTick::Animating
+    }
+
+    /// Slide `index` with `done` build steps, filling its parent: what's
+    /// playing (`animate`, the audience's slide) or the still state.
+    pub(crate) fn slide_element(
+        &mut self,
+        index: usize,
+        done: usize,
+        animate: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let view = self.view.upgrade()?;
+        let v = view.read(cx);
+        if index >= v.pres.len() {
+            return None;
+        }
+        Some(if animate {
+            self.player
+                .element(&v.painter, &v.pres, index, done, window, cx)
+        } else {
+            self.player
+                .still_element(&v.painter, &v.pres, index, done, cx)
+        })
+    }
+
+    /// What the next click shows: the next build step of this slide, else
+    /// the next slide (with a first step that starts by itself done).
+    pub(crate) fn next_click(&mut self, cx: &App) -> Option<(usize, usize)> {
+        let Pos::Slide { index, step } = self.nav.pos() else {
+            return None;
+        };
+        if step < self.nav.steps(index) {
+            return Some((index, step + 1));
+        }
+        let next = self.nav.upcoming()?;
+        let view = self.view.upgrade()?;
+        let auto = self.player.starts_by_itself(&view.read(cx).pres, next);
+        Some((next, usize::from(auto)))
     }
 
     /// Enter: the typed number's slide, else the next click.
@@ -373,6 +549,9 @@ impl SlideShow {
     }
 
     pub(crate) fn toggle_cover(&mut self, cover: Cover, cx: &mut Context<Self>) {
+        // A cover ends what's playing and restarts the auto-advance clock.
+        self.cancel_auto();
+        self.player.finish();
         self.cover = if self.cover == cover {
             Cover::None
         } else {
@@ -586,9 +765,27 @@ pub(crate) fn rect_of(b: Bounds<Pixels>) -> Rect {
     }
 }
 
-/// Paint `frame` fitted into `bounds` (letterboxed), recording where the
-/// slide went in `placed` (for pointer tools). The one place a show slide
-/// is painted: transitions wrap this.
+/// Ink and the laser of `frame` over a slide fitted into `bounds` (the
+/// slide itself is the player's element below), recording where the slide
+/// is in `placed` (for pointer tools).
+pub(crate) fn paint_overlay(
+    frame: &SlideFrame,
+    bounds: Bounds<Pixels>,
+    placed: Option<&Cell<Bounds<Pixels>>>,
+    window: &mut Window,
+) {
+    let (_, b) = crate::fit_slide(bounds, frame.size);
+    if let Some(placed) = placed {
+        placed.set(b);
+    }
+    window.with_content_mask(Some(ContentMask { bounds: b }), |window| {
+        paint_ink(&frame.strokes, b, window);
+        paint_laser(frame, b, window);
+    });
+}
+
+/// Paint `frame` fitted into `bounds` (letterboxed), fully built, with its
+/// ink (thumbnails, the slide grid).
 pub(crate) fn paint_show_slide(
     frame: &SlideFrame,
     bounds: Bounds<Pixels>,

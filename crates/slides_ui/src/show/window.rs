@@ -19,7 +19,7 @@ use super::{
     ArrowTool, Cover, EraseAll, EraserTool, HighlighterTool, LaserTool, NotesBigger, NotesSmaller,
     PenTool, SHOW_CONTEXT, ShowEnd, ShowEnter, ShowEscape, ShowFirst, ShowLast, ShowNext, ShowPrev,
     ShowRole, SlideFrame, SlideShow, ToggleBlack, ToggleGrid, TogglePresenterView, ToggleWhite,
-    aspect, paint_show_slide, rect_of,
+    aspect, paint_overlay, paint_show_slide, rect_of,
 };
 
 /// The corner toolbar and the cursor hide after this long without moving.
@@ -38,9 +38,8 @@ pub(crate) struct ShowWindow {
     pub(super) grid: bool,
     pen_menu: bool,
     pub(super) notes_scroll: ScrollHandle,
-    pub(super) strip_scroll: ScrollHandle,
-    /// The slide the strip was last scrolled to.
-    pub(super) strip_at: Option<usize>,
+    /// The presenter view's slide strip (not in the audience's window).
+    pub(super) strip: Option<Entity<super::presenter::PresenterStrip>>,
     _observe: Subscription,
     idle: Option<Task<()>>,
     _ticker: Option<Task<()>>,
@@ -80,7 +79,9 @@ impl ShowWindow {
                 }
             })
         });
-        Self {
+        let strip = (role != ShowRole::Audience)
+            .then(|| cx.new(|cx| super::presenter::PresenterStrip::new(show.clone(), cx)));
+        let mut this = Self {
             show,
             role,
             focus: cx.focus_handle(),
@@ -90,12 +91,13 @@ impl ShowWindow {
             grid: false,
             pen_menu: false,
             notes_scroll: ScrollHandle::new(),
-            strip_scroll: ScrollHandle::new(),
-            strip_at: None,
+            strip,
             _observe: observe,
             idle: None,
             _ticker: ticker,
-        }
+        };
+        this.start_idle(window, cx);
+        this
     }
 
     /// This window shows the presenter view now.
@@ -184,17 +186,50 @@ impl ShowWindow {
             }
             // A drawing tool outside the slide does nothing.
             (Some(_), None) if on_slide => {}
-            _ => self.update_show(cx, |s, cx| s.advance(cx)),
+            _ => self.update_show(cx, |s, cx| s.advance_on_click(cx)),
         }
     }
 
-    fn mouse_move(&mut self, e: &MouseMoveEvent, cx: &mut Context<Self>) {
+    /// Hide the corner toolbar and the cursor after [`IDLE`] without the
+    /// pointer moving.
+    fn start_idle(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.idle = Some(cx.spawn_in(window, async move |this, cx| {
+            cx.background_executor().timer(IDLE).await;
+            let hide = this.update(cx, |this, cx| {
+                cx.notify();
+                this.hides_cursor(cx)
+            });
+            if matches!(hide, Ok(true)) {
+                // GPUI has no hidden cursor style; the only public way to the
+                // platform's "hide until the mouse moves" is the
+                // hide-while-typing rule, which a key with text sets off. F24
+                // is bound to nothing and there's no text input here, so it
+                // does nothing else. (Outside the update: the key reaches
+                // this view's key handler.)
+                let key = Keystroke {
+                    modifiers: Modifiers::default(),
+                    key: "f24".into(),
+                    key_char: Some(String::new()),
+                };
+                let _ = cx.update(|window, cx| window.dispatch_keystroke(key, cx));
+            }
+        }));
+    }
+
+    /// The pointer hides over the slides when idle (the arrow only: pens
+    /// and the laser keep theirs; never over the presenter view).
+    fn hides_cursor(&self, cx: &App) -> bool {
+        !(self.shows_presenter(cx)
+            || self.grid
+            || self.pen_menu
+            || self.drag.is_some()
+            || self.show.read(cx).tool != Tool::Arrow)
+    }
+
+    fn mouse_move(&mut self, e: &MouseMoveEvent, window: &mut Window, cx: &mut Context<Self>) {
         let was_idle = self.is_idle();
         self.last_move = Some(Instant::now());
-        self.idle = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(IDLE).await;
-            let _ = this.update(cx, |_, cx| cx.notify());
-        }));
+        self.start_idle(window, cx);
         if was_idle {
             cx.notify();
         }
@@ -241,33 +276,41 @@ impl ShowWindow {
         self.last_move.is_none_or(|t| t.elapsed() >= IDLE)
     }
 
-    /// The drawable slide on screen: `frame` painted letterboxed (black or
-    /// white instead under `cover`), with the pointer tools and click to
-    /// advance.
+    /// The drawable slide on screen: `slide` (the player's element, which
+    /// fits the slide in the area as `frame` does), `frame`'s ink and laser
+    /// above it (black or white instead under `cover`), with the pointer
+    /// tools and click to advance.
     pub(super) fn slide_area(
         &self,
         id: &'static str,
+        slide: Option<AnyElement>,
         frame: Option<SlideFrame>,
         cover: Cover,
         cx: &mut Context<Self>,
     ) -> Stateful<Div> {
         let placed = self.placed.clone();
-        let other = tokens(cx).fg_muted;
         let tool = self.show.read(cx).tool;
         let paint = canvas(
             |_, _, _| {},
             move |bounds, _, window, _| match (cover, &frame) {
                 (Cover::Black, _) => window.paint_quad(fill(bounds, black())),
                 (Cover::White, _) => window.paint_quad(fill(bounds, white())),
-                (Cover::None, Some(f)) => paint_show_slide(f, bounds, Some(&placed), other, window),
+                (Cover::None, Some(f)) => paint_overlay(f, bounds, Some(&placed), window),
                 (Cover::None, None) => {}
             },
         )
+        .absolute()
+        .top_0()
+        .left_0()
         .size_full();
+        let slide = slide
+            .filter(|_| cover == Cover::None)
+            .map(|e| div().absolute().top_0().left_0().size_full().child(e));
         div()
             .id(id)
             .size_full()
             .relative()
+            .children(slide)
             .child(paint)
             .when(tool.draws(), |d| d.cursor(CursorStyle::Crosshair))
             .on_mouse_down(
@@ -280,7 +323,7 @@ impl ShowWindow {
                     this.update_show(cx, |s, cx| s.retreat(cx))
                 }),
             )
-            .on_mouse_move(cx.listener(|this, e, _, cx| this.mouse_move(e, cx)))
+            .on_mouse_move(cx.listener(|this, e, window, cx| this.mouse_move(e, window, cx)))
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|this, e, _, cx| this.mouse_up(e, cx)),
@@ -293,7 +336,7 @@ impl ShowWindow {
 
     // ── audience view ───────────────────────────────────────────────────
 
-    fn render_audience(&mut self, cx: &mut Context<Self>) -> AnyElement {
+    fn render_audience(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let s = self.show.read(cx);
         let pos = s.nav.pos();
         let cover = s.cover;
@@ -303,9 +346,15 @@ impl ShowWindow {
         let chrome = !self.is_idle() || self.pen_menu;
         let area = match pos {
             Pos::End if cover == Cover::None => self
-                .slide_area("show-end", None, cover, cx)
+                .slide_area("show-end", None, None, cover, cx)
                 .child(end_screen()),
-            _ => self.slide_area("show-slide", frame, cover, cx),
+            Pos::Slide { index, step } if cover == Cover::None => {
+                let slide = self
+                    .show
+                    .update(cx, |s, cx| s.slide_element(index, step, true, window, cx));
+                self.slide_area("show-slide", slide, frame, cover, cx)
+            }
+            _ => self.slide_area("show-slide", None, frame, cover, cx),
         };
         div()
             .relative()
@@ -465,7 +514,8 @@ impl ShowWindow {
             .absolute()
             .inset_0()
             .occlude()
-            .bg(hsla(0., 0., 0.06, 0.94))
+            // Opaque: the slide behind showing through the thumbnails is noise.
+            .bg(hsla(0., 0., 0.06, 1.0))
             .overflow_y_scroll()
             .p(SPACE_10)
             .child(div().flex().flex_wrap().gap(SPACE_7).children(cells))
@@ -480,10 +530,16 @@ impl Render for ShowWindow {
             let show = self.show.clone();
             window.defer(cx, move |_, cx| show.update(cx, |s, cx| s.end(cx)));
         }
+        // Transitions and builds: move the clock on before drawing; keep
+        // frames coming while something plays (the presenter view shows
+        // only end states, but a click must still find the animation over).
+        if self.show.update(cx, |s, cx| s.tick(cx)) {
+            window.request_animation_frame();
+        }
         let body = if self.shows_presenter(cx) {
             self.render_presenter(window, cx)
         } else {
-            self.render_audience(cx)
+            self.render_audience(window, cx)
         };
         macro_rules! on {
             ($div:expr, $($action:ty => |$s:ident, $cx:ident| $body:expr),* $(,)?) => {

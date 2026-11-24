@@ -337,6 +337,12 @@ impl ShowPlayer {
         self.fx(pres, slide).steps.len()
     }
 
+    /// Whether slide `slide`'s first build step starts by itself (after
+    /// its transition): it counts as done as soon as the slide is on.
+    pub fn starts_by_itself(&mut self, pres: &Presentation, slide: usize) -> bool {
+        self.fx(pres, slide).steps.first().is_some_and(|s| s.auto)
+    }
+
     /// Whether a click on slide `slide` advances (`advClick`).
     pub fn advances_on_click(&mut self, pres: &Presentation, slide: usize) -> bool {
         self.fx(pres, slide)
@@ -486,6 +492,31 @@ impl ShowPlayer {
     pub fn clear(&mut self) {
         self.built.clear();
         self.fx.clear();
+    }
+
+    /// Slide `slide` with `done` build steps shown, never animated (the
+    /// presenter view's slides). Fills its parent like [`Self::element`].
+    pub fn still_element(
+        &mut self,
+        painter: &Painter,
+        pres: &Presentation,
+        slide: usize,
+        done: usize,
+        cx: &App,
+    ) -> AnyElement {
+        let b = self.built(painter, pres, slide, cx);
+        let state = b.state(done, 0.0);
+        div()
+            .relative()
+            .size_full()
+            .child(slide_element(
+                &b,
+                &state,
+                LayerFx::FULL,
+                &painter.bridge,
+                self.other,
+            ))
+            .into_any_element()
     }
 
     /// The slide area: slide `slide` with `done` build steps shown, or

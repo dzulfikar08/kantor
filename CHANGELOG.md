@@ -21,7 +21,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   show" screen follows the last slide. Pointer tools: laser pointer (`Ctrl L`, or hold `Ctrl` and drag), pen
   (`Ctrl P`, six colours), highlighter (`Ctrl I`), eraser (`Ctrl E`, removes whole strokes) and `E` to erase the
   slide's ink; ink drawn in either window shows in both and stays on its slide until the show ends. A toolbar appears
-  at the bottom left of the slides when the mouse moves.
+  at the bottom left of the slides when the mouse moves; it and the pointer hide after two seconds without moving.
+- Slides: the slide show plays transitions and builds. Transitions: fade, push, wipe, split, cover, uncover, box and
+  through black (PowerPoint 2010+ transitions are read too; the ones Kantor can't draw fade). Builds: per-click
+  entrances and exits (appear, fade, fly, wipe, split, zoom, float), by shape or by paragraph, with *With Previous* /
+  *After Previous*, delays and the slide's "advance after" time. A click during an animation ends it, going back shows
+  the previous step without animating, and jumping to a slide (number, grid, strip) goes there without a transition.
+  The presenter view shows the current slide as built so far and, under *Next*, what the next click shows (the next
+  build step or the next slide). `.odp` slide transitions are kept when opened (as PowerPoint's closest transition).
 
 ## [0.23.0] - 2026-11-23
 

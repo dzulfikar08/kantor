@@ -82,11 +82,29 @@ impl Nav {
         self.hidden.get(index).copied().unwrap_or(false)
     }
 
-    /// Set how many build steps `index` has (for animations, later).
-    #[allow(dead_code)] // the hook for per-click builds
+    /// Set how many build steps `index` has (keeps the slide on screen's
+    /// step in range).
     pub fn set_steps(&mut self, index: usize, steps: usize) {
         if let Some(s) = self.steps.get_mut(index) {
             *s = steps;
+        }
+        if let Pos::Slide { index: i, step } = &mut self.pos
+            && *i == index
+        {
+            *step = (*step).min(steps);
+        }
+    }
+
+    /// How many build steps `index` has.
+    pub fn steps(&self, index: usize) -> usize {
+        self.steps.get(index).copied().unwrap_or(0)
+    }
+
+    /// Count `step` build steps of the slide on screen as done (the steps
+    /// that start by themselves after a transition).
+    pub fn set_step(&mut self, step: usize) {
+        if let Pos::Slide { index, step: s } = &mut self.pos {
+            *s = step.min(self.steps.get(*index).copied().unwrap_or(0));
         }
     }
 
@@ -411,6 +429,13 @@ mod tests {
         assert_eq!(nav.pos(), Pos::Slide { index: 0, step: 2 });
         nav.retreat();
         assert_eq!(nav.pos(), Pos::Slide { index: 0, step: 1 });
+        // Steps done by themselves; fewer steps after an edit.
+        nav.set_step(9);
+        assert_eq!(nav.pos(), Pos::Slide { index: 0, step: 2 });
+        nav.set_steps(0, 1);
+        assert_eq!(nav.pos(), Pos::Slide { index: 0, step: 1 });
+        assert_eq!(nav.steps(0), 1);
+        assert_eq!(nav.steps(7), 0);
     }
 
     #[std::prelude::v1::test]
