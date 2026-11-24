@@ -27,6 +27,19 @@ pub enum AiError {
     NoAnswer(String),
     /// The request is too large to send (selection too long).
     TooLarge(String),
+    /// Paparan AI: no sign-in, or the server no longer accepts it (401).
+    SignedOut,
+    /// Paparan AI: the account is out of credits (402). `topup_url` is where
+    /// to buy more, when the server said.
+    InsufficientCredits {
+        message: String,
+        topup_url: Option<String>,
+    },
+    /// Too many requests (429); `retry_after` is the server's wait in seconds.
+    RateLimited {
+        retry_after: Option<u64>,
+        message: String,
+    },
 }
 
 impl fmt::Display for AiError {
@@ -60,6 +73,15 @@ impl fmt::Display for AiError {
             Self::BadReply(msg) => write!(f, "The model's answer couldn't be used: {msg}"),
             Self::NoAnswer(msg) => write!(f, "{msg}"),
             Self::TooLarge(msg) => write!(f, "{msg}"),
+            Self::SignedOut => write!(f, "Signed out of Paparan AI. Sign in again in AI Settings."),
+            Self::InsufficientCredits { .. } => {
+                write!(f, "Not enough Paparan AI credits. Top up to continue.")
+            }
+            Self::RateLimited {
+                retry_after: Some(s),
+                ..
+            } => write!(f, "Too many requests. Try again in {s} s."),
+            Self::RateLimited { .. } => write!(f, "Too many requests. Try again in a moment."),
         }
     }
 }

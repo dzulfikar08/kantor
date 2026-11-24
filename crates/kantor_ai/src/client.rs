@@ -4,7 +4,7 @@
 //! events, Ollama as one JSON object per line. [`Client::complete`] calls
 //! `on_text` with each piece and returns the whole text.
 
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::AiError;
 use crate::error::{error_message, truncate};
-use crate::provider::{Api, ProviderConfig};
+use crate::provider::{Api, ProviderConfig, ProviderId};
 use crate::transport::{HttpRequest, Transport, map_io_error};
 
 /// What to ask. `json` asks for a JSON object reply (natively where the API
@@ -23,6 +23,13 @@ pub struct ChatRequest {
     pub user: String,
     pub json: bool,
     pub max_tokens: u32,
+    /// The Kantor feature asking (`rewrite`, `formula`, …): sent to Paparan
+    /// AI as `paparan_task` so its server-side prompt for that task is used.
+    /// Other providers don't get it.
+    pub task: Option<&'static str>,
+    /// OpenAI-style tool definitions (`[{"type":"function",…}]`), for the
+    /// OpenAI-compatible APIs.
+    pub tools: Option<Value>,
 }
 
 impl ChatRequest {
@@ -32,7 +39,20 @@ impl ChatRequest {
             user: user.into(),
             json: false,
             max_tokens: 1024,
+            task: None,
+            tools: None,
         }
+    }
+
+    /// Name the Kantor feature asking (see [`ChatRequest::task`]).
+    pub fn task(mut self, task: &'static str) -> Self {
+        self.task = Some(task);
+        self
+    }
+
+    pub fn tools(mut self, tools: Value) -> Self {
+        self.tools = Some(tools);
+        self
     }
 
     pub fn json(mut self) -> Self {
@@ -62,6 +82,26 @@ impl Cancel {
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
+/// A tool call the model asked for (OpenAI-compatible APIs), its arguments
+/// as the JSON text streamed.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: String,
+}
+
+/// A whole streamed reply: its text and any tool calls.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reply {
+    pub text: String,
+    pub tool_calls: Vec<ToolCall>,
+}
+
+/// The longest `Retry-After` waited out before trying once more; longer
+/// waits are reported to the user.
+const MAX_AUTO_WAIT_SECS: u64 = 10;
+
 pub struct Client {
     config: ProviderConfig,
     transport: Arc<dyn Transport>,
@@ -88,6 +128,21 @@ impl Client {
         cancel: &Cancel,
         on_text: &mut dyn FnMut(&str),
     ) -> Result<String, AiError> {
+        let reply = self.complete_reply(req, cancel, on_text)?;
+        if reply.text.trim().is_empty() {
+            return Err(AiError::BadReply("the model sent an empty answer".into()));
+        }
+        Ok(reply.text)
+    }
+
+    /// [`Client::complete`], keeping tool calls too (a reply may be only
+    /// tool calls).
+    pub fn complete_reply(
+        &self,
+        req: &ChatRequest,
+        cancel: &Cancel,
+        on_text: &mut dyn FnMut(&str),
+    ) -> Result<Reply, AiError> {
         if cancel.is_cancelled() {
             return Err(AiError::Cancelled);
         }
@@ -98,20 +153,44 @@ impl Client {
             self.config.model,
             http.body.len()
         );
-        let resp = self.transport.post(&http)?;
-        if cancel.is_cancelled() {
-            return Err(AiError::Cancelled);
-        }
-        if !(200..300).contains(&resp.status) {
-            let mut body = String::new();
-            let _ = resp.body.take(64 * 1024).read_to_string(&mut body);
-            return Err(AiError::Http {
-                status: resp.status,
-                message: error_message(&body),
-            });
-        }
+        let paparan = self.config.provider == ProviderId::Paparan;
+        let mut waited = false;
+        let resp = loop {
+            let resp = self.transport.send(&http)?;
+            if cancel.is_cancelled() {
+                return Err(AiError::Cancelled);
+            }
+            if paparan {
+                crate::paparan::note_response(&resp);
+            }
+            if (200..300).contains(&resp.status) {
+                break resp;
+            }
+            let err = if paparan {
+                crate::paparan::error_from_response(resp)
+            } else {
+                let status = resp.status;
+                AiError::Http {
+                    status,
+                    message: error_message(&resp.read_text()),
+                }
+            };
+            // A short Retry-After is waited out once.
+            if let AiError::RateLimited {
+                retry_after: Some(secs),
+                ..
+            } = &err
+                && *secs <= MAX_AUTO_WAIT_SECS
+                && !waited
+            {
+                waited = true;
+                wait(std::time::Duration::from_secs(*secs), cancel)?;
+                continue;
+            }
+            return Err(err);
+        };
         let host = http.url.split('?').next().unwrap_or_default().to_owned();
-        read_stream(
+        read_reply(
             self.config.api(),
             BufReader::new(resp.body),
             cancel,
@@ -131,6 +210,21 @@ impl Client {
     }
 }
 
+/// Sleep `d`, waking to check `cancel`.
+fn wait(d: std::time::Duration, cancel: &Cancel) -> Result<(), AiError> {
+    let end = std::time::Instant::now() + d;
+    loop {
+        if cancel.is_cancelled() {
+            return Err(AiError::Cancelled);
+        }
+        let now = std::time::Instant::now();
+        if now >= end {
+            return Ok(());
+        }
+        std::thread::sleep((end - now).min(std::time::Duration::from_millis(100)));
+    }
+}
+
 pub fn build_request(cfg: &ProviderConfig, req: &ChatRequest) -> HttpRequest {
     let base = cfg.base_url.trim_end_matches('/');
     let key = cfg.api_key.clone().unwrap_or_default();
@@ -143,20 +237,20 @@ pub fn build_request(cfg: &ProviderConfig, req: &ChatRequest) -> HttpRequest {
                 "messages": [{"role": "user", "content": req.user}],
                 "stream": true,
             });
-            HttpRequest {
-                url: format!("{base}/v1/messages"),
-                headers: vec![
+            HttpRequest::post(
+                format!("{base}/v1/messages"),
+                vec![
                     ("x-api-key", key),
                     ("anthropic-version", ANTHROPIC_VERSION.to_owned()),
                 ],
-                body: body.to_string(),
-            }
+                body.to_string(),
+            )
         }
         Api::OpenAi => {
             // No temperature / max_tokens: newer OpenAI models reject them,
             // and `response_format` isn't supported by every compatible
             // server, so JSON is asked for in the prompt only.
-            let body = json!({
+            let mut body = json!({
                 "model": cfg.model,
                 "messages": [
                     {"role": "system", "content": req.system},
@@ -164,18 +258,31 @@ pub fn build_request(cfg: &ProviderConfig, req: &ChatRequest) -> HttpRequest {
                 ],
                 "stream": true,
             });
+            if let Some(tools) = &req.tools {
+                body["tools"] = tools.clone();
+            }
             let mut headers = Vec::new();
             if !key.is_empty() {
                 headers.push(("authorization", format!("Bearer {key}")));
             }
-            if cfg.provider == crate::ProviderId::OpenRouter {
-                headers.push(("x-title", "Kantor".to_owned()));
+            match cfg.provider {
+                ProviderId::OpenRouter => headers.push(("x-title", "Kantor".to_owned())),
+                ProviderId::Paparan => {
+                    if let Some(task) = req.task {
+                        body["paparan_task"] = json!(task);
+                    }
+                    headers.push((
+                        "x-kantor-version",
+                        crate::paparan::CLIENT_VERSION.to_owned(),
+                    ));
+                }
+                _ => {}
             }
-            HttpRequest {
-                url: format!("{base}/chat/completions"),
+            HttpRequest::post(
+                format!("{base}/chat/completions"),
                 headers,
-                body: body.to_string(),
-            }
+                body.to_string(),
+            )
         }
         Api::Gemini => {
             let mut generation = json!({ "maxOutputTokens": req.max_tokens });
@@ -187,14 +294,14 @@ pub fn build_request(cfg: &ProviderConfig, req: &ChatRequest) -> HttpRequest {
                 "contents": [{"role": "user", "parts": [{"text": req.user}]}],
                 "generationConfig": generation,
             });
-            HttpRequest {
-                url: format!(
+            HttpRequest::post(
+                format!(
                     "{base}/v1beta/models/{}:streamGenerateContent?alt=sse",
                     cfg.model
                 ),
-                headers: vec![("x-goog-api-key", key)],
-                body: body.to_string(),
-            }
+                vec![("x-goog-api-key", key)],
+                body.to_string(),
+            )
         }
         Api::Ollama => {
             let mut body = json!({
@@ -209,16 +316,13 @@ pub fn build_request(cfg: &ProviderConfig, req: &ChatRequest) -> HttpRequest {
             if req.json {
                 body["format"] = json!("json");
             }
-            HttpRequest {
-                url: format!("{base}/api/chat"),
-                headers: Vec::new(),
-                body: body.to_string(),
-            }
+            HttpRequest::post(format!("{base}/api/chat"), Vec::new(), body.to_string())
         }
     }
 }
 
-/// Read a streamed reply to the end, calling `on_text` per piece.
+/// Read a streamed reply to the end, calling `on_text` per piece; an empty
+/// answer is an error.
 pub fn read_stream(
     api: Api,
     reader: impl BufRead,
@@ -226,7 +330,25 @@ pub fn read_stream(
     on_text: &mut dyn FnMut(&str),
     host: &str,
 ) -> Result<String, AiError> {
+    let reply = read_reply(api, reader, cancel, on_text, host)?;
+    if reply.text.trim().is_empty() {
+        return Err(AiError::BadReply("the model sent an empty answer".into()));
+    }
+    Ok(reply.text)
+}
+
+/// Read a streamed reply to the end: its text (`on_text` per piece) and,
+/// for the OpenAI-compatible APIs, tool calls assembled from their deltas.
+/// Empty only if there's neither.
+pub fn read_reply(
+    api: Api,
+    reader: impl BufRead,
+    cancel: &Cancel,
+    on_text: &mut dyn FnMut(&str),
+    host: &str,
+) -> Result<Reply, AiError> {
     let mut out = String::new();
+    let mut calls: Vec<ToolCall> = Vec::new();
     for line in reader.lines() {
         if cancel.is_cancelled() {
             return Err(AiError::Cancelled);
@@ -252,6 +374,15 @@ pub fn read_stream(
         let value: Value = serde_json::from_str(payload).map_err(|_| {
             AiError::BadReply(format!("unexpected data: {}", truncate(payload, 120)))
         })?;
+        if api == Api::OpenAi
+            && let Some(deltas) = value
+                .pointer("/choices/0/delta/tool_calls")
+                .and_then(Value::as_array)
+        {
+            for d in deltas {
+                add_tool_delta(&mut calls, d);
+            }
+        }
         match piece(api, &value)? {
             Piece::Text(t) => {
                 if !t.is_empty() {
@@ -263,10 +394,35 @@ pub fn read_stream(
             Piece::Skip => {}
         }
     }
-    if out.trim().is_empty() {
+    if out.trim().is_empty() && calls.is_empty() {
         return Err(AiError::BadReply("the model sent an empty answer".into()));
     }
-    Ok(out)
+    Ok(Reply {
+        text: out,
+        tool_calls: calls,
+    })
+}
+
+/// Merge one streamed `tool_calls` delta: the first names the call (`id`,
+/// `function.name`), later ones with the same `index` append arguments.
+fn add_tool_delta(calls: &mut Vec<ToolCall>, d: &Value) {
+    let index = d
+        .get("index")
+        .and_then(Value::as_u64)
+        .map_or(calls.len().saturating_sub(1), |i| i as usize);
+    while calls.len() <= index {
+        calls.push(ToolCall::default());
+    }
+    let call = &mut calls[index];
+    if let Some(id) = d.get("id").and_then(Value::as_str) {
+        call.id = id.to_owned();
+    }
+    if let Some(name) = d.pointer("/function/name").and_then(Value::as_str) {
+        call.name.push_str(name);
+    }
+    if let Some(args) = d.pointer("/function/arguments").and_then(Value::as_str) {
+        call.arguments.push_str(args);
+    }
 }
 
 enum Piece {
@@ -284,6 +440,10 @@ fn piece(api: Api, v: &Value) -> Result<Piece, AiError> {
             .or_else(|| err.as_str())
             .unwrap_or("unknown error")
             .to_owned();
+        // Paparan AI names its errors (`insufficient_credits`).
+        if let Some(code) = err.get("code").and_then(Value::as_str) {
+            return Err(crate::paparan::error_from_code(code, message, err));
+        }
         let status = err.get("code").and_then(Value::as_u64).unwrap_or(500) as u16;
         return Err(AiError::Http { status, message });
     }
@@ -503,13 +663,57 @@ mod tests {
     }
 
     impl Transport for Mock {
-        fn post(&self, req: &HttpRequest) -> Result<HttpResponse, AiError> {
+        fn send(&self, req: &HttpRequest) -> Result<HttpResponse, AiError> {
             self.seen.lock().unwrap().push(req.clone());
-            Ok(HttpResponse {
-                status: self.status,
-                body: Box::new(Cursor::new(self.reply.as_bytes())),
-            })
+            Ok(HttpResponse::new(
+                self.status,
+                Cursor::new(self.reply.as_bytes()),
+            ))
         }
+    }
+
+    #[test]
+    fn parses_tool_call_deltas() {
+        let s = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"add_slide\",\"arguments\":\"\"}}]}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"title\\\":\"}}]}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"call_2\",\"function\":{\"name\":\"notes\",\"arguments\":\"{}\"}}]}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"Hi\\\"}\"}}]}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n\
+                 data: [DONE]\n\n";
+        let reply = read_reply(
+            Api::OpenAi,
+            Cursor::new(s.as_bytes().to_vec()),
+            &Cancel::default(),
+            &mut |_| {},
+            "test",
+        )
+        .unwrap();
+        assert_eq!(reply.text, "");
+        assert_eq!(
+            reply.tool_calls,
+            vec![
+                ToolCall {
+                    id: "call_1".into(),
+                    name: "add_slide".into(),
+                    arguments: "{\"title\":\"Hi\"}".into(),
+                },
+                ToolCall {
+                    id: "call_2".into(),
+                    name: "notes".into(),
+                    arguments: "{}".into(),
+                },
+            ]
+        );
+        // Text-only callers still see an empty answer as an error.
+        assert!(matches!(read(Api::OpenAi, s), Err(AiError::BadReply(_))));
+    }
+
+    #[test]
+    fn tools_are_sent_to_openai_compatible_apis() {
+        let req = ChatRequest::new("s", "u")
+            .tools(json!([{"type": "function", "function": {"name": "f"}}]));
+        let r = build_request(&cfg(ProviderId::OpenAi, Some("k")), &req);
+        assert_eq!(body(&r)["tools"][0]["function"]["name"], "f");
     }
 
     #[test]

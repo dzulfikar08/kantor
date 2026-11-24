@@ -30,6 +30,9 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   The presenter view shows the current slide as built so far and, under *Next*, what the next click shows (the next
   build step or the next slide). `.odp` slide transitions are kept when opened (as PowerPoint's closest transition).
 - **Light mode** (Fixes #1): Kantor Light and Kantor Dark themes, and *Follow System*, which picks one of them from the system's light or dark setting and switches when the system does (Windows, macOS, Linux through the desktop portal). New palette commands *Theme: Light*, *Theme: Dark* and *Theme: Follow System*; the theme picker lists them first.
+- Paparan AI, a hosted AI provider: sign in with a Paparan account (a code confirmed in the browser), see the plan and
+  credits left in *AI Settings*, and use every AI feature without an API key; *Top up* opens the payment page when
+  credits run out or low. Your own API key and Ollama stay free with every feature.
 
 ### Changed
 

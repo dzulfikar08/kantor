@@ -23,6 +23,10 @@ pub enum Api {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ProviderId {
+    /// Paparan AI: hosted credits, signed in with a Paparan account (see
+    /// [`crate::paparan`]). OpenAI-compatible, with a bearer token from the
+    /// keychain instead of an API key.
+    Paparan,
     Anthropic,
     OpenAi,
     OpenRouter,
@@ -50,6 +54,17 @@ pub struct ProviderInfo {
 }
 
 pub const PROVIDERS: &[ProviderInfo] = &[
+    ProviderInfo {
+        id: ProviderId::Paparan,
+        key: "paparan",
+        label: "Paparan AI",
+        api: Api::OpenAi,
+        default_base_url: "https://app.paparanai.id/api/kantor/v1",
+        default_model: crate::paparan::DEFAULT_MODEL,
+        needs_key: false,
+        base_url_editable: false,
+        key_hint: "No API key: sign in with your Paparan account and pay for credits by QRIS or virtual account",
+    },
     ProviderInfo {
         id: ProviderId::Anthropic,
         key: "anthropic",
@@ -200,6 +215,8 @@ impl ProviderConfig {
                 saved.and_then(|s| s.base_url.as_ref()),
                 info.default_base_url,
             )
+        } else if provider == ProviderId::Paparan {
+            crate::paparan::chat_base()
         } else {
             info.default_base_url.to_owned()
         };
@@ -211,6 +228,9 @@ impl ProviderConfig {
             return Err(AiError::MissingSetting("model"));
         }
         let api_key = api_key.filter(|k| !k.trim().is_empty());
+        if provider == ProviderId::Paparan && api_key.is_none() {
+            return Err(AiError::SignedOut);
+        }
         if info.needs_key && api_key.is_none() {
             return Err(AiError::MissingKey {
                 provider: info.label,
@@ -234,7 +254,9 @@ impl ProviderConfig {
             return Err(AiError::Disabled);
         }
         let provider = ProviderId::from_key(&settings.provider).ok_or(AiError::Disabled)?;
-        let api_key = if provider.info().needs_key || provider == ProviderId::Custom {
+        let api_key = if provider.info().needs_key
+            || matches!(provider, ProviderId::Custom | ProviderId::Paparan)
+        {
             key(provider)
         } else {
             None
@@ -300,6 +322,28 @@ mod tests {
         assert_eq!(cfg.model, "gpt-x");
         assert_eq!(cfg.base_url, "https://proxy.example/v1");
         assert!(!format!("{cfg:?}").contains("sk-1"), "key never printed");
+    }
+
+    #[test]
+    fn paparan_is_first_and_needs_a_sign_in() {
+        assert_eq!(PROVIDERS[0].id, ProviderId::Paparan);
+        let s = AiSettings {
+            enabled: true,
+            provider: "paparan".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            ProviderConfig::from_settings(&s, |_| None),
+            Err(AiError::SignedOut)
+        );
+        let cfg = ProviderConfig::from_settings(&s, |p| {
+            assert_eq!(p, ProviderId::Paparan);
+            Some("tok".into())
+        })
+        .unwrap();
+        assert_eq!(cfg.model, "paparan-auto");
+        assert_eq!(cfg.api(), Api::OpenAi);
+        assert!(cfg.base_url.ends_with("/api/kantor/v1"), "{}", cfg.base_url);
     }
 
     #[test]
