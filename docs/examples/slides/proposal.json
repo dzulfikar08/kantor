@@ -1,0 +1,164 @@
+{
+  "size": "16:9",
+  "units": "in",
+  "preset": "consulting-navy",
+  "footer": { "text": "Prepared for an example manufacturer", "logo": "logo.png" },
+  "cover": { "logo": "logo-white.png" },
+  "slides": [
+    {
+      "kind": "cover",
+      "eyebrow": "Introduction and demo · November 2026",
+      "title": "Reliable uptime for every line",
+      "subtitle": "A maintenance platform for a mid-sized process plant",
+      "notes": "Sample deck: all names and numbers are made up."
+    },
+    {
+      "eyebrow": "Who we are talking to",
+      "title": "The plant at a glance",
+      "subtitle": "One site, three product families, running around the clock",
+      "footer_note": "Sources: sample figures for this example",
+      "elements": [
+        {
+          "type": "stat_cards",
+          "items": [
+            { "value": "2015", "label": "Opened", "detail": "Greenfield site, two expansions since" },
+            { "value": "~500 t", "label": "Output a day", "detail": "About 180,000 t a year", "highlight": true },
+            { "value": "3", "label": "Product families", "detail": "Each on its own line" },
+            { "value": "40", "label": "Countries supplied", "detail": "Through two export ports" }
+          ]
+        }
+      ]
+    },
+    {
+      "eyebrow": "The problem",
+      "title": "Why one unplanned stop hurts twice",
+      "subtitle": "Two products come off the same line, so one stop costs both",
+      "footer_note": "Our reading of a typical plant, to confirm with your maintenance team",
+      "elements": [
+        {
+          "type": "comparison", "h": 3.6,
+          "columns": [
+            { "tag": "Likely causes", "title": "What stops the line", "items": ["Pump packing and valve wear", "Vacuum loss in distillation", "Steam or cooling water upsets", "Critical spares not in stock"] },
+            { "tag": "What one stop costs", "title": "What it costs", "highlight": true, "items": ["Both products lost together", "Off-spec batches and rework", "More energy per tonne on restart", "Overtime and expedited parts"] }
+          ]
+        }
+      ]
+    },
+    {
+      "eyebrow": "The platform",
+      "title": "One platform for every maintenance record",
+      "subtitle": "Plant floor, stores, safety and management working from the same data",
+      "elements": [
+        {
+          "type": "cards", "columns": 3,
+          "items": [
+            { "title": "Assets & QR", "text": "Asset tree and history, with a QR tag on every machine" },
+            { "title": "Work orders & PM", "text": "Plan, assign and close corrective and preventive work" },
+            { "title": "Mobile checklists", "text": "Technicians work from a phone app, offline too" },
+            { "title": "Spares", "text": "Stock levels, reorder alerts and purchase requests" },
+            { "title": "Compliance", "text": "Inspections, licences and audit records with due dates" },
+            { "title": "Energy", "text": "Meters, targets, and energy per tonne" }
+          ]
+        }
+      ]
+    },
+    {
+      "eyebrow": "For IT",
+      "title": "Runs on your server, connects to your systems",
+      "subtitle": "A small footprint inside your network, open APIs to everything around it",
+      "footer_note": "Server specification and integration detail in the appendix",
+      "elements": [
+        {
+          "type": "cards", "columns": 2, "numbered": false, "h": 4.2,
+          "items": [
+            { "icon": "server", "title": "One program plus a database", "text": "Linux or Windows, x64 or ARM; nothing else to install" },
+            { "icon": "gauge", "title": "Starts at 2 cores and 4 GB", "text": "Measured under a 20-client load test" },
+            { "icon": "shield-check", "title": "Your data stays in your network", "text": "Database, files and backups on your own servers" },
+            { "icon": "plug", "title": "Connects to what you run", "text": "REST API, signed webhooks, ERP connectors" }
+          ]
+        }
+      ]
+    },
+    {
+      "eyebrow": "The demo",
+      "title": "What you will see in the demo",
+      "subtitle": "Built on an example plant; tags and numbers are illustrative",
+      "elements": [
+        {
+          "type": "numbered_list", "columns": 2,
+          "items": [
+            { "title": "Pump vibration", "text": "Rising vibration opens a ticket by itself" },
+            { "title": "Distillation vacuum", "text": "The trend, then the troubleshooting guide" },
+            { "title": "Missing bearing", "text": "A stock-out becomes a purchase request" },
+            { "title": "Hazardous area", "text": "A safety checklist and a recorded near miss" },
+            { "title": "Expired certificate", "text": "A pressure vessel flagged before the audit" },
+            { "title": "Energy per tonne", "text": "Energy use tied back to maintenance" }
+          ]
+        }
+      ]
+    },
+    {
+      "eyebrow": "Rollout",
+      "title": "Phased rollout, foundation first",
+      "subtitle": "Each phase pays off before the next one starts",
+      "elements": [
+        {
+          "type": "timeline", "h": 3.0,
+          "items": [
+            { "label": "Phase 1", "title": "Digital work", "text": "Asset register, work orders, PM and mobile checklists" },
+            { "label": "Phase 2", "title": "Stores and compliance", "text": "Spares, certificates, skills and training" },
+            { "label": "Phase 3", "title": "Condition monitoring", "text": "Sensors and rules on critical rotating equipment" },
+            { "label": "Later", "title": "Predictive maintenance", "text": "Once enough history has built up", "badge": "+" }
+          ]
+        },
+        { "type": "callout", "tone": "warning", "w": 5.4, "title": "Most plants start", "text": "with Phase 1 in one area." }
+      ]
+    },
+    {
+      "eyebrow": "How we could start",
+      "title": "Start small: one area, one crew",
+      "subtitle": "An example only; where to start is chosen together with your team",
+      "elements": [
+        {
+          "type": "steps", "w": 6.2, "h": 3.4,
+          "items": [
+            { "title": "Share data", "text": "Asset list and two months of work order history" },
+            { "title": "Set up", "text": "Load the asset register and print QR tags" },
+            { "title": "Go live", "text": "One crew works from the mobile app" },
+            { "title": "Review together", "text": "Compare results with the starting point" }
+          ]
+        },
+        { "type": "callout", "tone": "warning", "x": 7.4, "y": 2.4, "w": 5.2, "h": 1.0, "title": "One option:", "text": "the utilities, because they run around the clock and feed every unit." },
+        { "type": "callout", "tone": "success", "icon": "calendar-check", "x": 7.4, "y": 3.7, "w": 5.2, "h": 1.0, "title": "Eight weeks", "text": "from shared data to the first review." }
+      ]
+    },
+    {
+      "eyebrow": "What a first phase would measure",
+      "title": "Starting points and targets, from your own history",
+      "elements": [
+        {
+          "type": "table", "preset": "clean", "columns": [4, 7],
+          "rows": [
+            ["Measure", "How the platform tracks it"],
+            ["Breakdowns logged digitally", "Every ticket, with its asset and timestamps"],
+            ["PM done on schedule", "PM compliance per area and per crew"],
+            ["Time to respond", "Response and repair time on every ticket"],
+            ["Critical spares stock-outs", "Reorder alerts and purchase requests"]
+          ]
+        }
+      ]
+    },
+    {
+      "kind": "section",
+      "eyebrow": "Appendix",
+      "title": "Detail for your questions",
+      "subtitle": "Architecture, server sizing, integrations, security"
+    },
+    {
+      "kind": "cover",
+      "eyebrow": "Next step",
+      "title": "A follow-up conversation",
+      "subtitle": "About an hour with your maintenance and IT leads to see how work is managed today, then a proposal that fits"
+    }
+  ]
+}

@@ -227,6 +227,10 @@ pub struct RunStyle {
     pub underline: Option<bool>,
     pub strike: Option<bool>,
     pub color: Option<Color>,
+    /// All capitals (`cap="all"`).
+    pub caps: Option<bool>,
+    /// Character spacing in hundredths of a point (`spc`).
+    pub spacing: Option<i32>,
 }
 
 impl RunStyle {
@@ -240,6 +244,8 @@ impl RunStyle {
             underline: o.underline.or(self.underline),
             strike: o.strike.or(self.strike),
             color: o.color.clone().or_else(|| self.color.clone()),
+            caps: o.caps.or(self.caps),
+            spacing: o.spacing.or(self.spacing),
         }
     }
 
@@ -263,6 +269,12 @@ impl RunStyle {
             } else {
                 " strike=\"noStrike\""
             });
+        }
+        if let Some(c) = self.caps {
+            out.push_str(if c { " cap=\"all\"" } else { " cap=\"none\"" });
+        }
+        if let Some(spc) = self.spacing {
+            let _ = write!(out, " spc=\"{}\"", spc.clamp(-400_000, 400_000));
         }
         out.push_str(" dirty=\"0\"");
         if self.color.is_none() && self.font.is_none() {
@@ -292,7 +304,14 @@ pub struct RunSpec {
     /// `\n` inside is a line break (`a:br`) within the paragraph.
     pub text: String,
     pub style: RunStyle,
+    /// A field (`a:fld/@type`, e.g. `slidenum`) showing `text` until
+    /// PowerPoint updates it.
+    pub field: Option<String>,
 }
+
+/// The `a:fld/@id` of fields Kantor writes (one id per field type is what
+/// PowerPoint writes for a deck's slide numbers too).
+const FIELD_ID: &str = "{B6F15528-21DE-4FAA-801E-4B4B414E544F}";
 
 /// A paragraph's bullet.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -355,7 +374,7 @@ impl TextSpec {
                 .map(|l| ParaSpec {
                     runs: vec![RunSpec {
                         text: l.to_owned(),
-                        style: RunStyle::default(),
+                        ..RunSpec::default()
                     }],
                     ..ParaSpec::default()
                 })
@@ -480,6 +499,16 @@ fn write_para(out: &mut String, p: &ParaSpec, base: &RunStyle) {
     }
     for r in &p.runs {
         let style = base.over(&r.style);
+        if let Some(f) = &r.field {
+            let _ = write!(out, "<a:fld id=\"{FIELD_ID}\" type=\"{}\">", esc_attr(f));
+            style.write(out, "a:rPr");
+            let _ = write!(
+                out,
+                "<a:t>{}</a:t></a:fld>",
+                esc(&r.text.replace('\n', " "))
+            );
+            continue;
+        }
         for (i, piece) in r.text.split('\n').enumerate() {
             if i > 0 {
                 out.push_str("<a:br>");
@@ -504,6 +533,8 @@ pub struct GeomSpec {
     pub preset: String,
     /// `(name, value)` of `a:avLst/a:gd` (`fmla="val {value}"`).
     pub adjust: Vec<(String, i64)>,
+    /// A custom geometry (`a:custGeom`, written as is) instead of the preset.
+    pub custom: Option<String>,
 }
 
 impl GeomSpec {
@@ -511,11 +542,27 @@ impl GeomSpec {
         Self {
             preset: name.to_owned(),
             adjust: Vec::new(),
+            custom: None,
+        }
+    }
+
+    /// A custom geometry: `xml` is a whole `a:custGeom` element.
+    pub fn custom(xml: String) -> Self {
+        Self {
+            preset: "rect".to_owned(),
+            adjust: Vec::new(),
+            custom: Some(xml),
         }
     }
 
     /// Check the preset name and adjust names against the ECMA presets.
     pub fn check(&self) -> anyhow::Result<()> {
+        if let Some(xml) = &self.custom {
+            if !(xml.starts_with("<a:custGeom>") && xml.ends_with("</a:custGeom>")) {
+                bail!("a custom geometry must be one a:custGeom element");
+            }
+            return Ok(());
+        }
         let Some(def) = crate::geom::preset(&self.preset) else {
             bail!(
                 "\"{}\" is not a preset shape (see the DrawingML preset names, e.g. rect, roundRect, ellipse, chevron, homePlate, rightArrow)",
@@ -539,6 +586,10 @@ impl GeomSpec {
     }
 
     fn write(&self, out: &mut String) {
+        if let Some(xml) = &self.custom {
+            out.push_str(xml);
+            return;
+        }
         let _ = write!(out, "<a:prstGeom prst=\"{}\">", esc_attr(&self.preset));
         if self.adjust.is_empty() {
             out.push_str("<a:avLst/>");
@@ -574,6 +625,9 @@ pub struct ShapeSpec {
     pub text: Option<TextSpec>,
     /// Default formatting of the text's runs.
     pub style: RunStyle,
+    /// Written as this placeholder of the slide (`p:ph/@type`, e.g.
+    /// `title`), so outlines and screen readers see it as such.
+    pub placeholder: Option<String>,
 }
 
 /// A straight line or connector between two points (`p:cxnSp`).
@@ -754,12 +808,23 @@ pub fn element_xml(el: &Element, id: u32, rel: Option<&str>) -> String {
         ElementKind::Shape(s) => {
             out.push_str("<p:sp><p:nvSpPr>");
             cnv_pr(&mut out, id, &name, None);
-            out.push_str(if s.text_box {
-                "<p:cNvSpPr txBox=\"1\"/>"
-            } else {
-                "<p:cNvSpPr/>"
-            });
-            out.push_str("<p:nvPr/></p:nvSpPr><p:spPr>");
+            match &s.placeholder {
+                Some(ph) => {
+                    let _ = write!(
+                        out,
+                        "<p:cNvSpPr><a:spLocks noGrp=\"1\"/></p:cNvSpPr><p:nvPr><p:ph type=\"{}\"/></p:nvPr></p:nvSpPr><p:spPr>",
+                        esc_attr(ph)
+                    );
+                }
+                None => {
+                    out.push_str(if s.text_box {
+                        "<p:cNvSpPr txBox=\"1\"/>"
+                    } else {
+                        "<p:cNvSpPr/>"
+                    });
+                    out.push_str("<p:nvPr/></p:nvSpPr><p:spPr>");
+                }
+            }
             write_xfrm(&mut out, "a:xfrm", &el.xfrm);
             s.geom.write(&mut out);
             match (&s.fill, s.text_box) {
@@ -773,7 +838,7 @@ pub fn element_xml(el: &Element, id: u32, rel: Option<&str>) -> String {
                 (None, false) => {}
             }
             out.push_str("</p:spPr>");
-            if !s.text_box {
+            if !s.text_box && s.placeholder.is_none() {
                 out.push_str(SHAPE_STYLE);
             }
             out.push_str("<p:txBody>");
@@ -951,6 +1016,110 @@ pub enum BackgroundSpec {
     Picture(Arc<Vec<u8>>),
 }
 
+/// A slide transition to write (`p:transition`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TransitionSpec {
+    /// `cut`, `fade`, `push`, `wipe`, `split`, `cover`, `pull` (uncover)
+    /// or `zoom`.
+    pub kind: String,
+    /// `l`, `r`, `u`, `d` (push, wipe, cover, pull), `in` / `out` (split,
+    /// zoom).
+    pub dir: Option<String>,
+    /// `horz` / `vert` (split).
+    pub orient: Option<String>,
+    /// Written as `p14:dur` (PowerPoint 2010+) with `spd` for older readers.
+    pub duration_ms: Option<u32>,
+    /// Fade or cut through black.
+    pub through_black: bool,
+    /// Move on by itself after this long (`advTm`).
+    pub advance_after_ms: Option<u32>,
+}
+
+/// Transition kinds [`TransitionSpec`] writes.
+pub const TRANSITIONS: [&str; 8] = [
+    "cut", "fade", "push", "wipe", "split", "cover", "pull", "zoom",
+];
+
+impl TransitionSpec {
+    /// The `p:transition` element (inside `mc:AlternateContent` when it
+    /// has a duration).
+    pub fn xml(&self) -> String {
+        let attr = |k: &str, v: &Option<String>| {
+            v.as_deref()
+                .map(|v| format!(" {k}=\"{}\"", esc_attr(v)))
+                .unwrap_or_default()
+        };
+        let effect = match self.kind.as_str() {
+            "fade" | "cut" => {
+                let thru = if self.through_black {
+                    " thruBlk=\"1\""
+                } else {
+                    ""
+                };
+                format!("<p:{}{thru}/>", self.kind)
+            }
+            "split" => format!(
+                "<p:split{}{}/>",
+                attr("orient", &self.orient),
+                attr("dir", &self.dir)
+            ),
+            k @ ("push" | "wipe" | "cover" | "pull" | "zoom") => {
+                format!("<p:{k}{}/>", attr("dir", &self.dir))
+            }
+            _ => "<p:fade/>".to_owned(),
+        };
+        let ms = self.duration_ms.unwrap_or(700).clamp(1, 60_000);
+        let spd = match ms {
+            0..=500 => "fast",
+            501..=750 => "med",
+            _ => "slow",
+        };
+        let adv = self
+            .advance_after_ms
+            .map(|t| format!(" advTm=\"{}\"", t.min(86_400_000)))
+            .unwrap_or_default();
+        let plain = format!("<p:transition spd=\"{spd}\"{adv}>{effect}</p:transition>");
+        match self.duration_ms {
+            None => plain,
+            Some(_) => format!(
+                "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\"><mc:Choice xmlns:p14=\"http://schemas.microsoft.com/office/powerpoint/2010/main\" Requires=\"p14\"><p:transition spd=\"{spd}\" p14:dur=\"{ms}\"{adv}>{effect}</p:transition></mc:Choice><mc:Fallback>{plain}</mc:Fallback></mc:AlternateContent>"
+            ),
+        }
+    }
+}
+
+/// `suffix` (a slide's XML after its shapes) without its transition.
+fn without_transition(suffix: &str) -> String {
+    let mut s = suffix.to_owned();
+    // `mc:AlternateContent` holding a transition.
+    while let Some(t) = s.find("<p:transition") {
+        let (start, end) = match s[..t].rfind("<mc:AlternateContent") {
+            Some(a) if !s[a..t].contains("</mc:AlternateContent>") => {
+                match s[t..].find("</mc:AlternateContent>") {
+                    Some(e) => (a, t + e + "</mc:AlternateContent>".len()),
+                    None => break,
+                }
+            }
+            _ => {
+                let head = match crate::xml::tag_end(&s[t..]) {
+                    Some(h) => t + h,
+                    None => break,
+                };
+                if s[..head].ends_with("/>") {
+                    (t, head)
+                } else {
+                    match s[t..].find("</p:transition>") {
+                        Some(e) => (t, t + e + "</p:transition>".len()),
+                        None => break,
+                    }
+                }
+            }
+        };
+        s.replace_range(start..end, "");
+    }
+    s
+}
+
 /// Where the next new media part goes.
 fn free_media_part(p: &Presentation, ext: &str) -> String {
     (1..)
@@ -1037,6 +1206,45 @@ impl Presentation {
             let shape = s.shapes.remove(from);
             s.shapes.insert(to, shape);
             Ok((to, Focus::shape(slide, to)))
+        })
+    }
+
+    /// A colour of the first master's theme (`accent1`, `dk1`, ...).
+    pub fn theme_color(&self, slot: &str) -> Option<Rgb> {
+        self.masters.first()?.theme.color(slot)
+    }
+
+    /// Set (or with `None` remove) slide `slide`'s transition. One undo
+    /// step.
+    pub fn set_transition(
+        &mut self,
+        slide: usize,
+        t: Option<&TransitionSpec>,
+    ) -> anyhow::Result<()> {
+        self.slides.get(slide).context("no such slide")?;
+        self.record(Kind::Other, None, Focus::slide(slide), false, |p| {
+            let s = p.slide_mut(slide)?;
+            let mut suffix = without_transition(&s.src.suffix);
+            if let Some(t) = t {
+                let at = match suffix.find("</p:clrMapOvr>") {
+                    Some(i) => i + "</p:clrMapOvr>".len(),
+                    None => {
+                        suffix
+                            .find("</p:cSld>")
+                            .context("this slide's XML can't take a transition")?
+                            + "</p:cSld>".len()
+                    }
+                };
+                suffix.insert_str(at, &t.xml());
+            }
+            s.src = Arc::new(crate::presentation::SlideSrc {
+                prefix: s.src.prefix.clone(),
+                suffix,
+                shapes: s.src.shapes.clone(),
+                rels: s.src.rels.clone(),
+                edited: true,
+            });
+            Ok(((), Focus::slide(slide)))
         })
     }
 
@@ -1152,6 +1360,7 @@ mod tests {
                                     bold: Some(true),
                                     ..RunStyle::default()
                                 },
+                                field: None,
                             },
                             RunSpec {
                                 text: "simple".into(),
@@ -1160,6 +1369,7 @@ mod tests {
                                     color: Some(Color::scheme("accent2")),
                                     ..RunStyle::default()
                                 },
+                                field: None,
                             },
                         ],
                         align: Some(Align::Center),
@@ -1178,6 +1388,7 @@ mod tests {
                     color: Some(rgb("FFFFFF")),
                     ..RunStyle::default()
                 },
+                placeholder: None,
             }),
             name: None,
             xfrm: Xfrm::new(914_400, 914_400, 2_743_200, 914_400),
@@ -1213,6 +1424,63 @@ mod tests {
             crate::xml::NS_R
         );
         roxmltree::Document::parse(&doc).unwrap();
+    }
+
+    #[test]
+    fn writes_transitions_custom_geometry_fields_and_titles() {
+        let mut p = Presentation::new();
+        let t = TransitionSpec {
+            kind: "push".into(),
+            dir: Some("u".into()),
+            duration_ms: Some(1200),
+            ..TransitionSpec::default()
+        };
+        p.set_transition(0, Some(&t)).unwrap();
+        p.set_transition(0, Some(&t)).unwrap();
+        let xml = p.slide(0).xml();
+        assert_eq!(xml.matches("<p:transition").count(), 2, "{xml}");
+        let tr = p.slide(0).show_fx().transition.unwrap();
+        assert_eq!(tr.duration_ms, 1200);
+        assert_eq!(
+            tr.kind,
+            crate::anim::TransitionKind::Push(crate::anim::Dir::Up)
+        );
+        p.set_transition(0, None).unwrap();
+        assert!(!p.slide(0).xml().contains("transition"));
+
+        let mut el = shape(GeomSpec::custom(
+            "<a:custGeom><a:avLst/><a:gdLst/><a:ahLst/><a:cxnLst/><a:rect l=\"0\" t=\"0\" r=\"r\" b=\"b\"/><a:pathLst><a:path w=\"24\" h=\"24\" fill=\"none\"><a:moveTo><a:pt x=\"0\" y=\"0\"/></a:moveTo><a:lnTo><a:pt x=\"24\" y=\"24\"/></a:lnTo></a:path></a:pathLst></a:custGeom>".into(),
+        ));
+        if let ElementKind::Shape(s) = &mut el.kind {
+            s.placeholder = Some("title".into());
+            s.style.caps = Some(true);
+            s.style.spacing = Some(100);
+            if let Some(t) = &mut s.text {
+                t.paras[0].runs.push(RunSpec {
+                    text: "7".into(),
+                    field: Some("slidenum".into()),
+                    ..RunSpec::default()
+                });
+            }
+        }
+        el.check().unwrap();
+        let xml = element_xml(&el, 5, None);
+        assert!(
+            xml.contains("<p:nvPr><p:ph type=\"title\"/></p:nvPr>"),
+            "{xml}"
+        );
+        assert!(!xml.contains("<p:style>"));
+        assert!(xml.contains("<a:custGeom>") && !xml.contains("prstGeom"));
+        assert!(xml.contains("cap=\"all\" spc=\"100\""));
+        assert!(xml.contains("type=\"slidenum\">"));
+        assert!(xml.contains("<a:t>7</a:t></a:fld>"));
+        let i = p.add_element(0, &el).unwrap();
+        assert!(
+            p.slide(0).shapes[i]
+                .ph
+                .as_ref()
+                .is_some_and(|ph| ph.is_title())
+        );
     }
 
     #[test]

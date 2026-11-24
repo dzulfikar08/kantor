@@ -392,15 +392,16 @@ const SPECS: &[Spec] = &[
     (
         "slides_set_notes",
         "Set speaker notes",
-        "Replace a slide's speaker notes (plain text). One undo step. slides_list shows the current notes.",
+        "Replace a slide's speaker notes (plain text, as `text` or `notes`). One undo step. slides_list shows the current notes.",
         || {
             json!({
                 "document": document(),
                 "slide": {"type": "integer", "minimum": 1},
                 "text": {"type": "string"},
+                "notes": {"type": "string", "description": "Same as text (the key deck slides use)."},
             })
         },
-        &["slide", "text"],
+        &["slide"],
         false,
     ),
     (
@@ -448,7 +449,7 @@ const SPECS: &[Spec] = &[
         "slides_add_elements",
         "Add several elements",
         concat!(
-            "Add several shapes, text boxes, lines, pictures and tables to a slide at once (each with its `type`; the same objects as slides_add_shape, slides_add_picture and slides_add_table, and as the elements of slides_build). Later ones are on top. ",
+            "Add several shapes, text boxes, lines, pictures and tables to a slide at once (each with its `type`; the same objects as slides_add_shape, slides_add_picture and slides_add_table, and as the elements of slides_build). Also icons (type icon: a Lucide `icon` name, size, color) and components that expand into editable shapes: stat_cards, cards, steps, timeline, callout, numbered_list, comparison, badge, and tables with preset clean (see `kantor slides schema`). `style` names a text style (eyebrow, title, subtitle, body, small, label, card_title, stat, ...); colours may be palette names (primary, highlight, ink, muted, divider, paper, tint, ...). Later ones are on top. ",
             elements_help!()
         ),
         || {
