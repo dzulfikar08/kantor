@@ -699,7 +699,8 @@ fn check_slide(
                 }
             }
         }
-        let footer = shape.ph.as_ref().is_some_and(|p| p.is_footer());
+        let footer = shape.ph.as_ref().is_some_and(|p| p.is_footer())
+            || furniture_footer(&shape.name, rect, sh);
         let ink = match text {
             Some(t) if t.vert == Vert::Horz => {
                 let m = measure(builder, engine, t, &r.xfrm);
@@ -927,6 +928,14 @@ fn check_fit(
             details,
         );
     }
+}
+
+/// The footer text boxes `kantor slides build` draws for a deck `footer`
+/// (its text, the slide's `footer_note` and the slide number): footers like
+/// the footer placeholders, so small text there is fine. Known by their
+/// names and by sitting in the bottom strip of the slide.
+fn furniture_footer(name: &str, rect: R, slide_h: f32) -> bool {
+    matches!(name, "Footer" | "Footer note" | "Slide number") && rect[1] >= slide_h * 0.85
 }
 
 fn check_small(cx: &mut Ctx, t: &RenderText, who: &Who, rect: R) {
@@ -1323,6 +1332,89 @@ mod tests {
             .filter(|f| f.check != "font_missing" && f.check != "title_wraps")
             .collect();
         assert!(worth.is_empty(), "{}", r.text("t"));
+    }
+
+    /// A deck made only of a preset's furniture and components, the way
+    /// `kantor slides build` lays them out.
+    fn preset_deck(preset: &str) -> Presentation {
+        let json = json!({"units": "in", "preset": preset, "footer": {"text": "Example Co"}, "slides": [
+            {"kind": "cover", "eyebrow": "Board meeting", "title": "From 8 cities\nto 14", "subtitle": "Results and plan",
+             "meta": "Strategy team", "mark": "14", "mark_label": "cities by 2027", "notes": "n"},
+            {"eyebrow": "Summary", "title": "Ahead of target", "subtitle": "Net sales", "footer_note": "Source: sales.xlsx", "notes": "n",
+             "elements": [
+                {"type": "stat_cards", "y": 2.45, "h": 2.4, "items": [
+                    {"value": "6.3 M", "label": "Sales", "detail": "Above target"},
+                    {"value": "5 / 8", "label": "Cities", "detail": "On target"},
+                    {"value": "-122 k", "label": "Gap", "detail": "Three cities", "highlight": true}]},
+                {"type": "callout", "y": 5.5, "title": "Next:", "text": "fix three cities first."}]},
+            {"eyebrow": "Causes", "title": "Four things to check", "footer_note": "Team notes", "notes": "n",
+             "elements": [{"type": "cards", "y": 2.45, "h": 2.2, "columns": 3, "items": [
+                {"title": "Opening", "text": "Check early sales"},
+                {"title": "Rivals", "text": "Check new shops"},
+                {"title": "Staff", "text": "Check tenure"}]}]},
+            {"eyebrow": "Plan", "title": "Two waves", "notes": "n",
+             "elements": [
+                {"type": "steps", "y": 2.45, "h": 2.0, "current": 2, "items": [
+                    {"title": "Wave 1", "text": "Three cities"},
+                    {"title": "Review", "text": "Two of three"},
+                    {"title": "Wave 2", "text": "Three more"}]},
+                {"type": "comparison", "y": 4.6, "h": 1.9, "columns": [
+                    {"tag": "Today", "title": "8 cities", "items": ["Jakarta"]},
+                    {"tag": "Wave 1", "title": "3 cities", "items": ["Malang"], "highlight": true}]}]},
+            {"eyebrow": "Roadmap", "title": "One decision point", "notes": "n",
+             "elements": [
+                {"type": "timeline", "y": 2.6, "h": 2.4, "current": 1, "items": [
+                    {"label": "Q1", "title": "Fix", "text": "Three cities"},
+                    {"label": "Q2", "title": "Wave 1", "text": "Open three"},
+                    {"label": "Q3", "title": "Wave 2", "text": "If approved"}]},
+                {"type": "table", "preset": "clean", "y": 5.2, "w": 8, "rows": [["Item", "Cost"], ["Shops", "3,300"]]}]},
+            {"kind": "section", "eyebrow": "Decisions", "title": "Three approvals", "notes": "n",
+             "elements": [
+                {"type": "numbered_list", "y": 3.0, "h": 2.4, "items": [
+                    {"title": "Program", "text": "for three cities"},
+                    {"title": "Wave 1", "text": "in three cities"}]},
+                {"type": "callout", "y": 6.0, "title": "Start:", "text": "January."}]}
+        ]});
+        crate::agent::slides_author::build(&json, None).unwrap()
+    }
+
+    #[std::prelude::v1::test]
+    fn preset_decks_check_clean() {
+        let mut engine = Engine::new();
+        for preset in crate::agent::slides_style::PRESETS {
+            let r = check(&preset_deck(preset), &mut engine, None);
+            // Without the preset's fonts (CI) text is measured in another
+            // font, so only the font-independent checks count there.
+            let fonts_here = find(&r, "font_missing").is_none();
+            let bad: Vec<_> = r
+                .findings
+                .iter()
+                .filter(|f| f.severity <= Severity::Warning && f.check != "font_missing")
+                .filter(|f| fonts_here || matches!(f.check, "small_text" | "low_contrast"))
+                .collect();
+            assert!(bad.is_empty(), "{preset}: {}", r.text("t"));
+        }
+    }
+
+    #[std::prelude::v1::test]
+    fn preset_furniture_names_dont_hide_real_problems() {
+        // A small "Footer" box up on the slide is body text; a real
+        // overflow in a preset deck is still one.
+        let json = json!({"units": "in", "preset": "editorial", "slides": [
+            {"title": "T", "notes": "n", "elements": [
+                {"type": "text", "name": "Footer", "x": 1, "y": 3, "w": 4, "h": 0.4, "text": "Fine print", "size": 8},
+                {"type": "text", "x": 1, "y": 4, "w": 1, "h": 0.3, "size": 18,
+                 "text": "This sentence is far too long to stay in a box this small"}]}]});
+        let p = crate::agent::slides_author::build(&json, None).unwrap();
+        let r = run(&p);
+        assert!(find(&r, "small_text").is_some(), "{}", r.text("t"));
+        assert!(
+            r.findings
+                .iter()
+                .any(|f| f.severity == Severity::Error && f.check.starts_with("text_")),
+            "{}",
+            r.text("t")
+        );
     }
 
     #[std::prelude::v1::test]

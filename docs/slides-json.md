@@ -315,9 +315,12 @@ works too: `accent` (accent 1; also `primary`), `accent_soft` (also
 `info`, `white`, `black`, `on_primary`. Those that are theme colours are
 written as theme colours; the others as RGB. Override them in
 `"palette": {"muted": "#5B6676"}`. On a dark section (or cover) slide the
-text colours swap: `ink` is `on_dark`, `muted` `on_dark_muted`, and rules
+text colours swap: `ink` is `on_dark`, `muted` `on_dark_muted`, `accent` is
+`on_dark_accent` (on a dark section, not a cover on the accent itself), the
+tones (`highlight`, `warning`, `good`, `bad`, …) are lightened until they
+read on the dark at 4.5:1, `on_accent` is the dark background, and rules
 and panels are mixed from the dark background, so components work there
-unchanged.
+unchanged. The presets' accents read at 4.5:1 or more on their paper.
 
 ## Slide furniture
 
@@ -353,7 +356,11 @@ move). `rule` is a hairline across the content width above it, `mark` a
 small square at the bottom right (`{color, size}`), `bar` a bar along the
 bottom edge. `"footer": false` hides the footer on one slide (`true` shows
 it on a cover); `"header": false` or `"footer": false` on the deck turns a
-preset's off.
+preset's off. Its boxes are named `Footer`, `Footer note` and `Slide
+number`, and `kantor slides check` treats them as footers (9 pt is fine
+there). Text boxes for one line (titles, numbers, numerals, stat values)
+are as tall as the font's own line height at their size and line spacing,
+so a deck built from components checks clean.
 
 `"kind": "cover"` makes a cover: the footer's `text` at the top left
 (`cover.brand`) or the cover logo, the eyebrow (beside or under the cover's
@@ -472,7 +479,7 @@ kantor convert deck.pptx slide3.png --slide 3 --width 1920
 | `text_crosses_edge` | warning | text partly over the shape behind it (text wholly inside a card, picture or band is fine) |
 | `low_contrast` | warning (error under 2:1) | text colour against the colour behind it under 4.5:1 (3:1 for 18 pt bold or 24 pt and up); text over pictures isn't checked |
 | `font_missing` | warning / info | a font not installed here: text falls back to another font, so line breaks can differ (info when a font with the same metrics stands in, e.g. Carlito for Calibri) |
-| `small_text` | warning | text under 10 pt (footers excluded) |
+| `small_text` | warning | text under 10 pt (footers excluded: footer placeholders, and the `Footer`, `Footer note` and `Slide number` boxes a deck `footer` draws along the bottom) |
 | `empty_placeholder` | warning | a placeholder with no text (shows a prompt in editors, nothing in the show) |
 | `no_title` | warning / info | a slide without a title placeholder (info when big text near the top looks like one: give the slide a `title`) |
 | `no_notes` | info | no speaker notes |

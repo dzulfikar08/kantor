@@ -16,6 +16,7 @@ use slides_engine::{Emu, Presentation, Rgb, SlideSize};
 use slides_engine::author::Element;
 
 use super::slides_author::{Ctx, element, length, object, opt_bool, opt_str};
+use super::slides_check::contrast;
 
 const IN: Emu = 914_400;
 const PT: Emu = 12_700;
@@ -126,12 +127,12 @@ pub fn preset(name: &str) -> Result<Value> {
         "editorial" => json!({
             "theme": {"name": "Editorial", "fonts": {"heading": "Instrument Serif", "body": "Inter"},
                 "colors": {"dk1": "#1E1B18", "lt1": "#FFFFFF", "dk2": "#1E1B18", "lt2": "#ECE3D5",
-                    "accent1": "#B4532A", "accent2": "#2E5E4E", "accent3": "#6E655C", "accent4": "#CDBFAC",
-                    "accent5": "#D9CEBF", "accent6": "#8A3E1F", "hlink": "#B4532A", "folHlink": "#6E655C"}},
+                    "accent1": "#A94C25", "accent2": "#2E5E4E", "accent3": "#6E655C", "accent4": "#CDBFAC",
+                    "accent5": "#D9CEBF", "accent6": "#8A3E1F", "hlink": "#A94C25", "folHlink": "#6E655C"}},
             "palette": {"background": "#F6F1E9", "muted": "#6E655C", "line": "#D9CEBF", "divider": "#D9CEBF",
                 "panel": "#ECE3D5", "paper": "#ECE3D5", "bar": "#CDBFAC", "accent_soft": "#F2DED0", "tint": "#F2DED0",
                 "highlight": "accent1", "warning": "accent1", "good": "#2E5E4E", "success": "#2E5E4E",
-                "bad": "#B4532A", "danger": "#B4532A", "dark": "#1E1B18", "on_dark": "#F6F1E9",
+                "bad": "#A94C25", "danger": "#A94C25", "dark": "#1E1B18", "on_dark": "#F6F1E9",
                 "on_dark_accent": "#D9774A", "accent_light": "#D9774A", "on_dark_muted": "#B4A898"},
             "card_style": "rule",
             "background": "background",
@@ -517,6 +518,37 @@ impl Look {
         }
         set(&mut l, "bar", mix(dark, light, 0.4));
         set(&mut l, "background", dark);
+        // Accent text, numerals and rules in the light accent (a cover on
+        // the accent itself keeps it: that is its background), the tones
+        // lifted until they read on the dark (WCAG 4.5:1), and text on
+        // them dark.
+        let accent = self.rgb("accent");
+        if bg != "accent" {
+            let light_accent = readable(self.rgb("on_dark_accent"), dark, light);
+            set(&mut l, "on_dark_accent", light_accent);
+            for k in [
+                "accent",
+                "primary",
+                "info",
+                "highlight",
+                "warning",
+                "good",
+                "success",
+                "bad",
+                "danger",
+            ] {
+                let Some((c, _)) = self.palette.get(k) else {
+                    continue;
+                };
+                let c = if *c == accent {
+                    light_accent
+                } else {
+                    readable(*c, dark, light)
+                };
+                set(&mut l, k, c);
+            }
+            set(&mut l, "on_accent", dark);
+        }
         l
     }
 
@@ -555,27 +587,9 @@ impl Look {
             .unwrap_or(d)
     }
 
-    /// The height of one line of `style` (single spacing ≈ 1.2 × the size).
-    pub fn line_h(&self, style: &str, d: f64) -> Emu {
-        let ls = self
-            .styles
-            .get(style)
-            .and_then(|s| s.get("line_spacing"))
-            .and_then(Value::as_f64)
-            .unwrap_or(1.0);
-        (self.size_of(style, d) * 1.2 * ls * PT as f64).round() as Emu
-    }
-
-    /// About how many lines `text` takes in `style` at width `w`.
-    pub fn lines(&self, style: &str, d: f64, text: &str, w: Emu) -> usize {
-        let size = self.size_of(style, d);
-        let bold = self
-            .styles
-            .get(style)
-            .and_then(|s| s.get("bold"))
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let font = match self
+    /// The font family of `style` (theme `heading` / `body` resolved).
+    fn font_of(&self, style: &str) -> &str {
+        match self
             .styles
             .get(style)
             .and_then(|s| s.get("font"))
@@ -584,22 +598,123 @@ impl Look {
             Some("heading") => self.fonts[0].as_str(),
             Some("body") | None => self.fonts[1].as_str(),
             Some(f) => f,
+        }
+    }
+
+    fn flag(&self, style: &str, key: &str) -> bool {
+        self.styles
+            .get(style)
+            .and_then(|s| s.get(key))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    }
+
+    /// The height of one line of `style`: the font's own line height (its
+    /// ascent, descent and gap) times the size and the line spacing.
+    pub fn line_h(&self, style: &str, d: f64) -> Emu {
+        let ls = self
+            .styles
+            .get(style)
+            .and_then(|s| s.get("line_spacing"))
+            .and_then(Value::as_f64)
+            .unwrap_or(1.0);
+        let k = font_line_height(self.font_of(style));
+        (self.size_of(style, d) * k * ls * PT as f64).ceil() as Emu
+    }
+
+    /// About how many lines `text` takes in `style` at width `w`: words
+    /// wrapped one by one, each character's width guessed from its shape.
+    pub fn lines(&self, style: &str, d: f64, text: &str, w: Emu) -> usize {
+        let size = self.size_of(style, d);
+        let font = self.font_of(style);
+        let caps = self.flag(style, "caps");
+        let k = if font.contains("Instrument Serif") {
+            // Condensed display face: fits more on a line.
+            0.8
+        } else if self.flag(style, "bold") {
+            1.06
+        } else {
+            1.0
         };
-        // Condensed display faces fit more on a line.
-        let narrow = font.contains("Instrument Serif");
-        let per_char =
-            size * match (narrow, bold) {
-                (true, _) => 0.4,
-                (false, true) => 0.56,
-                (false, false) => 0.5,
-            } * PT as f64;
-        let per_line = (w.max(1) as f64 / per_char).floor().max(1.0);
+        let mono = font.contains("Mono");
+        let em = size * PT as f64;
+        let width = |s: &str| -> f64 {
+            s.chars()
+                .map(|c| {
+                    let c = if caps { c.to_ascii_uppercase() } else { c };
+                    if mono && (c as u32) < 0x2E80 {
+                        0.6
+                    } else {
+                        char_em(c) * k
+                    }
+                })
+                .sum::<f64>()
+                * em
+        };
+        // A little room for the guess being short.
+        let max = w.max(1) as f64 * 0.96;
+        let space = width(" ");
         text.split('\n')
             .map(|l| {
-                let n = l.chars().count() as f64;
-                ((n / per_line).ceil() as usize).max(1)
+                let mut n = 1;
+                let mut x = 0.0;
+                for word in l.split(' ').filter(|w| !w.is_empty()) {
+                    let ww = width(word);
+                    let need = if x > 0.0 { x + space + ww } else { ww };
+                    if need <= max {
+                        x = need;
+                    } else if x > 0.0 && ww <= max {
+                        n += 1;
+                        x = ww;
+                    } else {
+                        // A word longer than the line breaks inside it.
+                        let total = if x > 0.0 { x + space + ww } else { ww };
+                        n += (total / max).ceil() as usize - 1;
+                        x = total % max;
+                    }
+                }
+                n
             })
             .sum()
+    }
+}
+
+/// About how wide a character is, in ems of a proportional sans.
+fn char_em(c: char) -> f64 {
+    match c {
+        ' ' => 0.26,
+        'i' | 'l' | 'j' | 'I' | '!' | '|' | '.' | ',' | ':' | ';' | '\'' | '\u{2019}' => 0.28,
+        'f' | 't' | 'r' | '(' | ')' | '[' | ']' | '1' | '-' | '/' | '"' => 0.38,
+        'm' | 'w' | 'M' | 'W' | '@' | '%' | '\u{2014}' => 0.86,
+        'A'..='Z' | '&' | '\u{2212}' | '+' | '=' | '#' => 0.66,
+        c if (c as u32) >= 0x2E80 => 1.0,
+        _ => 0.56,
+    }
+}
+
+/// `c`, mixed towards `light` until it reads on `dark` (4.5:1).
+fn readable(c: Rgb, dark: Rgb, light: Rgb) -> Rgb {
+    let mut t = 0.0;
+    let mut out = c;
+    while contrast(out.0, dark.0) < 4.5 && t < 1.0 {
+        t += 0.05;
+        out = mix(c, light, t);
+    }
+    out
+}
+
+/// A font's single line height as a multiple of its size (hhea / typo
+/// ascent + descent + line gap, from the font files): text boxes made for
+/// one line are this tall, so `kantor slides check` measures them as
+/// fitting. Fixed numbers rather than the installed fonts so a deck builds
+/// the same everywhere; other fonts get 1.2.
+fn font_line_height(font: &str) -> f64 {
+    match font {
+        "Instrument Serif" => 1.30,
+        "JetBrains Mono" => 1.32,
+        "Inter" => 1.21,
+        "Calibri" | "Calibri Light" | "Carlito" => 1.22,
+        _ => 1.2,
     }
 }
 
@@ -1718,6 +1833,50 @@ mod tests {
         }
         assert!(preset("nope").is_err());
         let p = Presentation::new();
+        // Accent text reads on each preset's background and, on a dark
+        // section, every tone reads on the dark (WCAG 4.5:1).
+        for name in PRESETS {
+            let d = json!({"preset": name});
+            let l = Look::build(&p, d.as_object().unwrap(), &Ctx::default()).unwrap();
+            let bg = l.rgb("background").0;
+            for k in ["accent", "highlight", "muted"] {
+                assert!(contrast(l.rgb(k).0, bg) >= 4.5, "{name} {k}");
+            }
+            let dark = l.on_dark("dark");
+            for k in [
+                "accent",
+                "on_dark_accent",
+                "highlight",
+                "warning",
+                "good",
+                "bad",
+                "muted",
+                "ink",
+            ] {
+                assert!(
+                    contrast(dark.rgb(k).0, dark.rgb("background").0) >= 4.5,
+                    "{name} dark {k}"
+                );
+            }
+            assert!(
+                contrast(dark.rgb("on_accent").0, dark.rgb("accent").0) >= 4.5,
+                "{name}"
+            );
+        }
+        // One-line boxes follow the font's own line height.
+        let ed = Look::build(
+            &p,
+            json!({"preset": "editorial"}).as_object().unwrap(),
+            &Ctx::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            ed.line_h("number", 0.0),
+            (30.0 * 1.3 * PT as f64).ceil() as Emu
+        );
+        assert_eq!(ed.lines("body", 14.0, "Short", 3 * IN), 1);
+        let n = ed.lines("body", 14.0, "one two three four five six seven", IN);
+        assert!((3..=5).contains(&n), "{n}");
         let deck = json!({"preset": "swiss", "styles": {"eyebrow": {"size": 12}}, "palette": {"muted": "#123456"}});
         let look = Look::build(&p, deck.as_object().unwrap(), &Ctx::default()).unwrap();
         assert_eq!(look.size_of("eyebrow", 0.0), 12.0);
