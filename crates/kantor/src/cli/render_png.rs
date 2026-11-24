@@ -146,7 +146,9 @@ pub fn render(
                 .ok_or_else(|| anyhow!("can't draw slide {}", slides[page] + 1))?;
             let rgb = r
                 .rgba
-                .chunks_exact(4)
+                .as_chunks::<4>()
+                .0
+                .iter()
                 .flat_map(|p| [p[0], p[1], p[2]])
                 .collect();
             Ok(Image {

@@ -961,7 +961,9 @@ fn check_contrast(
         return;
     }
     // The worst run against the worst background.
-    let mut worst: Option<(f64, f64, [u8; 3], [u8; 3], f32)> = None;
+    // Ratio, ratio needed, text colour, background, size.
+    type Worst = (f64, f64, [u8; 3], [u8; 3], f32);
+    let mut worst: Option<Worst> = None;
     for p in &t.paras {
         for run in &p.runs {
             if p.text

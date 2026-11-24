@@ -228,7 +228,20 @@ fn pptx_to_pdf_one_page_per_slide() {
     let text = String::from_utf8_lossy(&pdf);
     assert!(text.contains("/MediaBox[0 0 960 540]"), "16:9 slide size");
     // Other pairs from a presentation are still refused.
-    let out = kantor(d, &["deck.pptx", "deck.png"]);
+    let out = kantor(d, &["deck.pptx", "deck.xlsx"]);
     assert_eq!(out.status.code(), Some(2));
-    assert!(stderr(&out).contains(".pptx to .png is not supported"));
+    assert!(stderr(&out).contains(".pptx to .xlsx is not supported"));
+    // Slides as pictures.
+    let out = kantor(
+        d,
+        &["-o", ".", "--to", "png", "--width", "320", "deck.pptx"],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    for n in 1..=3 {
+        let png = std::fs::read(d.join(format!("deck-0{n}.png"))).unwrap();
+        assert_eq!(&png[16..24], &[0, 0, 1, 64, 0, 0, 0, 180]);
+    }
+    let out = kantor(d, &["--contact-sheet", "deck.pptx", "sheet.png"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(d.join("sheet.png").is_file());
 }
