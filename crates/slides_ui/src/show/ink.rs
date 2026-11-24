@@ -239,7 +239,7 @@ pub struct Rect {
 
 impl Rect {
     /// A screen point as a slide point (`None` outside the slide).
-    pub fn to_slide(&self, x: f32, y: f32) -> Option<SlidePoint> {
+    pub fn to_slide(self, x: f32, y: f32) -> Option<SlidePoint> {
         if self.w <= 0.0 || self.h <= 0.0 {
             return None;
         }
@@ -249,7 +249,7 @@ impl Rect {
 
     /// A screen point as a slide point, held to the slide's edge (a stroke
     /// dragged past the edge stays on it).
-    pub fn to_slide_clamped(&self, x: f32, y: f32) -> SlidePoint {
+    pub fn to_slide_clamped(self, x: f32, y: f32) -> SlidePoint {
         if self.w <= 0.0 || self.h <= 0.0 {
             return (0.0, 0.0);
         }
@@ -259,7 +259,7 @@ impl Rect {
         )
     }
 
-    pub fn to_screen(&self, p: SlidePoint) -> (f32, f32) {
+    pub fn to_screen(self, p: SlidePoint) -> (f32, f32) {
         (self.x + p.0 * self.w, self.y + p.1 * self.h)
     }
 }
