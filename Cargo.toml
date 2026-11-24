@@ -46,6 +46,7 @@ chrono = { version = "0.4", default-features = false }
 # hands it Indonesian for the widgets' own text (kantor_ui::widget_strings).
 rust-i18n = "4.2"
 
+kantor_acp = { path = "crates/kantor_acp" }
 kantor_ai = { path = "crates/kantor_ai" }
 kantor_cloud = { path = "crates/kantor_cloud" }
 kantor_esign = { path = "crates/kantor_esign" }

@@ -1,0 +1,31 @@
+[package]
+name = "kantor_acp"
+description = "Kantor as an Agent Client Protocol client: run Claude Code, Codex, Gemini CLI or any ACP agent on the open documents (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+log.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# The event stream: a GPUI task awaits it (already in GPUI's tree).
+futures.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+# Signals the agent's process group on shutdown without `unsafe`
+# (already in the tree through GPUI).
+rustix = { version = "1", features = ["process", "std"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+# The fake ACP agent is this test binary started again with
+# KANTOR_ACP_FAKE_AGENT set, so it needs its own `main`.
+[[test]]
+name = "acp"
+harness = false
+
+[lints]
+workspace = true

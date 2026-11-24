@@ -4191,6 +4191,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "kantor_acp"
+version = "0.23.0"
+dependencies = [
+ "futures",
+ "log",
+ "rustix",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "kantor_ai"
 version = "0.23.0"
 dependencies = [
