@@ -865,8 +865,29 @@ mod tests {
         let bytes = p.to_bytes().unwrap();
         assert!(slides_engine::package_problems(&bytes).is_empty());
         let file = std::fs::read(root.join("tests/corpus/pptx/kantor_charts.pptx")).unwrap();
+        // The parts, not the zip bytes: deflate output may differ between
+        // platforms' compression back ends.
+        fn parts(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
+            use std::io::Read as _;
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut out = Vec::new();
+            for i in 0..z.len() {
+                let mut f = z.by_index(i).unwrap();
+                let name = f.name().to_owned();
+                let mut b = Vec::new();
+                f.read_to_end(&mut b).unwrap();
+                if name.ends_with(".xlsx") {
+                    for (n, x) in parts(&b) {
+                        out.push((format!("{name}/{n}"), x));
+                    }
+                } else {
+                    out.push((name, b));
+                }
+            }
+            out
+        }
         assert!(
-            bytes == file,
+            parts(&bytes) == parts(&file),
             "tests/corpus/pptx/kantor_charts.pptx is out of date: run `kantor slides build docs/examples/slides/charts.json -o tests/corpus/pptx/kantor_charts.pptx -f`"
         );
         // Every chart reads back with its type and series.
