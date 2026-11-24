@@ -2928,7 +2928,7 @@ impl Workspace {
                                     .child(
                                         div().text_size(FONT_CAPTION).text_color(t.fg_dim).child(
                                             match e.group {
-                                                Group::System => t("System"),
+                                                Group::System => i18n::t("System"),
                                                 g => g.label(),
                                             },
                                         ),
