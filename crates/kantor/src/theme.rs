@@ -134,7 +134,7 @@ pub fn restore(cx: &mut App) {
 
 /// Show a UI font without committing it.
 pub fn preview_font(font: Option<&str>, cx: &mut App) {
-    fonts::apply(font.as_deref(), cx);
+    fonts::apply(font, cx);
     cx.refresh_windows();
 }
 
