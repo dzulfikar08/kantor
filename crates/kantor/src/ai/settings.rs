@@ -628,7 +628,7 @@ impl SettingsPanel {
     }
 
     /// The model menu for Paparan AI.
-    fn paparan_model_menu(&self, view: WeakEntity<Self>, cx: &App) -> Button {
+    fn paparan_model_menu(&self, view: WeakEntity<Self>, cx: &App) -> impl IntoElement + use<> {
         let typed = self.model.read(cx).value().trim().to_owned();
         let current = if typed.is_empty() {
             paparan_api::DEFAULT_MODEL.to_owned()
