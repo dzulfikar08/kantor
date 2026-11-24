@@ -873,7 +873,7 @@ mod tests {
             let mut out = Vec::new();
             for i in 0..z.len() {
                 let mut f = z.by_index(i).unwrap();
-                let name = f.name().to_owned();
+                let name = f.name().unwrap().into_owned();
                 let mut b = Vec::new();
                 f.read_to_end(&mut b).unwrap();
                 if name.ends_with(".xlsx") {
