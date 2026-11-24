@@ -362,8 +362,6 @@ fn defs() -> Value {
         "line_element": closed("line", line_props(), &["x1", "y1", "x2", "y2"], "A straight line from (x1, y1) to (x2, y2), optionally with arrowheads."),
         "picture": closed("picture", picture_props(), &["path"], "A picture from a PNG or JPEG file, optionally cropped and cut to a shape."),
         "table": closed("table", table_props(), &["rows"], "A table."),
-        "chart": closed("chart", chart_props(), &["chart", "w", "h", "categories", "series"], "A real, editable chart (PowerPoint's Edit Data opens its data): column, bar, line, area, pie, doughnut, scatter or combo."),
-        "icon": super::slides_icons::schema(),
         "element": {
             "description": "Something on a slide, by `type`: an element, or a component that expands into several.",
             "oneOf": [r("shape"), r("text_box"), r("line_element"), r("picture"), r("table"), r("chart"), r("icon"),
@@ -388,6 +386,15 @@ fn defs() -> Value {
             },
         },
     });
+    // Outside the literal: one json! with every definition passes the macro
+    // recursion limit.
+    defs["icon"] = super::slides_icons::schema();
+    defs["chart"] = closed(
+        "chart",
+        chart_props(),
+        &["chart", "w", "h", "categories", "series"],
+        "A real, editable chart (PowerPoint's Edit Data opens its data): column, bar, line, area, pie, doughnut, scatter or combo.",
+    );
     for (k, v) in super::slides_components::schema_defs()
         .into_iter()
         .chain(super::slides_style::schema_defs())
