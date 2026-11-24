@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 use slides_engine::Emu;
 
 use super::slides_author::{Ctx, keys_with, length, object, opt_bool, opt_str};
-use super::slides_style::{Look, look_of};
+use super::slides_style::{CardStyle, Look, look_of};
 
 /// Component `type`s.
 pub const COMPONENTS: [&str; 8] = [
@@ -56,8 +56,20 @@ fn shape(
            "fill": fill, "line": line})
 }
 
-fn hairline() -> Value {
-    json!({"color": "divider", "width": "0.75pt"})
+/// A straight line.
+fn rule(name: &str, x1: Emu, y1: Emu, x2: Emu, y2: Emu, color: &str, width: &str) -> Value {
+    json!({"type": "line", "name": name, "x1": e(x1), "y1": e(y1), "x2": e(x2), "y2": e(y2),
+           "color": color, "width": width})
+}
+
+/// The rule on top of a card in the rule look: 1pt ink, 2.5pt accent when
+/// highlighted.
+fn top_rule(name: &str, x: Emu, y: Emu, w: Emu, hi: bool) -> Value {
+    if hi {
+        rule(name, x, y, x + w, y, "accent", "2.5pt")
+    } else {
+        rule(name, x, y, x + w, y, "ink", "1pt")
+    }
 }
 
 /// A paragraph in `style`, with more settings.
@@ -152,18 +164,20 @@ fn number(o: &Map<String, Value>, i: usize) -> Result<String> {
     })
 }
 
+/// Text colours on a filled card: heading and body.
+type OnFill = Option<(&'static str, &'static str)>;
+
 /// Paragraphs for an item's `title`, `text` and `bullets`.
 fn body(
     io: &Map<String, Value>,
     title_style: &str,
     text_style: &str,
-    on_dark: bool,
+    on: OnFill,
 ) -> Result<Vec<Value>> {
     let mut paras = Vec::new();
-    let (tc, bc) = if on_dark {
-        (json!({"color": "white"}), json!({"color": "on_dark_muted"}))
-    } else {
-        (json!({}), json!({}))
+    let (tc, bc) = match on {
+        Some((t, b)) => (json!({"color": t}), json!({"color": b})),
+        None => (json!({}), json!({})),
     };
     if let Some(t) = text_of(io, "title")? {
         paras.push(para(&t, title_style, tc.clone()));
@@ -196,9 +210,9 @@ fn body(
     Ok(paras)
 }
 
-/// A round badge with a number or an icon.
+/// A square badge with a number or an icon (the fill look's marker).
 #[allow(clippy::too_many_arguments)]
-fn marker(
+fn square(
     out: &mut Vec<Value>,
     name: &str,
     x: Emu,
@@ -206,14 +220,14 @@ fn marker(
     d: Emu,
     label: Option<&str>,
     icon: Option<&str>,
-    filled: bool,
+    on: bool,
 ) {
-    let (fill, fg) = if filled {
-        ("primary", "white")
+    let (fill, fg) = if on {
+        ("accent", "on_accent")
     } else {
-        ("tint", "primary")
+        ("panel", "ink")
     };
-    let mut b = shape(name, "ellipse", x, y, d, d, json!(fill), json!("none"));
+    let mut b = shape(name, "rect", x, y, d, d, json!(fill), json!("none"));
     if icon.is_none()
         && let Some(l) = label
     {
@@ -227,6 +241,41 @@ fn marker(
         let s = (d as f64 * 0.54).round() as Emu;
         out.push(json!({"type": "icon", "name": format!("{name} icon"), "icon": i, "x": e(x + (d - s) / 2), "y": e(y + (d - s) / 2), "size": e(s), "color": fg}));
     }
+}
+
+/// A number in `style` (or an icon) with no box (the rule look's marker);
+/// returns its height.
+#[allow(clippy::too_many_arguments)]
+fn numeral(
+    out: &mut Vec<Value>,
+    look: &Look,
+    name: &str,
+    x: Emu,
+    y: Emu,
+    w: Emu,
+    label: Option<&str>,
+    icon: Option<&str>,
+    style: &str,
+    color: &str,
+) -> Emu {
+    if let Some(i) = icon {
+        let s = inch(0.4);
+        out.push(json!({"type": "icon", "name": format!("{name} icon"), "icon": i, "x": e(x), "y": e(y + inch(0.04)), "size": e(s), "color": color}));
+        return s + inch(0.08);
+    }
+    let Some(l) = label else { return 0 };
+    let h = look.line_h(style, 30.0);
+    let mut t = text(
+        name,
+        x,
+        y,
+        w,
+        h,
+        json!([para(l, style, json!({"color": color}))]),
+    );
+    t["wrap"] = json!(false);
+    out.push(t);
+    h
 }
 
 const ITEM_KEYS: &[&str] = &["title", "text", "bullets", "icon"];
@@ -273,10 +322,13 @@ fn stat_cards(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
     let n = list.len() as Emu;
     let gap = gap(o, cx, look)?;
     let cw = (w - gap * (n - 1)) / n;
-    let pad = if cw > inch(2.4) {
-        inch(0.35)
+    let ruled = look.card_style == CardStyle::Rule;
+    let pad = if ruled {
+        0
+    } else if cw > inch(2.4) {
+        inch(0.32)
     } else {
-        inch(0.25)
+        inch(0.22)
     };
     let mut out = Vec::new();
     for (i, it) in list.iter().enumerate() {
@@ -287,36 +339,31 @@ fn stat_cards(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
         )?;
         let hi = opt_bool(io, "highlight")?.unwrap_or(false);
         let x0 = x + i as Emu * (cw + gap);
-        let mut card = shape(
-            &format!("{name} {}", i + 1),
-            "roundRect",
-            x0,
-            y,
-            cw,
-            h,
-            json!(if hi { "primary" } else { "paper" }),
-            if hi { json!("none") } else { hairline() },
-        );
-        card["radius"] = e(inch(0.08));
-        out.push(card);
-        let mut ty = y + pad;
-        out.push(shape(
-            &format!("{name} {} rule", i + 1),
-            "rect",
-            x0 + pad,
-            ty,
-            inch(0.5),
-            inch(0.06),
-            json!(if hi { "highlight" } else { "primary" }),
-            json!("none"),
-        ));
-        ty += inch(0.06) + inch(0.22);
+        let on = (hi && !ruled).then_some(("on_accent", "accent_soft"));
+        let mut ty = if ruled {
+            out.push(top_rule(&format!("{name} {} rule", i + 1), x0, y, cw, hi));
+            y + inch(0.12)
+        } else {
+            out.push(shape(
+                &format!("{name} {}", i + 1),
+                "rect",
+                x0,
+                y,
+                cw,
+                h,
+                json!(if hi { "accent" } else { "panel" }),
+                json!("none"),
+            ));
+            y + pad * 3 / 4
+        };
         let tw = cw - 2 * pad;
         let value = text_of(io, "value")?.context("a stat card needs `value`")?;
         let vh = look.line_h("stat", 40.0) * look.lines("stat", 40.0, &value, tw).min(3) as Emu;
         let mut vp = para(&value, "stat", json!({}));
-        if hi {
-            vp["color"] = json!("white");
+        if let Some((c, _)) = on {
+            vp["color"] = json!(c);
+        } else if hi {
+            vp["color"] = json!("accent");
         }
         out.push(text(
             &format!("{name} {} value", i + 1),
@@ -326,7 +373,7 @@ fn stat_cards(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
             vh,
             json!([vp]),
         ));
-        ty += vh + inch(0.12);
+        ty += vh + inch(0.1);
         let mut sub = Map::new();
         if let Some(l) = text_of(io, "label")? {
             sub.insert("title".into(), json!(l));
@@ -335,7 +382,12 @@ fn stat_cards(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
             sub.insert("text".into(), json!(d));
         }
         if !sub.is_empty() {
-            let paras = body(&sub, "card_title", "small", hi)?;
+            let mut paras = body(&sub, "card_title", "small", on)?;
+            if let Some(Value::Object(f)) = paras.first_mut()
+                && sub.contains_key("title")
+            {
+                f.insert("size".into(), json!(look.size_of("card_title", 16.0) - 2.0));
+            }
             out.push(text(
                 &format!("{name} {} label", i + 1),
                 x0 + pad,
@@ -384,16 +436,26 @@ fn cards(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
     let cw = (w - gap * (cols as Emu - 1)) / cols as Emu;
     let full = (h - gap * (rows as Emu - 1)) / rows as Emu;
     let numbered = opt_bool(o, "numbered")?.unwrap_or(true);
-    let pad = inch(0.3);
+    let ruled = look.card_style == CardStyle::Rule;
+    let pad = if ruled { 0 } else { inch(0.3) };
+    let marker_h = |io: &Map<String, Value>| -> Emu {
+        if io.get("icon").is_some_and(|i| !i.is_null()) {
+            inch(0.48)
+        } else if numbered {
+            look.line_h("number", 24.0) + inch(0.1)
+        } else {
+            0
+        }
+    };
     let mut ch = full;
     if !given[3] {
-        // As tall as the fullest card needs, at least 2.4in, at most the box.
+        // As tall as the fullest card needs, at least 2in, at most the box.
         let tw = cw - 2 * pad;
         let mut need = 0;
         for it in list {
             let mut owned = Map::new();
             let io = item(it, "a card", ITEM_KEYS, &mut owned)?;
-            let mut hgt = 2 * pad + inch(0.72);
+            let mut hgt = 2 * pad.max(inch(0.15)) + marker_h(io) + inch(0.2);
             if let Some(t) = text_of(io, "title")? {
                 hgt +=
                     look.line_h("card_title", 16.0) * look.lines("card_title", 16.0, &t, tw) as Emu;
@@ -412,9 +474,9 @@ fn cards(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
             }
             need = need.max(hgt);
         }
-        ch = need.max(inch(2.4)).min(full);
+        ch = need.max(inch(2.0)).min(full);
     }
-    let fill = o.get("fill").cloned().unwrap_or(json!("white"));
+    let fill = o.get("fill").cloned().unwrap_or(json!("panel"));
     let hi_at = o
         .get("highlight")
         .and_then(Value::as_u64)
@@ -428,66 +490,74 @@ fn cards(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
         let x0 = x + c as Emu * (cw + gap);
         let y0 = y + r as Emu * (ch + gap);
         let hi = hi_at == Some(i + 1);
-        let mut card = shape(
-            &format!("{name} {}", i + 1),
-            "roundRect",
-            x0,
-            y0,
-            cw,
-            ch,
-            if hi { json!("primary") } else { fill.clone() },
-            if hi { json!("none") } else { hairline() },
-        );
-        card["radius"] = e(inch(0.08));
-        out.push(card);
+        let on = (hi && !ruled).then_some(("on_accent", "accent_soft"));
+        if ruled {
+            out.push(top_rule(&format!("{name} {} rule", i + 1), x0, y0, cw, hi));
+        } else {
+            out.push(shape(
+                &format!("{name} {}", i + 1),
+                "rect",
+                x0,
+                y0,
+                cw,
+                ch,
+                if hi { json!("accent") } else { fill.clone() },
+                json!("none"),
+            ));
+        }
         let icon = opt_str(io, "icon")?;
         let label = numbered.then(|| number(o, i)).transpose()?;
-        let has_marker = icon.is_some() || label.is_some();
-        let d = if vertical { inch(0.52) } else { inch(0.46) };
-        let paras = body(io, "card_title", "small", hi)?;
+        let mark_color = if on.is_some() { "on_accent" } else { "accent" };
+        let paras = body(io, "card_title", "small", on)?;
+        let top = if ruled { inch(0.14) } else { pad };
         if vertical {
-            let mut ty = y0 + pad;
-            if has_marker {
-                marker(
-                    &mut out,
-                    &format!("{name} {} badge", i + 1),
-                    x0 + pad,
-                    ty,
-                    d,
-                    label.as_deref(),
-                    icon,
-                    false,
-                );
-                ty += d + inch(0.2);
+            let mut ty = y0 + top;
+            let mh = numeral(
+                &mut out,
+                look,
+                &format!("{name} {} number", i + 1),
+                x0 + pad,
+                ty,
+                inch(1.2),
+                label.as_deref(),
+                icon,
+                "number",
+                mark_color,
+            );
+            if mh > 0 {
+                ty += mh + inch(0.1);
             }
             out.push(text(
                 &format!("{name} {} text", i + 1),
                 x0 + pad,
                 ty,
                 cw - 2 * pad,
-                y0 + ch - pad / 2 - ty,
+                (y0 + ch - pad / 2 - ty).max(inch(0.3)),
                 json!(paras),
             ));
         } else {
             let mut tx = x0 + pad;
-            if has_marker {
-                marker(
+            if icon.is_some() || label.is_some() {
+                let mh = look.line_h("number", 24.0).max(inch(0.48));
+                numeral(
                     &mut out,
-                    &format!("{name} {} badge", i + 1),
+                    look,
+                    &format!("{name} {} number", i + 1),
                     tx,
-                    y0 + (ch - d) / 2,
-                    d,
+                    y0 + (ch - mh) / 2 + if ruled { inch(0.06) } else { 0 },
+                    inch(0.8),
                     label.as_deref(),
                     icon,
-                    false,
+                    "number",
+                    mark_color,
                 );
-                tx += d + inch(0.22);
+                tx += inch(0.75);
             }
             let mut t = text(
                 &format!("{name} {} text", i + 1),
                 tx,
-                y0,
-                x0 + cw - pad / 2 - tx,
+                y0 + if ruled { inch(0.06) } else { 0 },
+                (x0 + cw - pad / 2 - tx).max(inch(0.5)),
                 ch,
                 json!(paras),
             );
@@ -513,36 +583,61 @@ fn steps(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
         pitch = pitch.min(inch(1.0));
     }
     let current = o.get("current").and_then(Value::as_u64).unwrap_or(1) as usize;
-    let d = inch(0.5);
+    let ruled = look.card_style == CardStyle::Rule;
+    let d = inch(0.46);
+    let tx = x + inch(0.75);
     let mut out = Vec::new();
     for (i, it) in list.iter().enumerate() {
         let mut owned = Map::new();
         let io = item(it, "a step", ITEM_KEYS, &mut owned)?;
         let by = y + i as Emu * pitch;
-        let label = number(o, i)?;
-        marker(
-            &mut out,
-            &format!("{name} {} badge", i + 1),
-            x,
-            by,
-            d,
-            Some(label.as_str()),
-            opt_str(io, "icon")?,
-            i < current,
-        );
-        if (i as Emu) < n - 1 {
-            out.push(json!({"type": "line", "name": format!("{name} {} link", i + 1),
-                "x1": e(x + d / 2), "y1": e(by + d + inch(0.05)), "x2": e(x + d / 2), "y2": e(by + pitch - inch(0.05)),
-                "color": "divider", "width": "1.5pt"}));
+        let on = i + 1 == current;
+        let icon = opt_str(io, "icon")?;
+        if ruled {
+            let label = number(o, i)?.trim_start_matches('0').to_owned();
+            numeral(
+                &mut out,
+                look,
+                &format!("{name} {} number", i + 1),
+                x,
+                by - inch(0.08),
+                inch(0.65),
+                Some(label.as_str()),
+                icon,
+                "numeral",
+                if on { "accent" } else { "muted" },
+            );
+            if (i as Emu) < n - 1 {
+                out.push(rule(
+                    &format!("{name} {} rule", i + 1),
+                    tx,
+                    by + pitch - inch(0.1),
+                    x + w,
+                    by + pitch - inch(0.1),
+                    "line",
+                    "0.75pt",
+                ));
+            }
+        } else {
+            let label = number(o, i)?;
+            square(
+                &mut out,
+                &format!("{name} {} badge", i + 1),
+                x,
+                by,
+                d,
+                Some(label.as_str()),
+                icon,
+                on,
+            );
         }
-        let tx = x + d + inch(0.25);
-        let paras = body(io, "card_title", "small", false)?;
+        let paras = body(io, "card_title", "small", None)?;
         out.push(text(
             &format!("{name} {} text", i + 1),
             tx,
             by + inch(0.02),
             (x + w - tx).max(inch(1.0)),
-            pitch - inch(0.08),
+            pitch - inch(0.16),
             json!(paras),
         ));
     }
@@ -560,87 +655,77 @@ fn timeline(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
     let name = prefix(o, "Phase")?;
     let n = list.len() as Emu;
     let current = o.get("current").and_then(Value::as_u64).unwrap_or(1) as usize;
-    let keys = &["label", "title", "text", "bullets", "badge"];
+    let keys = &["label", "title", "text", "bullets"];
     let mut out = Vec::new();
-    match opt_str(o, "style")?.unwrap_or("dots") {
-        "dots" => {
+    match opt_str(o, "style")?.unwrap_or("track") {
+        "track" | "dots" => {
             let pitch = w / n;
-            let d = inch(0.6);
+            let d = inch(0.3);
             let ly = y + d / 2;
-            let start = x + inch(0.1) + d / 2;
-            let end = x + w - inch(0.2);
-            out.push(shape(
+            out.push(rule(
                 &format!("{name} track"),
-                "rect",
-                start,
-                ly - inch(0.03),
-                end - start,
-                inch(0.06),
-                json!("divider"),
-                json!("none"),
+                x,
+                ly,
+                x + w,
+                ly,
+                "line",
+                "2pt",
             ));
-            if current >= 1 {
-                let to =
-                    (x + (current as Emu - 1) * pitch + inch(0.1) + d / 2 + pitch / 2).min(end);
-                out.push(shape(
+            if current > 1 {
+                let to = (x + (current as Emu - 1) * pitch).min(x + w);
+                out.push(rule(
                     &format!("{name} progress"),
-                    "rect",
-                    start,
-                    ly - inch(0.03),
-                    to - start,
-                    inch(0.06),
-                    json!("primary"),
-                    json!("none"),
+                    x,
+                    ly,
+                    to,
+                    ly,
+                    "accent",
+                    "2pt",
                 ));
             }
             for (i, it) in list.iter().enumerate() {
                 let mut owned = Map::new();
                 let io = item(it, "a timeline item", keys, &mut owned)?;
-                let cx0 = x + i as Emu * pitch + inch(0.1);
-                let done = i < current;
-                let label = match text_of(io, "badge")? {
-                    Some(b) => b,
-                    None => number(o, i)?.trim_start_matches('0').to_owned(),
+                let x0 = x + i as Emu * pitch;
+                let (fill, line) = if i + 1 == current {
+                    (json!("accent"), json!("none"))
+                } else if i + 1 < current {
+                    (json!("ink"), json!("none"))
+                } else {
+                    (
+                        json!("background"),
+                        json!({"color": "ink", "width": "1.25pt"}),
+                    )
                 };
-                let mut c = shape(
-                    &format!("{name} {} dot", i + 1),
-                    "ellipse",
-                    cx0,
-                    ly - d / 2,
+                out.push(shape(
+                    &format!("{name} {} marker", i + 1),
+                    "rect",
+                    x0,
+                    y,
                     d,
                     d,
-                    json!(if done { "primary" } else { "white" }),
-                    if done {
-                        json!("none")
-                    } else {
-                        json!({"color": "primary", "width": "1.5pt"})
-                    },
-                );
-                c["text"] = json!(label);
-                c["style"] = json!("badge");
-                c["size"] = json!(15);
-                c["color"] = json!(if done { "white" } else { "primary" });
-                c["insets"] = json!(0);
-                out.push(c);
+                    fill,
+                    line,
+                ));
                 let mut paras = Vec::new();
                 if let Some(l) = text_of(io, "label")? {
-                    let mut more = json!({});
-                    if i + 1 == current {
-                        more["color"] = json!("highlight");
-                    }
-                    paras.push(para(&l, "label", more));
+                    let color = if i + 1 == current { "accent" } else { "muted" };
+                    paras.push(para(&l, "label", json!({"color": color})));
                 }
-                let mut rest = body(io, "card_title", "small", false)?;
-                if !paras.is_empty()
-                    && let Some(Value::Object(f)) = rest.first_mut()
-                {
-                    f.insert("space_before".into(), json!(4));
+                let mut rest = body(io, "card_title", "small", None)?;
+                if let Some(Value::Object(f)) = rest.first_mut() {
+                    if io.contains_key("title") {
+                        f.insert("size".into(), json!(look.size_of("card_title", 16.0) + 1.0));
+                    }
+                    if !paras.is_empty() {
+                        f.insert("space_before".into(), json!(5));
+                    }
                 }
                 paras.extend(rest);
-                let ty = y + d + inch(0.3);
+                let ty = y + d + inch(0.25);
                 out.push(text(
                     &format!("{name} {} text", i + 1),
-                    cx0,
+                    x0,
                     ty,
                     pitch - inch(0.3),
                     (y + h - ty).max(inch(0.6)),
@@ -657,11 +742,11 @@ fn timeline(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
                 let io = item(it, "a timeline item", keys, &mut owned)?;
                 let x0 = x + i as Emu * step;
                 let (fill, fg) = if i + 1 < current {
-                    ("primary", "white")
+                    ("ink", "on_accent")
                 } else if i + 1 == current {
-                    ("dark", "white")
+                    ("accent", "on_accent")
                 } else {
-                    ("tint", "primary")
+                    ("panel", "ink")
                 };
                 let mut c = shape(
                     &format!("{name} {}", i + 1),
@@ -682,11 +767,12 @@ fn timeline(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
                 out.push(c);
                 let mut paras = Vec::new();
                 if let Some(l) = text_of(io, "label")? {
-                    paras.push(para(&l, "label", json!({})));
+                    let color = if i + 1 == current { "accent" } else { "muted" };
+                    paras.push(para(&l, "label", json!({"color": color})));
                 }
                 let mut sub = io.clone();
                 sub.remove("title");
-                let rest = body(&sub, "card_title", "small", false)?;
+                let rest = body(&sub, "card_title", "small", None)?;
                 let only_blank = rest.len() == 1 && rest[0] == json!("");
                 if !only_blank {
                     let mut rest = rest;
@@ -710,18 +796,18 @@ fn timeline(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
                 }
             }
         }
-        other => bail!("timeline `style` must be dots or chevrons, not \"{other}\""),
+        other => bail!("timeline `style` must be track or chevrons, not \"{other}\""),
     }
     Ok(out)
 }
 
-/// The base colour of a callout tone.
+/// The palette colour of a callout tone.
 fn tone(t: &str) -> Result<&'static str> {
     Ok(match t {
-        "info" => "info",
+        "info" => "accent",
         "warning" => "warning",
-        "success" => "success",
-        "danger" => "danger",
+        "success" => "good",
+        "danger" => "bad",
         "note" => "muted",
         other => {
             bail!("callout `tone` must be info, warning, success, danger or note, not \"{other}\"")
@@ -740,6 +826,7 @@ fn callout(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
     let title = text_of(o, "title")?;
     let body_t = text_of(o, "text")?.unwrap_or_default();
     let icon = opt_str(o, "icon")?;
+    let ruled = look.card_style == CardStyle::Rule;
     let x = match o.get("x").filter(|v| !v.is_null()) {
         Some(v) => length(v, cx, "x")?,
         None => content[0],
@@ -749,52 +836,66 @@ fn callout(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
         None => content[0] + content[2] - x,
     };
     let icon_w = if icon.is_some() {
-        inch(0.32) + inch(0.18)
+        inch(0.34) + inch(0.18)
     } else {
         0
     };
-    let left = inch(0.28) + icon_w;
+    let left = inch(0.3) + icon_w;
     let all = format!("{} {body_t}", title.as_deref().unwrap_or(""));
     let lines = look
-        .lines("callout", 13.0, all.trim(), w - left - inch(0.28))
+        .lines("callout", 14.0, all.trim(), w - left - inch(0.3))
         .min(6);
-    let auto_h = look.line_h("callout", 13.0) * lines as Emu + inch(0.3);
+    let auto_h =
+        look.line_h("callout", 14.0) * lines as Emu + inch(if ruled { 0.16 } else { 0.32 });
     let h = match o.get("h").filter(|v| !v.is_null()) {
         Some(v) => length(v, cx, "h")?,
-        None => auto_h.max(inch(0.55)),
+        None => auto_h.max(inch(if ruled { 0.45 } else { 0.6 })),
     };
     let y = match o.get("y").filter(|v| !v.is_null()) {
         Some(v) => length(v, cx, "y")?,
         None => content[1] + content[3] - h,
     };
     let name = prefix(o, "Callout")?;
-    let ink = look.mixed(base, "black", 0.45);
+    // The rule look: a pull quote beside a rule in the tone's colour. The
+    // fill look: a bar in the tone's colour (a panel for notes).
+    let (lead, fg, fill) = if ruled {
+        (base, "ink", None)
+    } else if base == "muted" {
+        ("ink", "ink", Some("panel"))
+    } else {
+        ("on_accent", "on_accent", Some(base))
+    };
     let mut runs = Vec::new();
     if let Some(t) = &title {
-        runs.push(json!({"text": format!("{t} "), "bold": true, "color": ink}));
+        runs.push(json!({"text": format!("{t} "), "bold": !ruled, "color": lead}));
     }
     if !body_t.is_empty() {
-        runs.push(json!({"text": body_t}));
+        runs.push(json!({"text": body_t, "color": fg}));
     }
-    let mut s = shape(
-        &name,
-        "roundRect",
-        x,
-        y,
-        w,
-        h,
-        look.mixed(base, "white", 0.86),
-        json!("none"),
-    );
-    s["radius"] = e(inch(0.12).min(h / 2));
+    let mut out = Vec::new();
+    let mut s = match fill {
+        Some(f) => shape(&name, "rect", x, y, w, h, json!(f), json!("none")),
+        None => {
+            out.push(rule(
+                &format!("{name} rule"),
+                x,
+                y,
+                x,
+                y + h,
+                if base == "muted" { "line" } else { base },
+                "2.5pt",
+            ));
+            text(&name, x, y, w, h, json!(""))
+        }
+    };
     s["anchor"] = json!("middle");
     s["align"] = json!("left");
-    s["insets"] = json!([e(left), e(inch(0.06)), e(inch(0.28)), e(inch(0.06))]);
+    s["insets"] = json!([e(left), e(inch(0.06)), e(inch(0.3)), e(inch(0.06))]);
     s["text"] = json!([{"runs": runs, "style": "callout"}]);
-    let mut out = vec![s];
+    out.push(s);
     if let Some(i) = icon {
-        let sz = inch(0.32);
-        out.push(json!({"type": "icon", "name": format!("{name} icon"), "icon": i, "x": e(x + inch(0.24)), "y": e(y + (h - sz) / 2), "size": e(sz), "color": look.color(base).unwrap_or(json!("accent1"))}));
+        let sz = inch(0.34);
+        out.push(json!({"type": "icon", "name": format!("{name} icon"), "icon": i, "x": e(x + inch(0.28)), "y": e(y + (h - sz) / 2), "size": e(sz), "color": lead}));
     }
     Ok(out)
 }
@@ -828,6 +929,7 @@ fn numbered_list(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
         "number" => true,
         other => bail!("`marker` must be badge or number, not \"{other}\""),
     };
+    let ruled = look.card_style == CardStyle::Rule;
     let mut out = Vec::new();
     for (i, it) in list.iter().enumerate() {
         let mut owned = Map::new();
@@ -835,52 +937,69 @@ fn numbered_list(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
         let (r, c) = (i / cols, i % cols);
         let x0 = x + c as Emu * (cw + col_gap);
         let y0 = y + r as Emu * (rh + row_gap);
-        let pad = if boxed { inch(0.3) } else { 0 };
+        let pad = if boxed && !ruled { inch(0.3) } else { 0 };
         if boxed {
-            let mut b = shape(
-                &format!("{name} {}", i + 1),
-                "roundRect",
-                x0,
-                y0,
-                cw,
-                rh,
-                json!("paper"),
-                json!("none"),
-            );
-            b["radius"] = e(inch(0.1).min(rh / 2));
-            out.push(b);
+            if ruled {
+                out.push(rule(
+                    &format!("{name} {} rule", i + 1),
+                    x0,
+                    y0,
+                    x0 + cw,
+                    y0,
+                    "line",
+                    "0.75pt",
+                ));
+            } else {
+                out.push(shape(
+                    &format!("{name} {}", i + 1),
+                    "rect",
+                    x0,
+                    y0,
+                    cw,
+                    rh,
+                    json!("panel"),
+                    json!("none"),
+                ));
+            }
         }
-        let label = number(o, i)?;
+        let icon = opt_str(io, "icon")?;
         let mut tx = x0 + pad;
-        if big {
-            let nw = inch(0.85);
-            let mut t = text(
+        if big || ruled {
+            let mut label = number(o, i)?;
+            if !big {
+                label = label.trim_start_matches('0').to_owned();
+            }
+            let nw = if big { inch(0.95) } else { inch(0.7) };
+            let mh = look.line_h("numeral", 30.0);
+            numeral(
+                &mut out,
+                look,
                 &format!("{name} {} number", i + 1),
                 tx,
-                y0,
+                y0 + (rh - mh) / 2,
                 nw,
-                rh,
-                json!([para(&label, "number", json!({}))]),
+                Some(label.as_str()),
+                icon,
+                "numeral",
+                "accent",
             );
-            t["anchor"] = json!("middle");
-            out.push(t);
             tx += nw;
         } else {
-            let d = inch(0.5).min(rh - inch(0.1)).max(inch(0.3));
-            let label = label.trim_start_matches('0').to_owned();
-            marker(
+            let d = inch(0.46).min(rh - inch(0.1)).max(inch(0.3));
+            let label = number(o, i)?;
+            square(
                 &mut out,
                 &format!("{name} {} badge", i + 1),
                 tx,
                 y0 + (rh - d) / 2,
                 d,
                 Some(label.as_str()),
-                opt_str(io, "icon")?,
+                icon,
                 true,
             );
             tx += d + inch(0.25);
         }
-        let paras = body(io, "card_title", "small", false)?;
+        let paras = body(io, "card_title", "small", None)?;
         let mut t = text(
             &format!("{name} {} text", i + 1),
             tx,
@@ -903,7 +1022,8 @@ fn comparison(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
     let n = list.len() as Emu;
     let gap = gap(o, cx, look)?;
     let cw = (w - gap * (n - 1)) / n;
-    let pad = inch(0.3);
+    let ruled = look.card_style == CardStyle::Rule;
+    let pad = if ruled { 0 } else { inch(0.3) };
     let mut out = Vec::new();
     for (i, it) in list.iter().enumerate() {
         let io = object(
@@ -913,49 +1033,59 @@ fn comparison(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
         )?;
         let hi = opt_bool(io, "highlight")?.unwrap_or(false);
         let x0 = x + i as Emu * (cw + gap);
-        out.push(shape(
-            &format!("{name} {}", i + 1),
-            "rect",
-            x0,
-            y,
-            cw,
-            h,
-            json!(if hi { "tint" } else { "paper" }),
-            json!("none"),
-        ));
-        out.push(shape(
-            &format!("{name} {} bar", i + 1),
-            "rect",
-            x0,
-            y,
-            cw,
-            inch(0.06),
-            json!(if hi { "primary" } else { "muted" }),
-            json!("none"),
-        ));
-        let mut ty = y + inch(0.06) + pad * 3 / 4;
+        let on = hi && !ruled;
+        if ruled {
+            out.push(top_rule(&format!("{name} {} rule", i + 1), x0, y, cw, hi));
+        } else {
+            out.push(shape(
+                &format!("{name} {}", i + 1),
+                "rect",
+                x0,
+                y,
+                cw,
+                h,
+                json!(if hi { "accent" } else { "panel" }),
+                json!("none"),
+            ));
+        }
+        let (tag_c, title_c, text_c, item_c) = if on {
+            ("accent_soft", "on_accent", "accent_soft", "on_accent")
+        } else if hi {
+            ("accent", "ink", "muted", "ink")
+        } else {
+            ("muted", "ink", "muted", "ink")
+        };
+        let mut ty = y + if ruled { inch(0.18) } else { pad };
         if let Some(icon) = opt_str(io, "icon")? {
             let s = inch(0.36);
-            out.push(json!({"type": "icon", "name": format!("{name} {} icon", i + 1), "icon": icon, "x": e(x0 + pad), "y": e(ty), "size": e(s), "color": if hi { "primary" } else { "muted" }}));
+            let c = if on {
+                "on_accent"
+            } else if hi {
+                "accent"
+            } else {
+                "muted"
+            };
+            out.push(json!({"type": "icon", "name": format!("{name} {} icon", i + 1), "icon": icon, "x": e(x0 + pad), "y": e(ty), "size": e(s), "color": c}));
             ty += s + inch(0.15);
         }
         let mut paras = Vec::new();
         if let Some(t) = text_of(io, "tag")? {
-            paras.push(para(
-                &t,
-                "label",
-                json!({"color": if hi { "primary" } else { "muted" }}),
-            ));
+            paras.push(para(&t, "label", json!({"color": tag_c})));
         }
         if let Some(t) = text_of(io, "title")? {
-            let mut more = json!({"size": look.size_of("card_title", 16.0) + 2.0});
+            let mut more =
+                json!({"size": look.size_of("card_title", 16.0) + 2.0, "color": title_c});
             if !paras.is_empty() {
-                more["space_before"] = json!(2);
+                more["space_before"] = json!(4);
             }
             paras.push(para(&t, "card_title", more));
         }
         if let Some(t) = text_of(io, "text")? {
-            paras.push(para(&t, "small", json!({"space_before": 6})));
+            paras.push(para(
+                &t,
+                "small",
+                json!({"space_before": 6, "color": text_c}),
+            ));
         }
         if let Some(list) = io.get("items").filter(|v| !v.is_null()) {
             let list = list
@@ -965,7 +1095,7 @@ fn comparison(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
                 let t = b
                     .as_str()
                     .context("comparison `items` must be an array of strings")?;
-                paras.push(para(t, "small", json!({"bullet": true, "color": "ink", "space_before": if k == 0 { 10 } else { 6 }})));
+                paras.push(para(t, "small", json!({"bullet": true, "color": item_c, "space_before": if k == 0 { 10 } else { 6 }})));
             }
         }
         if paras.is_empty() {
@@ -988,12 +1118,12 @@ fn badge(v: &Value, cx: &Ctx) -> Result<Vec<Value>> {
         v,
         "a badge",
         &[
-            "type", "name", "x", "y", "size", "text", "icon", "fill", "color",
+            "type", "name", "x", "y", "size", "text", "icon", "fill", "color", "geometry",
         ],
     )?;
     let d = match o.get("size").filter(|v| !v.is_null()) {
         Some(s) => length(s, cx, "size")?,
-        None => inch(0.5),
+        None => inch(0.46),
     };
     let x = o
         .get("x")
@@ -1008,9 +1138,10 @@ fn badge(v: &Value, cx: &Ctx) -> Result<Vec<Value>> {
         .transpose()?
         .unwrap_or(0);
     let name = prefix(o, "Badge")?;
-    let fill = o.get("fill").cloned().unwrap_or(json!("primary"));
-    let fg = o.get("color").cloned().unwrap_or(json!("white"));
-    let mut b = shape(&name, "ellipse", x, y, d, d, fill, json!("none"));
+    let fill = o.get("fill").cloned().unwrap_or(json!("accent"));
+    let fg = o.get("color").cloned().unwrap_or(json!("on_accent"));
+    let geometry = opt_str(o, "geometry")?.unwrap_or("rect");
+    let mut b = shape(&name, geometry, x, y, d, d, fill, json!("none"));
     let mut out = Vec::new();
     match (text_of(o, "text")?, opt_str(o, "icon")?) {
         (_, Some(i)) => {
@@ -1029,8 +1160,10 @@ fn badge(v: &Value, cx: &Ctx) -> Result<Vec<Value>> {
     Ok(out)
 }
 
-/// `{"type": "table", "preset": "clean"}`: a rounded header bar behind a
-/// borderless header row, soft banded rows, no grid lines.
+/// `{"type": "table", "preset": "clean"}`, drawn by the deck's card style.
+/// Rule: no fills, an ink rule above and below, a thinner one under the
+/// header and hairlines between rows. Fill: an ink header row and banded
+/// rows. No grid lines either way.
 fn clean_table(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
     let mut t = v.as_object().cloned().unwrap_or_default();
     let preset = t.remove("preset");
@@ -1042,6 +1175,7 @@ fn clean_table(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
         Some(Value::Bool(b)) => b,
         Some(_) => bail!("`first_bold` must be true or false"),
     };
+    let ruled = look.card_style == CardStyle::Rule;
     let content = cx.area.unwrap_or(look.content);
     let x = match t.get("x").filter(|v| !v.is_null()) {
         Some(v) => length(v, cx, "x")?,
@@ -1063,30 +1197,41 @@ fn clean_table(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
     if n_rows == 0 {
         bail!("a table needs `rows`");
     }
-    let header_h = inch(0.46);
+    let header_h = inch(0.42);
     let body_h = match t.remove("row_height").filter(|v| !v.is_null()) {
         Some(v) => length(&v, cx, "row_height")?,
-        None => inch(0.55),
+        None => inch(0.48),
     };
+    let heights: Vec<Emu> = (0..n_rows)
+        .map(|r| if header && r == 0 { header_h } else { body_h })
+        .collect();
     if !t.contains_key("row_heights") {
-        let hs: Vec<Value> = (0..n_rows)
-            .map(|r| e(if header && r == 0 { header_h } else { body_h }))
-            .collect();
+        let hs: Vec<Value> = heights.iter().map(|h| e(*h)).collect();
         t.insert("row_heights".into(), json!(hs));
     }
-    for (k, d) in [
-        ("header_fill", json!("none")),
-        ("header_color", json!("white")),
-        ("banded", json!(true)),
-        ("band_fill", json!("paper")),
+    let defaults = if ruled {
+        vec![
+            ("header_fill", json!("none")),
+            ("header_color", json!("muted")),
+            ("banded", json!(false)),
+        ]
+    } else {
+        vec![
+            ("header_fill", json!("ink")),
+            ("header_color", json!("on_accent")),
+            ("banded", json!(true)),
+            ("band_fill", json!("panel")),
+        ]
+    };
+    for (k, d) in defaults.into_iter().chain([
         ("border", json!("none")),
         ("anchor", json!("middle")),
         (
             "cell_margins",
-            json!([e(inch(0.25)), e(inch(0.05)), e(inch(0.15)), e(inch(0.05))]),
+            json!([e(inch(0.08)), e(inch(0.04)), e(inch(0.08)), e(inch(0.04))]),
         ),
         ("style", json!("table")),
-    ] {
+    ]) {
         t.entry(k).or_insert(d);
     }
     if let Some(Value::Array(rows)) = t.get_mut("rows") {
@@ -1118,22 +1263,23 @@ fn clean_table(v: &Value, cx: &Ctx, look: &Look) -> Result<Vec<Value>> {
             }
         }
     }
-    let mut out = Vec::new();
-    if header {
-        let mut bar = shape(
-            "Table header",
-            "roundRect",
-            x,
-            y,
-            w,
-            header_h,
-            json!("primary"),
-            json!("none"),
-        );
-        bar["radius"] = e(header_h / 5);
-        out.push(bar);
+    let mut out = vec![Value::Object(t)];
+    if ruled {
+        let mut ry = y;
+        out.push(rule("Table rule top", x, ry, x + w, ry, "ink", "1pt"));
+        for (r, rh) in heights.iter().enumerate() {
+            ry += rh;
+            let last = r + 1 == heights.len();
+            let (name, color, width) = if last {
+                ("Table rule bottom".to_owned(), "ink", "1pt")
+            } else if header && r == 0 {
+                ("Table rule header".to_owned(), "ink", "0.75pt")
+            } else {
+                (format!("Table rule {}", r + 1), "line", "0.5pt")
+            };
+            out.push(rule(&name, x, ry, x + w, ry, color, width));
+        }
     }
-    out.push(Value::Object(t));
     Ok(out)
 }
 
@@ -1186,10 +1332,10 @@ pub fn schema_defs() -> Vec<(&'static str, Value)> {
                 box_schema(json!({
                     "items": {"type": "array", "minItems": 1, "maxItems": 8, "items": {"type": "object", "additionalProperties": false, "required": ["value"], "properties": {
                         "value": text, "label": {"type": "string"}, "detail": {"type": "string"},
-                        "highlight": {"type": "boolean", "description": "Filled with the primary colour."}}}},
+                        "highlight": {"type": "boolean", "description": "Stands out: an accent rule (rule card style) or an accent fill (fill card style)."}}}},
                 })),
                 &["items"],
-                "A row of stat cards (big value, label, detail) spread across the box; one may be highlighted.",
+                "A row of stats (big value, label, detail) spread across the box: under a rule (rule card style) or on square panels (fill); one may be highlighted.",
             ),
         ),
         (
@@ -1199,13 +1345,13 @@ pub fn schema_defs() -> Vec<(&'static str, Value)> {
                 box_schema(json!({
                     "items": {"type": "array", "minItems": 1, "maxItems": 24, "items": item},
                     "columns": {"type": "integer", "minimum": 1, "maximum": 6},
-                    "numbered": {"type": "boolean", "description": "A numbered badge on each card (default true; an item's icon replaces it)."},
+                    "numbered": {"type": "boolean", "description": "A number on each card (default true; an item's icon replaces it)."},
                     "numbers": numbers, "start": {"type": "integer", "minimum": 0},
-                    "fill": r("fill"),
-                    "highlight": {"type": "integer", "minimum": 1, "description": "This card (from 1) filled with the primary colour."},
+                    "fill": {"description": "The cards' fill in the fill card style (default the palette's panel).", "allOf": [r("fill")]},
+                    "highlight": {"type": "integer", "minimum": 1, "description": "This card (from 1) stands out: an accent rule or an accent fill."},
                 })),
                 &["items"],
-                "A grid of cards: badge or icon, heading, text or bullets. Short cards put the badge beside the text.",
+                "A grid of cards: number or icon, heading, text or bullets; under a rule (rule card style) or on square panels (fill). Short cards put the number beside the text.",
             ),
         ),
         (
@@ -1214,11 +1360,11 @@ pub fn schema_defs() -> Vec<(&'static str, Value)> {
                 "steps",
                 box_schema(json!({
                     "items": {"type": "array", "minItems": 1, "maxItems": 12, "items": item},
-                    "current": {"type": "integer", "minimum": 0, "description": "Steps up to this one (from 1) are filled (default 1)."},
+                    "current": {"type": "integer", "minimum": 0, "description": "The highlighted step, from 1 (default 1; 0: none)."},
                     "numbers": numbers, "start": {"type": "integer", "minimum": 0},
                 })),
                 &["items"],
-                "Numbered steps down the box, joined by a line.",
+                "Numbered steps down the box: big numerals with hairlines between (rule card style) or square number badges (fill).",
             ),
         ),
         (
@@ -1228,13 +1374,13 @@ pub fn schema_defs() -> Vec<(&'static str, Value)> {
                 box_schema(json!({
                     "items": {"type": "array", "minItems": 1, "maxItems": 10, "items": {"anyOf": [{"type": "string"}, {"type": "object", "additionalProperties": false, "properties": {
                         "label": {"type": "string", "description": "Small caps tag such as \"Phase 1\"."}, "title": {"type": "string"}, "text": {"type": "string"},
-                        "bullets": {"type": "array", "items": {"type": "string"}}, "badge": {"type": "string", "description": "The dot's text (default the number)."}}}]}},
+                        "bullets": {"type": "array", "items": {"type": "string"}}}}]}},
                     "current": {"type": "integer", "minimum": 0, "description": "The current phase, from 1 (default 1)."},
-                    "style": {"type": "string", "enum": ["dots", "chevrons"], "description": "Dots on a line (default) or chevrons."},
+                    "style": {"type": "string", "enum": ["track", "chevrons"], "description": "Square markers on a line (default) or chevrons."},
                     "numbers": numbers, "start": {"type": "integer", "minimum": 0},
                 })),
                 &["items"],
-                "Phases across the box: dots on a line or chevrons, with a label, title and text under each.",
+                "Phases across the box: square markers on a line (done ink, current accent, later outlined) or chevrons, with a label, title and text under each.",
             ),
         ),
         (
@@ -1247,7 +1393,7 @@ pub fn schema_defs() -> Vec<(&'static str, Value)> {
                     "icon": {"type": "string", "description": "A Lucide icon name."},
                 })),
                 &[],
-                "A tinted box with a bold lead-in and text; by default across the bottom of the content area.",
+                "The one sentence to remember, with a lead-in: a pull quote beside an accent rule (rule card style) or a solid bar (fill); by default across the bottom of the content area.",
             ),
         ),
         (
@@ -1257,8 +1403,8 @@ pub fn schema_defs() -> Vec<(&'static str, Value)> {
                 box_schema(json!({
                     "items": {"type": "array", "minItems": 1, "maxItems": 24, "items": item},
                     "columns": {"type": "integer", "minimum": 1, "maximum": 4},
-                    "marker": {"type": "string", "enum": ["badge", "number"], "description": "A filled round badge (default) or a big number."},
-                    "boxed": {"type": "boolean", "description": "Each row on a soft rounded box (default true)."},
+                    "marker": {"type": "string", "enum": ["badge", "number"], "description": "badge (default): a numeral (rule card style) or a square badge (fill); number: a big 01, 02."},
+                    "boxed": {"type": "boolean", "description": "A hairline above each row (rule card style) or a panel behind it (fill); default true."},
                     "numbers": numbers, "start": {"type": "integer", "minimum": 0},
                 })),
                 &["items"],
@@ -1286,11 +1432,12 @@ pub fn schema_defs() -> Vec<(&'static str, Value)> {
                 "badge",
                 obj(json!({
                     "name": {"type": "string"}, "x": r("length"), "y": r("length"),
-                    "size": {"description": "Diameter (default 0.5in).", "allOf": [r("length")]},
+                    "size": {"description": "Side (default 0.46in).", "allOf": [r("length")]},
                     "text": text, "icon": {"type": "string"}, "fill": r("fill"), "color": r("color"),
+                    "geometry": {"type": "string", "description": "A preset shape (default rect; ellipse for a circle)."},
                 })),
                 &[],
-                "A round badge with a number, short text or icon.",
+                "A square badge with a number, short text or icon.",
             ),
         ),
     ]
@@ -1311,15 +1458,35 @@ mod tests {
         }
     }
 
+    /// The plain look and every preset's (rule and fill card styles).
+    fn looks() -> Vec<Ctx> {
+        let p = slides_engine::Presentation::new();
+        let mut out = vec![cx()];
+        for name in super::super::slides_style::PRESETS {
+            let deck = json!({"preset": name});
+            let look = Look::build(&p, deck.as_object().unwrap(), &cx()).unwrap();
+            out.push(Ctx {
+                look: Some(std::sync::Arc::new(look)),
+                ..cx()
+            });
+        }
+        out
+    }
+
     #[std::prelude::v1::test]
     fn components_expand_into_elements() {
-        let c = cx();
+        for c in looks() {
+            expands_in(&c);
+        }
+    }
+
+    fn expands_in(c: &Ctx) {
         for v in [
             json!({"type": "stat_cards", "items": [{"value": "96%", "label": "On time", "detail": "Up 4 points", "highlight": true}, {"value": 42, "label": "Sites"}]}),
             json!({"type": "cards", "columns": 3, "items": [{"title": "One", "text": "a"}, {"title": "Two", "bullets": ["x", "y"], "icon": "rocket"}, "Three"]}),
             json!({"type": "cards", "h": 1.2, "items": ["A", "B"]}),
             json!({"type": "steps", "items": [{"title": "Share data", "text": "Two months"}, "Go live"], "current": 2}),
-            json!({"type": "timeline", "items": [{"label": "Phase 1", "title": "Digital work", "text": "Assets"}, {"label": "Later", "title": "Predictive", "badge": "+"}]}),
+            json!({"type": "timeline", "items": [{"label": "Phase 1", "title": "Digital work", "text": "Assets"}, {"label": "Later", "title": "Predictive"}]}),
             json!({"type": "timeline", "style": "chevrons", "items": [{"title": "Plan", "text": "a"}, {"title": "Build"}, {"title": "Run"}], "current": 2}),
             json!({"type": "callout", "tone": "warning", "title": "One option:", "text": "start with utilities", "icon": "lightbulb"}),
             json!({"type": "numbered_list", "columns": 2, "items": [{"title": "Feed pump", "text": "Vibration"}, "Vacuum"]}),
@@ -1328,27 +1495,27 @@ mod tests {
             json!({"type": "badge", "x": 1, "y": 1, "text": "3"}),
             json!({"type": "table", "preset": "clean", "columns": [2, 1], "rows": [["Name", "Score"], ["Ann", 9], ["Bo", 7]]}),
         ] {
-            let els = expand(&v, &c).unwrap().unwrap_or_else(|| panic!("{v}"));
+            let els = expand(&v, c).unwrap().unwrap_or_else(|| panic!("{v}"));
             assert!(!els.is_empty());
             for el in &els {
-                super::super::slides_author::element(el, &c)
+                super::super::slides_author::element(el, c)
                     .unwrap_or_else(|e| panic!("{v}\n{el}\n{e:#}"));
             }
         }
-        assert!(expand(&json!({"type": "shape"}), &c).unwrap().is_none());
-        assert!(expand(&json!({"type": "cards", "items": []}), &c).is_err());
-        assert!(expand(&json!({"type": "callout", "tone": "loud"}), &c).is_err());
+        assert!(expand(&json!({"type": "shape"}), c).unwrap().is_none());
+        assert!(expand(&json!({"type": "cards", "items": []}), c).is_err());
+        assert!(expand(&json!({"type": "callout", "tone": "loud"}), c).is_err());
         assert!(
             expand(
                 &json!({"type": "stat_cards", "items": [{"value": 1, "colour": "red"}]}),
-                &c
+                c
             )
             .is_err()
         );
         assert!(
             expand(
                 &json!({"type": "table", "preset": "fancy", "rows": [["a"]]}),
-                &c
+                c
             )
             .is_err()
         );

@@ -1520,6 +1520,9 @@ const SLIDE_KEYS: &[&str] = &[
     "footer",
     "footer_note",
     "transition",
+    "meta",
+    "mark",
+    "mark_label",
 ];
 
 /// Add `elements` (an array) to slide `slide`; returns their ids.
@@ -1615,6 +1618,7 @@ const DECK_KEYS: &[&str] = &[
     "footer",
     "cover",
     "content",
+    "card_style",
     "transition",
     "slides",
 ];
@@ -1733,7 +1737,8 @@ pub fn build(deck: &Value, base: Option<&Path>) -> Result<Presentation> {
     if slides.is_empty() || slides.len() > MAX_SLIDES {
         bail!("a deck has 1 to {MAX_SLIDES} slides");
     }
-    let deck_bg = get(o, "background");
+    let preset_bg = cx.look.as_ref().and_then(|l| l.background.clone());
+    let deck_bg = get(o, "background").or(preset_bg.as_ref());
     for (n, s) in slides.iter().enumerate() {
         add_deck_slide(&mut p, s, deck_bg, &cx).with_context(|| format!("slide {}", n + 1))?;
     }
@@ -1750,13 +1755,35 @@ fn add_deck_slide(
 ) -> Result<usize> {
     use super::slides_style as style;
     let so = object(s, "a slide", SLIDE_KEYS)?;
-    let look = style::look_of(cx);
+    let mut look = style::look_of(cx);
     let kind = opt_str(so, "kind")?.unwrap_or("content");
     let cover = match kind {
         "content" => false,
         "cover" | "section" => true,
         other => bail!("slide `kind` must be content, cover or section, not \"{other}\""),
     };
+    if !cover {
+        for k in ["meta", "mark", "mark_label"] {
+            if get(so, k).is_some() {
+                bail!("`{k}` is for cover slides (`kind`)");
+            }
+        }
+    }
+    // A dark cover or section: text and rules in the light colours.
+    let mut cx_dark = None;
+    if cover && get(so, "background").is_none() {
+        let bg = style::cover_background_name(&look, kind == "section");
+        if let Some(name) = bg.as_str()
+            && look.is_dark(name)
+        {
+            look = Arc::new(look.on_dark(name));
+            cx_dark = Some(Ctx {
+                look: Some(look.clone()),
+                ..cx.clone()
+            });
+        }
+    }
+    let cx = cx_dark.as_ref().unwrap_or(cx);
     let header_mode = cover || (look.header.is_some() && get(so, "layout").is_none());
     if !header_mode {
         for k in ["eyebrow", "subtitle"] {
@@ -2326,31 +2353,44 @@ mod tests {
         let q = Presentation::from_bytes(bytes).unwrap();
         assert_eq!(q.len(), deck["slides"].as_array().unwrap().len());
         let listed = super::super::slides::list(&q, 0);
-        // The cover: a centred title placeholder over a picture.
+        // The cover: the title placeholder, the accent block with its mark.
         assert_eq!(
             listed["slides"][0]["title"],
             "On time, for the third quarter running"
         );
         assert!(q.slide(0).background.is_some());
+        let s1 = shapes(&listed, 0);
+        assert!(!s1.iter().any(|s| s["name"] == "Slide number"));
+        assert!(s1.iter().any(|s| s["name"] == "Cover block"));
         assert!(
-            !shapes(&listed, 0)
-                .iter()
-                .any(|s| s["name"] == "Slide number")
+            s1.iter()
+                .any(|s| s["name"] == "Cover mark" && s["text"] == "96%")
         );
-        // Header: eyebrow in capitals, the title as the title placeholder.
+        assert!(
+            s1.iter().any(|s| s["name"] == "Cover brand"
+                && s["text"] == "Lumen Logistics · Q3 operations review")
+        );
+        // Header: the eyebrow in sentence case beside a rule, the title as
+        // the title placeholder; square corners everywhere.
         let s2 = &listed["slides"][1];
         assert_eq!(s2["title"], "How a shipment moves");
         let s2s = shapes(&listed, 1);
-        assert!(s2s.iter().any(|s| s["text"] == "HOW IT WORKS"));
+        assert!(s2s.iter().any(|s| s["text"] == "How it works"));
+        assert!(s2s.iter().any(|s| s["name"] == "Header rule"));
+        let all: Vec<Value> = (0..q.len()).flat_map(|i| shapes(&listed, i)).collect();
+        assert!(!all.iter().any(|s| s["geometry"] == "roundRect"
+            || (s["geometry"] == "ellipse" && s["kind"] != "picture")));
         assert!(
             s2s.iter()
                 .any(|s| s["placeholder"] == "title" && s["text"] == "How a shipment moves")
         );
         assert_eq!(s2s.iter().filter(|s| s["geometry"] == "chevron").count(), 3);
         assert!(s2s.iter().any(|s| s["geometry"] == "homePlate"));
-        // Footer: bar, logo, text and a slide number field.
+        // Footer: a hairline, logo, text and a slide number field.
         let number = s2s.iter().find(|s| s["name"] == "Slide number").unwrap();
-        assert_eq!(number["text"], "2");
+        assert_eq!(number["text"], "02");
+        assert!(s2s.iter().any(|s| s["name"] == "Footer rule"));
+        assert!(!s2s.iter().any(|s| s["name"] == "Footer bar"));
         assert!(
             s2s.iter()
                 .any(|s| s["name"] == "Logo" && s["kind"] == "picture")
@@ -2372,12 +2412,11 @@ mod tests {
             .filter(|s| s["kind"] == "picture" && s["name"] != "Logo")
             .collect();
         assert_eq!(pics.len(), 3);
-        assert_eq!(pics[0]["geometry"], "roundRect");
         assert_eq!(pics[1]["geometry"], "ellipse");
         assert!(
             shapes(&listed, 5)
                 .iter()
-                .any(|s| s["name"] == "Card 3 badge icon")
+                .any(|s| s["name"] == "Card 3 number icon")
         );
         assert_eq!(q.notes_text(5), "Ask for approval of the six-week pilot.");
         // Transitions: the deck's fade, the last slide's push.
@@ -2401,12 +2440,39 @@ mod tests {
         for (i, s) in deck["slides"].as_array().unwrap().iter().enumerate() {
             assert_eq!(listed["slides"][i]["title"], s["title"], "slide {}", i + 1);
         }
-        // Every element is ordinary, editable shapes.
+        // Every element is ordinary, editable shapes (page numbers are
+        // slide number fields).
         let all: Vec<Value> = (0..q.len()).flat_map(|i| shapes(&listed, i)).collect();
+        assert!(all.iter().all(|s| s.get("text_locked").is_none()
+            || s["name"] == "Slide number"
+            || s["name"] == "Eyebrow"));
+        // Swiss: the page number and eyebrow in the header, the footer's
+        // text at its right, a 4×4 grid on the cover.
+        let s2 = shapes(&listed, 1);
         assert!(
-            all.iter()
-                .all(|s| s.get("text_locked").is_none() || s["name"] == "Slide number")
+            s2.iter()
+                .any(|s| s["name"] == "Eyebrow" && s["text"] == "02 / WHO WE ARE TALKING TO")
         );
+        assert!(
+            s2.iter().any(|s| s["name"] == "Header text"
+                && s["text"] == "Prepared for an example manufacturer")
+        );
+        assert!(s2.iter().any(|s| s["name"] == "Footer mark"));
+        assert_eq!(
+            shapes(&listed, 0)
+                .iter()
+                .filter(|s| s["name"]
+                    .as_str()
+                    .is_some_and(|n| n.starts_with("Cover square")))
+                .count(),
+            16
+        );
+        // The same deck in every preset.
+        for name in super::super::slides_style::PRESETS {
+            let mut d = deck.clone();
+            d["preset"] = json!(name);
+            build(&d, Some(&dir)).unwrap_or_else(|e| panic!("{name}: {e:#}"));
+        }
     }
 
     #[std::prelude::v1::test]

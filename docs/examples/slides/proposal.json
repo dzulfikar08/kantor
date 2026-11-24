@@ -1,15 +1,15 @@
 {
   "size": "16:9",
   "units": "in",
-  "preset": "consulting-navy",
+  "preset": "swiss",
   "footer": { "text": "Prepared for an example manufacturer", "logo": "logo.png" },
-  "cover": { "logo": "logo-white.png" },
   "slides": [
     {
       "kind": "cover",
       "eyebrow": "Introduction and demo · November 2026",
       "title": "Reliable uptime for every line",
       "subtitle": "A maintenance platform for a mid-sized process plant",
+      "meta": "Sample deck · names and numbers are made up",
       "notes": "Sample deck: all names and numbers are made up."
     },
     {
@@ -108,7 +108,7 @@
             { "label": "Phase 1", "title": "Digital work", "text": "Asset register, work orders, PM and mobile checklists" },
             { "label": "Phase 2", "title": "Stores and compliance", "text": "Spares, certificates, skills and training" },
             { "label": "Phase 3", "title": "Condition monitoring", "text": "Sensors and rules on critical rotating equipment" },
-            { "label": "Later", "title": "Predictive maintenance", "text": "Once enough history has built up", "badge": "+" }
+            { "label": "Later", "title": "Predictive maintenance", "text": "Once enough history has built up" }
           ]
         },
         { "type": "callout", "tone": "warning", "w": 5.4, "title": "Most plants start", "text": "with Phase 1 in one area." }
@@ -155,10 +155,20 @@
       "subtitle": "Architecture, server sizing, integrations, security"
     },
     {
-      "kind": "cover",
+      "kind": "section",
       "eyebrow": "Next step",
       "title": "A follow-up conversation",
-      "subtitle": "About an hour with your maintenance and IT leads to see how work is managed today, then a proposal that fits"
+      "elements": [
+        {
+          "type": "numbered_list", "boxed": false, "h": 2.4,
+          "items": [
+            { "title": "About an hour", "text": "With your maintenance and IT leads" },
+            { "title": "See how work is managed today", "text": "Work orders, spares and the reports you already keep" },
+            { "title": "A proposal that fits", "text": "Scope, rollout and price for the first phase" }
+          ]
+        },
+        { "type": "callout", "w": 7.4, "title": "Next:", "text": "pick a date in the next two weeks." }
+      ]
     }
   ]
 }

@@ -1,4 +1,4 @@
-//! A deck's look: built-in presets (`"preset": "consulting-navy"`), named
+//! A deck's look: built-in presets (`"preset": "editorial"`), named
 //! text styles (`"style": "eyebrow"` on elements, paragraphs, runs and
 //! cells), the colour palette (`"color": "muted"`), slide furniture (the
 //! header with eyebrow, title and subtitle, the footer with page numbers,
@@ -27,83 +27,169 @@ fn e(v: Emu) -> Value {
 // ── presets ────────────────────────────────────────────────────────────────
 
 /// The built-in looks.
-pub const PRESETS: [&str; 4] = ["consulting-navy", "warm", "mono", "teal"];
+pub const PRESETS: [&str; 3] = ["editorial", "swiss", "mono"];
+
+/// How cards, stats, notes, comparisons and tables are drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardStyle {
+    /// No boxes: a rule on top, numbers in the heading font, hairline tables.
+    Rule,
+    /// Solid square panels, the highlighted one in the accent colour.
+    Fill,
+}
+
+impl CardStyle {
+    fn parse(s: &str) -> Result<Self> {
+        Ok(match s {
+            "rule" => Self::Rule,
+            "fill" => Self::Fill,
+            other => bail!("`card_style` must be rule or fill, not \"{other}\""),
+        })
+    }
+}
 
 /// Text styles every deck has (presets and decks change or add to them).
 /// Colours are palette names, `heading` / `body` the theme's fonts.
 fn base_styles() -> Value {
     json!({
-        "eyebrow": {"size": 11, "bold": true, "caps": true, "letter_spacing": 1, "color": "primary"},
+        "eyebrow": {"size": 11, "color": "muted"},
+        "page_number": {"size": 10, "bold": true, "color": "ink"},
         "title": {"font": "heading", "size": 30, "bold": true, "color": "ink", "line_spacing": 1.0},
         "subtitle": {"size": 15, "color": "muted", "line_spacing": 1.1},
         "body": {"size": 16, "color": "ink", "line_spacing": 1.15},
         "small": {"size": 12, "color": "muted", "line_spacing": 1.2},
         "note": {"size": 9, "color": "muted"},
-        "label": {"size": 10.5, "bold": true, "caps": true, "letter_spacing": 0.5, "color": "muted"},
+        "label": {"size": 10.5, "bold": true, "color": "muted"},
         "card_title": {"size": 16, "bold": true, "color": "ink", "line_spacing": 1.05},
         "stat": {"font": "heading", "size": 40, "bold": true, "color": "ink", "line_spacing": 1.0},
-        "number": {"font": "heading", "size": 24, "bold": true, "color": "primary"},
-        "badge": {"size": 12, "bold": true, "color": "primary"},
+        "number": {"font": "heading", "size": 24, "bold": true, "color": "accent"},
+        "numeral": {"font": "heading", "size": 30, "bold": true, "color": "accent", "line_spacing": 1.0},
+        "badge": {"size": 11, "bold": true, "color": "on_accent"},
         "table": {"size": 12, "color": "ink"},
-        "callout": {"size": 13, "color": "ink", "line_spacing": 1.15},
-        "table_header": {"size": 10, "bold": true, "caps": true, "letter_spacing": 0.5, "color": "white"},
-        "footer": {"size": 10, "color": "muted"},
-        "cover_eyebrow": {"size": 12, "bold": true, "caps": true, "letter_spacing": 1, "color": "accent_light"},
-        "cover_title": {"font": "heading", "size": 44, "bold": true, "color": "white", "line_spacing": 1.0},
-        "cover_subtitle": {"size": 17, "color": "on_dark_muted", "line_spacing": 1.2},
+        "callout": {"size": 14, "color": "ink", "line_spacing": 1.15},
+        "table_header": {"size": 11, "bold": true, "color": "on_accent"},
+        "footer": {"size": 9, "color": "muted"},
+        "cover_brand": {"size": 12, "bold": true, "color": "ink"},
+        "cover_eyebrow": {"size": 12, "color": "accent"},
+        "cover_title": {"font": "heading", "size": 44, "bold": true, "color": "ink", "line_spacing": 1.0},
+        "cover_subtitle": {"size": 17, "color": "muted", "line_spacing": 1.2},
+        "cover_meta": {"size": 11, "color": "muted"},
+        "cover_mark": {"font": "heading", "size": 96, "color": "on_accent", "line_spacing": 0.9},
+        "cover_mark_label": {"size": 11, "color": "on_accent"},
+        "section_eyebrow": {"size": 11, "bold": true, "color": "on_dark_accent"},
+        "section_title": {"font": "heading", "size": 40, "bold": true, "color": "on_dark", "line_spacing": 1.0},
+        "section_subtitle": {"size": 17, "color": "on_dark_muted", "line_spacing": 1.2},
     })
 }
 
-/// Header, footer and cover shared by the presets.
-fn furniture() -> Value {
+/// The swiss look's furniture and styles (also `mono`'s).
+fn swiss(name: &str, palette: Value) -> Value {
+    const MONO: &str = "JetBrains Mono";
     json!({
-        "header": {},
-        "footer": {"page_numbers": true, "bar": {"color": "primary", "height": "0.08in"}},
-        "cover": {},
+        "theme": {"name": name, "fonts": {"heading": "Inter", "body": "Inter"}},
+        "palette": palette,
+        "card_style": "fill",
+        "background": "background",
+        "styles": {
+            "eyebrow": {"font": MONO, "size": 10, "caps": true, "color": "muted"},
+            "page_number": {"font": MONO, "size": 10, "bold": true, "color": "accent"},
+            "title": {"size": 32, "bold": true},
+            "subtitle": {"size": 15},
+            "stat": {"size": 44, "bold": true},
+            "number": {"font": MONO, "size": 10, "bold": true, "color": "accent"},
+            "numeral": {"font": "heading", "size": 28, "bold": true},
+            "badge": {"font": MONO, "size": 10, "bold": true},
+            "label": {"font": MONO, "size": 10, "bold": false, "caps": true},
+            "callout": {"size": 15, "color": "on_accent"},
+            "table_header": {"size": 11, "bold": true, "color": "on_accent"},
+            "footer": {"font": MONO, "size": 9, "caps": true},
+            "cover_brand": {"font": MONO, "size": 10, "bold": true, "color": "on_accent"},
+            "cover_eyebrow": {"font": MONO, "size": 10, "caps": true, "color": "accent_soft"},
+            "cover_title": {"size": 54, "bold": true, "color": "on_accent", "line_spacing": 0.95},
+            "cover_subtitle": {"color": "accent_soft"},
+            "cover_meta": {"font": MONO, "size": 10, "caps": true, "color": "accent_soft"},
+            "section_eyebrow": {"font": MONO, "size": 10, "caps": true, "bold": true, "color": "on_dark_muted"},
+            "section_title": {"size": 40, "bold": true},
+        },
+        "header": {"y": "0.5in", "gap": "0.18in", "content_gap": "0.45in", "page_number": true,
+                   "text": true, "rule": {"color": "ink", "w": "full", "h": "3pt", "gap": "0.1in"}},
+        "footer": {"page_numbers": false, "y": "6.94in", "mark": {"color": "accent", "size": "0.14in"}},
+        "cover": {"background": "accent", "y": "2.05in", "motif": "grid", "brand": true, "rule": false,
+                  "section_background": "dark", "section_y": "0.9in"},
     })
 }
 
-/// A preset: theme, palette, styles, header, footer, cover.
+/// A preset: theme, palette, styles, header, footer, cover, card style and
+/// slide background.
 pub fn preset(name: &str) -> Result<Value> {
-    let mut v = match name {
-        "consulting-navy" | "navy" => json!({
-            "theme": {"name": "Consulting Navy", "fonts": {"heading": "Calibri", "body": "Calibri"},
-                "colors": {"dk1": "#0B1726", "lt1": "#FFFFFF", "dk2": "#061E3F", "lt2": "#F6F8FB",
-                    "accent1": "#004FA7", "accent2": "#F29D1E", "accent3": "#2E8B57", "accent4": "#4C99F8",
-                    "accent5": "#5B6676", "accent6": "#C2412D", "hlink": "#004FA7", "folHlink": "#5B6676"}},
-            "palette": {"muted": "#5B6676", "divider": "#DDE3EA", "tint": "#E8F1FC", "paper": "#F6F8FB",
-                "accent_light": "#4C99F8", "on_dark_muted": "#C9D6E8", "success": "#2E8B57", "danger": "#C2412D"},
+    Ok(match name {
+        "editorial" => json!({
+            "theme": {"name": "Editorial", "fonts": {"heading": "Instrument Serif", "body": "Inter"},
+                "colors": {"dk1": "#1E1B18", "lt1": "#FFFFFF", "dk2": "#1E1B18", "lt2": "#ECE3D5",
+                    "accent1": "#B4532A", "accent2": "#2E5E4E", "accent3": "#6E655C", "accent4": "#CDBFAC",
+                    "accent5": "#D9CEBF", "accent6": "#8A3E1F", "hlink": "#B4532A", "folHlink": "#6E655C"}},
+            "palette": {"background": "#F6F1E9", "muted": "#6E655C", "line": "#D9CEBF", "divider": "#D9CEBF",
+                "panel": "#ECE3D5", "paper": "#ECE3D5", "bar": "#CDBFAC", "accent_soft": "#F2DED0", "tint": "#F2DED0",
+                "highlight": "accent1", "warning": "accent1", "good": "#2E5E4E", "success": "#2E5E4E",
+                "bad": "#B4532A", "danger": "#B4532A", "dark": "#1E1B18", "on_dark": "#F6F1E9",
+                "on_dark_accent": "#D9774A", "accent_light": "#D9774A", "on_dark_muted": "#B4A898"},
+            "card_style": "rule",
+            "background": "background",
+            "styles": {
+                "eyebrow": {"size": 11, "color": "muted"},
+                "page_number": {"size": 9, "bold": true, "color": "ink"},
+                "title": {"size": 40, "bold": false},
+                "subtitle": {"size": 15},
+                "stat": {"size": 54, "bold": false},
+                "number": {"size": 30, "bold": false},
+                "numeral": {"size": 34, "bold": false},
+                "label": {"size": 11, "bold": true},
+                "callout": {"font": "heading", "size": 20, "line_spacing": 1.1},
+                "table_header": {"size": 11, "bold": false, "color": "muted"},
+                "cover_eyebrow": {"size": 12, "color": "accent"},
+                "cover_title": {"size": 64, "bold": false, "line_spacing": 0.92},
+                "cover_mark": {"size": 104, "bold": false},
+                "section_title": {"size": 46, "bold": false},
+            },
+            "header": {"y": "0.52in", "gap": "0.12in", "content_gap": "0.5in",
+                       "rule": {"color": "accent", "w": "0.35in", "h": "1.5pt", "position": "left"}},
+            "footer": {"y": "7.05in", "rule": {"color": "line", "width": "0.75pt"}},
+            "cover": {"background": "background", "y": "2.05in", "motif": "block", "brand": true,
+                      "rule": {"color": "accent", "w": "0.35in", "h": "1.5pt", "position": "left"},
+                      "section_background": "dark", "section_y": "0.9in"},
         }),
-        "warm" => json!({
-            "theme": {"name": "Warm", "fonts": {"heading": "Georgia", "body": "Calibri"},
-                "colors": {"dk1": "#2B2118", "lt1": "#FFFFFF", "dk2": "#3D2B1F", "lt2": "#FBF6F0",
-                    "accent1": "#B4532A", "accent2": "#E0A43A", "accent3": "#5E7D4F", "accent4": "#2F6F73",
-                    "accent5": "#8C6E5A", "accent6": "#A23B3B", "hlink": "#B4532A", "folHlink": "#8C6E5A"}},
-            "palette": {"muted": "#7A6A5C", "divider": "#E8DDD2", "tint": "#F6E7DE", "paper": "#FBF6F0",
-                "accent_light": "#E8A27F", "on_dark_muted": "#E3D3C4", "success": "#5E7D4F", "danger": "#A23B3B"},
-            "styles": {"title": {"bold": false, "size": 32}, "stat": {"bold": false}, "cover_title": {"bold": false, "size": 46}},
-        }),
-        "mono" => json!({
-            "theme": {"name": "Mono", "fonts": {"heading": "Arial", "body": "Arial"},
-                "colors": {"dk1": "#111111", "lt1": "#FFFFFF", "dk2": "#1A1A1A", "lt2": "#F4F4F4",
-                    "accent1": "#111111", "accent2": "#E63946", "accent3": "#2A9D8F", "accent4": "#6C757D",
-                    "accent5": "#ADB5BD", "accent6": "#E63946", "hlink": "#111111", "folHlink": "#6C757D"}},
-            "palette": {"muted": "#6B6B6B", "divider": "#DDDDDD", "tint": "#EFEFEF", "paper": "#F4F4F4",
-                "accent_light": "#E63946", "on_dark_muted": "#C8C8C8", "success": "#2A9D8F", "danger": "#E63946"},
-            "styles": {"eyebrow": {"color": "highlight"}, "number": {"color": "ink"}, "badge": {"color": "ink"}},
-        }),
-        "teal" => json!({
-            "theme": {"name": "Teal", "fonts": {"heading": "Calibri", "body": "Calibri"},
-                "colors": {"dk1": "#0F172A", "lt1": "#FFFFFF", "dk2": "#042F2E", "lt2": "#F1F5F4",
-                    "accent1": "#0F766E", "accent2": "#F59E0B", "accent3": "#16A34A", "accent4": "#0EA5E9",
-                    "accent5": "#64748B", "accent6": "#DC2626", "hlink": "#0F766E", "folHlink": "#64748B"}},
-            "palette": {"muted": "#64748B", "divider": "#E2E8F0", "tint": "#E0F2F1", "paper": "#F1F5F4",
-                "accent_light": "#5EEAD4", "on_dark_muted": "#CCE3E1", "success": "#16A34A", "danger": "#DC2626"},
-        }),
+        "swiss" => {
+            let mut v = swiss(
+                "Swiss",
+                json!({"background": "#FFFFFF", "muted": "#5F6368", "line": "#DADCE0", "divider": "#DADCE0",
+                    "panel": "#F1F2F4", "paper": "#F1F2F4", "bar": "#C4C7CC", "accent_soft": "#E3E8FD", "tint": "#E3E8FD",
+                    "highlight": "tx1", "warning": "accent1", "good": "#14804A", "success": "#14804A",
+                    "bad": "#D33A1F", "danger": "#D33A1F", "dark": "#111111", "on_dark": "#FFFFFF",
+                    "on_dark_accent": "#8FA0F0", "accent_light": "#8FA0F0", "on_dark_muted": "#A6A9AE"}),
+            );
+            v["theme"]["colors"] = json!({"dk1": "#111111", "lt1": "#FFFFFF", "dk2": "#111111", "lt2": "#F1F2F4",
+                "accent1": "#2340D8", "accent2": "#14804A", "accent3": "#D33A1F", "accent4": "#5F6368",
+                "accent5": "#C4C7CC", "accent6": "#8FA0F0", "hlink": "#2340D8", "folHlink": "#5F6368"});
+            v
+        }
+        "mono" => {
+            let mut v = swiss(
+                "Mono",
+                json!({"background": "#FFFFFF", "muted": "#666666", "line": "#DDDDDD", "divider": "#DDDDDD",
+                    "panel": "#F2F2F2", "paper": "#F2F2F2", "bar": "#C8C8C8", "accent_soft": "#D9D9D9", "tint": "#E6E6E6",
+                    "highlight": "accent2", "warning": "accent2", "good": "#1F7A4D", "success": "#1F7A4D",
+                    "bad": "#D33A1F", "danger": "#D33A1F", "dark": "#111111", "on_dark": "#FFFFFF",
+                    "on_dark_accent": "#FF6B57", "accent_light": "#BBBBBB", "on_dark_muted": "#A8A8A8"}),
+            );
+            v["theme"]["colors"] = json!({"dk1": "#111111", "lt1": "#FFFFFF", "dk2": "#111111", "lt2": "#F2F2F2",
+                "accent1": "#111111", "accent2": "#D33A1F", "accent3": "#1F7A4D", "accent4": "#666666",
+                "accent5": "#C8C8C8", "accent6": "#999999", "hlink": "#111111", "folHlink": "#666666"});
+            v["styles"]["page_number"]["color"] = json!("highlight");
+            v["footer"]["mark"]["color"] = json!("highlight");
+            v
+        }
         other => bail!("`preset` \"{other}\" is not one of {}", PRESETS.join(", ")),
-    };
-    merge(&mut v, &furniture());
-    Ok(v)
+    })
 }
 
 /// `over` merged into `base` (objects key by key, anything else replaced).
@@ -157,10 +243,25 @@ pub struct Look {
     pub gap: Emu,
     pub transition: Option<TransitionSpec>,
     pub size: SlideSize,
+    /// How cards, stats and tables are drawn.
+    pub card_style: CardStyle,
+    /// Every slide's background unless the deck or slide has one.
+    pub background: Option<Value>,
 }
 
 /// Palette names (besides theme colour names, which always work).
-pub const PALETTE: [&str; 17] = [
+pub const PALETTE: [&str; 28] = [
+    "accent",
+    "accent_soft",
+    "background",
+    "panel",
+    "line",
+    "bar",
+    "good",
+    "bad",
+    "on_accent",
+    "on_dark",
+    "on_dark_accent",
     "primary",
     "highlight",
     "ink",
@@ -179,6 +280,10 @@ pub const PALETTE: [&str; 17] = [
     "black",
     "on_primary",
 ];
+
+/// Palette colours made from the accent: a deck with its own accent colour
+/// gets them mixed from it instead of the preset's.
+const ACCENT_TINTS: [&str; 4] = ["accent_soft", "tint", "on_dark_accent", "accent_light"];
 
 fn mix(a: Rgb, b: Rgb, t: f64) -> Rgb {
     let m = |x: u8, y: u8| {
@@ -248,14 +353,33 @@ impl Look {
         put("on_dark_muted", mix(white, dark, 0.22), None);
         put("success", Rgb([0x2E, 0x8B, 0x57]), None);
         put("danger", Rgb([0xC2, 0x41, 0x2D]), None);
-        // Preset, then deck palette.
-        for src in [preset.get("palette"), deck.get("palette")]
+        put("accent", accent1, Some("accent1"));
+        put("accent_soft", mix(accent1, white, 0.85), None);
+        put("background", white, Some("bg1"));
+        put("panel", paper, Some("bg2"));
+        put("line", mix(ink, white, 0.82), None);
+        put("bar", mix(ink, white, 0.7), None);
+        put("good", Rgb([0x2E, 0x8B, 0x57]), None);
+        put("bad", Rgb([0xC2, 0x41, 0x2D]), None);
+        put("on_accent", white, Some("bg1"));
+        put("on_dark", white, Some("bg1"));
+        put("on_dark_accent", mix(accent1, white, 0.35), None);
+        // Preset, then deck palette. A deck with its own accent colour
+        // keeps the tints made from it, not the preset's.
+        let own_accent = deck
+            .get("theme")
+            .and_then(|t| t.get("colors"))
+            .and_then(|c| c.get("accent1"))
+            .is_some_and(|c| !c.is_null());
+        for (src, is_preset) in [(preset.get("palette"), true), (deck.get("palette"), false)]
             .into_iter()
-            .flatten()
-            .filter(|v| !v.is_null())
+            .filter_map(|(v, p)| v.filter(|v| !v.is_null()).map(|v| (v, p)))
         {
             let o = object(src, "`palette`", &PALETTE)?;
             for (k, v) in o {
+                if is_preset && own_accent && ACCENT_TINTS.contains(&k.as_str()) {
+                    continue;
+                }
                 let s = v
                     .as_str()
                     .with_context(|| format!("palette `{k}` must be a colour string"))?;
@@ -343,7 +467,16 @@ impl Look {
             None | Some(Value::Null) => None,
             Some(t) => transition(t)?,
         };
+        let card_style = match opt_str(deck, "card_style")?
+            .or(preset.get("card_style").and_then(Value::as_str))
+        {
+            Some(c) => CardStyle::parse(c)?,
+            None => CardStyle::Fill,
+        };
+        let background = preset.get("background").cloned();
         Ok(Look {
+            card_style,
+            background,
             styles,
             palette,
             header,
@@ -354,6 +487,37 @@ impl Look {
             transition,
             size,
         })
+    }
+
+    /// The look for a dark slide (sections): text in the light colours,
+    /// rules and panels mixed from the dark one.
+    pub fn on_dark(&self, bg: &str) -> Look {
+        let mut l = self.clone();
+        let dark = self.rgb(bg);
+        let light = self.rgb("on_dark");
+        let set = |l: &mut Look, k: &str, c: Rgb| {
+            l.palette.insert(k.to_owned(), (c, None));
+        };
+        let muted = self.rgb("on_dark_muted");
+        for k in ["ink", "black"] {
+            set(&mut l, k, light);
+        }
+        set(&mut l, "muted", muted);
+        for k in ["line", "divider"] {
+            set(&mut l, k, mix(dark, light, 0.28));
+        }
+        for k in ["panel", "paper", "tint", "accent_soft"] {
+            set(&mut l, k, mix(dark, light, 0.1));
+        }
+        set(&mut l, "bar", mix(dark, light, 0.4));
+        set(&mut l, "background", dark);
+        l
+    }
+
+    /// Whether a palette colour (or `#RRGGBB`) is dark.
+    pub fn is_dark(&self, name: &str) -> bool {
+        let Rgb([r, g, b]) = self.rgb(name);
+        0.2126 * r as f64 + 0.7152 * g as f64 + 0.0722 * b as f64 <= 110.0
     }
 
     /// A palette colour as a colour value for elements: the theme slot it
@@ -455,7 +619,18 @@ const RUN_STYLE_KEYS: &[&str] = &[
     "caps",
     "letter_spacing",
 ];
-pub const HEADER_KEYS: &[&str] = &["x", "y", "w", "gap", "content_gap", "rule", "align"];
+pub const HEADER_KEYS: &[&str] = &[
+    "x",
+    "y",
+    "w",
+    "gap",
+    "content_gap",
+    "rule",
+    "align",
+    "page_number",
+    "separator",
+    "text",
+];
 pub const FOOTER_KEYS: &[&str] = &[
     "text",
     "page_numbers",
@@ -466,8 +641,24 @@ pub const FOOTER_KEYS: &[&str] = &[
     "y",
     "style",
     "note_style",
+    "rule",
+    "mark",
 ];
-pub const COVER_KEYS: &[&str] = &["background", "x", "w", "rule", "logo", "logo_h", "align"];
+pub const COVER_KEYS: &[&str] = &[
+    "background",
+    "x",
+    "y",
+    "w",
+    "rule",
+    "logo",
+    "logo_h",
+    "align",
+    "motif",
+    "block_w",
+    "brand",
+    "section_background",
+    "section_y",
+];
 
 // ── resolving styles and palette names ────────────────────────────────────
 
@@ -780,8 +971,70 @@ fn title_element(v: Value, cx: &Ctx, ph: &str) -> Result<Element> {
     Ok(el)
 }
 
+/// The page number as shown: `02`.
+fn page_text(cx: &Ctx) -> String {
+    cx.slide_no
+        .map_or_else(|| "#".to_owned(), |n| format!("{n:02}"))
+}
+
+/// A slide number field run in `style`.
+fn page_run(cx: &Ctx, style: &str) -> Value {
+    json!({"field": "slide_number", "text": page_text(cx), "style": style})
+}
+
+/// A filled rectangle (rules, blocks, squares).
+fn rect(name: &str, x: Emu, y: Emu, w: Emu, h: Emu, fill: Value, cx: &Ctx) -> Result<Element> {
+    element(
+        &resolve(
+            &json!({"type": "shape", "name": name, "x": e(x), "y": e(y), "w": e(w.max(1)), "h": e(h.max(1)), "fill": fill, "line": "none"}),
+            cx,
+        )?,
+        cx,
+    )
+}
+
+/// A short rule: `{color, w, h, position, gap}` (`w` may be "full").
+struct Rule {
+    color: Value,
+    w: Emu,
+    h: Emu,
+    /// Beside the label (left of it) rather than above it.
+    beside: bool,
+    gap: Emu,
+}
+
+fn rule_of(v: Option<&Value>, what: &str, cx: &Ctx, full: Emu, on: bool) -> Result<Option<Rule>> {
+    let o = match v {
+        Some(Value::Bool(false)) => return Ok(None),
+        None | Some(Value::Null) if !on => return Ok(None),
+        None | Some(Value::Null) | Some(Value::Bool(true)) => Map::new(),
+        Some(r @ Value::Object(_)) => {
+            object(r, what, &["color", "w", "h", "position", "gap"])?.clone()
+        }
+        Some(_) => bail!("{what} must be {{color, w, h, position, gap}} or false"),
+    };
+    let w = match o.get("w") {
+        Some(Value::String(s)) if s == "full" => full,
+        _ => len_or(&o, "w", cx, (0.9 * IN as f64) as Emu)?,
+    };
+    let beside = match opt_str(&o, "position")?.unwrap_or("above") {
+        "above" => false,
+        "left" => true,
+        other => bail!("{what} `position` must be above or left, not \"{other}\""),
+    };
+    Ok(Some(Rule {
+        color: o.get("color").cloned().unwrap_or(json!("accent")),
+        w,
+        h: len_or(&o, "h", cx, (0.06 * IN as f64) as Emu)?,
+        beside,
+        gap: len_or(&o, "gap", cx, (0.18 * IN as f64) as Emu)?,
+    }))
+}
+
 /// The header of a slide with `eyebrow`, `title` and `subtitle` (the
-/// title is the slide's title placeholder).
+/// title is the slide's title placeholder): a rule above the label row or
+/// beside it, the label row (page number, eyebrow, the deck's name at the
+/// right), then the title and subtitle.
 pub fn header(so: &Map<String, Value>, cx: &Ctx, look: &Look) -> Result<Furniture> {
     let h = look.header.clone().unwrap_or_default();
     let size = look.size;
@@ -792,6 +1045,21 @@ pub fn header(so: &Map<String, Value>, cx: &Ctx, look: &Look) -> Result<Furnitur
     let gap = len_or(&h, "gap", cx, (0.06 * IN as f64) as Emu)?;
     let content_gap = len_or(&h, "content_gap", cx, (0.4 * IN as f64) as Emu)?;
     let align = opt_str(&h, "align")?;
+    let numbered = opt_bool(&h, "page_number")?.unwrap_or(false);
+    let sep = opt_str(&h, "separator")?.unwrap_or(" / ").to_owned();
+    let side_text = match h.get("text") {
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Bool(true)) => look
+            .footer
+            .as_ref()
+            .and_then(|f| get_str(f, "text"))
+            .map(str::to_owned),
+        None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+        Some(_) => bail!("header `text` must be a string or true (the footer's text)"),
+    };
+    let eyebrow = opt_str(so, "eyebrow")?;
+    let has_row = eyebrow.is_some() || numbered || side_text.is_some();
+    let lh = look.line_h("eyebrow", 11.0);
     let mut out = Vec::new();
     let with_align = |mut v: Value| {
         if let Some(a) = align {
@@ -799,29 +1067,68 @@ pub fn header(so: &Map<String, Value>, cx: &Ctx, look: &Look) -> Result<Furnitur
         }
         v
     };
-    if let Some(r) = h.get("rule").filter(|r| r.is_object()) {
-        let ro = object(r, "header `rule`", &["color", "w", "h"])?;
-        let rh = len_or(ro, "h", cx, (0.06 * IN as f64) as Emu)?;
-        let rw = len_or(ro, "w", cx, (0.9 * IN as f64) as Emu)?;
-        let rx = if align == Some("center") {
-            x + (w - rw) / 2
-        } else {
-            x
-        };
-        let color = ro.get("color").cloned().unwrap_or(json!("highlight"));
-        out.push(element(
-            &resolve(
-                &json!({"type": "shape", "name": "Header rule", "x": e(rx), "y": e(y), "w": e(rw), "h": e(rh), "fill": color, "line": "none"}),
+    let mut label_x = x;
+    if let Some(r) = rule_of(h.get("rule"), "header `rule`", cx, w, false)? {
+        if r.beside && has_row {
+            out.push(rect(
+                "Header rule",
+                x,
+                y + (lh - r.h) / 2,
+                r.w,
+                r.h,
+                r.color,
                 cx,
-            )?,
-            cx,
-        )?);
-        y += rh + (0.18 * IN as f64) as Emu;
+            )?);
+            label_x = x + r.w + (0.15 * IN as f64) as Emu;
+        } else {
+            let rx = if align == Some("center") {
+                x + (w - r.w) / 2
+            } else {
+                x
+            };
+            out.push(rect("Header rule", rx, y, r.w, r.h, r.color, cx)?);
+            y += r.h + r.gap;
+        }
     }
-    if let Some(t) = opt_str(so, "eyebrow")? {
-        let lh = look.line_h("eyebrow", 11.0);
-        let v = with_align(text_box("Eyebrow", x, y, w, lh, "eyebrow", json!(t)));
-        out.push(element(&resolve(&v, cx)?, cx)?);
+    if has_row {
+        let side_w = if side_text.is_some() { 3 * IN } else { 0 };
+        if let Some(t) = &side_text {
+            let mut v = text_box(
+                "Header text",
+                x + w - side_w,
+                y,
+                side_w,
+                lh,
+                "eyebrow",
+                json!([{"runs": [{"text": t, "caps": false}]}]),
+            );
+            v["align"] = json!("right");
+            v["wrap"] = json!(false);
+            out.push(element(&resolve(&v, cx)?, cx)?);
+        }
+        let mut runs = Vec::new();
+        if numbered {
+            runs.push(page_run(cx, "page_number"));
+            if eyebrow.is_some() {
+                runs.push(json!({"text": sep, "style": "eyebrow"}));
+            }
+        }
+        if let Some(t) = eyebrow {
+            runs.push(json!({"text": t, "style": "eyebrow"}));
+        }
+        if !runs.is_empty() {
+            let bw = (x + w - side_w - label_x).max(IN);
+            let v = with_align(text_box(
+                "Eyebrow",
+                label_x,
+                y,
+                bw,
+                lh,
+                "eyebrow",
+                json!([{"runs": runs}]),
+            ));
+            out.push(element(&resolve(&v, cx)?, cx)?);
+        }
         y += lh + gap;
     }
     if let Some(t) = opt_str(so, "title")? {
@@ -851,30 +1158,131 @@ pub fn header(so: &Map<String, Value>, cx: &Ctx, look: &Look) -> Result<Furnitur
     })
 }
 
-/// A cover or section slide: a dark background, a rule, eyebrow, a big
-/// title and subtitle centred on the slide's height.
+/// A cover or section slide. A cover: the deck's name (or cover logo) at
+/// the top left, eyebrow (beside or under a short rule), a big title,
+/// subtitle and a `meta` line at the bottom, with the cover's motif: an
+/// accent `block` down the right carrying the slide's `mark` (a big number),
+/// or a `grid` of squares. A section: eyebrow, title and subtitle on a dark
+/// background, components under them. Without a `y` the text is centred on
+/// the slide's height.
 pub fn cover(so: &Map<String, Value>, cx: &Ctx, look: &Look, section: bool) -> Result<Furniture> {
     let c = &look.cover;
     let size = look.size;
     let margin = (0.75 * IN as f64) as Emu;
     let x = len_or(c, "x", cx, margin)?;
-    let w = len_or(c, "w", cx, ((size.cx - 2 * x) as f64 * 0.75) as Emu)?;
     let align = opt_str(c, "align")?;
+    let motif = if section {
+        "none"
+    } else {
+        opt_str(c, "motif")?.unwrap_or("none")
+    };
+    let mut out = Vec::new();
+    // The motif and how wide the text may go beside it.
+    let mut text_end = size.cx - margin;
+    match motif {
+        "none" => {}
+        "block" => {
+            let bw = len_or(c, "block_w", cx, (3.6 * IN as f64) as Emu)?;
+            let bx = size.cx - bw;
+            out.push(rect(
+                "Cover block",
+                bx,
+                0,
+                bw,
+                size.cy,
+                json!("accent"),
+                cx,
+            )?);
+            let pad = (0.4 * IN as f64) as Emu;
+            if let Some(t) = text_of(so, "mark_label")? {
+                let lh = look.line_h("cover_mark_label", 11.0);
+                let v = text_box(
+                    "Cover mark label",
+                    bx + pad,
+                    (0.6 * IN as f64) as Emu,
+                    bw - 2 * pad,
+                    lh * 2,
+                    "cover_mark_label",
+                    json!(t),
+                );
+                out.push(element(&resolve(&v, cx)?, cx)?);
+            }
+            if let Some(t) = text_of(so, "mark")? {
+                let mh = (look.size_of("cover_mark", 96.0) * 1.25 * PT as f64) as Emu;
+                let mut v = text_box(
+                    "Cover mark",
+                    bx + pad * 3 / 4,
+                    size.cy - (0.55 * IN as f64) as Emu - mh,
+                    bw - pad,
+                    mh,
+                    "cover_mark",
+                    json!(t),
+                );
+                v["anchor"] = json!("bottom");
+                v["wrap"] = json!(false);
+                out.push(element(&resolve(&v, cx)?, cx)?);
+            }
+            text_end = bx - (0.5 * IN as f64) as Emu;
+        }
+        "grid" => {
+            let cell = (0.7 * IN as f64) as Emu;
+            let pitch = (0.84 * IN as f64) as Emu;
+            let gx = size.cx - margin - (0.36 * IN as f64) as Emu - 3 * pitch - cell;
+            let gy = (size.cy as f64 * 0.233) as Emu;
+            for r in 0..4 {
+                for k in 0..4 {
+                    let i = r * 4 + k;
+                    let (fill, line) = match i {
+                        1 | 6 | 11 => (json!("on_accent"), json!("none")),
+                        9 => (json!("highlight"), json!("none")),
+                        _ => (json!("none"), json!({"color": "on_accent", "width": "1pt"})),
+                    };
+                    let v = json!({"type": "shape", "name": format!("Cover square {}", i + 1),
+                        "x": e(gx + k * pitch), "y": e(gy + r * pitch), "w": e(cell), "h": e(cell),
+                        "fill": fill, "line": line});
+                    out.push(element(&resolve(&v, cx)?, cx)?);
+                }
+            }
+            text_end = gx - (0.45 * IN as f64) as Emu;
+        }
+        other => bail!("cover `motif` must be block, grid or none, not \"{other}\""),
+    }
+    let full = text_end - x;
+    let w = if section {
+        len_or(c, "w", cx, size.cx - margin - x)?
+    } else {
+        len_or(
+            c,
+            "w",
+            cx,
+            (((size.cx - 2 * x) as f64 * 0.75) as Emu).min(full),
+        )?
+    };
+    let (s_eyebrow, s_title, s_sub) = if section {
+        ("section_eyebrow", "section_title", "section_subtitle")
+    } else {
+        ("cover_eyebrow", "cover_title", "cover_subtitle")
+    };
     let eyebrow = opt_str(so, "eyebrow")?;
     let title = opt_str(so, "title")?;
     let subtitle = opt_str(so, "subtitle")?;
-    let rule_h = (0.07 * IN as f64) as Emu;
     let gap = (0.14 * IN as f64) as Emu;
-    let title_lines = title.map_or(0, |t| look.lines("cover_title", 44.0, t, w).min(5));
-    let sub_lines = subtitle.map_or(0, |t| look.lines("cover_subtitle", 17.0, t, w).min(5));
-    let eh = look.line_h("cover_eyebrow", 12.0);
-    let th = look.line_h("cover_title", 44.0) * title_lines as Emu;
-    let sh = look.line_h("cover_subtitle", 17.0) * sub_lines as Emu;
-    let rule = c.get("rule").cloned().unwrap_or(json!({}));
-    let has_rule = !matches!(rule, Value::Bool(false));
+    let title_lines = title.map_or(0, |t| look.lines(s_title, 44.0, t, w).min(5));
+    let sub_lines = subtitle.map_or(0, |t| look.lines(s_sub, 17.0, t, w).min(5));
+    let eh = look.line_h(s_eyebrow, 12.0);
+    let th = look.line_h(s_title, 44.0) * title_lines as Emu;
+    let sh = look.line_h(s_sub, 17.0) * sub_lines as Emu;
+    let rule = if section {
+        None
+    } else {
+        rule_of(c.get("rule"), "cover `rule`", cx, w, true)?
+    };
+    let rule_above = rule
+        .as_ref()
+        .is_some_and(|r| !r.beside || eyebrow.is_none());
     let mut total = 0;
-    if has_rule {
-        total += rule_h + gap * 2;
+    if let Some(r) = rule.as_ref().filter(|_| rule_above) {
+        total += r.h + gap * 2;
     }
     if eyebrow.is_some() {
         total += eh + gap;
@@ -883,71 +1291,97 @@ pub fn cover(so: &Map<String, Value>, cx: &Ctx, look: &Look, section: bool) -> R
     if subtitle.is_some() {
         total += gap * 2 + sh;
     }
-    let mut y = ((size.cy as f64 * if section { 0.5 } else { 0.47 }) - total as f64 / 2.0) as Emu;
-    let mut out = Vec::new();
+    let y_key = if section { "section_y" } else { "y" };
+    let mut y = match c.get(y_key).filter(|v| !v.is_null()) {
+        Some(v) => length(v, cx, y_key)?,
+        None => ((size.cy as f64 * if section { 0.5 } else { 0.47 }) - total as f64 / 2.0) as Emu,
+    };
     let with_align = |mut v: Value| {
         if let Some(a) = align {
             v["align"] = json!(a);
         }
         v
     };
-    if has_rule {
-        let ro = match &rule {
-            Value::Object(_) => object(&rule, "cover `rule`", &["color", "w", "h"])?.clone(),
-            _ => Map::new(),
-        };
-        let rw = len_or(&ro, "w", cx, (0.9 * IN as f64) as Emu)?;
-        let rh = len_or(&ro, "h", cx, rule_h)?;
-        let rx = if align == Some("center") {
-            x + (w - rw) / 2
-        } else {
-            x
-        };
-        let color = ro.get("color").cloned().unwrap_or(json!("highlight"));
-        out.push(element(
-            &resolve(
-                &json!({"type": "shape", "name": "Cover rule", "x": e(rx), "y": e(y), "w": e(rw), "h": e(rh), "fill": color, "line": "none"}),
+    if !section {
+        let top = (0.6 * IN as f64) as Emu;
+        if let Some(logo) = opt_str(c, "logo")? {
+            let lh = len_or(c, "logo_h", cx, (0.42 * IN as f64) as Emu)?;
+            out.push(element(
+                &json!({"type": "picture", "name": "Logo", "path": logo, "x": e(x), "y": e(top), "h": e(lh)}),
                 cx,
-            )?,
-            cx,
-        )?);
-        y += rh + gap * 2;
+            )?);
+        } else if opt_bool(c, "brand")?.unwrap_or(false)
+            && let Some(t) = look.footer.as_ref().and_then(|f| get_str(f, "text"))
+        {
+            let lh = look.line_h("cover_brand", 12.0);
+            let v = text_box("Cover brand", x, top, full, lh, "cover_brand", json!(t));
+            out.push(element(&resolve(&v, cx)?, cx)?);
+        }
+    }
+    let mut label_x = x;
+    if let Some(r) = &rule {
+        if rule_above {
+            let rx = if align == Some("center") {
+                x + (w - r.w) / 2
+            } else {
+                x
+            };
+            out.push(rect("Cover rule", rx, y, r.w, r.h, r.color.clone(), cx)?);
+            y += r.h + gap * 2;
+        } else {
+            out.push(rect(
+                "Cover rule",
+                x,
+                y + (eh - r.h) / 2,
+                r.w,
+                r.h,
+                r.color.clone(),
+                cx,
+            )?);
+            label_x = x + r.w + (0.15 * IN as f64) as Emu;
+        }
     }
     if let Some(t) = eyebrow {
-        let v = with_align(text_box("Eyebrow", x, y, w, eh, "cover_eyebrow", json!(t)));
+        let v = with_align(text_box(
+            "Eyebrow",
+            label_x,
+            y,
+            w - (label_x - x),
+            eh,
+            s_eyebrow,
+            json!(t),
+        ));
         out.push(element(&resolve(&v, cx)?, cx)?);
         y += eh + gap;
     }
     if let Some(t) = title {
-        let v = with_align(text_box("Title", x, y, w, th, "cover_title", json!(t)));
+        let v = with_align(text_box("Title", x, y, w, th, s_title, json!(t)));
         out.push(title_element(resolve(&v, cx)?, cx, "ctrTitle")?);
         y += th;
     }
     if let Some(t) = subtitle {
         y += gap * 2;
-        let v = with_align(text_box(
-            "Subtitle",
-            x,
-            y,
-            w,
-            sh,
-            "cover_subtitle",
-            json!(t),
-        ));
+        let v = with_align(text_box("Subtitle", x, y, w, sh, s_sub, json!(t)));
         out.push(element(&resolve(&v, cx)?, cx)?);
         y += sh;
     }
-    if let Some(logo) = opt_str(c, "logo")? {
-        let lh = len_or(c, "logo_h", cx, (0.42 * IN as f64) as Emu)?;
-        out.push(element(
-            &json!({"type": "picture", "name": "Logo", "path": logo, "x": e(x), "y": e(size.cy - margin - lh), "h": e(lh)}),
-            cx,
-        )?);
+    if let Some(t) = text_of(so, "meta")? {
+        let lh = look.line_h("cover_meta", 11.0);
+        let v = with_align(text_box(
+            "Cover meta",
+            x,
+            size.cy - (0.85 * IN as f64) as Emu,
+            full,
+            lh,
+            "cover_meta",
+            json!(t),
+        ));
+        out.push(element(&resolve(&v, cx)?, cx)?);
     }
     let content = [
         x,
-        y + IN / 3,
-        size.cx - x - margin,
+        y + (0.45 * IN as f64) as Emu,
+        if section { size.cx - x - margin } else { full },
         (size.cy - y - IN).max(IN / 2),
     ];
     Ok(Furniture {
@@ -956,18 +1390,35 @@ pub fn cover(so: &Map<String, Value>, cx: &Ctx, look: &Look, section: bool) -> R
     })
 }
 
-/// The cover's background (palette names allowed), if any.
-pub fn cover_background(look: &Look, cx: &Ctx, section: bool) -> Value {
-    let bg = look
-        .cover
-        .get("background")
-        .cloned()
-        .unwrap_or(json!(if section { "primary" } else { "dark" }));
-    resolve_background(&bg, cx)
+/// The palette name (or value) of a cover's or section's background.
+pub fn cover_background_name(look: &Look, section: bool) -> Value {
+    let key = if section {
+        "section_background"
+    } else {
+        "background"
+    };
+    look.cover.get(key).cloned().unwrap_or(json!("dark"))
 }
 
-/// The footer of slide number `n`: bar, logo, text, the slide's note and
-/// its number (a slide number field).
+/// The cover's background (palette names allowed), if any.
+pub fn cover_background(look: &Look, cx: &Ctx, section: bool) -> Value {
+    resolve_background(&cover_background_name(look, section), cx)
+}
+
+/// A string or number setting as text.
+fn text_of(o: &Map<String, Value>, key: &str) -> Result<Option<String>> {
+    Ok(match o.get(key) {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.clone()),
+        Some(Value::Number(n)) => Some(n.to_string()),
+        Some(_) => bail!("`{key}` must be text"),
+    })
+}
+
+/// The footer of a slide: a hairline across the content width or a bar
+/// along the bottom, logo and the slide's `footer_note` at the left, the
+/// footer's text and the page number (a slide number field) at the right,
+/// or a small square mark in the corner.
 pub fn footer(so: &Map<String, Value>, cx: &Ctx, look: &Look) -> Result<Vec<Element>> {
     let Some(f) = &look.footer else {
         if get_str(so, "footer_note").is_some() {
@@ -991,14 +1442,47 @@ pub fn footer(so: &Map<String, Value>, cx: &Ctx, look: &Look) -> Result<Vec<Elem
                 _ => bail!("footer `bar` must be {{color, height}} or false"),
             };
             let bh = len_or(&bo, "height", cx, (0.08 * IN as f64) as Emu)?;
-            let color = bo.get("color").cloned().unwrap_or(json!("primary"));
-            out.push(element(
-                &resolve(
-                    &json!({"type": "shape", "name": "Footer bar", "x": 0, "y": e(size.cy - bh), "w": e(size.cx), "h": e(bh), "fill": color, "line": "none"}),
-                    cx,
-                )?,
+            let color = bo.get("color").cloned().unwrap_or(json!("accent"));
+            out.push(rect("Footer bar", 0, size.cy - bh, size.cx, bh, color, cx)?);
+        }
+    }
+    match f.get("rule") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => {}
+        Some(r) => {
+            let ro = match r {
+                Value::Object(_) => object(r, "footer `rule`", &["color", "width"])?.clone(),
+                Value::Bool(true) => Map::new(),
+                _ => bail!("footer `rule` must be {{color, width}} or false"),
+            };
+            let ry = row_y - (0.07 * IN as f64) as Emu;
+            let v = json!({"type": "line", "name": "Footer rule", "x1": e(margin), "y1": e(ry),
+                "x2": e(size.cx - margin), "y2": e(ry),
+                "color": ro.get("color").cloned().unwrap_or(json!("line")),
+                "width": ro.get("width").cloned().unwrap_or(json!("0.75pt"))});
+            out.push(element(&resolve(&v, cx)?, cx)?);
+        }
+    }
+    let mut right = size.cx - margin;
+    match f.get("mark") {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => {}
+        Some(m) => {
+            let mo = match m {
+                Value::Object(_) => object(m, "footer `mark`", &["color", "size"])?.clone(),
+                Value::Bool(true) => Map::new(),
+                _ => bail!("footer `mark` must be {{color, size}} or false"),
+            };
+            let s = len_or(&mo, "size", cx, (0.14 * IN as f64) as Emu)?;
+            let color = mo.get("color").cloned().unwrap_or(json!("accent"));
+            out.push(rect(
+                "Footer mark",
+                right - s,
+                row_y + (row_h - s) / 2,
+                s,
+                s,
+                color,
                 cx,
             )?);
+            right -= s + (0.2 * IN as f64) as Emu;
         }
     }
     let mut x = margin;
@@ -1011,57 +1495,59 @@ pub fn footer(so: &Map<String, Value>, cx: &Ctx, look: &Look) -> Result<Vec<Elem
         x += el.xfrm.cx + (0.2 * IN as f64) as Emu;
         out.push(el);
     }
-    let num_w = IN;
-    let right = size.cx - margin;
-    let numbers = opt_bool(f, "page_numbers")?.unwrap_or(true);
-    let text_end = if let Some(t) = opt_str(f, "text")? {
-        let chars = t.chars().count() as f64;
-        let est = (chars * look.size_of(&style, 10.0) * 0.52 * PT as f64) as Emu + IN / 4;
-        let w = est.min(right - num_w - x);
-        let v = text_box("Footer", x, row_y, w, row_h, &style, json!(t));
-        let mut v = v;
-        v["anchor"] = json!("middle");
-        v["wrap"] = json!(false);
-        out.push(element(&resolve(&v, cx)?, cx)?);
-        x + w
-    } else {
-        x
-    };
-    let notes_on = opt_bool(f, "note_field")?.unwrap_or(true);
-    if let Some(n) = get_str(so, "footer_note") {
-        if !notes_on {
-            bail!("the deck's footer has `note_field: false`");
-        }
-        let start = text_end + IN / 4;
-        let end = right - if numbers { num_w + IN / 5 } else { 0 };
-        if end - start > IN / 2 {
-            let mut v = text_box(
-                "Footer note",
-                start,
-                row_y,
-                end - start,
-                row_h,
-                &note_style,
-                json!(n),
-            );
-            v["anchor"] = json!("middle");
-            v["align"] = json!("right");
-            out.push(element(&resolve(&v, cx)?, cx)?);
-        }
-    }
-    if numbers {
+    if opt_bool(f, "page_numbers")?.unwrap_or(true) {
+        let num_w = (0.45 * IN as f64) as Emu;
         let mut v = text_box(
             "Slide number",
             right - num_w,
             row_y,
             num_w,
             row_h,
-            &style,
-            json!([{"runs": [{"field": "slide_number"}]}]),
+            "page_number",
+            json!([{"runs": [page_run(cx, "page_number")]}]),
         );
         v["anchor"] = json!("middle");
         v["align"] = json!("right");
+        v["wrap"] = json!(false);
         out.push(element(&resolve(&v, cx)?, cx)?);
+        right -= num_w + (0.1 * IN as f64) as Emu;
+    }
+    let in_header = look
+        .header
+        .as_ref()
+        .is_some_and(|h| h.get("text") == Some(&Value::Bool(true)));
+    if let Some(t) = opt_str(f, "text")?.filter(|_| !in_header) {
+        let chars = t.chars().count() as f64;
+        let est = (chars * look.size_of(&style, 10.0) * 0.55 * PT as f64) as Emu + IN / 4;
+        let w = est.min(right - x - IN);
+        if w > IN / 2 {
+            let mut v = text_box("Footer", right - w, row_y, w, row_h, &style, json!(t));
+            v["anchor"] = json!("middle");
+            v["align"] = json!("right");
+            v["wrap"] = json!(false);
+            out.push(element(&resolve(&v, cx)?, cx)?);
+            right -= w;
+        }
+    }
+    let notes_on = opt_bool(f, "note_field")?.unwrap_or(true);
+    if let Some(n) = get_str(so, "footer_note") {
+        if !notes_on {
+            bail!("the deck's footer has `note_field: false`");
+        }
+        let end = right - IN / 4;
+        if end - x > IN / 2 {
+            let mut v = text_box(
+                "Footer note",
+                x,
+                row_y,
+                end - x,
+                row_h,
+                &note_style,
+                json!(n),
+            );
+            v["anchor"] = json!("middle");
+            out.push(element(&resolve(&v, cx)?, cx)?);
+        }
     }
     Ok(out)
 }
@@ -1124,37 +1610,57 @@ pub fn schema_defs() -> Vec<(&'static str, Value)> {
 
 /// Deck keys for the look.
 pub fn deck_props() -> Map<String, Value> {
-    let rule = json!({"description": "An accent bar above the eyebrow: {color, w, h}, or false.", "anyOf": [
-        {"type": "boolean", "const": false},
-        {"type": "object", "additionalProperties": false, "properties": {"color": r("color"), "w": r("length"), "h": r("length")}}]});
+    let rule = json!({"description": "A rule above the eyebrow, or beside it (position left): {color, w (a length or \"full\"), h, position, gap}, or false.", "anyOf": [
+        {"type": "boolean"},
+        {"type": "object", "additionalProperties": false, "properties": {"color": r("color"),
+            "w": {"anyOf": [{"type": "string", "const": "full"}, r("length")]}, "h": r("length"),
+            "position": {"type": "string", "enum": ["above", "left"]},
+            "gap": {"description": "Space under a rule above the eyebrow.", "allOf": [r("length")]}}}]});
+    let small = |what: &str| {
+        json!({"description": what, "anyOf": [{"type": "boolean"},
+        {"type": "object", "additionalProperties": false, "properties": {"color": r("color"), "width": r("length"), "size": r("length")}}]})
+    };
     let palette: Map<String, Value> = PALETTE
         .iter()
         .map(|n| ((*n).to_owned(), json!({"type": "string"})))
         .collect();
     json!({
-        "preset": {"type": "string", "enum": PRESETS, "description": "A built-in look: theme colours and fonts, palette, text styles, header and footer. The deck's own settings go over it."},
+        "preset": {"type": "string", "enum": PRESETS, "description": "A built-in look: editorial (warm paper, Instrument Serif titles and numbers, hairline rules, no boxes), swiss (white, Inter bold titles under a thick rule, mono labels, solid square panels, one strong blue) or mono (swiss in black, white and one red). Sets the theme colours and fonts, palette, text styles, card style, header, footer, covers and the slide background; the deck's own settings go over it (its theme accent recolours the preset's tints)."},
+        "card_style": {"type": "string", "enum": ["rule", "fill"], "description": "How cards, stats, comparisons, callouts and clean tables are drawn: rule (no boxes, a rule on top, numbers in the heading font) or fill (square panels, the highlighted one in the accent colour). Default from the preset; fill without one."},
         "palette": {"type": "object", "additionalProperties": false, "properties": palette,
-            "description": "Named colours used by styles and components (and allowed wherever a colour is): #RRGGBB or a theme colour. Default from the theme: primary accent1, highlight accent2, ink tx1, dark tx2, paper bg2, white bg1, muted/divider/tint mixed from them."},
+            "description": "Named colours used by styles and components (and allowed wherever a colour is): #RRGGBB or a theme colour. Default from the theme: accent / primary accent1, highlight accent2, ink tx1, dark tx2, panel / paper bg2, background / white / on_accent / on_dark bg1, muted, line / divider, bar, accent_soft / tint, on_dark_accent mixed from them; good / success, bad / danger fixed."},
         "styles": {"type": "object", "additionalProperties": r("text_style"),
-            "description": "Named text styles (used with `style`): eyebrow, title, subtitle, body, small, note, label, card_title, stat, number, badge, callout, table, table_header, footer, cover_eyebrow, cover_title, cover_subtitle, and any of your own. Keys given here go over the preset's."},
+            "description": "Named text styles (used with `style`): eyebrow, page_number, title, subtitle, body, small, note, label, card_title, stat, number, numeral, badge, callout, table, table_header, footer, cover_brand, cover_eyebrow, cover_title, cover_subtitle, cover_meta, cover_mark, cover_mark_label, section_eyebrow, section_title, section_subtitle, and any of your own. Keys given here go over the preset's."},
         "header": {"description": "Where a slide's eyebrow, title and subtitle go (a preset turns it on; false: none). Slides with a header put `title` in a title placeholder, and components default to the area under it.",
             "anyOf": [{"type": "boolean"}, {"type": "object", "additionalProperties": false, "properties": {
                 "x": r("length"), "y": {"description": "Top of the header (default 0.55in).", "allOf": [r("length")]}, "w": r("length"),
                 "gap": r("length"), "content_gap": {"description": "Space between the header and the content area.", "allOf": [r("length")]},
-                "rule": rule.clone(), "align": {"type": "string", "enum": ["left", "center"]}}}]},
+                "rule": rule.clone(), "align": {"type": "string", "enum": ["left", "center"]},
+                "page_number": {"type": "boolean", "description": "The page number (02) before the eyebrow."},
+                "separator": {"type": "string", "description": "Between the page number and the eyebrow (default \" / \")."},
+                "text": {"description": "Text at the right of the eyebrow row; true: the footer's text (then not in the footer).", "type": ["string", "boolean"]}}}]},
         "footer": {"description": "Each slide's footer (cover and section slides have none unless `footer: true`).",
             "anyOf": [{"type": "boolean"}, {"type": "object", "additionalProperties": false, "properties": {
                 "text": {"type": "string", "description": "e.g. \"Prepared for …\"."},
-                "page_numbers": {"type": "boolean", "description": "A slide number field at the right (default true)."},
+                "page_numbers": {"type": "boolean", "description": "A slide number field (02) at the right (default true)."},
                 "logo": {"type": "string", "description": "A PNG or JPEG at the left."},
                 "logo_h": r("length"),
                 "bar": {"description": "A bar along the bottom edge: {color, height}, or false.", "anyOf": [{"type": "boolean"},
                     {"type": "object", "additionalProperties": false, "properties": {"color": r("color"), "height": r("length")}}]},
                 "note_field": {"type": "boolean", "description": "Show slides' `footer_note` (default true)."},
+                "rule": small("A hairline across the content width above the footer: {color, width}, or false."),
+                "mark": small("A small square at the bottom right: {color, size}, or false."),
                 "y": r("length"), "style": {"type": "string"}, "note_style": {"type": "string"}}}]},
         "cover": {"type": "object", "additionalProperties": false, "description": "Cover and section slides (`kind`).", "properties": {
-            "background": r("background"), "x": r("length"), "w": r("length"), "rule": rule,
-            "logo": {"type": "string"}, "logo_h": r("length"), "align": {"type": "string", "enum": ["left", "center"]}}},
+            "background": r("background"), "x": r("length"),
+            "y": {"description": "Top of the cover's text (default: centred).", "allOf": [r("length")]},
+            "w": r("length"), "rule": rule,
+            "logo": {"type": "string", "description": "A picture at the top left."}, "logo_h": r("length"), "align": {"type": "string", "enum": ["left", "center"]},
+            "motif": {"type": "string", "enum": ["none", "block", "grid"], "description": "block: an accent block down the right carrying the slide's `mark`; grid: a 4×4 grid of squares."},
+            "block_w": r("length"),
+            "brand": {"type": "boolean", "description": "The footer's text at the top left (when there is no logo)."},
+            "section_background": r("background"),
+            "section_y": {"description": "Top of a section slide's text (default: centred).", "allOf": [r("length")]}}},
         "content": {"type": "object", "additionalProperties": false, "description": "The content area under the header (default 0.75in margins, from 2.2in to 0.85in above the bottom) and the gap between cards.",
             "properties": {"x": r("length"), "y": r("length"), "w": r("length"), "h": r("length"), "gap": r("length")}},
         "transition": {"description": "Every slide's transition unless it has its own.", "allOf": [r("transition")]},
@@ -1167,11 +1673,14 @@ pub fn deck_props() -> Map<String, Value> {
 /// Slide keys for the look.
 pub fn slide_props() -> Map<String, Value> {
     json!({
-        "kind": {"type": "string", "enum": ["content", "cover", "section"], "description": "cover / section: a dark slide with a big title (see the deck's `cover`)."},
+        "kind": {"type": "string", "enum": ["content", "cover", "section"], "description": "cover: a big title with the cover's motif; section: a dark slide with a big title, components under it (see the deck's `cover`)."},
         "eyebrow": {"type": "string", "description": "The small label above the title (needs a header or preset)."},
         "subtitle": {"type": "string"},
         "footer": {"type": "boolean", "description": "false hides the deck's footer on this slide."},
         "footer_note": {"type": "string", "description": "Text in the footer, e.g. a source."},
+        "meta": {"type": "string", "description": "A cover's small line at the bottom, e.g. who presents."},
+        "mark": {"type": ["string", "number"], "description": "A cover's big number in the accent block (cover motif block)."},
+        "mark_label": {"type": "string", "description": "A small line at the top of the accent block."},
         "transition": r("transition"),
     })
     .as_object()
@@ -1191,10 +1700,22 @@ mod tests {
         }
         assert!(preset("nope").is_err());
         let p = Presentation::new();
-        let deck = json!({"preset": "consulting-navy", "styles": {"eyebrow": {"size": 12}}, "palette": {"muted": "#123456"}});
+        let deck = json!({"preset": "swiss", "styles": {"eyebrow": {"size": 12}}, "palette": {"muted": "#123456"}});
         let look = Look::build(&p, deck.as_object().unwrap(), &Ctx::default()).unwrap();
         assert_eq!(look.size_of("eyebrow", 0.0), 12.0);
         assert_eq!(look.styles["eyebrow"]["caps"], true);
+        assert_eq!(look.card_style, CardStyle::Fill);
+        // A deck's own accent: the tints are mixed from it, not the preset's.
+        let ed = json!({"preset": "editorial"});
+        let ed = Look::build(&p, ed.as_object().unwrap(), &Ctx::default()).unwrap();
+        assert_eq!(ed.card_style, CardStyle::Rule);
+        assert_eq!(ed.rgb("accent_soft").hex(), "F2DED0");
+        assert!(ed.is_dark("dark") && !ed.is_dark("background"));
+        assert_eq!(ed.on_dark("dark").rgb("ink"), ed.rgb("on_dark"));
+        let own = json!({"preset": "editorial", "theme": {"colors": {"accent1": "#0055AA"}}});
+        let own = Look::build(&p, own.as_object().unwrap(), &Ctx::default()).unwrap();
+        assert_ne!(own.rgb("accent_soft").hex(), "F2DED0");
+        assert!(preset("consulting-navy").is_err());
         let cx = Ctx {
             look: Some(Arc::new(look)),
             ..Ctx::default()

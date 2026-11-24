@@ -1,17 +1,19 @@
 {
   "size": "16:9",
   "units": "in",
-  "preset": "consulting-navy",
+  "preset": "editorial",
   "theme": { "name": "Harbor" },
   "footer": { "text": "Lumen Logistics · Q3 operations review", "logo": "logo.png" },
   "transition": { "type": "fade", "duration": 0.6 },
   "slides": [
     {
       "kind": "cover",
-      "background": { "picture": "sky.png" },
       "eyebrow": "Quarterly operations review · Q3",
       "title": "On time, for the third quarter running",
       "subtitle": "Lumen Logistics · made-up sample data",
+      "meta": "Operations team · October",
+      "mark": "96%",
+      "mark_label": "On-time delivery in Q3",
       "notes": "Open with the headline: on-time delivery is up for the third quarter running."
     },
     {
@@ -66,7 +68,7 @@
       "eyebrow": "Growth",
       "title": "Volume is growing",
       "elements": [
-        { "type": "picture", "path": "bars.png", "x": 0.75, "y": 2.2, "w": 4.2, "h": 4.2, "geometry": "roundRect", "radius": 0.2, "line": { "color": "divider", "width": "0.75pt" }, "alt": "Bar chart: parcels per month, rising" },
+        { "type": "picture", "path": "bars.png", "x": 0.75, "y": 2.2, "w": 4.2, "h": 4.2, "line": { "color": "line", "width": "0.75pt" }, "alt": "Bar chart: parcels per month, rising" },
         { "type": "picture", "path": "sky.png", "x": 5.4, "y": 2.2, "w": 2.6, "h": 2.6, "fit": "cover", "geometry": "ellipse" },
         { "type": "picture", "path": "sky.png", "x": 8.4, "y": 2.2, "w": 2.2, "crop": { "left": 0.25, "right": 0.25 } },
         {

@@ -37,11 +37,12 @@ The short way to a good-looking deck: pick a `preset`, give each slide an
 ```json
 {
   "units": "in",
-  "preset": "consulting-navy",
-  "footer": {"text": "Prepared for Example Co", "logo": "logo.png"},
+  "preset": "editorial",
+  "footer": {"text": "Example Co"},
   "transition": "fade",
   "slides": [
-    {"kind": "cover", "eyebrow": "Proposal · November 2026", "title": "Reliable uptime for every line"},
+    {"kind": "cover", "eyebrow": "Proposal · November 2026", "title": "Reliable uptime for every line",
+     "mark": "96%", "mark_label": "Uptime on the pilot line"},
     {"eyebrow": "At a glance", "title": "Three numbers that matter", "footer_note": "Source: 2026 annual report",
      "elements": [{"type": "stat_cards", "items": [
        {"value": "96%", "label": "On time"}, {"value": "−18%", "label": "Cost per parcel", "highlight": true}, {"value": "4.7", "label": "Rating"}]}]}
@@ -114,11 +115,12 @@ Every element has a `type` and optionally a `name`.
   `row_height`/`row_heights`, `header` (default true: bold `header_color` on
   `header_fill`), `banded` with `band_fill`, `fill`, `border` (default 1 pt
   grey), `cell_margins`, `style_id`, and text formatting for every cell.
-  `"preset": "clean"` gives the consultancy look: a rounded header bar in
-  the primary colour behind a borderless header row (small capitals), soft
-  banded rows, no grid lines, the first column bold (`first_bold: false`
-  to turn off); `x`, `y`, `w` default to the content area. It stays a real
-  table (the header bar is a shape behind it).
+  `"preset": "clean"` draws it in the deck's card style (below): `rule`
+  has no fills, an ink rule above and below, a thinner one under the
+  header and hairlines between rows (lines drawn over the table); `fill`
+  has an ink header row and banded panel rows. No grid lines either way,
+  the first column bold (`first_bold: false` to turn off); `x`, `y`, `w`
+  default to the content area. It stays a real table.
 
 ### Text
 
@@ -166,36 +168,66 @@ text at full size until then.
   else Blank), `title`, `bullets`, `background` (a fill, `{"picture": path}`
   or `"inherit"`), `elements` (drawn in order, later on top), `notes`.
   With a deck `header` (or a preset): `eyebrow`, `subtitle`, `kind`
-  (`content`, `cover`, `section`), `footer`, `footer_note` and `transition`
-  (below); a slide with its own `layout` keeps the layout's placeholders.
-- Deck keys for the look: `preset`, `palette`, `styles`, `header`, `footer`,
-  `cover`, `content`, `transition` (below).
+  (`content`, `cover`, `section`), `footer`, `footer_note` and `transition`;
+  on covers `meta`, `mark` and `mark_label` (below); a slide with its own
+  `layout` keeps the layout's placeholders.
+- Deck keys for the look: `preset`, `card_style`, `palette`, `styles`,
+  `header`, `footer`, `cover`, `content`, `transition` (below).
 
 ## Presets, styles and the palette
 
-`"preset"` picks a built-in look: `consulting-navy` (navy and amber,
-Calibri), `warm` (terracotta and mustard, Georgia headings, Calibri body),
-`mono` (black, white and one red, Arial) or `teal` (teal and amber,
-Calibri). A preset sets the theme colours and fonts, the palette, the text
-styles, a header (eyebrow, title, subtitle), a footer (bottom bar, slide
-numbers) and cover slides; the deck's own `theme`, `palette`, `styles`,
-`header`, `footer` and `cover` go over it key by key.
+`"preset"` picks a built-in look:
 
-Fonts are not embedded in the `.pptx` (Kantor doesn't write embedded fonts),
-so the presets use fonts PowerPoint has everywhere. On Linux, Kantor and
-LibreOffice show Calibri with its metric twin Carlito. A deck may name any
-font in `theme.fonts`; whoever opens it needs that font installed.
+- `editorial`: an annual-report feel. Warm paper (`#F6F1E9`) on every
+  slide, titles and big numbers in Instrument Serif, body and labels in
+  Inter, one terracotta accent. The header is a short accent rule with the
+  section label beside it in sentence case, then the title; the footer a
+  hairline with the source note at the left and the deck's name and page
+  number (`02`) at the right. Cards and stats have no boxes, only a rule on
+  top; tables only rules; the callout is a serif pull quote beside an accent
+  rule. The cover has a full-height accent block on the right carrying one
+  big number (`mark`); sections are dark with serif numerals in the accent.
+- `swiss`: a modernist grid. White, Inter bold titles under a 3 pt ink rule
+  across the content width, labels in JetBrains Mono capitals (`02 /
+  SECTION`, the number in the accent), one strong blue. Cards and stats are
+  solid square panels, the highlighted one blue with white text; tables
+  have an ink header row and banded rows; the callout is a blue bar. The
+  footer is the source note and a small blue square. The cover is all blue
+  with a big white title and a 4×4 grid of squares.
+- `mono`: `swiss` in black, white and one red.
+
+Corners are square everywhere. A preset sets the theme colours and fonts, the
+palette, the text styles, the card style, the header, footer and covers, and
+the slide background; the deck's own `theme`, `palette`, `styles`,
+`header`, `footer`, `cover`, `card_style` and `background` go over it key by
+key. A deck that sets its own `theme.colors.accent1` (its brand colour) gets
+the preset's tints (`accent_soft`, `tint`, `on_dark_accent`, `accent_light`)
+mixed from it instead.
+
+`"card_style"` is how cards, stats, steps, numbered lists, comparisons,
+callouts and clean tables are drawn: `rule` (editorial) or `fill` (swiss,
+mono, and decks without a preset).
+
+Fonts are not embedded in the `.pptx` (Kantor doesn't write embedded fonts):
+whoever opens a deck needs its fonts installed (Instrument Serif, Inter and
+JetBrains Mono are free, under the SIL Open Font License), or the viewer
+substitutes another. A deck may name any font in `theme.fonts`; `styles`
+change the label font (`"label": {"font": "..."}` and the others that name
+JetBrains Mono).
 
 **Text styles.** `"style": "eyebrow"` on an element, a paragraph, a run or a
 table cell applies a named style; keys given beside it win. Every deck has
-`eyebrow`, `title`, `subtitle`, `body`, `small`, `note`, `label`,
-`card_title`, `stat`, `number`, `badge`, `callout`, `table`,
-`table_header`, `footer`, `cover_eyebrow`, `cover_title` and
-`cover_subtitle`; change them or add your own in `styles`:
+`eyebrow`, `page_number`, `title`, `subtitle`, `body`, `small`, `note`,
+`label`, `card_title`, `stat`, `number` (card numbers), `numeral` (step and
+list numerals), `badge`, `callout`, `table`, `table_header`, `footer`,
+`cover_brand`, `cover_eyebrow`, `cover_title`, `cover_subtitle`,
+`cover_meta`, `cover_mark`, `cover_mark_label`, `section_eyebrow`,
+`section_title` and `section_subtitle`; change them or add your own in
+`styles`:
 
 ```json
 "styles": {
-  "eyebrow": {"size": 11, "bold": true, "caps": true, "letter_spacing": 1, "color": "primary"},
+  "eyebrow": {"size": 11, "color": "muted"},
   "quote": {"font": "heading", "size": 22, "italic": true, "color": "dark", "line_spacing": 1.2}
 }
 ```
@@ -208,12 +240,17 @@ a theme change in PowerPoint).
 
 **Palette.** Wherever a colour goes (`color`, `fill`, `line`, `border`,
 `header_fill`, `band_fill`, `background`, gradient stops) a palette name
-works too: `primary` (accent 1), `highlight` (accent 2), `ink` (text), `dark`
-(dark 2), `paper` (light 2), `white`, `muted`, `divider`, `tint`,
-`accent_light`, `on_dark_muted`, `info`, `success`, `warning`, `danger`,
-`black`, `on_primary`. Those that are theme colours are written as theme
-colours; the mixed ones (`muted`, `divider`, `tint`, ...) as RGB. Override
-them in `"palette": {"muted": "#5B6676"}`.
+works too: `accent` (accent 1; also `primary`), `accent_soft` (also
+`tint`), `ink` (text), `muted`, `line` (hairlines; also `divider`), `panel`
+(card fills; also `paper`), `bar`, `background` (the slide background),
+`dark`, `good` / `success`, `bad` / `danger`, `warning`, `highlight`,
+`on_accent`, `on_dark`, `on_dark_muted`, `on_dark_accent`, `accent_light`,
+`info`, `white`, `black`, `on_primary`. Those that are theme colours are
+written as theme colours; the others as RGB. Override them in
+`"palette": {"muted": "#5B6676"}`. On a dark section (or cover) slide the
+text colours swap: `ink` is `on_dark`, `muted` `on_dark_muted`, and rules
+and panels are mixed from the dark background, so components work there
+unchanged.
 
 ## Slide furniture
 
@@ -224,28 +261,46 @@ title placeholder, so `slides list`, the outline and screen readers see it as
 the title. Bullets go in a text box in the content area.
 
 ```json
-"header": {"x": "0.75in", "y": "0.55in", "w": "11.8in", "gap": "0.06in", "content_gap": "0.4in",
-           "rule": {"color": "highlight", "w": "0.9in", "h": "0.06in"}, "align": "left"}
+"header": {"x": "0.75in", "y": "0.52in", "w": "11.8in", "gap": "0.12in", "content_gap": "0.5in",
+           "rule": {"color": "accent", "w": "0.35in", "h": "1.5pt", "position": "left"},
+           "page_number": false, "separator": " / ", "text": false, "align": "left"}
 ```
+
+`rule` is a short bar above the eyebrow, or beside it with `"position":
+"left"`; `"w": "full"` spans the header's width (swiss: a 3 pt ink rule).
+`page_number: true` puts the page number before the eyebrow (`02 / ...`, in
+the `page_number` style); `text` puts text at the right of the eyebrow row
+(`true`: the footer's `text`, which then isn't repeated in the footer).
 
 `footer` is drawn on every slide but covers and sections:
 
 ```json
-"footer": {"text": "Prepared for Example Co", "logo": "logo.png", "logo_h": "0.2in",
-           "page_numbers": true, "bar": {"color": "primary", "height": "0.08in"}, "note_field": true}
+"footer": {"text": "Example Co", "logo": "logo.png", "logo_h": "0.2in", "page_numbers": true,
+           "rule": {"color": "line", "width": "0.75pt"}, "mark": false, "bar": false, "note_field": true}
 ```
 
-A slide's `"footer_note": "Source: …"` goes in the footer, right-aligned;
-`"footer": false` hides the footer on one slide (`true` shows it on a
-cover). Slide numbers are slide number fields. `"header": false` or
-`"footer": false` on the deck turns a preset's off.
+Left to right: the logo, the slide's `"footer_note": "Source: …"`, the
+footer's `text`, the page number (`02`, a slide number field; Kantor shows
+the number at build time and PowerPoint renumbers it as `2` when slides
+move). `rule` is a hairline across the content width above it, `mark` a
+small square at the bottom right (`{color, size}`), `bar` a bar along the
+bottom edge. `"footer": false` hides the footer on one slide (`true` shows
+it on a cover); `"header": false` or `"footer": false` on the deck turns a
+preset's off.
 
-`"kind": "cover"` (or `"section"`) makes a cover: a dark background (the
-palette's `dark`; `primary` for sections), an accent rule, then the
-eyebrow, a big title and subtitle centred on the slide's height, and the
-cover logo. Set them in the deck's `cover`:
-`{"background", "x", "w", "rule", "logo", "logo_h", "align"}`. A slide's own
-`background` wins (e.g. a photo).
+`"kind": "cover"` makes a cover: the footer's `text` at the top left
+(`cover.brand`) or the cover logo, the eyebrow (beside or under the cover's
+`rule`), a big title, the subtitle and the slide's `meta` line at the
+bottom, with the cover's `motif`: `block` (an accent block down the right,
+`block_w` wide, carrying the slide's `mark`, a big number, and
+`mark_label`) or `grid` (a 4×4 grid of squares). `"kind": "section"` is a
+dark slide (`cover.section_background`, default the palette's `dark`) with
+the eyebrow, title and subtitle at `section_y` (or centred), and the slide's
+components under them, drawn in the light colours. Set them in the deck's
+`cover`: `{"background", "x", "y", "w", "rule", "logo", "logo_h", "align",
+"motif", "block_w", "brand", "section_background", "section_y"}`. Without a
+`y` the text is centred on the slide's height. A slide's own `background`
+wins (e.g. a photo).
 
 `content` sets the area under the header that components use when they
 have no box (default: 0.75 in margins, from 2.2 in down to 0.85 in above the
@@ -260,26 +315,37 @@ the deck is built (nothing special is left in the file). Each takes a box
 and an optional `name` (prefix of the shapes' names). Text sizes come from the
 styles, colours from the palette.
 
-- **stat_cards** — a row of cards: `items: [{value, label, detail,
-  highlight}]` (one highlighted card is filled with the primary colour).
+Each is drawn in the deck's `card_style`: `rule` (no boxes, a 1 pt ink rule
+on top, 2.5 pt accent on the highlighted one, numbers in the heading font)
+or `fill` (square panels, the highlighted one in the accent colour with
+white text).
+
+- **stat_cards** — a row of stats: `items: [{value, label, detail,
+  highlight}]`.
 - **cards** — a grid: `items: [{title, text | bullets, icon}]` (or strings),
-  `columns` (default from the count), a numbered badge on each (`numbered:
-  false` for none; an item's `icon` replaces the number), `highlight: n`,
-  `fill`. Short cards put the badge beside the text.
-- **steps** — numbered steps down the box joined by a line: `items`,
-  `current` (steps up to it are filled).
-- **timeline** — phases across the box: `items: [{label, title, text,
-  badge}]`, `current`, `style`: `dots` (dots on a line, progress up to
-  `current`) or `chevrons`.
-- **callout** — a tinted box with a bold lead-in: `tone` (`info`, `warning`,
-  `success`, `danger`, `note`), `title`, `text`, `icon`; by default across the
-  bottom of the content area, as tall as its text.
+  `columns` (default from the count), a number on each (`numbered: false`
+  for none; an item's `icon` replaces the number), `highlight: n`, `fill`
+  (fill style). Short cards put the number beside the text.
+- **steps** — numbered steps down the box: big numerals with hairlines
+  between (rule) or square number badges (fill): `items`, `current` (the
+  highlighted step, from 1).
+- **timeline** — phases across the box: `items: [{label, title, text}]`,
+  `current`, `style`: `track` (square markers on a line: done ink, current
+  accent, later outlined; the line in the accent up to `current`) or
+  `chevrons`.
+- **callout** — the one sentence to remember: `tone` (`info`, `warning`,
+  `success`, `danger`, `note`), `title` (the lead-in), `text`, `icon`; a
+  pull quote beside a rule in the tone's colour (rule) or a solid bar
+  (fill); by default across the bottom of the content area, as tall as its
+  text.
 - **numbered_list** — rows of a number and text centred on each other:
-  `items`, `columns`, `marker` (`badge` or a big `number`), `boxed`.
+  `items`, `columns`, `marker` (`badge`: a numeral (rule) or a square badge
+  (fill); `number`: a big `01`), `boxed` (a hairline above each row, or a
+  panel behind it).
 - **comparison** — 2 to 4 columns: `columns: [{tag, title, text, items,
   icon, highlight}]`.
-- **badge** — a round badge: `text` or `icon`, `x`, `y`, `size`, `fill`,
-  `color`.
+- **badge** — a square badge: `text` or `icon`, `x`, `y`, `size`, `fill`,
+  `color`, `geometry` (`ellipse` for a circle).
 - **table** with `"preset": "clean"` (see Elements).
 
 Numbers are `01`, `02`, ... (`"numbers": "1"` for `1`, `2`; `start`).
