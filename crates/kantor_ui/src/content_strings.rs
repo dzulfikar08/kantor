@@ -101,7 +101,7 @@ pub const CONTENT_ITEMS: &[&str] = &[
     tk("1 video or sound left out"),
     tk("1 picture in a format Kantor can't show left out"),
     tk("1 shape Kantor can't read left out"),
-    tk("slide transitions and animations were left out"),
+    tk("slide animations were left out"),
 ];
 
 /// Phrases with a detail in them (an XML element or part name, kept as is).

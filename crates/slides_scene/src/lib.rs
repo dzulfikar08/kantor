@@ -28,6 +28,7 @@ pub use free::Charts;
 pub mod geom;
 pub mod mask;
 pub mod paint;
+pub mod show;
 pub mod table;
 pub use table::{TableCells, TableLayout};
 pub mod text;
