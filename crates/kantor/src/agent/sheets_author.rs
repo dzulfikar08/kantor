@@ -702,6 +702,8 @@ pub fn cell_value(book: &Workbook, sheet: u32, row: u32, col: u32) -> Value {
 
 /// A number as JSON (whole numbers without `.0`).
 pub fn number(n: f64) -> Value {
+    // 15 significant digits, as Excel shows them (no 1698300.0000000002).
+    let n = format!("{n:.14e}").parse::<f64>().unwrap_or(n);
     if n.fract() == 0.0 && n.abs() < 9.0e15 {
         json!(n as i64)
     } else {

@@ -135,8 +135,12 @@ fn dedupe(book: &mut Workbook, o: &Map<String, Value>) -> Result<(String, Value)
     if dups.is_empty() {
         return Ok(("no duplicate rows".into(), json!({"removed": 0})));
     }
-    let (_, used_cols) = book.used_size(sheet);
-    let whole_rows = r.left == 0 && r.right + 1 >= used_cols;
+    // Whole rows go when the duplicates have nothing outside the range.
+    let whole_rows = dups.iter().all(|&row| {
+        book.content_columns_in_row(sheet, row)
+            .iter()
+            .all(|c| (r.left..=r.right).contains(c))
+    });
     if whole_rows {
         // Delete runs of rows from the bottom up.
         let mut i = dups.len();
@@ -155,7 +159,7 @@ fn dedupe(book: &mut Workbook, o: &Map<String, Value>) -> Result<(String, Value)
         if (first..=r.bottom).any(|row| (r.left..=r.right).any(|c| is_formula(book, sheet, row, c)))
         {
             bail!(
-                "{} has formulas; give a range spanning whole rows (from column A to the last used column) so rows are deleted",
+                "{} has formulas and its duplicate rows have cells outside it; give a range spanning those cells so whole rows are deleted",
                 r.name()
             );
         }

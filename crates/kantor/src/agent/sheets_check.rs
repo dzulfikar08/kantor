@@ -267,28 +267,52 @@ impl Hits {
         let mut out = Vec::new();
         for ((check, sev, key), mut cells) in self.map {
             cells.sort_by_key(|(r, c, _)| (*c, *r));
+            // One finding per column: its first to last cell.
             let mut i = 0;
             while i < cells.len() {
                 let (r0, c0, ref sample) = cells[i];
                 let mut j = i + 1;
-                while j < cells.len() && cells[j].1 == c0 && cells[j].0 == cells[j - 1].0 + 1 {
+                while j < cells.len() && cells[j].1 == c0 {
                     j += 1;
                 }
                 let r1 = cells[j - 1].0;
                 let n = j - i;
+                let mut msg = message(check, &key, sample, n);
+                let list: Vec<String> = cells[i..j]
+                    .iter()
+                    .take(20)
+                    .map(|(r, c, _)| cell_name(*r, *c))
+                    .collect();
+                if (r1 - r0 + 1) as usize != n {
+                    if n <= 6 {
+                        msg.push_str(&format!(" (cells {})", list.join(", ")));
+                    } else {
+                        msg.push_str(&format!(
+                            " ({n} cells between {} and {})",
+                            cell_name(r0, c0),
+                            cell_name(r1, c0)
+                        ));
+                    }
+                }
                 out.push(Finding {
                     severity: sev,
                     check,
                     sheet: Some(sheet),
                     range: Some(CellRange::from_corners((r0, c0), (r1, c0))),
-                    message: message(check, &key, sample, n),
-                    details: json!({"cells": n, "example": sample}),
+                    message: msg,
+                    details: json!({"cells": n, "example": sample, "cell_list": list}),
                 });
                 i = j;
             }
         }
         out
     }
+}
+
+/// A subtotal formula (SUM, SUBTOTAL, AGGREGATE): the end of a block.
+fn is_subtotal(input: &str) -> bool {
+    let u = input.to_uppercase();
+    u.starts_with("=SUM(") || u.starts_with("=SUBTOTAL(") || u.starts_with("=AGGREGATE(")
 }
 
 /// Is `t` a total's label ("Total", "Grand total", "Jumlah", "Subtotal")?
@@ -555,9 +579,11 @@ fn check_sheet(book: &Workbook, s: u32, total_formulas: usize) -> (Vec<Finding>,
     let n = filled.len() as u64;
     let mut out = Vec::new();
     let mut hits = Hits::new();
+    // A number, or a formula's error among numbers (still a row of data).
     let number = |r: u32, c: u32| {
-        grid.get(&(r, c))
-            .is_some_and(|x| x.kind == ValueKind::Number)
+        grid.get(&(r, c)).is_some_and(|x| {
+            x.kind == ValueKind::Number || (x.formula && x.kind == ValueKind::Error)
+        })
     };
     let mut volatile = 0usize;
     let mut volatile_at = None;
@@ -691,7 +717,10 @@ fn check_sheet(book: &Workbook, s: u32, total_formulas: usize) -> (Vec<Finding>,
                     if g.left == g.right && g.left == c && g.bottom < r {
                         // The numbers directly above the formula.
                         let mut top = r;
-                        while top > 0 && number(top - 1, c) && !grid[&(top - 1, c)].formula {
+                        while top > 0
+                            && number(top - 1, c)
+                            && !is_subtotal(&grid[&(top - 1, c)].input)
+                        {
                             top -= 1;
                         }
                         if top < r {
@@ -717,7 +746,10 @@ fn check_sheet(book: &Workbook, s: u32, total_formulas: usize) -> (Vec<Finding>,
                         }
                     } else if g.top == g.bottom && g.top == r && g.right < c {
                         let mut left = c;
-                        while left > 0 && number(r, left - 1) && !grid[&(r, left - 1)].formula {
+                        while left > 0
+                            && number(r, left - 1)
+                            && !is_subtotal(&grid[&(r, left - 1)].input)
+                        {
                             left -= 1;
                         }
                         if left < c {
@@ -885,7 +917,13 @@ fn totals(book: &Workbook, s: u32, grid: &HashMap<(u32, u32), Cell>) -> Vec<Find
     };
     let (rows, cols) = book.used_size(s);
     let mut seen = HashSet::new();
+    // Pivot tables' totals are values Excel recalculates on refresh.
+    let pivots: Vec<CellRange> = book.pivots(s).iter().map(|p| p.bounds).collect();
+    let in_pivot = |r: u32, c: u32| pivots.iter().any(|p| p.contains(r, c));
     for (&(r, c), cell) in grid {
+        if in_pivot(r, c) {
+            continue;
+        }
         if cell.kind != ValueKind::Text
             || cell.formula
             || !is_total_label(&book.display_value(s, r, c))

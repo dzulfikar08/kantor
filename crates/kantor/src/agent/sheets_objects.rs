@@ -454,7 +454,7 @@ fn add_cf(book: &mut Workbook, o: &Map<String, Value>) -> Result<(String, Value)
     };
     book.add_cf_rule(sheet, &r.name(), &def)?;
     Ok((
-        format!("added a {ty} rule to {}", r.name()),
+        format!("added a conditional format ({ty}) to {}", r.name()),
         json!({"range": r.name()}),
     ))
 }
