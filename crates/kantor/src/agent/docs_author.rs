@@ -2973,14 +2973,12 @@ mod tests {
                 None,
             )
             .unwrap();
-            let footers: String = (1..10)
-                .filter_map(|k| {
-                    let z = zip::ZipArchive::new(std::io::Cursor::new(&b.bytes)).ok()?;
-                    let name = format!("word/footer{k}.xml");
-                    z.file_names()
-                        .any(|n| n == name)
-                        .then(|| part(&b.bytes, &name))
-                })
+            let pkg = Pkg::read(&b.bytes).unwrap();
+            let footers: String = pkg
+                .parts
+                .keys()
+                .filter(|n| n.starts_with("word/footer"))
+                .filter_map(|n| pkg.text(n))
                 .collect();
             if sections {
                 assert!(footers.contains("PAGEREF _KantorEnd"), "{footers}");
