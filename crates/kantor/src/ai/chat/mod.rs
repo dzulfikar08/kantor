@@ -44,8 +44,9 @@ pub enum ChatEvent {
     OpenSettings,
 }
 
-/// The widest a picture shows in the list.
-const THUMB_SHOWN: f32 = 150.;
+/// The widest a picture shows in the list: one alone, or several in a row.
+const THUMB_ONE: f32 = 280.;
+const THUMB_MANY: f32 = 150.;
 
 const EXAMPLES: [&str; 3] = [
     i18n::tk("A 6-slide deck on this quarter's sales for the board"),
@@ -183,8 +184,10 @@ impl ChatPanel {
             .collect();
         self.chat.ask(&text, names);
         self.fail_action = None;
-        self.input
-            .update(cx, |s, cx| s.set_value(String::new(), window, cx));
+        self.input.update(cx, |s, cx| {
+            s.set_value(String::new(), window, cx);
+            s.set_placeholder(i18n::t("Ask for changes…"), window, cx);
+        });
         let first = self.session.is_none();
         let req = job::Request {
             prompt: text,
@@ -306,6 +309,14 @@ impl ChatPanel {
         self.fail_action = None;
         self.kind_auto = true;
         self.kind = JobKind::Deck;
+        self.input.update(cx, |s, cx| {
+            s.set_value(String::new(), window, cx);
+            s.set_placeholder(
+                i18n::t("Ask for a deck, a document or a workbook…"),
+                window,
+                cx,
+            );
+        });
         self.focus_input(window, cx);
         cx.notify();
     }
@@ -665,7 +676,12 @@ impl ChatPanel {
             let pic = self.pictures.get(id)?;
             let size = pic.thumb.size(0);
             let (w, h) = (size.width.0.max(1) as f32, size.height.0.max(1) as f32);
-            let shown_w = THUMB_SHOWN.min(w);
+            let max = if row.pictures.len() == 1 {
+                THUMB_ONE
+            } else {
+                THUMB_MANY
+            };
+            let shown_w = max.min(w / 2.);
             let id = *id;
             Some(
                 div()

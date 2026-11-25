@@ -23,7 +23,7 @@ use crate::harness::{App, DocTools};
 /// A picture a tool showed the model, decoded for the panel.
 pub struct Picture {
     pub label: String,
-    /// About 240 px wide, for the row.
+    /// About 560 px wide, for the row.
     pub thumb: Arc<RenderImage>,
     /// As rendered (at most 1600 px wide), for the enlarged view.
     pub full: Arc<RenderImage>,
@@ -304,8 +304,9 @@ impl Tools for Recorder<'_> {
     }
 }
 
-/// Width of the pictures in the message list.
-const THUMB_WIDTH: u32 = 240;
+/// Width of the pictures in the message list (twice what they show at,
+/// for high-density screens).
+const THUMB_WIDTH: u32 = 560;
 const FULL_WIDTH: u32 = 1600;
 
 /// A PNG or JPEG as pictures GPUI paints (BGRA).
