@@ -212,6 +212,7 @@ pub fn render_doc(
 
 /// Pages `pages` (0-based) of a PDF (a printed workbook), each `width` px
 /// wide.
+#[cfg(test)]
 pub fn render_pdf(pdf: Vec<u8>, pages: &[usize], width: u32) -> Result<Vec<Image>> {
     let doc =
         pdf_engine::PdfDoc::open(Arc::new(pdf), "").map_err(|e| anyhow!("reading the PDF: {e}"))?;
