@@ -141,6 +141,31 @@ pub const CHECKS: &[(&str, &str, &str)] = &[
         "info",
         "a hidden sheet, or hidden rows or columns, holding data",
     ),
+    (
+        "text_cut_off",
+        "warning",
+        "text that doesn't fit where it's shown, measured with the fonts the PDF and PNG use: wider than its cell when the next cell isn't empty, wider than its merged cells (merged cells don't spill), cut at the printed page's edge, or taller than its row",
+    ),
+    (
+        "number_hashes",
+        "warning",
+        "a number or date wider than its column, shown as ####",
+    ),
+    (
+        "outside_print_area",
+        "warning",
+        "filled cells, charts or pictures outside the sheet's print area: they don't print, or print cut",
+    ),
+    (
+        "split_by_page",
+        "warning",
+        "a chart or picture split over two or more printed pages by a page break",
+    ),
+    (
+        "unsorted_bars",
+        "info",
+        "a bar or column chart of one series over 4+ text categories (not months, dates, years or other ordered labels) whose values aren't sorted",
+    ),
 ];
 
 /// The findings of a check run.
@@ -522,6 +547,8 @@ fn check_inner(book: &Workbook, only: Option<u32>) -> Report {
     let names = book.sheet_names();
     let mut findings = Vec::new();
     let mut cells = 0u64;
+    // Made on first use: it scans the system's fonts.
+    let mut shaper: Option<sheets_pdf::Shaper> = None;
     let total_formulas: usize = (0..names.len() as u32)
         .map(|s| super::sheets_author::formula_cells(book, s).len())
         .sum();
@@ -531,6 +558,8 @@ fn check_inner(book: &Workbook, only: Option<u32>) -> Report {
         }
         let (f, n) = check_sheet(book, s, total_formulas);
         findings.extend(f);
+        findings.extend(print_fit(book, s, &mut shaper));
+        findings.extend(unsorted_bars(book, s));
         cells += n;
     }
     if only.is_none() {
@@ -1509,6 +1538,475 @@ fn hidden(book: &Workbook, s: u32, grid: &HashMap<(u32, u32), Cell>) -> Vec<Find
     out
 }
 
+/// Most pages of a sheet looked at for text that doesn't fit.
+const FIT_PAGES: usize = 60;
+
+/// Sheets with more filled cells than this aren't checked for how they
+/// print (laying out a big data sheet's pages is slow and rarely the
+/// point).
+const FIT_CELLS: usize = 50_000;
+
+/// The start of a text for a message.
+fn excerpt(t: &str) -> String {
+    let t = t.trim();
+    if t.chars().count() <= 40 {
+        t.to_owned()
+    } else {
+        let s: String = t.chars().take(38).collect();
+        format!("{}…", s.trim_end())
+    }
+}
+
+/// Points, rounded for a message.
+fn pt(x: f32) -> String {
+    format!("{} pt", x.round())
+}
+
+/// Why a cell's text is cut.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Cut {
+    /// The next cell isn't empty (or the text is right-aligned or
+    /// centred against one), so it can't spill.
+    Blocked,
+    /// The printed page's edge.
+    PageEdge,
+    /// The row is too short.
+    Short,
+}
+
+/// Text cut off and numbers shown as `####`, where the print layout
+/// (`kantor convert`, PDF export) puts them: every cell's text is placed
+/// in its room as the PDF draws it and measured with the same fonts.
+/// Content outside the print area and objects split by page breaks.
+fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -> Vec<Finding> {
+    let mut out = Vec::new();
+    if book.sheet_hidden(s) {
+        return out;
+    }
+    let filled = book.filled_cells(s);
+    if (filled.is_empty() && book.drawings(s).is_empty()) || filled.len() > FIT_CELLS {
+        return out;
+    }
+    let shaper = shaper.get_or_insert_with(sheets_pdf::Shaper::new);
+    let opts = sheets_pdf::Options {
+        sheets: Some(vec![s]),
+        ..Default::default()
+    };
+    let plan = sheets_pdf::Plan::new(book, &opts, shaper);
+    let Some(sp) = plan.sheets.first() else {
+        return out;
+    };
+    out.extend(outside_print_area(book, s, sp, &filled));
+    let chars = |pt: f64| super::sheets_author::px_to_chars(book, s, pt / 0.75).ceil();
+    let mut seen = HashSet::new();
+    // (column, cut) → cells (row, text, need, room).
+    let mut cut: BTreeMap<(u32, Cut), Vec<(u32, String, f32, f32)>> = BTreeMap::new();
+    let mut hashes: BTreeMap<u32, Vec<(u32, String, f32, f32)>> = BTreeMap::new();
+    for i in 0..plan.pages.len().min(FIT_PAGES) {
+        let page = sheets_pdf::extract_plain(book, &plan, i);
+        for t in &page.texts {
+            let Some((r, c)) = t.at else { continue };
+            if !seen.insert((r, c)) {
+                continue;
+            }
+            let Some(o) = sheets_pdf::overrun(shaper, t) else {
+                continue;
+            };
+            let shown = excerpt(&t.text);
+            if o.hashes {
+                hashes
+                    .entry(c)
+                    .or_default()
+                    .push((r, shown, o.need, o.room));
+                continue;
+            }
+            let merge = book.merge_at(s, r, c);
+            let right = t.clip[0] + t.clip[2];
+            // The page's edge: a merged block reaching past it, or
+            // overflowing text stopped at the page's last column.
+            let page_edge = (o.right > 0.0
+                && (t.cell[0] + t.cell[2] > right + 0.5
+                    || (merge.is_none() && (right - page.block[0]).abs() < 0.5)))
+                || (o.left > 0.0 && t.cell[0] < t.clip[0] - 0.5 && merge.is_some());
+            let horizontal = o.left > 0.0 || o.right > 0.0;
+            if let Some(m) = merge
+                && horizontal
+            {
+                let (msg, fix) = if page_edge {
+                    (
+                        format!(
+                            "\"{shown}\" is cut off at the printed page's edge: the merged cells {} run past it",
+                            m.name()
+                        ),
+                        "fit the sheet to the page width (page_setup fit: \"width\" or \"page\") or narrow the columns".to_owned(),
+                    )
+                } else {
+                    (
+                        format!(
+                            "\"{shown}\" is cut off: it needs {} but the merged cells {} are {} wide, and merged cells don't spill into their neighbours",
+                            pt(o.need),
+                            m.name(),
+                            pt(o.room)
+                        ),
+                        "widen the columns, shorten the text, or wrap it (and make the row taller)"
+                            .to_owned(),
+                    )
+                };
+                out.push(Finding {
+                    severity: Severity::Warning,
+                    check: "text_cut_off",
+                    sheet: Some(s),
+                    range: Some(m),
+                    message: format!("{msg}; {fix}"),
+                    details: json!({"text": t.text, "need_pt": o.need.round(), "room_pt": o.room.round(), "merged": m.name(), "page_edge": page_edge}),
+                });
+                continue;
+            }
+            let why = if !horizontal {
+                Cut::Short
+            } else if page_edge {
+                Cut::PageEdge
+            } else {
+                Cut::Blocked
+            };
+            cut.entry((c, why))
+                .or_default()
+                .push((r, shown, o.need, o.room));
+        }
+    }
+    let range_of = |c: u32, cells: &[(u32, String, f32, f32)]| {
+        let (r0, r1) = cells
+            .iter()
+            .fold((u32::MAX, 0), |(a, b), x| (a.min(x.0), b.max(x.0)));
+        CellRange::from_corners((r0, c), (r1, c))
+    };
+    for ((c, why), cells) in cut {
+        let n = cells.len();
+        let (r, shown, need, room) = &cells[0];
+        let at = cell_name(*r, c);
+        let col = column_name(c);
+        let fix = match why {
+            Cut::Blocked => {
+                let wide = cells.iter().map(|x| x.2).fold(0.0f32, f32::max);
+                format!(
+                    "the cell beside it isn't empty, so it can't spill; widen column {col} (to about {} characters), shorten the text or wrap it",
+                    chars(f64::from(wide) + 6.0)
+                )
+            }
+            Cut::PageEdge => "the printed page's edge cuts it; fit the sheet to the page width (page_setup fit: \"width\" or \"page\") or narrow the columns".to_owned(),
+            Cut::Short => format!(
+                "the row is too short for it; make row {} taller (or leave its height automatic)",
+                r + 1
+            ),
+        };
+        let what = if why == Cut::Short {
+            format!("it needs {} of height and has {}", pt(*need), pt(*room))
+        } else {
+            format!("it needs {} and has {}", pt(*need), pt(*room))
+        };
+        let message = if n == 1 {
+            format!("\"{shown}\" is cut off: {what}; {fix}")
+        } else {
+            format!("{n} texts are cut off (\"{shown}\" in {at}: {what}); {fix}")
+        };
+        let list: Vec<String> = cells.iter().take(20).map(|x| cell_name(x.0, c)).collect();
+        out.push(Finding {
+            severity: Severity::Warning,
+            check: "text_cut_off",
+            sheet: Some(s),
+            range: Some(range_of(c, &cells)),
+            message,
+            details: json!({"cells": n, "example": shown, "need_pt": need.round(), "room_pt": room.round(), "cell_list": list}),
+        });
+    }
+    for (c, cells) in hashes {
+        let n = cells.len();
+        let wide = cells.iter().map(|x| x.2).fold(0.0f32, f32::max);
+        let (_, shown, _, room) = &cells[0];
+        let col = column_name(c);
+        let want = chars(f64::from(wide) + 6.0);
+        let message = if n == 1 {
+            format!(
+                "{shown} shows as ####: it needs {} and column {col} gives it {}; widen column {col} to about {want} characters",
+                pt(wide),
+                pt(*room)
+            )
+        } else {
+            format!(
+                "{n} numbers show as #### (the widest needs {}, column {col} gives {}); widen column {col} to about {want} characters",
+                pt(wide),
+                pt(*room)
+            )
+        };
+        let list: Vec<String> = cells.iter().take(20).map(|x| cell_name(x.0, c)).collect();
+        out.push(Finding {
+            severity: Severity::Warning,
+            check: "number_hashes",
+            sheet: Some(s),
+            range: Some(range_of(c, &cells)),
+            message,
+            details: json!({"cells": n, "example": shown, "need_pt": wide.round(), "room_pt": room.round(), "width_chars": want, "cell_list": list}),
+        });
+    }
+    out
+}
+
+/// Filled cells and objects outside the print area, objects split by page
+/// breaks.
+fn outside_print_area(
+    book: &Workbook,
+    s: u32,
+    sp: &sheets_pdf::SheetPlan,
+    filled: &[(u32, u32)],
+) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let areas: Vec<CellRange> = sp.areas.iter().map(|a| a.0).collect();
+    let set = !sp.print.print_area.is_empty();
+    let names = areas
+        .iter()
+        .map(CellRange::name)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if set {
+        let mut left: Vec<(u32, u32)> = filled
+            .iter()
+            .copied()
+            .filter(|&(r, c)| !areas.iter().any(|a| a.contains(r, c)))
+            .filter(|&(r, c)| !book.display_value(s, r, c).trim().is_empty())
+            .filter(|&(r, c)| !book.is_row_hidden(s, r) && !book.is_column_hidden(s, c))
+            .collect();
+        if !left.is_empty() {
+            left.sort_unstable();
+            let (r0, c0, r1, c1) = left
+                .iter()
+                .fold((u32::MAX, u32::MAX, 0, 0), |(a, b, c, d), &(r, cc)| {
+                    (a.min(r), b.min(cc), c.max(r), d.max(cc))
+                });
+            let (fr, fc) = left[0];
+            out.push(Finding {
+                severity: Severity::Warning,
+                check: "outside_print_area",
+                sheet: Some(s),
+                range: Some(CellRange::from_corners((r0, c0), (r1, c1))),
+                message: format!(
+                    "{} filled cell(s) are outside the print area {names}, so they don't print (\"{}\" in {}); widen the print area (page_setup print_area) or clear it",
+                    left.len(),
+                    excerpt(&book.display_value(s, fr, fc)),
+                    cell_name(fr, fc)
+                ),
+                details: json!({"cells": left.len(), "print_area": names}),
+            });
+        }
+    }
+    for d in book.drawings(s) {
+        if !d.prints || d.hidden {
+            continue;
+        }
+        let kind = match d.kind.as_ref() {
+            sheets_engine::drawing::DrawingKind::Chart { .. } => "chart",
+            sheets_engine::drawing::DrawingKind::Picture { .. } => "picture",
+            _ => continue,
+        };
+        let Some(at) = super::sheets_list::anchor_range(&d.anchor) else {
+            continue;
+        };
+        let label = if d.name.is_empty() {
+            format!("a {kind} at {}", at.name())
+        } else {
+            format!("{kind} \"{}\" at {}", d.name, at.name())
+        };
+        let inside = areas
+            .iter()
+            .find(|a| a.contains(at.top, at.left) && a.contains(at.bottom, at.right));
+        if set && inside.is_none() {
+            let some = areas.iter().any(|a| a.intersects(&at));
+            out.push(Finding {
+                severity: Severity::Warning,
+                check: "outside_print_area",
+                sheet: Some(s),
+                range: Some(at),
+                message: format!(
+                    "{label} is {} the print area {names}, so it {}; widen the print area (page_setup print_area) to take it in",
+                    if some { "partly outside" } else { "outside" },
+                    if some { "prints cut" } else { "doesn't print" }
+                ),
+                details: json!({"object": d.name, "kind": kind, "print_area": names}),
+            });
+            continue;
+        }
+        // Page breaks through it.
+        let Some(grid) = sp
+            .areas
+            .iter()
+            .find(|a| a.0.contains(at.top, at.left))
+            .map(|a| &a.1)
+        else {
+            continue;
+        };
+        let bands = |b: &[(u32, u32)], lo: u32, hi: u32| {
+            b.iter().filter(|(x, y)| *y >= lo && *x <= hi).count()
+        };
+        let across = bands(&grid.cols, at.left, at.right);
+        let down = bands(&grid.rows, at.top, at.bottom);
+        if across > 1 || down > 1 {
+            let mut how = Vec::new();
+            if across > 1 {
+                how.push(format!("{across} pages across"));
+            }
+            if down > 1 {
+                how.push(format!("{down} pages down"));
+            }
+            let fix = if across > 1 {
+                "fit the sheet to the page width (page_setup fit: \"width\" or \"page\"), or move or resize it"
+            } else {
+                "move it, resize it or fit the sheet to one page (page_setup fit: \"page\")"
+            };
+            out.push(Finding {
+                severity: Severity::Warning,
+                check: "split_by_page",
+                sheet: Some(s),
+                range: Some(at),
+                message: format!(
+                    "{label} is split over {} by page breaks; {fix}",
+                    how.join(" and ")
+                ),
+                details: json!({"object": d.name, "kind": kind, "pages_across": across, "pages_down": down}),
+            });
+        }
+    }
+    out
+}
+
+/// Is a category label one with an order of its own (months, days,
+/// quarters, years, numbers, ranges, sizes, levels)? Then sorting a chart
+/// by value would scramble it.
+fn ordered_label(t: &str) -> bool {
+    let l = t.trim().to_lowercase();
+    if l.chars().any(|c| c.is_ascii_digit()) {
+        return true;
+    }
+    // Months (English, Indonesian) and their short forms, days, periods
+    // and steps, levels and sizes.
+    const WORDS: &str = "january february march april may june july august september \
+        october november december jan feb mar apr jun jul aug sep sept oct nov dec \
+        januari februari maret mei juni juli agustus oktober desember agu agt okt des \
+        peb monday tuesday wednesday thursday friday saturday sunday mon tue tues wed \
+        thu thur thurs fri sat sun senin selasa rabu kamis jumat jum'at sabtu minggu \
+        ahad quarter kuartal triwulan semester week pekan month bulan year tahun day \
+        hari phase fase tahap step langkah stage round q h fy ytd mtd first second \
+        third fourth fifth last pertama kedua ketiga keempat kelima terakhir before \
+        after sebelum sesudah early mid late awal tengah akhir low medium high rendah \
+        sedang tinggi very sangat small large kecil besar xs s m l xl xxl poor fair \
+        good excellent buruk cukup baik under over less more kurang lebih below above \
+        min max";
+    l.split(|c: char| !c.is_alphanumeric() && c != '\'')
+        .filter(|w| !w.is_empty())
+        .any(|w| WORDS.split_whitespace().any(|x| x == w))
+}
+
+/// Bar and column charts of one series over 4+ text categories whose
+/// values aren't sorted: sorted bars read as a ranking at a glance.
+fn unsorted_bars(book: &Workbook, s: u32) -> Vec<Finding> {
+    let mut out = Vec::new();
+    let names = book.sheet_names();
+    let resolve = |f: &str| -> Option<(u32, CellRange)> {
+        let refs = references(&format!("={f}"));
+        let [r] = refs.as_slice() else { return None };
+        let sheet = match &r.sheet {
+            Some(n) => names.iter().position(|x| x.eq_ignore_ascii_case(n))? as u32,
+            None => s,
+        };
+        (r.range.top == r.range.bottom || r.range.left == r.range.right).then_some((sheet, r.range))
+    };
+    let cells = |(sheet, g): (u32, CellRange)| -> Vec<(u32, u32, u32)> {
+        let mut v = Vec::new();
+        for r in g.top..=g.bottom.min(g.top + 500) {
+            for c in g.left..=g.right.min(g.left + 500) {
+                if !book.is_row_hidden(sheet, r) && !book.is_column_hidden(sheet, c) {
+                    v.push((sheet, r, c));
+                }
+            }
+        }
+        v
+    };
+    for d in book.drawings(s) {
+        let sheets_engine::drawing::DrawingKind::Chart { xml, .. } = d.kind.as_ref() else {
+            continue;
+        };
+        let series = super::sheets_list::chart_series(xml);
+        let [one] = series.as_slice() else { continue };
+        if one["plot"] != "bar" {
+            continue;
+        }
+        let (Some(cat), Some(val)) = (one["categories"].as_str(), one["values"].as_str()) else {
+            continue;
+        };
+        let (Some(cat), Some(val)) = (resolve(cat), resolve(val)) else {
+            continue;
+        };
+        let cats = cells(cat);
+        let vals = cells(val);
+        if cats.len() != vals.len() || cats.len() < 4 {
+            continue;
+        }
+        let mut labels = Vec::new();
+        let mut values = Vec::new();
+        let mut text = true;
+        for (&(cs, cr, cc), &(vs, vr, vc)) in cats.iter().zip(&vals) {
+            let label = book.display_value(cs, cr, cc);
+            if book.value_kind(cs, cr, cc) != ValueKind::Text || label.trim().is_empty() {
+                text = false;
+                break;
+            }
+            let Some((v, _)) = book.number_at(vs, vr, vc) else {
+                text = false;
+                break;
+            };
+            labels.push(label);
+            values.push(v);
+        }
+        if !text || labels.iter().any(|l| ordered_label(l)) {
+            continue;
+        }
+        // "Other" kept last is still a sorted chart.
+        let other = |l: &str| {
+            matches!(
+                l.trim().to_lowercase().as_str(),
+                "other" | "others" | "lainnya" | "lain-lain" | "lain lain" | "rest" | "sisanya"
+            )
+        };
+        let mut v: &[f64] = &values;
+        if labels.last().is_some_and(|l| other(l)) {
+            v = &values[..values.len() - 1];
+        }
+        let up = v.windows(2).all(|w| w[0] <= w[1]);
+        let down = v.windows(2).all(|w| w[0] >= w[1]);
+        if up || down {
+            continue;
+        }
+        let at = super::sheets_list::anchor_range(&d.anchor);
+        let cat_name = cat.1.name();
+        let val_name = val.1.name();
+        let label = if d.name.is_empty() {
+            "a chart".to_owned()
+        } else {
+            format!("chart \"{}\"", d.name)
+        };
+        out.push(Finding {
+            severity: Severity::Info,
+            check: "unsorted_bars",
+            sheet: Some(s),
+            range: at,
+            message: format!(
+                "{label} shows {} categories ({cat_name}) in an order that isn't by value; sort the categories by value ({val_name}) so the ranking reads at a glance",
+                labels.len()
+            ),
+            details: json!({"chart": d.name, "categories": cat_name, "values": val_name}),
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1788,5 +2286,205 @@ mod tests {
             checks(&r)
         );
         assert_eq!(date_shape("[$-421]dd/mm/yyyy;@"), "dd/mm/yyyy");
+    }
+
+    fn found<'a>(r: &'a Report, check: &str) -> Vec<&'a Finding> {
+        r.findings.iter().filter(|f| f.check == check).collect()
+    }
+
+    /// Text cut by merged cells and full neighbours, numbers as ####; text
+    /// that spills or fits is left alone.
+    #[std::prelude::v1::test]
+    fn text_that_does_not_fit() {
+        let long =
+            "A subtitle much longer than its merged cells could ever show on one line, ".repeat(3);
+        let spill = "A note that spills into the empty cells beside it";
+        let b = build(
+            &json!({"sheets": [{"name": "S",
+            "cells": {
+                "A2": long,
+                "A4": spill, "B4": "x",
+                "A6": spill,
+                "A8": "Short note",
+                "B10": 123_456_789_012_i64,
+                "A12": "Big", "A14": "Wrapped and fits"
+            },
+            "widths": {"A": 10, "B": 4, "C:H": 10},
+            "heights": {"12": 9},
+            "formats": [
+                {"range": "A2:D2", "merge": true, "align": "center"},
+                {"range": "A8:F8", "merge": true},
+                {"range": "B10", "number_format": "#,##0"},
+                {"range": "A12", "size": 24},
+                {"range": "A14", "wrap": true}
+            ]}]}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        let all = checks(&r);
+        let cut = found(&r, "text_cut_off");
+        let merged = cut
+            .iter()
+            .find(|f| f.range.unwrap().name() == "A2:D2")
+            .unwrap_or_else(|| panic!("{all:?}"));
+        assert!(
+            merged.message.contains("merged cells A2:D2"),
+            "{}",
+            merged.message
+        );
+        assert_eq!(merged.details["page_edge"], json!(false));
+        assert!(has(&r, "text_cut_off", "A4"), "{all:?}");
+        let a4 = cut
+            .iter()
+            .find(|f| f.range.unwrap().name() == "A4")
+            .unwrap();
+        assert!(a4.message.contains("isn't empty"), "{}", a4.message);
+        // A big font in a 9 pt row.
+        let a12 = cut
+            .iter()
+            .find(|f| f.range.unwrap().name() == "A12")
+            .unwrap_or_else(|| panic!("{all:?}"));
+        assert!(a12.message.contains("row 12"), "{}", a12.message);
+        assert!(has(&r, "number_hashes", "B10"), "{all:?}");
+        // Spilling into empty cells, a short text in a wide merge and wrapped
+        // text in an automatic row are fine.
+        for ok in ["A6", "A8:F8", "A8", "A14"] {
+            assert!(
+                !r.findings
+                    .iter()
+                    .any(|f| f.range.map(|g| g.name()).as_deref() == Some(ok)),
+                "{ok}: {all:?}"
+            );
+        }
+        assert_eq!(cut.len(), 3, "{all:?}");
+    }
+
+    /// A merged title wider than the printed page is cut at the page's
+    /// edge, and a wide chart is split over two pages; fitting the sheet to
+    /// the page fixes both.
+    #[std::prelude::v1::test]
+    fn the_page_cuts_wide_content() {
+        let title = "Quarterly revenue by outlet and month with the reported amounts beside them";
+        let sheet = |fit: bool| {
+            let mut s = json!({"name": "Dash",
+                "rows": [[title], [], ["Outlet", "Revenue"], ["Dago", 5], ["Kopo", 9], ["Antapani", 7], ["Buah Batu", 3]],
+                "widths": {"A:C": 60},
+                "formats": [{"range": "A1:C1", "merge": true, "align": "center", "size": 14}],
+                "charts": [{"chart": "line", "data": "Dash!A3:B7", "at": "B10", "to": "C30"}]});
+            if fit {
+                s["page_setup"] = json!({"fit": "page", "landscape": true});
+            }
+            json!({"sheets": [s]})
+        };
+        let b = build(&sheet(false), None).unwrap();
+        let r = check(&b, None);
+        let all = checks(&r);
+        let title_cut = found(&r, "text_cut_off")
+            .into_iter()
+            .find(|f| f.range.unwrap().name() == "A1:C1")
+            .unwrap_or_else(|| panic!("{all:?}"));
+        assert_eq!(
+            title_cut.details["page_edge"],
+            json!(true),
+            "{}",
+            title_cut.message
+        );
+        assert!(title_cut.message.contains("page"), "{}", title_cut.message);
+        let split = found(&r, "split_by_page");
+        assert_eq!(split.len(), 1, "{all:?}");
+        assert!(
+            split[0].message.contains("pages across"),
+            "{}",
+            split[0].message
+        );
+
+        let b = build(&sheet(true), None).unwrap();
+        let r = check(&b, None);
+        let all = checks(&r);
+        for c in [
+            "text_cut_off",
+            "split_by_page",
+            "number_hashes",
+            "outside_print_area",
+        ] {
+            assert!(found(&r, c).is_empty(), "{c}: {all:?}");
+        }
+    }
+
+    #[std::prelude::v1::test]
+    fn content_outside_the_print_area() {
+        let b = build(
+            &json!({"sheets": [{"name": "S",
+                "rows": [["Item", "Amount"], ["a", 1], ["b", 2], ["c", 3]],
+                "cells": {"F2": "Checked by Ana"},
+                "charts": [{"chart": "column", "data": "S!A1:B4", "at": "D6", "to": "J20"}],
+                "page_setup": {"print_area": "A1:C10"}}]}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        let all = checks(&r);
+        let out = found(&r, "outside_print_area");
+        assert_eq!(out.len(), 2, "{all:?}");
+        assert!(has(&r, "outside_print_area", "F2"), "{all:?}");
+        assert!(has(&r, "outside_print_area", "D6:J20"), "{all:?}");
+    }
+
+    /// One series of outlets in no order: sort them. Months, a sorted
+    /// chart, two series and a line chart are left alone.
+    #[std::prelude::v1::test]
+    fn unsorted_bar_charts() {
+        let b = build(
+            &json!({"sheets": [{"name": "D",
+                "rows": [
+                    ["Outlet", "Revenue", "Month", "Sales", "Cost"],
+                    ["Dago", 3466, "Jan", 50, 20],
+                    ["Buah Batu", 1546, "Feb", 70, 30],
+                    ["Antapani", 1548, "Mar", 40, 25],
+                    ["Kopo", 1446, "Apr", 90, 35],
+                ],
+                "charts": [
+                    {"chart": "bar", "data": "D!A1:B5", "at": "G1", "to": "M15", "title": "By outlet"},
+                    {"chart": "column", "data": "D!C1:D5", "at": "G17", "to": "M30"},
+                    {"chart": "column", "categories": "D!A2:A5", "series": [{"name": "Revenue", "values": "D!B2:B5"}, {"name": "Sales", "values": "D!D2:D5"}], "at": "G32", "to": "M45"},
+                    {"chart": "line", "data": "D!A1:B5", "at": "G47", "to": "M60"}
+                ],
+                "page_setup": {"fit": "page"}}]}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        let all = checks(&r);
+        let f = found(&r, "unsorted_bars");
+        assert_eq!(f.len(), 1, "{all:?}");
+        assert_eq!(f[0].severity, Severity::Info);
+        assert_eq!(f[0].range.unwrap().name(), "G1:M15", "{}", f[0].message);
+        assert!(
+            f[0].message.contains("sort the categories by value"),
+            "{}",
+            f[0].message
+        );
+        assert!(f[0].message.contains("A2:A5"), "{}", f[0].message);
+        assert!(ordered_label("Q1 2026"));
+        assert!(ordered_label("Maret"));
+        assert!(ordered_label("High"));
+        assert!(!ordered_label("Buah Batu"));
+        assert!(!ordered_label("Dago"));
+    }
+
+    #[std::prelude::v1::test]
+    fn sorted_bars_pass() {
+        let b = build(
+            &json!({"sheets": [{"name": "D",
+                "rows": [["Outlet", "Revenue"], ["Dago", 3466], ["Antapani", 1548], ["Buah Batu", 1546], ["Kopo", 1446], ["Other", 1500]],
+                "widths": {"A": 16},
+                "charts": [{"chart": "bar", "data": "D!A1:B6", "at": "D1", "to": "J15"}],
+                "page_setup": {"fit": "page"}}]}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        assert!(r.findings.is_empty(), "{:?}", checks(&r));
     }
 }

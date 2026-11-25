@@ -9,6 +9,14 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- `kantor sheets check` (and the `sheets_check` tool) finds text that doesn't fit where it prints, measured with the
+  fonts the PDF and PNG use (`text_cut_off`: wider than its merged cells, blocked by a full neighbour, cut at the page's
+  edge, taller than its row), numbers shown as `####` (`number_hashes`), content outside the print area
+  (`outside_print_area`), charts and pictures split by page breaks (`split_by_page`), and bar or column charts of
+  categories not sorted by value (`unsorted_bars`, info).
+
 ## [0.24.0] - 2026-11-25
 
 A real slide show with presenter view, light mode, Paparan AI, and command-line tools that let AI agents build and check decks, Word documents and workbooks.
