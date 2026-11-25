@@ -87,10 +87,15 @@ pub fn device_name() -> String {
         .chain(std::fs::read_to_string("/etc/hostname").ok())
         .map(|h| h.trim().to_owned())
         .find(|h| !h.is_empty());
-    match host {
-        Some(h) => format!("Kantor on {h}"),
-        None => format!("Kantor ({})", std::env::consts::OS),
-    }
+    // Just the computer: the link page already says "Connect Kantor on …".
+    host.unwrap_or_else(|| {
+        match std::env::consts::OS {
+            "macos" => "Mac",
+            "windows" => "Windows PC",
+            _ => "Linux computer",
+        }
+        .to_owned()
+    })
 }
 
 // ── Replies ─────────────────────────────────────────────────────────────
