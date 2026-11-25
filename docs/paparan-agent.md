@@ -1,8 +1,8 @@
 # Paparan AI agent loop
 
 The harness Paparan AI uses inside Kantor to make decks, documents and workbooks: a model and
-Kantor's tools take turns until the model calls `finish`. There is no chat UI yet; `kantor agent
-run` drives it from a terminal, and a GPUI chat panel will render the same events.
+Kantor's tools take turns until the model calls `finish`. `kantor agent run` drives it from a
+terminal; the chat panel (below) renders the same events in the app.
 
 | Part | Where |
 |---|---|
@@ -10,6 +10,7 @@ run` drives it from a terminal, and a GPUI chat panel will render the same event
 | Skill prompts (local folder, hook for served prompts) | `kantor_ai/src/agent/skill.rs` |
 | The document tools, confined to one work folder | `crates/kantor/src/harness/` |
 | `kantor agent run` | `crates/kantor/src/cli/agent.rs` |
+| The chat panel | `crates/kantor/src/ai/chat/` (docked by `workspace/chat.rs`) |
 
 ## Running it
 
@@ -30,6 +31,31 @@ kantor agent run --skill ~/.claude/skills/paparan-deck --dir job \
 - `--provider paparan` uses the Paparan AI sign-in saved by Kantor (credits) instead of a key.
 - Exit status 0 only when the model called `finish` and it was accepted.
 - Ctrl+C stops after the current step; twice quits.
+
+## The chat panel
+
+Paparan AI Chat (command palette, or the sparkle button in the tab strip) docks on the right.
+
+- The user types a request and attaches source files (paper clip, or drop them on the panel). The
+  kind (deck, document, workbook) is guessed from the words and the files' types, and can be
+  picked instead; it chooses the skill (`paparan-deck|doc|sheet`). Skills come through a loader
+  (`job::SkillLoader`, a `PromptSource` per kind): today local folders under `ai.skills_dir` in
+  settings.toml (default `~/.claude/skills`); served skills plug in as another loader.
+- Each job has a work folder: new under `<data dir>/paparan/jobs/<time>-<words>`, or one the user
+  picks before the first request. Attachments are copied in and count as the user's files (never
+  overwritten).
+- The provider is the one in AI Settings: Paparan AI (credits shown), any OpenAI-compatible API,
+  or Ollama (through its `/v1` endpoint). Anthropic's own API can't run jobs yet.
+- The harness runs on a worker thread; events come back in batches (one redraw per batch). The
+  list shows the model's text (Markdown), a row per tool call (name, the files it works on;
+  click for the result), `look` pictures as thumbnails (decoded on the worker; click to
+  enlarge), nudges as quiet lines, a usage line, then the `finish` summary with the output files
+  (Open in a tab, Reveal in the file manager). Stop cancels after the current step.
+- Follow-ups continue the job: same folder, same tools (files the job made stay its own to
+  change), and the conversation goes on (`agent::resume`; pictures from earlier runs become
+  notes, calls a stopped run left unanswered get a result).
+- `KANTOR_CHAT_SCRIPT=script.json` replaces the model with a script of turns (`ai/chat/script.rs`)
+  while the tools stay real: for demos and screenshots without a provider.
 
 ## Rules the loop enforces
 
