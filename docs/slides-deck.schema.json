@@ -2507,14 +2507,18 @@
             },
             "reverse": {
               "type": "boolean",
-              "description": "Values (categories) in reverse order."
+              "description": "Values (categories) in reverse order. A bar chart's categories reversed (first at the top) keep the value axis at the bottom."
+            },
+            "visible": {
+              "type": "boolean",
+              "description": "false hides the axis (line, ticks and labels); default true."
             }
           }
         },
         "category_axis": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The category axis: title, reverse (scatter: the x axis, with min/max/major_unit).",
+          "description": "The category axis: title, reverse, visible (scatter: the x axis, with min/max/major_unit).",
           "properties": {
             "title": {
               "type": "string"
@@ -2539,7 +2543,11 @@
             },
             "reverse": {
               "type": "boolean",
-              "description": "Values (categories) in reverse order."
+              "description": "Values (categories) in reverse order. A bar chart's categories reversed (first at the top) keep the value axis at the bottom."
+            },
+            "visible": {
+              "type": "boolean",
+              "description": "false hides the axis (line, ticks and labels); default true."
             }
           }
         },

@@ -542,6 +542,27 @@
       },
       "required": []
     },
+    "sheet_view_args": {
+      "type": "object",
+      "description": "How a sheet shows on screen: `show_gridlines` false hides the gridlines (Excel's View > Gridlines; printing them is page_setup's `gridlines`).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "show_gridlines": {
+          "type": "boolean",
+          "description": "false hides the gridlines on screen (true shows them)."
+        }
+      },
+      "required": [
+        "show_gridlines"
+      ]
+    },
     "insert_rows_args": {
       "type": "object",
       "description": "Insert empty rows before row `before_row` (from 1).",
@@ -933,7 +954,7 @@
     },
     "to_numbers_args": {
       "type": "object",
-      "description": "Turn numbers stored as text (\"1,234.50\", \"Rp 12.000\", \"(500)\", \"15%\") into numbers. `decimal`: \".\", \",\" or \"auto\".",
+      "description": "Turn numbers stored as text (\"1,234.50\", \"Rp 12.000\", \"(500)\", \"15%\") into numbers. `decimal`: \".\", \",\" or \"auto\". `number_format` is applied to the whole range (numbers already there too).",
       "additionalProperties": false,
       "properties": {
         "sheet": {
@@ -967,7 +988,7 @@
     },
     "to_dates_args": {
       "type": "object",
-      "description": "Turn dates stored as text (\"15/01/2026\", \"2026-01-15\", \"15 Jan 2026\", \"15 Januari 2026\") into dates. `order`: dmy, mdy, ymd or auto.",
+      "description": "Turn dates stored as text (\"15/01/2026\", \"2026-01-15\", \"15 Jan 2026\", \"15 Januari 2026\") into dates. `order`: dmy, mdy, ymd or auto. `number_format` (default yyyy-mm-dd) is applied to the whole range when given, else to the converted cells and the range's existing dates.",
       "additionalProperties": false,
       "properties": {
         "sheet": {
@@ -1554,14 +1575,18 @@
             },
             "reverse": {
               "type": "boolean",
-              "description": "Values (categories) in reverse order."
+              "description": "Values (categories) in reverse order. A bar chart's categories reversed (first at the top) keep the value axis at the bottom."
+            },
+            "visible": {
+              "type": "boolean",
+              "description": "false hides the axis (line, ticks and labels); default true."
             }
           }
         },
         "category_axis": {
           "type": "object",
           "additionalProperties": false,
-          "description": "The category axis: title, reverse (scatter: the x axis, with min/max/major_unit).",
+          "description": "The category axis: title, reverse, visible (scatter: the x axis, with min/max/major_unit).",
           "properties": {
             "title": {
               "type": "string"
@@ -1586,7 +1611,11 @@
             },
             "reverse": {
               "type": "boolean",
-              "description": "Values (categories) in reverse order."
+              "description": "Values (categories) in reverse order. A bar chart's categories reversed (first at the top) keep the value axis at the bottom."
+            },
+            "visible": {
+              "type": "boolean",
+              "description": "false hides the axis (line, ticks and labels); default true."
             }
           }
         },
@@ -2441,6 +2470,21 @@
             },
             "args": {
               "$ref": "#/$defs/freeze_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "sheet_view"
+            },
+            "args": {
+              "$ref": "#/$defs/sheet_view_args"
             }
           }
         },
@@ -3638,14 +3682,18 @@
                   },
                   "reverse": {
                     "type": "boolean",
-                    "description": "Values (categories) in reverse order."
+                    "description": "Values (categories) in reverse order. A bar chart's categories reversed (first at the top) keep the value axis at the bottom."
+                  },
+                  "visible": {
+                    "type": "boolean",
+                    "description": "false hides the axis (line, ticks and labels); default true."
                   }
                 }
               },
               "category_axis": {
                 "type": "object",
                 "additionalProperties": false,
-                "description": "The category axis: title, reverse (scatter: the x axis, with min/max/major_unit).",
+                "description": "The category axis: title, reverse, visible (scatter: the x axis, with min/max/major_unit).",
                 "properties": {
                   "title": {
                     "type": "string"
@@ -3670,7 +3718,11 @@
                   },
                   "reverse": {
                     "type": "boolean",
-                    "description": "Values (categories) in reverse order."
+                    "description": "Values (categories) in reverse order. A bar chart's categories reversed (first at the top) keep the value axis at the bottom."
+                  },
+                  "visible": {
+                    "type": "boolean",
+                    "description": "false hides the axis (line, ticks and labels); default true."
                   }
                 }
               },
@@ -4058,6 +4110,10 @@
         "gridlines": {
           "type": "boolean",
           "description": "Print (and draw in PDF/PNG) the gridlines."
+        },
+        "show_gridlines": {
+          "type": "boolean",
+          "description": "false hides the gridlines on screen (Excel's View > Gridlines), e.g. for a dashboard."
         },
         "page_setup": {
           "type": "object",
