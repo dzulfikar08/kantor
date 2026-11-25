@@ -234,6 +234,9 @@ fn run(o: Opts) -> Result<i32, String> {
         .as_ref()
         .map_or_else(|| App::ALL.to_vec(), |s| App::for_skill(&s.name()));
     let mut tools = DocTools::new(&dir, apps, !o.allow_overwrite).map_err(|e| format!("{e:#}"))?;
+    if !o.json {
+        println!("work folder: {}", tools.root().display());
+    }
 
     let transport = Arc::new(UreqTransport::with_timeouts(
         Duration::from_secs(300),
