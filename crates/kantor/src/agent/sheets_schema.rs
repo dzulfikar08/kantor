@@ -154,9 +154,9 @@ fn prop(tool: &str, key: &str) -> Value {
         ("add_conditional_format", k) => cf_prop(k),
         ("add_validation", k) => dv_prop(k),
         ("define_name", "name") | ("delete_name", "name") => s("The name, e.g. TaxRate."),
-        ("define_name", "refers_to") => {
-            json!({"type": ["string", "number"], "description": "A reference (Data!$B$2:$B$100), a number or a formula."})
-        }
+        ("define_name", "refers_to") => s(
+            "The cells it names, e.g. Data!$B$2:$B$100 (names of constants or formulas aren't supported: name a cell holding the value).",
+        ),
         ("add_pivot", k) => pivot_prop(k),
         ("page_setup", "landscape") => b("Landscape (else portrait)."),
         ("page_setup", "paper") => s("a4, letter, legal, f4, a3, a5, or WxHmm / WxHin."),

@@ -63,7 +63,7 @@ the same everywhere. The full schema is
                  "data_labels": true, "legend": "none"}],
      "page_setup": {"landscape": true, "fit": "page"}}
   ],
-  "names": [{"name": "TaxRate", "refers_to": "0.11"}],
+  "names": [{"name": "Regions", "refers_to": "Data!$B$2:$B$3"}],
   "active": "Dashboard"
 }
 ```
@@ -71,7 +71,7 @@ the same everywhere. The full schema is
 | Key | Meaning |
 |---|---|
 | `sheets` | the sheets in tab order (required) |
-| `names` | defined names `{name, refers_to, sheet}` (a `sheet` makes it sheet-level), made first so formulas can use them |
+| `names` | defined names `{name, refers_to, sheet}` of cells (a `sheet` makes it sheet-level), made first so formulas can use them. Names of constants (`0.11`) or formulas aren't supported: name a cell holding the value |
 | `active` | the sheet shown when the file opens |
 | `ops` | editing tools `{tool, args}` run after all sheets are made |
 | `calc` | `manual` for manual calculation (default automatic) |
@@ -133,7 +133,7 @@ written cells' values and formula errors right away.
 | `clear_conditional_formats` | `range` (or the sheet) | remove rules |
 | `add_validation` | `range`, `type`, `values`/`source`, `operator`, `value`, `value2`, `formula`, `allow_blank`, `dropdown`, `prompt`, `error`, `error_style` | data validation: `list` (a drop-down of `values` or the cells of `source`), `whole`, `decimal`, `date`, `time`, `text_length`, `custom` |
 | `clear_validation` | `range` | |
-| `define_name`, `delete_name` | `name`, `refers_to`, `sheet` | defined names |
+| `define_name`, `delete_name` | `name`, `refers_to` (cells), `sheet` | defined names |
 | `add_pivot` | `source` (range or table), `at` or `new_sheet`, `rows`, `columns`, `filters`, `values` (`[{field, func, name, number_format}]`), `layout`, `grand_totals`, `style` | a pivot table Excel refreshes |
 | `page_setup` | `landscape`, `paper`, `fit` (`width`, `page`, `[w, h]`), `scale`, `print_area`, `title_rows`, `gridlines`, `center` | printing, PDF and PNG |
 | `recalculate` | | recalculate every formula |

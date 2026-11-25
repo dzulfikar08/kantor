@@ -42,17 +42,23 @@ pub(super) fn run(
         }
         "define_name" => {
             let name = req_str(o, "name")?;
-            let formula = match get(o, "refers_to") {
-                Some(Value::Number(n)) => n.to_string(),
+            let text = match get(o, "refers_to") {
                 Some(Value::String(s)) => s.clone(),
-                _ => bail!(
-                    "`refers_to` is a reference such as Data!$B$2:$B$100, a number or a formula"
-                ),
+                _ => bail!("`refers_to` is a reference such as Data!$B$2:$B$100"),
             };
             let scope = match get(o, "sheet") {
                 Some(_) => Some(sheet_arg(book, o)?),
                 None => None,
             };
+            // Names of cells only (IronCalc can't evaluate names of constants
+            // or formulas), written absolute with their sheet.
+            let Ok((s, r)) = parse_ref(book, &text, scope.unwrap_or(book.active_sheet())) else {
+                bail!(
+                    "`refers_to` must be cells such as Data!$B$2:$B$100; names of values or formulas aren't supported: put the value in a cell (e.g. Inputs!$B$2) and name that cell"
+                );
+            };
+            let r = used_part(book, s, r);
+            let formula = super::sheets_chart::abs_ref(book, s, r);
             book.set_defined_name(name, scope, &formula)?;
             Ok((format!("defined {name}"), json!({"name": name})))
         }

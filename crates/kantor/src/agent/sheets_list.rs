@@ -90,8 +90,8 @@ fn list_inner(book: &Workbook, opts: &ListOpts) -> Result<Value> {
 fn sheet_json(book: &Workbook, s: u32, page: Option<CellRange>, opts: &ListOpts) -> Value {
     let name = book.sheet_names()[s as usize].clone();
     let (rows, cols) = book.used_size(s);
-    let used =
-        (rows > 0 && cols > 0).then(|| CellRange::from_corners((0, 0), (rows - 1, cols - 1)));
+    let empty = rows == 0 || cols == 0 || book.filled_cells(s).is_empty();
+    let used = (!empty).then(|| CellRange::from_corners((0, 0), (rows - 1, cols - 1)));
     let (fr, fc) = book.frozen(s);
     let mut v = json!({
         "number": s + 1,

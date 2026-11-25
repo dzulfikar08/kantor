@@ -1279,6 +1279,7 @@ mod tests {
         assert!(has(&r, "typed_total", "D7"), "{all:?}");
         assert!(has(&r, "typed_total", "B7"), "{all:?}");
         assert!(has(&r, "formula_error", "D10"), "{all:?}");
+        assert!(has(&r, "formula_error", "D9:D10"), "{all:?}");
         assert!(has(&r, "formula_error", "D11"), "{all:?}");
         assert!(has(&r, "refers_to_empty", "D9"), "{all:?}");
         assert!(

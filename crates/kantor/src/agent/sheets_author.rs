@@ -349,7 +349,7 @@ pub const TOOLS: &[ToolSpec] = &[
     ),
     tool!(
         "define_name",
-        "Define a name for a range or value (`refers_to`, e.g. \"Data!$B$2:$B$100\" or \"0.11\"), for the workbook or one `sheet`.",
+        "Define a name for cells (`refers_to`, e.g. \"Data!$B$2:$B$100\"), for the workbook or one `sheet`.",
         ["name", "refers_to", "sheet"],
         ["name", "refers_to"]
     ),
@@ -2074,7 +2074,7 @@ mod tests {
                  "tables": [{"range": "A1:B4", "name": "Sales"}]},
                 {"name": "Notes", "columns": [["Note", "Checked"]], "hidden": true}
             ],
-            "names": [{"name": "TaxRate", "refers_to": "0.11"}],
+            "names": [{"name": "Months", "refers_to": "Data!$A$2:$A$4"}],
             "active": "Data"
         });
         let b = build(&desc, None).unwrap();
@@ -2083,7 +2083,7 @@ mod tests {
         assert_eq!(b.frozen(0), (1, 0));
         assert_eq!(b.tables(0)[0].name, "Sales");
         assert!(b.sheet_hidden(1));
-        assert!(b.defined_names().iter().any(|n| n.name == "TaxRate"));
+        assert!(b.defined_names().iter().any(|n| n.name == "Months"));
         let one = to_bytes(&b).unwrap();
         let two = to_bytes(&build(&desc, None).unwrap()).unwrap();
         assert_eq!(one, two);
