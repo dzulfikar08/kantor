@@ -99,8 +99,13 @@ impl HttpResponse {
 
     /// The body as text, at most 64 KiB (error replies).
     pub fn read_text(self) -> String {
+        self.read_text_up_to(64 * 1024)
+    }
+
+    /// The body as text, at most `limit` bytes.
+    pub fn read_text_up_to(self, limit: u64) -> String {
         let mut text = String::new();
-        let _ = self.body.take(64 * 1024).read_to_string(&mut text);
+        let _ = self.body.take(limit).read_to_string(&mut text);
         text
     }
 }

@@ -75,6 +75,9 @@ pub fn save_token(token: &str) -> Result<KeyLocation, String> {
     keys::AI.save(TOKEN_NAME, token)
 }
 
+/// The largest successful reply read (a served skill with its references).
+const MAX_REPLY: u64 = 8 * 1024 * 1024;
+
 pub fn delete_token() {
     keys::AI.delete(TOKEN_NAME)
 }
@@ -424,7 +427,9 @@ impl Paparan {
         if !(200..300).contains(&resp.status) {
             return Err(error_from_response(resp));
         }
-        let body = resp.read_text();
+        // Served skills (all their reference files in one JSON) are well
+        // over the 64 KiB error-reply limit.
+        let body = resp.read_text_up_to(MAX_REPLY);
         if body.trim().is_empty() {
             return Ok(Value::Null);
         }
@@ -1235,6 +1240,28 @@ mod tests {
         for r in &seen {
             assert_eq!(r.method, Method::Get);
             assert!(r.headers.contains(&("authorization", "Bearer tok".into())));
+        }
+    }
+
+    #[test]
+    fn served_skill_larger_than_an_error_reply_loads() {
+        use crate::agent::{PromptSource, SkillFile};
+        // The live paparan-deck skill is ~110 KB; replies used to stop at 64 KiB.
+        let big = "x".repeat(200 * 1024);
+        let skill = json!({
+            "name": "paparan-deck",
+            "version": "v1",
+            "files": {
+                "SKILL.md": "---\nname: paparan-deck\ndescription: x\n---\n\n# Deck\n",
+                "references/big.md": big,
+            }
+        });
+        let t = Script::new(vec![ok(ME_OK), ok(&skill.to_string())]);
+        let api = Paparan::with_base("https://p.example/api/kantor", t);
+        let s = fetch_skill(&api, "tok", "paparan-deck").unwrap();
+        match s.read("references/big.md") {
+            Ok(SkillFile::Text(t)) => assert_eq!(t.len(), 200 * 1024),
+            other => panic!("{other:?}"),
         }
     }
 
