@@ -2625,8 +2625,7 @@ impl<'a> Flow<'a> {
                 .unwrap_or_default()
         };
         let mut h = 0.0;
-        let mut k = pi;
-        for _ in 0..6 {
+        for k in (pi..).take(6) {
             let p = &self.paras[k];
             if k > pi {
                 h += p.space_before_pt * PT;
@@ -2640,7 +2639,6 @@ impl<'a> Flow<'a> {
             if k + 1 >= self.paras.len() || self.paras[k + 1].page_break_before {
                 return 0.0;
             }
-            k += 1;
         }
         h
     }
