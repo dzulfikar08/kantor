@@ -167,8 +167,6 @@ fn base(fonts: Value, palette: Value) -> Value {
         "page": {"size": "A4", "orientation": "portrait",
                  "margins": {"top": "2.5cm", "bottom": "2.3cm", "left": "2.5cm", "right": "2.5cm"},
                  "header": "1.25cm", "footer": "1.1cm"},
-        "labels": {"figure": "Figure", "table": "Table", "contents": "Contents",
-                   "figures": "Figures", "tables": "Tables"},
         "styles": {
             "Normal": {"font": "body", "size": 10.5, "color": "ink", "space_after": 6, "line_spacing": 1.2},
             "Title": {"font": "heading", "size": 30, "color": "ink", "space_after": 6, "line_spacing": 1.0},
@@ -1922,6 +1920,15 @@ pub fn look_json(doc: &Map<String, Value>) -> Result<Value> {
                 );
             }
         }
+    }
+    // Built-in style names in any case or spacing ("heading 2") go over
+    // the preset's ("Heading 2").
+    if let Some(Value::Object(st)) = over.get_mut("styles") {
+        let named: Map<String, Value> = std::mem::take(st)
+            .into_iter()
+            .map(|(k, v)| (builtin(&k).map_or(k, |b| b.0.to_owned()), v))
+            .collect();
+        *st = named;
     }
     super::slides_style::merge(&mut v, &Value::Object(over));
     // `null` removes a preset's header or footer.

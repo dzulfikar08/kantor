@@ -1441,7 +1441,11 @@ mod tests {
         let t = texts(&mut s);
         let a = t.iter().position(|x| x == "a").unwrap();
         assert_eq!(t[a + 1], "New");
-        assert!(t.iter().any(|x| x.starts_with("See Table 1")), "{t:?}");
+        assert!(
+            t.iter()
+                .any(|x| x.replace('\u{a0}', " ").starts_with("See Table 1")),
+            "{t:?}"
+        );
         assert!(!t.iter().any(|x| x.contains(MARKER)));
         s.run(
             "move_section",

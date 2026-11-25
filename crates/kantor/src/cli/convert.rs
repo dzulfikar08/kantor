@@ -858,7 +858,11 @@ mod tests {
             kind(Path::new("deck.pptx"), Path::new("deck.png")).unwrap(),
             Kind::SlidesToPng
         );
-        assert!(err(&["a.docx", "a.png"]).contains(".docx to .png is not supported ("));
+        assert_eq!(
+            kind(Path::new("a.docx"), Path::new("a.png")).unwrap(),
+            Kind::DocsToPng
+        );
+        assert!(err(&["a.docx", "a.jpg"]).contains(".docx to .jpg is not supported ("));
         for ext in ["ppt", "PPS", "pot", "odp", "OTP"] {
             let input = format!("old.{ext}");
             assert_eq!(

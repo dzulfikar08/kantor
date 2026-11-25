@@ -52,6 +52,8 @@ pub fn shown(doc: &Document, i: usize) -> String {
         }
         match p.object_at(offset) {
             Some(o) if o.is_zero_width() => {}
+            // Comment marks: not text.
+            Some(Object::Opaque(o)) if o.xml.contains("commentReference") => {}
             Some(Object::Image(_)) => out.push_str("[picture]"),
             Some(Object::Float(f)) if matches!(f.kind, FloatKind::Chart { .. }) => {
                 out.push_str("[chart]")

@@ -165,6 +165,7 @@ pub fn layout_paragraph(
     lp.indent_right_pt = rp.indent_right_pt;
     lp.first_line_pt = rp.first_line_pt;
     lp.page_break_before = rp.page_break_before;
+    lp.keep_next = keeps_with_next(doc, p);
     lp.align = match rp.align {
         Align::Left => docs_layout::Align::Start,
         Align::Center => docs_layout::Align::Center,
@@ -615,6 +616,33 @@ pub fn table_x(
         docs_engine::TableAlign::Center => (content - width) / 2.0,
         docs_engine::TableAlign::Right => content - width,
     }
+}
+
+/// Whether paragraph `p` keeps with the next one (`w:keepNext` on it or
+/// on its style, or the style it's based on…).
+pub fn keeps_with_next(doc: &Document, p: &docs_engine::Paragraph) -> bool {
+    let found = |e: &docs_engine::model::Extras| -> Option<bool> {
+        e.iter()
+            .find(|x| docs_engine::model::element_name(x) == "keepNext")
+            .map(|x| docs_engine::xml::parse(x).is_none_or(|el| el.on()))
+    };
+    if p.cell.is_some() {
+        return false;
+    }
+    if let Some(v) = found(&p.props.extras) {
+        return v;
+    }
+    let mut id = p.props.style.clone();
+    for _ in 0..16 {
+        let Some(s) = id.as_deref().and_then(|i| doc.styles.get(i)) else {
+            return false;
+        };
+        if let Some(v) = found(&s.para.extras) {
+            return v;
+        }
+        id = s.based_on.clone();
+    }
+    false
 }
 
 /// A cell's own shading (`w:shd/@w:fill` in its `w:tcPr`), if it has one.

@@ -1,0 +1,156 @@
+{
+  "preset": "proposal",
+  "accent": "#1F5E5B",
+  "properties": {
+    "title": "Condition Monitoring and Maintenance Planning",
+    "subject": "Proposal",
+    "author": "Harbor Reliability Services",
+    "company": "Harbor Reliability Services",
+    "date": "2026-11-25",
+    "version": "1.0"
+  },
+  "cover": {
+    "label": "Proposal",
+    "subtitle": "A twelve-week programme for the filling and utilities areas of Example Packaging Co.",
+    "meta": [
+      ["Prepared for", "Example Packaging Co., Plant 2"],
+      ["Prepared by", "Harbor Reliability Services"],
+      ["Date", "25 November 2026"],
+      ["Reference", "HRS-2026-114, version 1.0"]
+    ],
+    "note": "Confidential: for the recipient's evaluation only."
+  },
+  "toc": {"levels": 2},
+  "blocks": [
+    {"h1": "Executive summary", "id": "summary"},
+    "Example Packaging Co. runs four filling lines and a utilities block at Plant 2 around the clock. Unplanned stoppages on those lines cost about **310 production hours** in the last twelve months, most of them on equipment that gave measurable warning before it failed.[^Stoppage log for October 2025 to September 2026, shared by the plant's maintenance team.]",
+    "We propose a twelve-week programme that puts sensors on the assets that matter most, links them to a maintenance planning platform, and trains the team to act on what the data shows. The work runs in three phases, set out in section {ref:approach}, and is priced at a fixed fee (see section {ref:investment}).",
+    {"type": "callout", "title": "What the plant gets", "text": [
+      {"bullets": [
+        "Early warning on 46 critical assets, with alerts sent to the technician on shift.",
+        "Planned work replacing emergency work: a target of 65 % planned within six months.",
+        "One place for work orders, spare parts and asset history, replacing three spreadsheets."
+      ]}
+    ]},
+    "We have done this before for three packaging plants of a similar size. The results we measured there are in section {ref:results}; we expect a similar path here, and we put part of our fee at risk against it.",
+
+    {"h1": "Understanding of your needs", "id": "needs"},
+    "Over two site visits we walked the lines with the maintenance supervisor and the production manager, read twelve months of stoppage records, and looked at how work is planned today. Four things stood out.",
+    {"numbers": [
+      "**Most stoppages are repeats.** Five failure modes account for 61 % of lost hours: bearing wear on the capper drives, seal leaks on the fillers, compressor trips, conveyor motor overheating and labeller misfeeds.",
+      "**Warnings are there but nobody sees them in time.** Vibration and temperature rise for days before a bearing fails, but they are checked by hand once a month.",
+      "**Planning happens on the day.** About 70 % of maintenance work is reactive, so parts are ordered after the breakdown and the line waits.",
+      "**Knowledge sits with a few people.** Two senior technicians hold most of the know-how about the older fillers, and both retire within three years."
+    ]},
+    {"type": "quote", "text": "We are good at fixing things fast. What we want is to stop fixing the same things every month.", "source": "Maintenance supervisor, Plant 2"},
+    {"h2": "What success looks like"},
+    "We agreed three measures with the plant team. They are the basis of the targets in this proposal and of the fee at risk.",
+    {"type": "table", "caption": "Agreed measures, baseline and target", "id": "measures", "columns": [4, 2, 2, 3],
+     "header": ["Measure", "Baseline", "Target", "How it is measured"],
+     "rows": [
+       ["Unplanned stoppage hours per quarter", "78", "45", "Production log, filling lines 1-4"],
+       ["Share of planned maintenance work", "30 %", "65 %", "Work orders, by type"],
+       ["Mean time to repair, critical assets", "3.4 h", "2.0 h", "Work order open to close"]
+     ]},
+
+    {"h1": "Proposed approach", "id": "approach"},
+    "The programme runs in three phases of four weeks. Each phase ends with a review with the plant manager, and the next phase starts only when its exit criteria are met.",
+    {"h2": "Phases", "id": "phases"},
+    {"type": "table", "caption": "Phases, activities and exit criteria", "id": "phase-table", "columns": [2, 5, 4],
+     "header": ["Phase", "Activities", "Exit criteria"],
+     "rows": [
+       ["1. Assess and instrument (weeks 1-4)", "Criticality review of 180 assets; sensor plan for the top 46; install sensors and the edge gateway on lines 1 and 2.", "Data from lines 1 and 2 arriving every minute; criticality list signed off."],
+       ["2. Connect and plan (weeks 5-8)", "Sensors on lines 3, 4 and utilities; asset register and spare parts loaded; preventive plans rebuilt from the failure history.", "All 46 assets monitored; first month of planned work scheduled."],
+       ["3. Operate and hand over (weeks 9-12)", "Alert rules tuned; daily planning meeting run with the team; technicians and planners trained.", "Two weeks of planning run by the plant team alone; handover report accepted."]
+     ]},
+    {"h2": "How the parts fit together", "id": "architecture"},
+    "Sensors on each asset send readings to an edge gateway on the plant network, which keeps 72 hours of data if the link is down. The platform turns the readings into condition scores, raises work orders when a score crosses its limit, and checks that the parts are in stock. {ref:fig-architecture} shows the flow from the plant floor to the people who act on it.",
+    {"type": "picture", "path": "architecture.png", "width": "100%", "alt": "Diagram: sensors on the filling lines, compressors, boiler house and PLCs feed an edge gateway, which feeds the platform's condition models, work orders, spare parts and reports, used by technicians, planners and the plant manager.", "caption": "From the plant floor to the people who act", "id": "fig-architecture"},
+    "No change is needed to the existing PLC programs: the gateway reads them through OPC UA and Modbus TCP, as the plant's controls engineer confirmed.",
+    {"h2": "Deliverables"},
+    {"bullets": [
+      "Criticality assessment of 180 assets, with the reasoning for each ranking.",
+      "Sensors, gateway and installation for 46 assets, with drawings and a spare-parts list.",
+      "The configured platform: asset register, preventive plans, alert rules and dashboards.",
+      {"text": "Training", "items": ["Technicians: two half-day sessions per shift.", "Planners: three days alongside our planner.", "Managers: one session on the reports."]},
+      "A handover report with the measures in {ref:measures} at week 12."
+    ]},
+
+    {"h1": "Expected results", "id": "results"},
+    "At three plants of a similar size, unplanned stoppage hours fell steadily once the alerts were live, while the share of planned work rose. {ref:fig-results} shows the average of the three over the first year; we used it to set the targets in {ref:measures}.",
+    {"type": "chart", "chart": "combo", "categories": ["Q1", "Q2", "Q3", "Q4"],
+     "series": [
+       {"name": "Unplanned stoppage hours", "values": [78, 61, 49, 43], "type": "column", "color": "accent"},
+       {"name": "Planned work (%)", "values": [30, 46, 58, 66], "type": "line", "axis": "secondary", "color": "accent3"}
+     ],
+     "legend": "bottom", "height": "7.5cm",
+     "axis": {"title": "Hours per quarter"},
+     "caption": "Stoppage hours and planned work at three comparable plants, first year (average)", "id": "fig-results",
+     "alt": "Unplanned stoppage hours fall from 78 to 43 per quarter while planned work rises from 30 % to 66 %."},
+    "The fall is steepest in the second quarter, when the first repeat failures are caught early. Most of the later gain comes from planning: parts are ready before the work starts, so repairs take less time.",
+    {"h2": "Risks and how we handle them"},
+    {"type": "table", "caption": "Main risks", "columns": [3, 1, 4],
+     "header": ["Risk", "Likelihood", "What we do"],
+     "rows": [
+       ["Sensor installation needs line stops", "Medium", "Install during the planned weekly cleaning windows; no extra stops."],
+       ["Network coverage in the boiler house", "Medium", "Site survey in week 1; a wired link is included in the price."],
+       ["Alert fatigue in the first weeks", "High", "Start with conservative limits and tune them weekly with the technicians."]
+     ]},
+
+    {"h1": "Team and timeline", "id": "team"},
+    "A team of four works on site for most of the twelve weeks, with a reliability engineer on call for the analysis.",
+    {"type": "table", "caption": "Team", "columns": [3, 2, 5],
+     "header": ["Role", "Days on site", "Responsible for"],
+     "rows": [
+       ["Programme lead", "36", "Plan, reviews with the plant manager, risks"],
+       ["Reliability engineer", "20", "Criticality, failure modes, alert rules"],
+       ["Instrumentation technician", "40", "Sensors, gateway, network"],
+       ["Maintenance planner", "30", "Preventive plans, planning meeting, training"]
+     ]},
+    "The week-by-week plan is in the appendix, on page {ref:workplan:page}.",
+
+    {"h1": "Investment", "id": "investment"},
+    "The fee is fixed. Twenty per cent of the services fee is at risk: it is paid only if the stoppage hours in the quarter after handover are at or below the target in {ref:measures}.",
+    {"type": "table", "caption": "Fees (USD, excluding VAT)", "id": "fees", "columns": [5, 2], "total": true,
+     "header": ["Item", "Amount"],
+     "rows": [
+       ["Assessment and planning services", "38,500"],
+       ["Sensors and gateway (46 assets)", "52,900"],
+       ["Installation and commissioning", "17,400"],
+       ["Platform subscription, first year", "21,600"],
+       ["Training and handover", "9,800"],
+       ["Total", "140,200"]
+     ]},
+    {"bullets": [
+      "Payment: 40 % at signature, 40 % at the end of phase 2, 20 % at handover (the part at risk).",
+      "The platform subscription renews yearly; the hardware belongs to the plant.",
+      "Prices hold for 60 days from the date of this proposal."
+    ]},
+
+    {"h1": "Next steps", "id": "next"},
+    {"numbers": [
+      "A call with the plant manager to go through this proposal and agree any changes.",
+      "Signature, and a kick-off date in the first week after it.",
+      "The site survey in week 1, so the installation dates can be fixed."
+    ]},
+    "We would be glad to show the platform running at one of the three plants mentioned in section {ref:results}. Contact us at [proposals@example.com](mailto:proposals@example.com).",
+
+    {"type": "section", "orientation": "landscape"},
+    {"h1": "Appendix: work plan", "id": "workplan", "numbered": false},
+    {"type": "table", "caption": "Week-by-week work plan", "columns": [3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+     "header": ["Activity", "W1", "W2", "W3", "W4", "W5", "W6", "W7", "W8", "W9", "W10", "W11", "W12"],
+     "align": ["left", "center", "center", "center", "center", "center", "center", "center", "center", "center", "center", "center", "center"],
+     "rows": [
+       ["Criticality review", "●", "●", "", "", "", "", "", "", "", "", "", ""],
+       ["Site and network survey", "●", "", "", "", "", "", "", "", "", "", "", ""],
+       ["Sensors, lines 1-2", "", "●", "●", "●", "", "", "", "", "", "", "", ""],
+       ["Sensors, lines 3-4 and utilities", "", "", "", "", "●", "●", "●", "", "", "", "", ""],
+       ["Asset register and spare parts", "", "", "●", "●", "●", "●", "", "", "", "", "", ""],
+       ["Preventive plans rebuilt", "", "", "", "", "", "●", "●", "●", "", "", "", ""],
+       ["Alert rules tuned", "", "", "", "", "", "", "", "●", "●", "●", "", ""],
+       ["Daily planning meeting", "", "", "", "", "", "", "", "", "●", "●", "●", "●"],
+       ["Training", "", "", "", "", "", "", "", "", "●", "●", "●", ""],
+       ["Phase reviews", "", "", "", "●", "", "", "", "●", "", "", "", "●"]
+     ]}
+  ]
+}

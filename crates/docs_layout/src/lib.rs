@@ -225,6 +225,10 @@ pub struct Paragraph {
     pub objects: Vec<InlineObject>,
     /// Start on a new page.
     pub page_break_before: bool,
+    /// Keep with the next paragraph (Word's `w:keepNext`): when this
+    /// paragraph and the first lines of the next don't fit on the page
+    /// together, this one starts the next page.
+    pub keep_next: bool,
     /// BCP 47 language, used for shaping and line breaking.
     pub locale: Option<String>,
     /// Byte ranges drawn struck through (tracked deletions): see
@@ -388,6 +392,7 @@ impl Paragraph {
             marker: None,
             objects: Vec::new(),
             page_break_before: false,
+            keep_next: false,
             locale: None,
             strikes: Vec::new(),
             tabs: Vec::new(),
@@ -2529,6 +2534,12 @@ impl<'a> Flow<'a> {
         let layout = self.layouts[pi].clone();
         if para.page_break_before && !self.at_top() {
             self.new_page();
+        } else if para.keep_next && !self.at_top() && self.ncols() == 1 && self.limit.is_none() {
+            let need = self.kept_height(pi);
+            let room = self.setup.height - self.setup.margin_top - self.setup.margin_bottom;
+            if self.y + need > self.bottom() && need < room * 0.8 {
+                self.new_page();
+            }
         }
         let heights: Vec<f32> = layout
             .layout
@@ -2601,6 +2612,37 @@ impl<'a> Flow<'a> {
             }
         }
         self.y += para.space_after_pt * PT;
+    }
+
+    /// The height paragraph `pi` needs at the bottom of a page to stay with
+    /// what follows it: all of it and of the paragraphs it keeps with,
+    /// then the first two lines of the next.
+    fn kept_height(&self, pi: usize) -> f32 {
+        let lines = |k: usize| -> Vec<f32> {
+            self.layouts
+                .get(k)
+                .map(|l| l.layout.lines().map(|x| x.metrics().line_height).collect())
+                .unwrap_or_default()
+        };
+        let mut h = 0.0;
+        let mut k = pi;
+        for _ in 0..6 {
+            let p = &self.paras[k];
+            if k > pi {
+                h += p.space_before_pt * PT;
+            }
+            let ls = lines(k);
+            if k > pi && !(p.keep_next && k + 1 < self.paras.len()) {
+                // The next paragraph: its first lines.
+                return h + ls.iter().take(MIN_LINES).sum::<f32>();
+            }
+            h += ls.iter().sum::<f32>() + p.space_after_pt * PT;
+            if k + 1 >= self.paras.len() || self.paras[k + 1].page_break_before {
+                return 0.0;
+            }
+            k += 1;
+        }
+        h
     }
 
     /// A cell's lines in cell coordinates.
