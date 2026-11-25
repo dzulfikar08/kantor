@@ -327,6 +327,52 @@ const SPECS: &[Spec] = &[
         &["find", "replace"],
         false,
     ),
+    (
+        "docs_build",
+        "Build a .docx from JSON",
+        "Write a new Word document from JSON without opening it (as `kantor docs build`): a preset look (report, proposal, letter) with `accent` and `fonts` for the client's brand, real styles, numbered headings, cover, table of contents (filled in with page numbers), lists, tables, pictures, charts, callouts, captions, cross-references ({ref:id}), footnotes ([^text]), sections (landscape pages), headers and footers. Blocks: heading, paragraph (or a string), list, table, picture, chart, callout, quote, page_break, section, toc, list_of_figures, list_of_tables; shorthands {\"h1\": …}, {\"bullets\": […]}. See `kantor docs schema` or docs/docs-json.md. The same JSON gives the same file. Returns pages and notes; check it with docs_check and look at it with `kantor convert FILE --to png`.",
+        || {
+            json!({
+                "doc": {"type": "object", "description": "The document: {preset, accent, fonts, properties: {title, company, date}, cover: {label, title, subtitle, meta}, toc: true, header, footer, page, styles, blocks: [...]}."},
+                "path": {"type": "string", "description": "Absolute path of the .docx to write (~ allowed)."},
+                "base_dir": {"type": "string", "description": "Folder relative picture paths start from (default: they must be absolute)."},
+                "overwrite": {"type": "boolean", "default": false},
+                "open": {"type": "boolean", "default": false, "description": "Open the new file in Kantor."},
+            })
+        },
+        &["doc", "path"],
+        false,
+    ),
+    (
+        "docs_edit",
+        "Revise a .docx file",
+        "Run editing tools on a Word file and save it, without opening it (as `kantor docs edit`). `ops` is [{tool, args}]: get_paragraphs, insert_paragraphs, replace_paragraph, delete_paragraphs, find_replace (with bold/italic/color/style to format the new text), format, insert_blocks (blocks as in docs_build, placed after/before a paragraph id, after_heading, before_heading, end_of_section), replace_blocks, delete_blocks (from/to ids or a heading's whole section), move_section, set_style, restyle (change a style definition), add_comment, resolve_comment, accept_changes, reject_changes, update_fields (TOC, numbers, references), set_header, set_footer, page_setup. `track` makes the edits tracked changes by that author. Paragraph ids come from docs_list (`kantor docs list FILE --text`). Returns each tool's result.",
+        || {
+            json!({
+                "path": {"type": "string", "description": "Absolute path of the .docx (~ allowed)."},
+                "output": {"type": "string", "description": "Write here instead of over the file."},
+                "ops": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {"tool": {"type": "string"}, "args": {"type": "object"}}, "required": ["tool"]}},
+                "track": {"type": "string", "description": "Author name: the edits become tracked changes."},
+                "base_dir": {"type": "string", "description": "Folder relative picture paths start from."},
+                "overwrite": {"type": "boolean", "default": false, "description": "Replace an existing `output`."},
+            })
+        },
+        &["path", "ops"],
+        false,
+    ),
+    (
+        "docs_check",
+        "Check a .docx file",
+        "Lay a Word file out as Kantor draws it and report problems with paragraph ids and pages (as `kantor docs check --json`): empty or skipped heading levels, headings made by hand, direct formatting, broken cross-references, a stale table of contents, caption numbers, pictures without alt text, tables without a header row, text past cells or margins, headings alone at a page bottom, mixed fonts, placeholder text (TBD, [Name], Lorem), double spaces, open comments and tracked changes, low contrast, fonts not installed. With `outline`, also the document's outline (as `kantor docs list`).",
+        || {
+            json!({
+                "path": {"type": "string", "description": "Absolute path of the .docx (~ allowed)."},
+                "outline": {"type": "boolean", "default": false, "description": "Also return the outline: sections, headings with ids, tables, pictures, fields, comments, changes, pages."},
+            })
+        },
+        &["path"],
+        true,
+    ),
     // ── Slides ─────────────────────────────────────────────────────────────
     (
         "slides_list",

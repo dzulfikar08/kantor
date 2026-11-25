@@ -617,6 +617,18 @@ pub fn table_x(
     }
 }
 
+/// A cell's own shading (`w:shd/@w:fill` in its `w:tcPr`), if it has one.
+pub fn cell_shading(tc_pr: Option<&str>) -> Option<docs_layout::Rgba> {
+    let el = docs_engine::xml::parse(tc_pr?)?;
+    let shd = el.child("shd")?;
+    let fill = shd.attr("fill")?;
+    if fill.eq_ignore_ascii_case("auto") || shd.attr("val") == Some("nil") {
+        return None;
+    }
+    let rgb = docs_engine::Rgb::parse(&fill.to_ascii_uppercase())?;
+    Some(rgba(rgb))
+}
+
 /// Word's shading of cells merged with Track Changes on (light yellow).
 pub const MERGED_FILL: docs_layout::Rgba = docs_layout::Rgba([0xFF, 0xFF, 0x99, 0xA0]);
 
@@ -718,7 +730,8 @@ fn table_block(
                     .tracked()
                     .or(row.tracked())
                     .map(tracked_fill)
-                    .or(cell.merge_tracked().then_some(MERGED_FILL)),
+                    .or(cell.merge_tracked().then_some(MERGED_FILL))
+                    .or_else(|| cell_shading(cell.tc_pr.as_deref())),
             });
         }
         let (min_height, exact) = row.height.map_or((0.0, false), |(h, e)| (tw(h), e));
@@ -864,6 +877,24 @@ fn table_range(paras: &[docs_engine::Paragraph], id: u32) -> std::ops::Range<usi
             s..s + len
         }
         None => 0..0,
+    }
+}
+
+#[cfg(test)]
+mod shading_tests {
+    #[test]
+    fn cell_shading_reads_the_fill() {
+        let f = super::cell_shading(Some(
+            r#"<w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="EAF2F0"/></w:tcPr>"#,
+        ));
+        assert_eq!(f.map(|c| c.0), Some([0xEA, 0xF2, 0xF0, 0xFF]));
+        assert!(
+            super::cell_shading(Some(
+                r#"<w:tcPr><w:shd w:val="clear" w:fill="auto"/></w:tcPr>"#
+            ))
+            .is_none()
+        );
+        assert!(super::cell_shading(None).is_none());
     }
 }
 

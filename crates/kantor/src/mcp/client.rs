@@ -164,6 +164,97 @@ pub fn build_deck(args: &Value) -> Result<Value, String> {
     run().map_err(|e| format!("{e:#}"))
 }
 
+/// `docs_build`: write the document here, without the app.
+pub fn build_doc(args: &Value) -> Result<Value, String> {
+    let run = || -> anyhow::Result<Value> {
+        use anyhow::{Context as _, bail};
+        let doc = args.get("doc").context("`doc` is required")?;
+        let path = crate::agent::path_arg(crate::agent::req_str(args, "path")?)?;
+        if !path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("docx"))
+        {
+            bail!("`path` must end in .docx");
+        }
+        let base = crate::agent::opt_str(args, "base_dir")?
+            .map(crate::agent::path_arg)
+            .transpose()?;
+        let overwrite = crate::agent::opt_bool(args, "overwrite")?.unwrap_or(false);
+        if path.exists() && !overwrite {
+            bail!(
+                "{} exists; pass overwrite=true to replace it",
+                path.display()
+            );
+        }
+        let built = crate::agent::docs_author::build(doc, base.as_deref())?;
+        crate::cli::slides::write_file(&path, &built.bytes)?;
+        Ok(
+            json!({"path": path, "pages": built.pages, "bytes": built.bytes.len(), "notes": built.warnings}),
+        )
+    };
+    run().map_err(|e| format!("{e:#}"))
+}
+
+/// `docs_edit`: revise a file here, without the app.
+pub fn edit_doc(args: &Value) -> Result<Value, String> {
+    let run = || -> anyhow::Result<Value> {
+        use anyhow::{Context as _, bail};
+        let path = crate::agent::path_arg(crate::agent::req_str(args, "path")?)?;
+        let out = match crate::agent::opt_str(args, "output")? {
+            Some(o) => crate::agent::path_arg(o)?,
+            None => path.clone(),
+        };
+        if !out
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("docx"))
+        {
+            bail!("the output must be a .docx file");
+        }
+        let overwrite = crate::agent::opt_bool(args, "overwrite")?.unwrap_or(false);
+        if out != path && out.exists() && !overwrite {
+            bail!(
+                "{} exists; pass overwrite=true to replace it",
+                out.display()
+            );
+        }
+        let ops = crate::agent::docs_edit::ops_of(args.get("ops").context("`ops` is required")?)?;
+        let base = crate::agent::opt_str(args, "base_dir")?
+            .map(crate::agent::path_arg)
+            .transpose()?;
+        let track = crate::agent::opt_str(args, "track")?.map(str::to_owned);
+        let mut s = crate::agent::docs_edit::Session::open(&path, base, track)?;
+        if out == path && s.read_only() {
+            bail!("{} isn't a .docx: give `output`", path.display());
+        }
+        let mut results = Vec::new();
+        for (n, (tool, a)) in ops.iter().enumerate() {
+            results.push(
+                s.run(tool, a)
+                    .with_context(|| format!("operation {} ({tool})", n + 1))?,
+            );
+        }
+        let bytes = s.save()?;
+        crate::cli::slides::write_file(&out, &bytes)?;
+        Ok(json!({"path": out, "results": results}))
+    };
+    run().map_err(|e| format!("{e:#}"))
+}
+
+/// `docs_check`: check a file here, without the app.
+pub fn check_doc(args: &Value) -> Result<Value, String> {
+    let run = || -> anyhow::Result<Value> {
+        let path = crate::agent::path_arg(crate::agent::req_str(args, "path")?)?;
+        let doc = crate::agent::docs_edit::open(&path)?;
+        let mut out = crate::agent::docs_check::check(&doc).json();
+        out["file"] = json!(path.display().to_string());
+        if crate::agent::opt_bool(args, "outline")? == Some(true) {
+            out["outline"] = crate::agent::docs_list::outline(&doc);
+        }
+        Ok(out)
+    };
+    run().map_err(|e| format!("{e:#}"))
+}
+
 /// `mail_merge`: run the merge here, without the app.
 pub fn mail_merge(args: &Value) -> Result<Value, String> {
     use crate::cli::merge::{App, Request, run};
@@ -261,6 +352,19 @@ impl Backend for AppClient {
         if tool == "slides_check" && args.get("path").is_some_and(|p| !p.is_null()) {
             return check_file(&args);
         }
+        match tool {
+            "docs_edit" => return edit_doc(&args),
+            "docs_check" => return check_doc(&args),
+            "docs_build" => {
+                let mut out = build_doc(&args)?;
+                if args.get("open").and_then(Value::as_bool) == Some(true) {
+                    let opened = self.call("open_document", json!({"path": out["path"]}))?;
+                    out["opened"] = opened;
+                }
+                return Ok(out);
+            }
+            _ => {}
+        }
         if tool == "slides_build" {
             let mut out = build_deck(&args)?;
             if args.get("open").and_then(Value::as_bool) == Some(true) {
@@ -307,6 +411,28 @@ mod tests {
         let mut bad = args.clone();
         bad["path"] = json!("relative.pptx");
         assert!(build_deck(&bad).is_err());
+    }
+
+    #[std::prelude::v1::test]
+    fn docs_build_edit_and_check_work_on_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("doc.docx");
+        let args = json!({"path": path, "doc": {"blocks": [{"h1": "Hello"}, "World. TBD"]}});
+        let out = build_doc(&args).unwrap();
+        assert_eq!(out["pages"], 1);
+        assert!(build_doc(&args).unwrap_err().contains("overwrite"));
+        let edited = edit_doc(&json!({"path": path, "ops": [
+            {"tool": "find_replace", "args": {"find": "TBD", "replace": "soon"}},
+            {"tool": "insert_blocks", "args": {"after_heading": "Hello", "blocks": ["Inserted."]}}
+        ]}))
+        .unwrap();
+        assert_eq!(edited["results"].as_array().unwrap().len(), 2);
+        let c = check_doc(&json!({"path": path, "outline": true})).unwrap();
+        assert_eq!(c["errors"], 0, "{c}");
+        assert_eq!(c["outline"]["headings"][0]["text"], "Hello");
+        for t in ["docs_build", "docs_edit", "docs_check"] {
+            assert!(super::super::tools::exists(t));
+        }
     }
 
     #[std::prelude::v1::test]

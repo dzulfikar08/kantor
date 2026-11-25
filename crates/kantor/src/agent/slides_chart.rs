@@ -714,7 +714,7 @@ pub fn plan(v: &Value, cx: &Ctx) -> Result<ChartPlan> {
 }
 
 /// The workbook embedded with chart `d`.
-fn workbook(d: &DataChart) -> Result<Vec<u8>> {
+pub(super) fn workbook(d: &DataChart) -> Result<Vec<u8>> {
     let cats: Vec<CellValue> = d
         .categories
         .iter()

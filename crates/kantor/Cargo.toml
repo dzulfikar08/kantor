@@ -20,6 +20,7 @@ chrono = { workspace = true, features = ["clock"] }
 # PNG files of slides (`kantor convert --to png`).
 flate2 = "1"
 docs_engine.workspace = true
+docs_layout.workspace = true
 docs_pdf.workspace = true
 docs_ui.workspace = true
 env_logger.workspace = true
@@ -52,6 +53,7 @@ slides_pdf.workspace = true
 # `kantor slides check`: text layout and scenes as the PDF draws them.
 slides_scene.workspace = true
 slides_ui.workspace = true
+zip.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 # SIGTERM/SIGINT/SIGHUP (logout, `kill`, Ctrl+C) quit like the Quit command:
@@ -73,8 +75,6 @@ embed-resource = "3"
 
 [dev-dependencies]
 tempfile.workspace = true
-# Comparing a built deck with its corpus file part by part.
-zip.workspace = true
 
 [lints]
 workspace = true
