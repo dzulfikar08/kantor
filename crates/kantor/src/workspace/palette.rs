@@ -2402,6 +2402,12 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Paparan AI Chat"),
+        detail: tk("Make a deck, a document or a workbook with AI"),
+        keys: "",
+        run: |ws, window, cx| ws.toggle_chat(&ToggleChat, window, cx),
+    },
+    Command {
         title: tk("AI Settings"),
         detail: tk("Provider, API key, model · off by default"),
         keys: "",

@@ -4166,6 +4166,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "gpui-pre-macos",
+ "image",
  "kantor_ai",
  "kantor_cloud",
  "kantor_core",
@@ -4212,6 +4213,7 @@ name = "kantor_ai"
 version = "0.24.0"
 dependencies = [
  "apple-native-keyring-store",
+ "base64 0.22.1",
  "kantor_core",
  "keyring-core",
  "log",

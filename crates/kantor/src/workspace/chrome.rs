@@ -187,6 +187,22 @@ impl Workspace {
             })
         };
 
+        let chat_toggle = {
+            let entity = entity.clone();
+            icon_button("toggle-chat", IconName::Sparkles, self.ui.chat_open, cx)
+                .tip(
+                    if self.ui.chat_open {
+                        i18n::t("Hide Paparan AI")
+                    } else {
+                        i18n::t("Paparan AI: make a deck, a document or a workbook")
+                    },
+                    None,
+                )
+                .on_click(move |_, window, cx| {
+                    let _ = entity.update(cx, |ws, cx| ws.toggle_chat(&ToggleChat, window, cx));
+                })
+        };
+
         let file_menu = self.render_file_menu(cx);
 
         let palette_hint = div()
@@ -229,6 +245,7 @@ impl Workspace {
             )
             .when(in_doc, |d| d.child(split_right).child(split_down))
             .child(inspector_toggle)
+            .child(chat_toggle)
             .child(file_menu)
             .child(palette_hint)
     }

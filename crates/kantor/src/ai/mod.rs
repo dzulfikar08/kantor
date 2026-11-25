@@ -1,9 +1,11 @@
-//! The AI panels: settings, the Sheets formula assistant and Docs rewrite.
+//! The AI panels: settings, the Sheets formula assistant, Docs rewrite and
+//! Paparan AI's chat ([`chat`]).
 //!
 //! Each is a small overlay card (like the palette). Requests run on a worker
 //! thread ([`run`]) and stream back to the UI. Nothing is sent while AI is
 //! switched off, and each feature sends only what its privacy line says.
 
+pub(crate) mod chat;
 mod formula;
 pub(crate) mod paparan;
 mod rewrite;

@@ -18,6 +18,9 @@ pub struct UiState {
     pub sidebar_width: f32,
     pub inspector_open: bool,
     pub inspector_width: f32,
+    /// Paparan AI's chat panel, docked on the right.
+    pub chat_open: bool,
+    pub chat_width: f32,
 }
 
 impl Default for UiState {
@@ -27,6 +30,8 @@ impl Default for UiState {
             sidebar_width: 248.,
             inspector_open: false,
             inspector_width: 300.,
+            chat_open: false,
+            chat_width: 380.,
         }
     }
 }

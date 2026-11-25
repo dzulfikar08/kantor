@@ -30,6 +30,8 @@ actions!(
         ClosePane,
         ToggleSidebar,
         ToggleInspector,
+        /// Paparan AI's chat panel.
+        ToggleChat,
         SplitRight,
         SplitDown,
         NextTab,

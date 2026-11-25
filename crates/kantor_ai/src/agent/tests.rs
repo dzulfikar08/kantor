@@ -585,3 +585,59 @@ fn steps_left_and_unchanged_pictures_are_pointed_out() {
     assert!(last(8).contains("3 steps left of 10"), "{}", last(8));
     assert!(last(10).contains("One step left"), "{}", last(10));
 }
+
+#[test]
+fn a_follow_up_goes_on_from_the_earlier_conversation() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut tools = Fake {
+        dir: dir.path().to_path_buf(),
+    };
+    let first = Scripted::new(vec![
+        call(
+            "look",
+            json!({"file": "deck.pptx", "page": "1", "version": "a"}),
+        ),
+        call("write", json!({"path": "deck.pptx", "content": "v1"})),
+        finish(&["deck.pptx"]),
+    ]);
+    let outcome = run(
+        &first,
+        &mut tools,
+        None,
+        "make a deck",
+        &Limits::default(),
+        &Cancel::default(),
+        &mut |_| {},
+    );
+    assert!(matches!(outcome.ending, Ending::Finished { .. }));
+    assert_eq!(images_in(&outcome.messages), 1);
+
+    // A job stopped mid-step left a call without its result.
+    let mut history = outcome.messages;
+    history.push(json!({"role": "assistant", "content": null, "tool_calls": [
+        {"id": "late", "type": "function", "function": {"name": "write", "arguments": "{}"}}
+    ]}));
+
+    let second = Scripted::new(vec![finish(&["deck.pptx"])]);
+    let mut events = Vec::new();
+    let outcome = resume(
+        &second,
+        &mut tools,
+        None,
+        history,
+        "now shorter",
+        &Limits::default(),
+        &Cancel::default(),
+        &mut |e| events.push(e.clone()),
+    );
+    assert!(matches!(outcome.ending, Ending::Finished { .. }));
+    assert_eq!(outcome.steps, 1, "the step count starts again");
+    let sent = second.sent(1);
+    assert_eq!(sent[0]["content"], "make a deck");
+    assert_eq!(images_in(&sent), 0, "old pictures become notes");
+    let n = sent.len();
+    assert_eq!(sent[n - 1]["content"], "now shorter");
+    assert_eq!(sent[n - 2]["role"], "tool");
+    assert_eq!(sent[n - 2]["tool_call_id"], "late");
+    assert!(matches!(events.first(), Some(Event::StepStart { step: 1 })));
+}

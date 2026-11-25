@@ -46,6 +46,56 @@ impl Context {
         c
     }
 
+    /// A conversation that goes on from an earlier job's (`history`, as
+    /// [`super::Outcome::messages`] gave it) with the user's next request.
+    /// Pictures in the history become notes (the model can look again),
+    /// and tool calls left without a result (a job stopped mid-step) get
+    /// one, so the API takes the conversation.
+    pub fn resume(history: Vec<Value>, task: &str) -> Self {
+        let mut c = Self::default();
+        let mut pending: Vec<String> = Vec::new();
+        for mut m in history {
+            let role = m.get("role").and_then(Value::as_str).unwrap_or_default();
+            if role == "tool" {
+                if let Some(id) = m.get("tool_call_id").and_then(Value::as_str) {
+                    pending.retain(|p| p != id);
+                }
+            } else {
+                c.close_calls(&mut pending);
+            }
+            if role == "assistant"
+                && let Some(calls) = m.get("tool_calls").and_then(Value::as_array)
+            {
+                pending = calls
+                    .iter()
+                    .filter_map(|call| call.get("id").and_then(Value::as_str))
+                    .map(str::to_owned)
+                    .collect();
+            }
+            if let Some(parts) = m.get_mut("content").and_then(Value::as_array_mut) {
+                for p in parts {
+                    if p.get("type").and_then(Value::as_str) == Some("image_url") {
+                        *p = json!({"type": "text", "text": "[picture from an earlier request removed; look again if you need it]"});
+                    }
+                }
+            }
+            c.push(0, m);
+        }
+        c.close_calls(&mut pending);
+        c.push(0, json!({"role": "user", "content": task}));
+        c
+    }
+
+    /// Results for tool calls that got none.
+    fn close_calls(&mut self, pending: &mut Vec<String>) {
+        for id in pending.drain(..) {
+            self.push(
+                0,
+                json!({"role": "tool", "tool_call_id": id, "content": "not run: the job was stopped"}),
+            );
+        }
+    }
+
     pub fn messages(&self) -> &[Value] {
         &self.messages
     }

@@ -127,6 +127,8 @@ icon_assets!(
         ArrowLeftRight,
         // Slides toolbar: speaker notes
         NotepadText,
+        // Paparan AI chat
+        Paperclip,
     ]
 );
 

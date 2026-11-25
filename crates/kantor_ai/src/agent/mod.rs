@@ -505,7 +505,51 @@ pub fn run(
     cancel: &Cancel,
     on_event: &mut dyn FnMut(&Event),
 ) -> Outcome {
-    let mut ctx = Context::new(task);
+    run_in(
+        Context::new(task),
+        model,
+        tools,
+        skill,
+        limits,
+        cancel,
+        on_event,
+    )
+}
+
+/// Go on with a job: `history` is the conversation an earlier run ended
+/// with ([`Outcome::messages`]), `task` the user's follow-up ("make slide 3
+/// shorter"). The model sees what it did before; the budgets start again.
+#[allow(clippy::too_many_arguments)]
+pub fn resume(
+    model: &dyn Model,
+    tools: &mut dyn Tools,
+    skill: Option<&dyn PromptSource>,
+    history: Vec<Value>,
+    task: &str,
+    limits: &Limits,
+    cancel: &Cancel,
+    on_event: &mut dyn FnMut(&Event),
+) -> Outcome {
+    run_in(
+        Context::resume(history, task),
+        model,
+        tools,
+        skill,
+        limits,
+        cancel,
+        on_event,
+    )
+}
+
+fn run_in(
+    mut ctx: Context,
+    model: &dyn Model,
+    tools: &mut dyn Tools,
+    skill: Option<&dyn PromptSource>,
+    limits: &Limits,
+    cancel: &Cancel,
+    on_event: &mut dyn FnMut(&Event),
+) -> Outcome {
     let mut total = Usage::default();
     let mut reported = true;
     let mut last_step = Usage::default();

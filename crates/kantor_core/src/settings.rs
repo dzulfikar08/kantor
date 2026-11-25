@@ -225,6 +225,11 @@ pub struct AiSettings {
     pub provider: String,
     /// Per-provider overrides, keyed by provider id.
     pub providers: BTreeMap<String, AiProviderSettings>,
+    /// Paparan AI's chat panel: the folder holding the skills
+    /// (`paparan-deck/SKILL.md`, …) for bring-your-own-key and development
+    /// runs; unset is `~/.claude/skills`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills_dir: Option<String>,
 }
 
 /// What the user changed for one provider; `None` uses the provider default.
@@ -500,6 +505,7 @@ mod tests {
                         base_url: None,
                     },
                 )]),
+                skills_dir: None,
             },
             update: UpdateSettings {
                 enabled: false,

@@ -177,10 +177,13 @@ impl Workspace {
     pub(super) fn render_drop_target(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let tk = tokens(cx);
         let (accent, soft) = (tk.accent, tk.accent_soft);
+        let chat = self.chat_drop_gap();
         div()
             .id("file-drop")
             .absolute()
             .inset_0()
+            // Files dropped on Paparan AI's panel are its attachments.
+            .when_some(chat, |d, w| d.right(w))
             .drag_over::<ExternalPaths>(move |s, _, _, _| {
                 s.bg(soft.opacity(0.35)).border_2().border_color(accent)
             })

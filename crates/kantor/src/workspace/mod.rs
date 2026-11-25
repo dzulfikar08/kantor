@@ -12,6 +12,7 @@
 
 mod agent;
 mod ai;
+mod chat;
 mod chrome;
 mod closing;
 mod cloud;
@@ -116,6 +117,7 @@ struct Tab {
 enum Drag {
     Sidebar { origin_x: Pixels, origin_w: f32 },
     Inspector { origin_x: Pixels, origin_w: f32 },
+    Chat { origin_x: Pixels, origin_w: f32 },
     Split { path: LayoutPath, axis: Axis },
 }
 
@@ -138,6 +140,8 @@ pub struct Workspace {
     palette: Option<Palette>,
     /// An open AI panel (settings, formula assistant, rewrite).
     ai: Option<ai::AiOverlay>,
+    /// Paparan AI's chat panel, once opened (kept while hidden).
+    chat: Option<chat::ChatDock>,
     message: SharedString,
     /// A short-lived status-bar message shown over any document's (agent
     /// edits, "copied"); see `Workspace::notice`.
@@ -182,6 +186,7 @@ impl Workspace {
             next_id: 1,
             palette: None,
             ai: None,
+            chat: None,
             message: SharedString::default(),
             notice: None,
             notice_id: 0,
@@ -243,6 +248,7 @@ impl Workspace {
         this.init_updates(cx);
         this.init_recovery(window, cx);
         this.init_cloud(window, cx);
+        this.init_chat(window, cx);
         this
     }
 
@@ -810,6 +816,9 @@ impl Workspace {
             Drag::Inspector { origin_x, origin_w } => {
                 self.ui.inspector_width = UiState::clamp(origin_w - (x - *origin_x) / px(1.));
             }
+            Drag::Chat { origin_x, origin_w } => {
+                self.ui.chat_width = chat::clamp_width(origin_w - (x - *origin_x) / px(1.));
+            }
             Drag::Split { path, axis } => {
                 let Some(bounds) = self.split_bounds.borrow().get(path).copied() else {
                     return;
@@ -939,6 +948,7 @@ impl Render for Workspace {
             .and(self.chrome.as_ref())
             .map(|c| c.palette.clone());
         let ai_panel = self.render_ai(cx);
+        let chat_dock = self.render_chat_dock(cx);
         let cloud_panel = self.render_cloud_panel(cx);
         let chrome = self.chrome.as_ref().map(|c| {
             (
@@ -987,6 +997,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::ask_for_formula))
             .on_action(cx.listener(Self::explain_formula))
             .on_action(cx.listener(Self::rewrite_selection))
+            .on_action(cx.listener(Self::toggle_chat))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(
                 MouseButton::Left,
@@ -1038,7 +1049,8 @@ impl Render for Workspace {
                                     .clone(),
                             ),
                         )
-                    }),
+                    })
+                    .children(chat_dock),
             );
         root.child(
             h_flex()

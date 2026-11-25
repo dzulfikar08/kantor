@@ -703,3 +703,41 @@ Kantor Light	Kantor Terang
 Kantor Dark	Kantor Gelap
 Follow Omarchy	Ikuti Omarchy
 System	Sistem
+
+# Paparan AI chat panel
+A 6-slide deck on this quarter's sales for the board	Paparan 6 slide tentang penjualan kuartal ini untuk direksi
+A monthly budget workbook with totals and a chart	Buku kerja anggaran bulanan dengan total dan grafik
+A one-page memo inviting the team to the planning meeting	Memo satu halaman yang mengundang tim ke rapat perencanaan
+Ask for a deck, a document or a workbook…	Minta paparan, dokumen, atau buku kerja…
+Attach files	Lampirkan berkas
+Attach files for Paparan AI	Lampirkan berkas untuk Paparan AI
+Choose the job's work folder	Pilih folder kerja untuk tugas ini
+Choose the work folder (default: a new folder in Kantor's data)	Pilih folder kerja (bawaan: folder baru di data Kantor)
+Deck	Paparan
+Describe it in English or Indonesian, and drop or attach the source files. The work happens in its own folder; your files are never changed.	Jelaskan dalam bahasa Indonesia atau Inggris, lalu seret atau lampirkan berkas sumbernya. Pekerjaan dilakukan di foldernya sendiri; berkas Anda tidak pernah diubah.
+Folder: {}	Folder: {}
+Hide Paparan AI	Sembunyikan Paparan AI
+{} left	sisa {}
+New chat	Obrolan baru
+Paparan AI makes decks, documents and workbooks from your request. Turn on AI and choose a provider first.	Paparan AI membuat paparan, dokumen, dan buku kerja dari permintaan Anda. Aktifkan AI dan pilih penyedia terlebih dahulu.
+partly estimated	sebagian perkiraan
+Reminded to do the work it announced	Diingatkan untuk mengerjakan yang sudah disebutkannya
+Reminded to finish with a summary	Diingatkan untuk menyelesaikan dengan ringkasan
+Reminded to keep going	Diingatkan untuk melanjutkan
+Reveal	Tampilkan di folder
+Scripted model	Model berskrip
+Send (Enter)	Kirim (Enter)
+Starting…	Memulai…
+{} steps	{} langkah
+Stopped.	Dihentikan.
+Stopped at the step limit: {}	Berhenti di batas langkah: {}
+Stopped by the budget: {}	Berhenti karena anggaran: {}
+Stopped: the model kept ending without finishing. {}	Berhenti: model terus berhenti tanpa menyelesaikan. {}
+Stopping after this step…	Berhenti setelah langkah ini…
+{} tokens in ({} cached), {} out	{} token masuk ({} dari cache), {} keluar
+What should Paparan AI make?	Apa yang perlu dibuat Paparan AI?
+Work folder: {}	Folder kerja: {}
+Working… step {}	Bekerja… langkah {}
+Paparan AI: make a deck, a document or a workbook	Paparan AI: buat paparan, dokumen, atau buku kerja
+Paparan AI Chat	Obrolan Paparan AI
+Make a deck, a document or a workbook with AI	Buat paparan, dokumen, atau buku kerja dengan AI

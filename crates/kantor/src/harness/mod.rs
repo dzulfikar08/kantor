@@ -144,6 +144,17 @@ impl DocTools {
         &self.root
     }
 
+    /// Count `rel` (a file added to the folder mid-job, such as one the
+    /// user attached to a follow-up) among the user's own files: read, never
+    /// overwritten.
+    pub fn protect(&mut self, rel: &Path) {
+        let rel: PathBuf = rel
+            .components()
+            .filter(|c| !matches!(c, Component::CurDir))
+            .collect();
+        self.originals.insert(rel);
+    }
+
     /// `p` (relative to the work folder, or absolute inside it) as a path
     /// inside the work folder; anything else is refused.
     pub fn resolve(&self, p: &str) -> Result<PathBuf> {
