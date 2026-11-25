@@ -4157,6 +4157,7 @@ dependencies = [
  "async-channel",
  "chrono",
  "docs_engine",
+ "docs_layout",
  "docs_pdf",
  "docs_ui",
  "embed-resource",
