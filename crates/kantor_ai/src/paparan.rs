@@ -539,53 +539,124 @@ impl Paparan {
     }
 }
 
-/// Check the account can run a job, then fetch the skill. Errors say what
-/// to do: sign in, top up, check the connection, or which skills exist.
+/// Why a served skill couldn't be fetched, for the app to offer the right
+/// next step (Sign in, Top up, Try again).
+#[derive(Clone, Debug, PartialEq)]
+pub enum SkillError {
+    /// No sign-in, or the server no longer takes it.
+    SignedOut,
+    /// No credits left.
+    NoCredits {
+        topup_url: Option<String>,
+    },
+    /// The server couldn't be reached (offline, time-out).
+    Offline {
+        skill: String,
+        message: String,
+    },
+    /// No skill by that name; `available` are the ones there are.
+    Unknown {
+        skill: String,
+        available: Vec<String>,
+    },
+    Other(String),
+}
+
+impl std::fmt::Display for SkillError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::SignedOut => write!(
+                f,
+                "signed out of Paparan AI (the sign-in was revoked or expired): \
+                 sign in again from Kantor's AI settings"
+            ),
+            Self::NoCredits {
+                topup_url: Some(url),
+            } => write!(f, "no Paparan AI credits left: top up at {url}"),
+            Self::NoCredits { topup_url: None } => {
+                write!(f, "no Paparan AI credits left: top up to continue")
+            }
+            Self::Offline { skill, message } => write!(
+                f,
+                "can't reach Paparan AI to fetch the {skill} skill: {message} (are you offline?)"
+            ),
+            Self::Unknown { skill, available } if available.is_empty() => {
+                write!(f, "Paparan AI has no skill {skill}")
+            }
+            Self::Unknown { skill, available } => write!(
+                f,
+                "Paparan AI has no skill {skill} (it has: {})",
+                available.join(", ")
+            ),
+            Self::Other(m) => f.write_str(m),
+        }
+    }
+}
+
+impl SkillError {
+    /// The error as the AI panels know it (to offer Sign in or Top up), when
+    /// there is one.
+    pub fn as_ai_error(&self) -> Option<AiError> {
+        match self {
+            Self::SignedOut => Some(AiError::SignedOut),
+            Self::NoCredits { topup_url } => Some(AiError::InsufficientCredits {
+                message: String::new(),
+                topup_url: topup_url.clone(),
+            }),
+            Self::Offline { message, .. } => Some(AiError::Network(message.clone())),
+            Self::Unknown { .. } | Self::Other(_) => None,
+        }
+    }
+}
+
+/// Check the account can run a job, then fetch the skill (see
+/// [`SkillError`] for what can go wrong).
+pub fn load_skill(
+    api: &Paparan,
+    token: &str,
+    name: &str,
+) -> Result<crate::agent::ServedSkill, SkillError> {
+    let explain = |e: AiError| match e {
+        AiError::SignedOut => SkillError::SignedOut,
+        AiError::InsufficientCredits { topup_url, .. } => SkillError::NoCredits { topup_url },
+        AiError::Network(_) | AiError::Timeout => SkillError::Offline {
+            skill: name.to_owned(),
+            message: e.to_string(),
+        },
+        e => SkillError::Other(format!("can't fetch the {name} skill from Paparan AI: {e}")),
+    };
+    let me = api.me(token).map_err(explain)?;
+    if me.credits.remaining <= 0.0 {
+        return Err(SkillError::NoCredits {
+            topup_url: me.topup_url,
+        });
+    }
+    let Some(skill) = api.skill(token, name).map_err(explain)? else {
+        let available = api
+            .skills(token)
+            .map(|l| {
+                l.iter()
+                    .map(|s| s.name.trim_start_matches("paparan-").to_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        return Err(SkillError::Unknown {
+            skill: name.to_owned(),
+            available,
+        });
+    };
+    crate::agent::ServedSkill::new(skill.name, skill.version, skill.files)
+        .map_err(SkillError::Other)
+}
+
+/// [`load_skill`] with the error as a sentence that says what to do: sign
+/// in, top up, check the connection, or which skills exist.
 pub fn fetch_skill(
     api: &Paparan,
     token: &str,
     name: &str,
 ) -> Result<crate::agent::ServedSkill, String> {
-    let explain = |e: AiError| match e {
-        AiError::SignedOut => "signed out of Paparan AI (the sign-in was revoked or expired): \
-             sign in again from Kantor's AI settings"
-            .to_owned(),
-        AiError::InsufficientCredits { topup_url, .. } => match topup_url {
-            Some(url) => format!("no Paparan AI credits left: top up at {url}"),
-            None => "no Paparan AI credits left: top up to continue".to_owned(),
-        },
-        AiError::Network(_) | AiError::Timeout => {
-            format!("can't reach Paparan AI to fetch the {name} skill: {e} (are you offline?)")
-        }
-        e => format!("can't fetch the {name} skill from Paparan AI: {e}"),
-    };
-    let me = api.me(token).map_err(explain)?;
-    if me.credits.remaining <= 0.0 {
-        return Err(match me.topup_url {
-            Some(url) => format!("no Paparan AI credits left: top up at {url}"),
-            None => "no Paparan AI credits left: top up to continue".to_owned(),
-        });
-    }
-    let Some(skill) = api.skill(token, name).map_err(explain)? else {
-        let names = api
-            .skills(token)
-            .map(|l| {
-                l.iter()
-                    .map(|s| s.name.trim_start_matches("paparan-").to_owned())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            })
-            .unwrap_or_default();
-        return Err(format!(
-            "Paparan AI has no skill {name}{}",
-            if names.is_empty() {
-                String::new()
-            } else {
-                format!(" (it has: {names})")
-            }
-        ));
-    };
-    crate::agent::ServedSkill::new(skill.name, skill.version, skill.files)
+    load_skill(api, token, name).map_err(|e| e.to_string())
 }
 
 /// A finished sign-in.

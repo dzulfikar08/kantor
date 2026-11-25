@@ -13,6 +13,7 @@ use gpui_kit::RenderImage;
 use kantor_ai::agent::{
     self, Event, Limits, LocalSkill, Model, PromptSource, ToolOutput, ToolSpec, Tools,
 };
+use kantor_ai::paparan::{Paparan, SkillError};
 use kantor_ai::{AiError, Api, Cancel, Client, ProviderConfig, ProviderId, UreqTransport};
 use kantor_core::settings::AiSettings;
 use serde_json::Value;
@@ -49,20 +50,52 @@ pub struct Session {
     history: Vec<Value>,
 }
 
-/// Where a job's skill comes from. Local folders for bring-your-own-key and
-/// development ([`local_skills`]); Paparan AI's served skills plug in here
-/// as another loader once the server has them.
+/// Where a job's skill comes from: Paparan AI's served skills
+/// ([`served_skills`]) or local folders for bring-your-own-key and
+/// development ([`local_skills`]). Called on the worker (it may fetch).
 pub type SkillLoader =
-    Arc<dyn Fn(JobKind) -> Result<Box<dyn PromptSource + Send>, String> + Send + Sync>;
+    Arc<dyn Fn(JobKind) -> Result<Box<dyn PromptSource + Send>, SkillError> + Send + Sync>;
 
 /// Skills from folders named after them under `dir`
 /// (`dir/paparan-deck/SKILL.md`).
 pub fn local_skills(dir: PathBuf) -> SkillLoader {
     Arc::new(move |kind: JobKind| {
         let folder = dir.join(kind.skill());
-        let skill = LocalSkill::open(&folder)?;
+        let skill = LocalSkill::open(&folder).map_err(SkillError::Other)?;
         Ok(Box::new(skill) as Box<dyn PromptSource + Send>)
     })
+}
+
+/// Paparan AI's skills, fetched for each job with the sign-in (`token`, or
+/// the one saved in the keychain) and kept in memory only.
+pub fn served_skills(api: Arc<Paparan>, token: Option<String>) -> SkillLoader {
+    Arc::new(move |kind: JobKind| {
+        let token = token
+            .clone()
+            .or_else(kantor_ai::paparan::load_token)
+            .ok_or(SkillError::SignedOut)?;
+        let skill = kantor_ai::paparan::load_skill(&api, &token, kind.skill())?;
+        Ok(Box::new(skill) as Box<dyn PromptSource + Send>)
+    })
+}
+
+/// The skills for a job: a skills folder set in settings.toml wins (an
+/// override for development); otherwise Paparan AI serves its own when it's
+/// the provider, and other providers (BYOK, Ollama) read `~/.claude/skills`.
+pub fn skill_loader(ai: &AiSettings) -> SkillLoader {
+    let set = ai
+        .skills_dir
+        .as_deref()
+        .is_some_and(|d| !d.trim().is_empty());
+    if !set && ProviderId::from_key(&ai.provider) == Some(ProviderId::Paparan) {
+        let transport = UreqTransport::with_timeouts(
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(60),
+        );
+        served_skills(Arc::new(Paparan::new(Arc::new(transport))), None)
+    } else {
+        local_skills(skills_dir(ai))
+    }
 }
 
 /// The skills folder: the setting, else `~/.claude/skills`.
@@ -179,7 +212,18 @@ pub fn work(req: Request, cancel: &Cancel, send: &dyn Fn(Msg)) -> Done {
     };
     let skill = match (req.skills)(kind) {
         Ok(s) => s,
-        Err(e) => return fail(e, session(tools, history)),
+        Err(e) => {
+            send(Msg::Event(Event::Error {
+                message: e.to_string(),
+            }));
+            return Done {
+                error: Some(
+                    e.as_ai_error()
+                        .unwrap_or_else(|| AiError::BadReply(e.to_string())),
+                ),
+                session: session(tools, history),
+            };
+        }
     };
     let model: Box<dyn Model> = match &req.script {
         Some(path) => match super::script::Played::load(path) {
@@ -240,6 +284,22 @@ pub fn work(req: Request, cancel: &Cancel, send: &dyn Fn(Msg)) -> Done {
     }
 }
 
+/// Whether trying the same request again may work (offline, a time-out,
+/// the server's own trouble).
+pub fn retryable(e: Option<&AiError>) -> bool {
+    matches!(
+        e,
+        Some(
+            AiError::Network(_)
+                | AiError::Timeout
+                | AiError::Http {
+                    status: 500..=599,
+                    ..
+                }
+        )
+    )
+}
+
 /// The client for the chosen provider, as the agent needs it: an
 /// OpenAI-compatible API with tool calls. Ollama is reached through its
 /// OpenAI-compatible endpoint.
@@ -256,6 +316,14 @@ fn client(ai: &AiSettings) -> Result<Client, AiError> {
 
 /// `cfg` as the agent can use it (see [`client`]).
 pub fn agent_config(cfg: ProviderConfig) -> Result<ProviderConfig, AiError> {
+    // Paparan AI's tier for agent jobs (vision and tool calls), whatever
+    // model the other AI features use.
+    if cfg.provider == ProviderId::Paparan {
+        return Ok(ProviderConfig {
+            model: kantor_ai::paparan::AGENT_MODEL.to_owned(),
+            ..cfg
+        });
+    }
     match cfg.api() {
         Api::OpenAi => Ok(cfg),
         Api::Ollama => Ok(ProviderConfig {
@@ -501,7 +569,7 @@ mod tests {
         std::fs::write(&src, b"brief").unwrap();
         let job = tmp.path().join("job");
         std::fs::create_dir_all(&job).unwrap();
-        let skills: SkillLoader = Arc::new(|_| Err("no skills here".to_owned()));
+        let skills: SkillLoader = Arc::new(|_| Err(SkillError::Other("no skills here".to_owned())));
         let req = |session, attachments| Request {
             prompt: "buat paparan".into(),
             kind: JobKind::Deck,
@@ -579,7 +647,199 @@ mod tests {
         assert_eq!(ollama.api(), Api::OpenAi);
         let paparan = agent_config(cfg(ProviderId::Paparan, "https://x/api/kantor/v1")).unwrap();
         assert_eq!(paparan.provider, ProviderId::Paparan);
+        assert_eq!(paparan.model, kantor_ai::paparan::AGENT_MODEL);
         assert!(agent_config(cfg(ProviderId::Anthropic, "https://api.anthropic.com")).is_err());
+    }
+
+    /// A Paparan server answering with canned replies, recording the URLs.
+    struct FakeServer {
+        replies: std::sync::Mutex<std::collections::VecDeque<Result<(u16, String), AiError>>>,
+        seen: std::sync::Mutex<Vec<(String, bool)>>,
+    }
+
+    impl FakeServer {
+        fn new(replies: Vec<Result<(u16, &str), AiError>>) -> Arc<Self> {
+            Arc::new(Self {
+                replies: std::sync::Mutex::new(
+                    replies
+                        .into_iter()
+                        .map(|r| r.map(|(s, b)| (s, b.to_owned())))
+                        .collect(),
+                ),
+                seen: std::sync::Mutex::new(Vec::new()),
+            })
+        }
+
+        fn urls(&self) -> Vec<String> {
+            self.seen
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|(u, _)| u.clone())
+                .collect()
+        }
+    }
+
+    impl kantor_ai::Transport for FakeServer {
+        fn send(&self, req: &kantor_ai::HttpRequest) -> Result<kantor_ai::HttpResponse, AiError> {
+            let bearer = req
+                .headers
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer tok");
+            self.seen.lock().unwrap().push((req.url.clone(), bearer));
+            let (status, body) = self
+                .replies
+                .lock()
+                .unwrap()
+                .pop_front()
+                .unwrap_or(Ok((500, "{}".to_owned())))?;
+            Ok(kantor_ai::HttpResponse::new(
+                status,
+                std::io::Cursor::new(body.into_bytes()),
+            ))
+        }
+    }
+
+    const ME: &str = r#"{"account":{"id":"u1","email":"a@b.id","name":"Ana"},"plan":"free","credits":{"remaining":300,"unit":"credit","low":false},"topup_url":"https://app.paparanai.id/topup"}"#;
+
+    /// Run a job with Paparan's served skills and a scripted model that
+    /// finishes at once.
+    fn served_run(server: Arc<FakeServer>) -> (Done, Vec<String>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let job = tmp.path().join("job");
+        std::fs::create_dir_all(&job).unwrap();
+        let script = tmp.path().join("script.json");
+        std::fs::write(
+            &script,
+            r#"[{"delay_ms": 0, "calls": [{"name": "finish", "args": {"summary": "Selesai", "outputs": []}}]}]"#,
+        )
+        .unwrap();
+        let api = Arc::new(Paparan::with_base(
+            "https://p.example/api/kantor",
+            server as Arc<dyn kantor_ai::Transport>,
+        ));
+        let req = Request {
+            prompt: "buat paparan".into(),
+            kind: JobKind::Deck,
+            folder: Some(job),
+            attachments: vec![],
+            ai: AiSettings::default(),
+            skills: served_skills(api, Some("tok".into())),
+            limits: Limits::default(),
+            session: None,
+            script: Some(script),
+        };
+        let errors = std::sync::Mutex::new(Vec::new());
+        let done = work(req, &Cancel::default(), &|m| {
+            if let Msg::Event(Event::Error { message }) = m {
+                errors.lock().unwrap().push(message);
+            }
+        });
+        (done, errors.into_inner().unwrap())
+    }
+
+    #[std::prelude::v1::test]
+    fn paparan_serves_the_skill_for_the_kind() {
+        let skill = serde_json::json!({
+            "name": "paparan-deck",
+            "version": "v1",
+            "files": {"SKILL.md": "---\nname: paparan-deck\n---\n# Deck\n", "references/charts.md": "c"}
+        })
+        .to_string();
+        let server = FakeServer::new(vec![Ok((200, ME)), Ok((200, &skill))]);
+        let (done, errors) = served_run(server.clone());
+        assert!(done.error.is_none(), "{:?} {errors:?}", done.error);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(
+            server.urls(),
+            vec![
+                "https://p.example/api/kantor/me".to_owned(),
+                "https://p.example/api/kantor/skills/paparan-deck".to_owned(),
+            ]
+        );
+        assert!(
+            server
+                .seen
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|(_, bearer)| *bearer)
+        );
+        assert!(done.session.is_some(), "the job can go on");
+    }
+
+    #[std::prelude::v1::test]
+    fn served_skill_errors_become_sign_in_top_up_and_retry() {
+        // Signed out: Sign in.
+        let (done, errors) = served_run(FakeServer::new(vec![Ok((
+            401,
+            r#"{"error":{"code":"unauthorized","message":"revoked"}}"#,
+        ))]));
+        assert_eq!(done.error, Some(AiError::SignedOut));
+        assert!(errors[0].contains("sign in again"), "{errors:?}");
+        // No credits: Top up, with the account's link.
+        let (done, _) = served_run(FakeServer::new(vec![Ok((
+            200,
+            r#"{"credits":{"remaining":0},"topup_url":"https://app.paparanai.id/topup"}"#,
+        ))]));
+        assert_eq!(
+            done.error,
+            Some(AiError::InsufficientCredits {
+                message: String::new(),
+                topup_url: Some("https://app.paparanai.id/topup".into())
+            })
+        );
+        // Offline: Try again.
+        let (done, errors) = served_run(FakeServer::new(vec![Err(AiError::Network(
+            "connection refused".into(),
+        ))]));
+        assert!(
+            matches!(done.error, Some(AiError::Network(_))),
+            "{:?}",
+            done.error
+        );
+        assert!(errors[0].contains("offline"), "{errors:?}");
+        assert!(retryable(done.error.as_ref()));
+        // No such skill: says which there are; nothing to offer.
+        let (done, errors) = served_run(FakeServer::new(vec![
+            Ok((200, ME)),
+            Ok((
+                404,
+                r#"{"error":{"code":"not_found","message":"No skill"}}"#,
+            )),
+            Ok((
+                200,
+                r#"{"skills":[{"name":"paparan-doc"},{"name":"paparan-sheet"}]}"#,
+            )),
+        ]));
+        assert!(errors[0].contains("doc, sheet"), "{errors:?}");
+        assert!(!retryable(done.error.as_ref()));
+    }
+
+    #[std::prelude::v1::test]
+    fn paparan_gets_served_skills_unless_a_folder_is_set() {
+        let ai = AiSettings {
+            enabled: true,
+            provider: "paparan".into(),
+            ..AiSettings::default()
+        };
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("paparan-deck")).unwrap();
+        std::fs::write(tmp.path().join("paparan-deck/SKILL.md"), "# Deck").unwrap();
+        let local = AiSettings {
+            skills_dir: Some(tmp.path().to_string_lossy().into_owned()),
+            ..ai.clone()
+        };
+        assert!(
+            skill_loader(&local)(JobKind::Deck).is_ok(),
+            "the folder wins"
+        );
+        let byok = AiSettings {
+            provider: "openai".into(),
+            skills_dir: local.skills_dir.clone(),
+            ..ai
+        };
+        assert!(skill_loader(&byok)(JobKind::Deck).is_ok());
     }
 
     #[std::prelude::v1::test]

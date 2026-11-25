@@ -45,8 +45,13 @@ Paparan AI Chat (command palette, or the sparkle button in the tab strip) docks 
 - The user types a request and attaches source files (paper clip, or drop them on the panel). The
   kind (deck, document, workbook) is guessed from the words and the files' types, and can be
   picked instead; it chooses the skill (`paparan-deck|doc|sheet`). Skills come through a loader
-  (`job::SkillLoader`, a `PromptSource` per kind): today local folders under `ai.skills_dir` in
-  settings.toml (default `~/.claude/skills`); served skills plug in as another loader.
+  (`job::SkillLoader`, a `PromptSource` per kind): with Paparan AI as the provider, its served
+  skill (`paparan::load_skill`, fetched per job, in memory only) and the `paparan-agent` model;
+  with other providers (BYOK, Ollama), local folders under `~/.claude/skills`. `ai.skills_dir` in
+  settings.toml, when set, wins for every provider (development).
+- Failures say what to do: signed out offers Sign in, no credits Top up (the account's link),
+  offline or a server error Try again (the same request, no repeat in the list); an unknown skill
+  names the ones there are.
 - Each job has a work folder: new under `<data dir>/paparan/jobs/<time>-<words>`, or one the user
   picks before the first request. Attachments are copied in and count as the user's files (never
   overwritten).

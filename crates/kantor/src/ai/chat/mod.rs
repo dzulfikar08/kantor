@@ -78,6 +78,10 @@ pub struct ChatPanel {
     enlarged: Option<usize>,
     /// Top up / Sign in, offered with the last failure.
     fail_action: Option<FailAction>,
+    /// The last request, sent again by Try again.
+    last_prompt: Option<String>,
+    /// Set when the last failure may pass (offline): Try again sends it.
+    retry: Option<String>,
     ai: AiSettings,
     scroll: ScrollHandle,
     _subscriptions: Vec<Subscription>,
@@ -125,6 +129,8 @@ impl ChatPanel {
             pictures: HashMap::new(),
             enlarged: None,
             fail_action: None,
+            last_prompt: None,
+            retry: None,
             ai,
             scroll: ScrollHandle::new(),
             _subscriptions: subscriptions,
@@ -182,19 +188,39 @@ impl ChatPanel {
             .map(|n| n.to_string_lossy().into_owned())
             .collect();
         self.chat.ask(&text, names);
-        self.fail_action = None;
         self.input.update(cx, |s, cx| {
             s.set_value(String::new(), window, cx);
             s.set_placeholder(i18n::t("Ask for changes…"), window, cx);
         });
+        self.start(text, attachments, cx);
+    }
+
+    /// Send the last request again (after a network failure).
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        if self.chat.running {
+            return;
+        }
+        let Some(text) = self.retry.take() else {
+            return;
+        };
+        self.ai = Settings::load().ai;
+        self.chat.again();
+        self.start(text, Vec::new(), cx);
+    }
+
+    /// Run `text` on a worker: the job's first request or a follow-up.
+    fn start(&mut self, text: String, attachments: Vec<PathBuf>, cx: &mut Context<Self>) {
+        self.fail_action = None;
+        self.retry = None;
         let first = self.session.is_none();
+        self.last_prompt = Some(text.clone());
         let req = job::Request {
             prompt: text,
             kind: self.kind,
             folder: if first { self.folder.clone() } else { None },
             attachments,
             ai: self.ai.clone(),
-            skills: job::local_skills(job::skills_dir(&self.ai)),
+            skills: job::skill_loader(&self.ai),
             limits: Limits::default(),
             session: self.session.take(),
             script: Self::script(),
@@ -272,8 +298,18 @@ impl ChatPanel {
                                 | kantor_ai::AiError::RateLimited { .. }
                         ) {
                             self.chat.set_failure(message);
+                        } else if job::retryable(Some(e)) {
+                            self.chat.set_failure(
+                                i18n::t(
+                                    "Can't reach the AI service. Check the connection and try again.",
+                                )
+                                .to_owned(),
+                            );
                         }
                         self.fail_action = action;
+                        if job::retryable(Some(e)) {
+                            self.retry = self.last_prompt.clone();
+                        }
                     }
                     self.chat.ended();
                     paparan::after_call(done.error.as_ref(), cx);
@@ -306,6 +342,8 @@ impl ChatPanel {
         self.pictures.clear();
         self.enlarged = None;
         self.fail_action = None;
+        self.retry = None;
+        self.last_prompt = None;
         self.kind_auto = true;
         self.kind = JobKind::Deck;
         self.input.update(cx, |s, cx| {
@@ -589,17 +627,40 @@ impl ChatPanel {
                 quiet_line(IconName::CircleAlert, text, t.warning).into_any_element()
             }
             Item::Failed { message } => {
-                let last = ix + 1 == self.chat.items.len();
+                // Buttons go with the last failure only (a usage line may
+                // follow it).
+                let last = !self.chat.running
+                    && self
+                        .chat
+                        .items
+                        .iter()
+                        .rposition(|i| matches!(i, Item::Failed { .. }))
+                        == Some(ix);
                 let entity = cx.entity().downgrade();
                 let action = self.fail_action.as_ref().filter(|_| last).map(|a| {
                     paparan::action_button(a, move |cx| {
                         let _ = entity.update(cx, |_, cx| cx.emit(ChatEvent::OpenSettings));
                     })
                 });
+                let retry = (last && self.retry.is_some()).then(|| {
+                    Button::new("chat-retry")
+                        .outline()
+                        .small()
+                        .label(i18n::t("Try again"))
+                        .on_click(cx.listener(|this, _, _, cx| this.retry(cx)))
+                });
                 v_flex()
                     .gap(SPACE_3)
                     .child(quiet_line(IconName::CircleX, message.clone(), t.danger))
-                    .children(action.map(|b| h_flex().pl(SPACE_7).child(b)))
+                    .when(action.is_some() || retry.is_some(), |d| {
+                        d.child(
+                            h_flex()
+                                .pl(SPACE_7)
+                                .gap(SPACE_3)
+                                .children(action)
+                                .children(retry),
+                        )
+                    })
                     .into_any_element()
             }
         }

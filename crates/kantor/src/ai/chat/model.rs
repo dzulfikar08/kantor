@@ -231,6 +231,11 @@ impl Chat {
             text: text.trim().to_owned(),
             files,
         });
+        self.again();
+    }
+
+    /// A run starts again for the last request (Try again).
+    pub fn again(&mut self) {
         self.running = true;
         self.step = 0;
         self.total = Usage::default();
@@ -723,6 +728,16 @@ mod tests {
         });
         chat.ended();
         assert!(matches!(chat.items.last(), Some(Item::Failed { .. })));
+        chat.again();
+        assert!(chat.running && chat.step == 0);
+        assert_eq!(
+            chat.items
+                .iter()
+                .filter(|i| matches!(i, Item::User { .. }))
+                .count(),
+            1,
+            "trying again doesn't repeat the request"
+        );
         // Rows open and close.
         let mut chat = Chat::default();
         chat.apply(&Event::ToolCall {
