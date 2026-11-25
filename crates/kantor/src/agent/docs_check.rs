@@ -77,6 +77,11 @@ pub const CHECKS: &[(&str, &str, &str)] = &[
         "a heading alone at the bottom of a page, its text on the next (info when the heading keeps with the next paragraph: Word moves it)",
     ),
     (
+        "table_at_page_bottom",
+        "warning / info",
+        "a table whose header row sits alone at the bottom of a page, its body rows on the next (warning), or that starts with one body row before a page break (info)",
+    ),
+    (
         "mixed_fonts",
         "warning",
         "body text in more than one font family",
@@ -714,6 +719,59 @@ fn check_layout(cx: &mut Cx) {
             ));
         }
     }
+    // Tables that start at the bottom of a page: the page each row starts
+    // on (its first paragraph's), per table.
+    let mut rows: BTreeMap<usize, BTreeMap<usize, (usize, usize)>> = BTreeMap::new();
+    for i in 0..doc.len() {
+        let Some(c) = doc.paragraph(i).cell else {
+            continue;
+        };
+        let Some(page) = cx.pages.page(i) else {
+            continue;
+        };
+        let e = rows
+            .entry(c.table as usize)
+            .or_default()
+            .entry(c.row as usize)
+            .or_insert((page, i));
+        e.0 = e.0.min(page);
+    }
+    for (table, pages) in rows {
+        let Some(t) = doc.table(table as _) else {
+            continue;
+        };
+        let heads = t.rows.iter().take_while(|r| r.header).count();
+        let page_of = |r: usize| pages.get(&r).map(|x| x.0);
+        let Some((start, first_para)) = pages.values().next().copied() else {
+            continue;
+        };
+        let body: Vec<usize> = (heads..t.rows.len()).filter_map(page_of).collect();
+        let Some(&last) = body.last() else { continue };
+        if last <= start {
+            continue;
+        }
+        let on_first = body.iter().filter(|&&p| p == start).count();
+        if heads > 0 && on_first == 0 {
+            found.push((
+                Severity::Warning,
+                "table_at_page_bottom",
+                first_para,
+                format!(
+                    "the table's header row is alone at the bottom of page {start}, its rows start on page {} (keep the header row with the next row: turn on keep with next in it, or start the table on the next page)",
+                    body[0]
+                ),
+                json!({"body_rows_on_first_page": 0}),
+            ));
+        } else if on_first == 1 && body.len() > 2 {
+            found.push((
+                Severity::Info,
+                "table_at_page_bottom",
+                first_para,
+                format!("the table starts at the bottom of page {start} with one row, the rest on the next page"),
+                json!({"body_rows_on_first_page": 1}),
+            ));
+        }
+    }
     for (s, c, p, m, d) in found {
         cx.add(s, c, Some(p), m, d);
     }
@@ -743,6 +801,13 @@ fn placeholder(t: &str) -> Option<String> {
             let Some(j) = after.find(close) else { break };
             let inner = &after[..j];
             let il = inner.to_lowercase();
+            // Whole words only ("[update]" isn't "[date]").
+            let words: Vec<&str> = il
+                .split(|c: char| !c.is_alphanumeric())
+                .filter(|w| !w.is_empty())
+                .collect();
+            // Code written as text: `[section]`, `<tag>`.
+            let in_code = rest[..i].ends_with('`') && after[j + close.len()..].starts_with('`');
             const WORDS: &[&str] = &[
                 "name",
                 "insert",
@@ -758,16 +823,17 @@ fn placeholder(t: &str) -> Option<String> {
                 "alamat",
                 "perusahaan",
                 "placeholder",
-                "your ",
-                "add ",
+                "your",
+                "add",
                 "tbd",
                 "xx",
             ];
-            if open == "{{"
-                || (inner.chars().count() <= 40
-                    && !inner.is_empty()
-                    && WORDS.iter().any(|w| il.contains(w))
-                    && !il.contains("://"))
+            if !in_code
+                && (open == "{{"
+                    || (inner.chars().count() <= 40
+                        && !inner.is_empty()
+                        && WORDS.iter().any(|w| words.contains(w))
+                        && !il.contains("://")))
             {
                 return Some(format!("{open}{inner}{close}"));
             }
@@ -777,12 +843,63 @@ fn placeholder(t: &str) -> Option<String> {
     None
 }
 
+/// Whether a run is code: the Code character style (or one named like
+/// it), a code paragraph style, or a monospaced font.
+fn is_code(doc: &Document, p: &Paragraph, props: &RunProps) -> bool {
+    let named = |id: Option<&str>| {
+        id.is_some_and(|id| {
+            let name = doc
+                .styles
+                .get(id)
+                .map_or(id.to_owned(), |s| s.name.clone())
+                .to_ascii_lowercase();
+            name.contains("code") || name.contains("verbatim") || id.eq_ignore_ascii_case("code")
+        })
+    };
+    if named(props.style.as_deref()) || named(p.props.style.as_deref()) {
+        return true;
+    }
+    let font = doc.resolve_run(p, props).font.to_ascii_lowercase();
+    [
+        "mono", "consolas", "courier", "menlo", "monaco", "cascadia", "code",
+    ]
+    .iter()
+    .any(|m| font.contains(m))
+}
+
+/// The text of paragraph `i` as shown, code runs blanked out (template
+/// placeholders aren't looked for in code).
+fn prose(doc: &Document, i: usize) -> String {
+    let p = doc.paragraph(i);
+    let mut out = String::with_capacity(p.text.len());
+    for (range, run) in p.run_ranges() {
+        if run
+            .rev
+            .as_ref()
+            .is_some_and(|r| r.kind == docs_engine::RevKind::Delete)
+        {
+            continue;
+        }
+        let code = is_code(doc, p, &run.props);
+        for c in p.text[range].chars() {
+            out.push(if code || c == docs_engine::OBJECT {
+                ' '
+            } else if c == docs_engine::LINE_BREAK {
+                '\n'
+            } else {
+                c
+            });
+        }
+    }
+    out
+}
+
 fn check_text(cx: &mut Cx) {
     let doc = cx.doc;
     let mut doubles = Vec::new();
     for i in 0..doc.len() {
         let t = shown(doc, i);
-        if let Some(p) = placeholder(&t) {
+        if let Some(p) = placeholder(&prose(doc, i)) {
             cx.add(
                 Severity::Error,
                 "placeholder_text",
@@ -1044,5 +1161,87 @@ mod tests {
         assert_eq!(placeholder("Dear [Name],").as_deref(), Some("[Name]"));
         assert_eq!(placeholder("Hi {{First}}").as_deref(), Some("{{First}}"));
         assert!(placeholder("XXL shirts and OXXO stores, see [1] and [Appendix A]").is_none());
+        // Whole words: a TOML section isn't a [date] placeholder.
+        assert!(placeholder("the [update] section").is_none());
+        assert!(placeholder("set `[name]` in the file").is_none());
+        assert_eq!(placeholder("Kepada [nama], ").as_deref(), Some("[nama]"));
+        assert_eq!(
+            placeholder("For [Client name] only").as_deref(),
+            Some("[Client name]")
+        );
+        assert_eq!(placeholder("[Due date]").as_deref(), Some("[Due date]"));
+        assert_eq!(placeholder("ref XXX here").as_deref(), Some("XXX"));
+        assert_eq!(
+            placeholder("[company_name]").as_deref(),
+            Some("[company_name]")
+        );
+    }
+
+    #[std::prelude::v1::test]
+    fn tables_starting_at_a_page_bottom() {
+        // Filler lines move the table down a line at a time: for some
+        // count its header row would end page 1 alone. Built, the header
+        // row keeps with the first row; without that, check finds it.
+        // Small filler lines (a step shorter than a table row) so one
+        // count lands the table in the gap.
+        let build = |n: usize| {
+            let mut blocks: Vec<Value> = (0..n).map(|k| json!(format!("Line {k}."))).collect();
+            blocks.push(json!({"type": "table", "header": ["A", "B"],
+                               "rows": [["1", "2"], ["3", "4"], ["5", "6"]]}));
+            let doc = json!({
+                "styles": {"Normal": {"size": 6, "space_after": 0, "line_spacing": 1.0}},
+                "blocks": blocks
+            });
+            crate::agent::docs_author::build(&doc, None).unwrap()
+        };
+        // The table reaches page 2 somewhere after `lo` lines.
+        let mut lo = 40;
+        while build(lo + 20).pages < 2 {
+            lo += 20;
+            assert!(lo < 400);
+        }
+        let mut found = false;
+        for n in lo..lo + 40 {
+            let b = build(n);
+            let warned = |bytes: Vec<u8>| {
+                let d = Document::from_read(docs_engine::docx::read(bytes).unwrap(), None);
+                check(&d)
+                    .findings
+                    .iter()
+                    .any(|f| f.check == "table_at_page_bottom" && f.severity == Severity::Warning)
+            };
+            assert!(
+                !warned(b.bytes.clone()),
+                "{n} lines: the header row moves on"
+            );
+            let mut pkg = crate::agent::docs_pkg::Pkg::read(&b.bytes).unwrap();
+            let x = pkg.text("word/document.xml").unwrap();
+            assert!(x.contains("<w:keepNext/>"));
+            pkg.set_text("word/document.xml", x.replace("<w:keepNext/>", ""));
+            if warned(pkg.to_bytes().unwrap()) {
+                found = true;
+                break;
+            }
+        }
+        assert!(found, "some line count leaves the header row alone");
+    }
+
+    #[std::prelude::v1::test]
+    fn no_placeholders_in_code() {
+        let r = check(&doc_of(json!({"blocks": [
+            {"h1": "Setup"},
+            "Edit the `[update]` section and the `[sheets]` one, then `TODO.md` and `{{ name }}`.",
+            {"text": [{"text": "Run "}, {"text": "[name] = TBD", "code": true}, {"text": " once."}]},
+            {"type": "table", "header": ["Key", "Value"], "rows": [["`[date]`", "the build date"]]}
+        ]})));
+        assert!(
+            !checks(&r).contains("placeholder_text"),
+            "{}",
+            r.text("code")
+        );
+        for text in ["Kepada [nama],", "Due TBD.", "Hi {{field}}", "Ref XXX."] {
+            let r = check(&doc_of(json!({"blocks": [{"h1": "A"}, text]})));
+            assert!(checks(&r).contains("placeholder_text"), "{text}");
+        }
     }
 }

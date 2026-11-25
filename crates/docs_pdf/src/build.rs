@@ -621,14 +621,20 @@ pub fn table_x(
 /// Whether paragraph `p` keeps with the next one (`w:keepNext` on it or
 /// on its style, or the style it's based on…).
 pub fn keeps_with_next(doc: &Document, p: &docs_engine::Paragraph) -> bool {
+    if p.cell.is_some() {
+        return false;
+    }
+    para_keeps_next(doc, p)
+}
+
+/// Whether paragraph `p` (in a table too) has "keep with next", directly
+/// or from its style.
+fn para_keeps_next(doc: &Document, p: &docs_engine::Paragraph) -> bool {
     let found = |e: &docs_engine::model::Extras| -> Option<bool> {
         e.iter()
             .find(|x| docs_engine::model::element_name(x) == "keepNext")
             .map(|x| docs_engine::xml::parse(x).is_none_or(|el| el.on()))
     };
-    if p.cell.is_some() {
-        return false;
-    }
     if let Some(v) = found(&p.props.extras) {
         return v;
     }
@@ -763,12 +769,21 @@ fn table_block(
             });
         }
         let (min_height, exact) = row.height.map_or((0.0, false), |(h, e)| (tw(h), e));
+        // Word keeps a row on the next row's page when every paragraph in
+        // it keeps with next.
+        let mut kept = cells
+            .iter()
+            .filter(|c| c.merge != Merge::Continue)
+            .flat_map(|c| c.paras.clone())
+            .peekable();
+        let keep_next = kept.peek().is_some() && kept.all(|i| para_keeps_next(doc, &paras[i]));
         rows.push(TableRow {
             cells,
             min_height,
             exact,
             header: row.header,
             cant_split: row.cant_split,
+            keep_next,
         });
     }
     let width: f32 = columns.iter().sum();

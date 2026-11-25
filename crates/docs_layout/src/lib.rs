@@ -1109,6 +1109,9 @@ pub struct TableRow {
     /// Kept on one page (Word's `w:cantSplit`): a row that doesn't fit
     /// moves to the next page instead of breaking at a line.
     pub cant_split: bool,
+    /// Kept on the next row's page (Word: every paragraph in the row keeps
+    /// with next), so a header row doesn't end a page alone.
+    pub keep_next: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -2788,6 +2791,20 @@ impl<'a> Flow<'a> {
             }
         };
         for (ri, row) in t.rows.iter().enumerate() {
+            // Rows kept with the next (Word: every paragraph in them keeps
+            // with next) start a page with that row when they'd end one
+            // alone: a header row isn't left at the bottom of a page.
+            if !self.at_top()
+                && self.ncols() == 1
+                && self.limit.is_none()
+                && (ri == 0 || !t.rows[ri - 1].keep_next)
+            {
+                let need = self.kept_rows_height(t, ri);
+                let room = self.setup.height - self.setup.margin_top - self.setup.margin_bottom;
+                if need > 0.0 && self.y + need > self.bottom() && need < room * 0.8 {
+                    new_page(self, ri);
+                }
+            }
             let (h, cells) = self.row_lines(t, row);
             let notes = self.notes_cost(self.row_notes(&cells));
             if self.y + h <= self.bottom() - notes {
@@ -2813,6 +2830,34 @@ impl<'a> Flow<'a> {
             }
             self.place_row_split(t, row, ri, &cells, &new_page);
         }
+    }
+
+    /// The height rows `ri…` need at the bottom of a page to stay
+    /// together: the rows that keep with the next, then the first line of
+    /// the row after them (all of it when it can't split); 0 when row `ri`
+    /// doesn't keep with the next or nothing follows it.
+    fn kept_rows_height(&self, t: &TableBlock, ri: usize) -> f32 {
+        let mut h = 0.0;
+        let mut k = ri;
+        while k < t.rows.len() && t.rows[k].keep_next {
+            h += self.row_lines(t, &t.rows[k]).0;
+            k += 1;
+        }
+        if k == ri || k >= t.rows.len() {
+            return 0.0;
+        }
+        let next = &t.rows[k];
+        let (nh, cells) = self.row_lines(t, next);
+        if next.cant_split || next.exact {
+            return h + nh;
+        }
+        let [pad_t, _, pad_b, _] = t.padding;
+        let first = cells
+            .iter()
+            .flatten()
+            .filter_map(|c| c.lines.first().map(|&(_, _, y, lh)| y + lh))
+            .fold(0.0f32, f32::max);
+        h + (first + pad_t + pad_b).min(nh)
     }
 
     /// Whether some cell's first line fits on this page.
@@ -4490,6 +4535,7 @@ mod tests {
                     exact: false,
                     header: false,
                     cant_split: false,
+                    keep_next: false,
                 })
                 .collect(),
         };
@@ -4612,6 +4658,7 @@ mod tab_tests {
                     exact: false,
                     header: header && r == 0,
                     cant_split: cant_split && tall.contains(&r),
+                    keep_next: false,
                 })
                 .collect(),
         };
@@ -4667,6 +4714,65 @@ mod tab_tests {
             .map(|(i, _)| i)
             .collect();
         assert_eq!(pages.len(), 2, "without cantSplit it breaks");
+    }
+
+    #[test]
+    fn header_rows_kept_with_the_next_row() {
+        // `n` filler paragraphs, then a table of a header row and three
+        // rows: for some `n` the header row ends page 1 alone, unless it
+        // keeps with the next row.
+        let alone = |n: usize, keep: bool| -> bool {
+            let mut engine = Engine::new();
+            let setup = PageSetup::a4();
+            let mut paras: Vec<Paragraph> = (0..n)
+                .map(|i| Paragraph::new(format!("para {i}")))
+                .collect();
+            let first = paras.len();
+            paras.extend((0..4).map(|r| Paragraph::new(format!("row {r}"))));
+            let t = TableBlock {
+                x: 0.0,
+                columns: vec![300.0],
+                padding: [0.0, 7.2, 0.0, 7.2],
+                rows: (0..4)
+                    .map(|r| TableRow {
+                        cells: vec![TableCell {
+                            col: 0,
+                            span: 1,
+                            paras: first + r..first + r + 1,
+                            merge: Merge::None,
+                            borders: [None; 4],
+                            fill: None,
+                        }],
+                        min_height: 0.0,
+                        exact: false,
+                        header: r == 0,
+                        cant_split: true,
+                        keep_next: keep && r == 0,
+                    })
+                    .collect(),
+            };
+            let w = 300.0 - 14.4;
+            let layouts: Vec<_> =
+                paras
+                    .iter()
+                    .enumerate()
+                    .map(|(i, p)| {
+                        Arc::new(engine.layout_paragraph(
+                            p,
+                            if i >= first { w } else { setup.content_width() },
+                        ))
+                    })
+                    .collect();
+            let mut blocks: Vec<Block> = (0..first).map(Block::Para).collect();
+            blocks.push(Block::Table(t));
+            let doc = PagedDocument::paginate_blocks(&paras, layouts, &blocks, setup);
+            doc.caret(first, 0).unwrap().page < doc.caret(first + 1, 0).unwrap().page
+        };
+        let hits: Vec<usize> = (20..90).filter(|&n| alone(n, false)).collect();
+        assert!(!hits.is_empty(), "some n leaves the header row alone");
+        for n in hits {
+            assert!(!alone(n, true), "n = {n}: kept with the next row");
+        }
     }
 
     #[test]

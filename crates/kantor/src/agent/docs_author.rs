@@ -356,7 +356,28 @@ pub struct Writer<'a> {
     charts: u32,
     /// The document's own ids of built-in styles (edits).
     style_map: HashMap<String, String>,
+    /// What `{pages}` counts with.
+    pages_field: PagesField,
 }
+
+/// The field behind the `{pages}` header/footer token.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PagesField {
+    /// `NUMPAGES`: every page (no front matter).
+    All,
+    /// `SECTIONPAGES`: the body is one section after the cover and
+    /// contents, so its pages are the section's.
+    Section,
+    /// `PAGEREF` to a bookmark at the end of the document: the last
+    /// page's number, which counts from 1 at the body's start (front
+    /// matter and a body of several sections).
+    LastPage,
+}
+
+/// The bookmark at the end of the document that `{pages}` refers to.
+const END_BOOKMARK: &str = "_KantorEnd";
+/// The `{pages}` result until `build` fills in the number.
+const PAGES_MARK: &str = "KANTOR-BODY-PAGES";
 
 impl<'a> Writer<'a> {
     fn new(
@@ -416,6 +437,7 @@ impl<'a> Writer<'a> {
             existing: BTreeSet::new(),
             charts: 0,
             style_map: HashMap::new(),
+            pages_field: PagesField::All,
         }
     }
 
@@ -1486,10 +1508,14 @@ impl<'a> Writer<'a> {
                 let c_runs = self.content(&text, &fmt_run)?;
                 let has_bullets = cobj.as_ref().and_then(|m| m.get("bullets")).is_some();
                 if !c_runs.is_empty() || !has_bullets {
+                    // Header rows keep with the first body row (Word keeps
+                    // a row whose paragraphs keep with next on the next
+                    // row's page): no header alone at a page's bottom.
                     self.para(
                         Some(style),
                         ParaFmt {
                             align,
+                            keep_next: (is_head && nrows > header_rows).then_some(true),
                             ..ParaFmt::default()
                         },
                         c_runs,
@@ -2073,7 +2099,16 @@ impl<'a> Writer<'a> {
                 .unwrap_or_default();
             match token {
                 "page" => x.push_str(&self.field("PAGE", "1", "")),
-                "pages" => x.push_str(&self.field("NUMPAGES", "1", "")),
+                "pages" => {
+                    let f = match self.pages_field {
+                        PagesField::All => self.field("NUMPAGES", "1", ""),
+                        PagesField::Section => self.field("SECTIONPAGES", "1", ""),
+                        PagesField::LastPage => {
+                            self.field(&format!("PAGEREF {END_BOOKMARK}"), PAGES_MARK, "")
+                        }
+                    };
+                    x.push_str(&f);
+                }
                 "section_pages" => x.push_str(&self.field("SECTIONPAGES", "1", "")),
                 "title" => x.push_str(&self.field("TITLE", &p.title, "")),
                 "subject" => x.push_str(&self.field("SUBJECT", &p.subject, "")),
@@ -2510,7 +2545,19 @@ pub fn build(json: &Value, base: Option<&Path>) -> Result<Built> {
     let cover = get(o, "cover");
     let toc = get(o, "toc").filter(|t| !matches!(t, Value::Bool(false)));
     let body_sect = w.sect.clone();
-    if cover.is_some() || toc.is_some() {
+    let front = cover.is_some() || toc.is_some();
+    // `{pages}`: the body's pages, numbered from 1 after the front matter.
+    if front {
+        let sections = blocks
+            .iter()
+            .any(|b| b.get("type").and_then(Value::as_str) == Some("section"));
+        w.pages_field = if sections {
+            PagesField::LastPage
+        } else {
+            PagesField::Section
+        };
+    }
+    if front {
         w.sect = Sect {
             header: None,
             footer: None,
@@ -2557,6 +2604,12 @@ pub fn build(json: &Value, base: Option<&Path>) -> Result<Built> {
             },
             String::new(),
         );
+    }
+    if w.pages_field == PagesField::LastPage {
+        let mark = w.bookmark(END_BOOKMARK, "");
+        if let Some(Item::P { content, .. }) = w.items.last_mut() {
+            content.push_str(&mark);
+        }
     }
     let last = w.sect.clone();
     let final_sect = w.sect_pr(&last);
@@ -2638,7 +2691,10 @@ pub fn build(json: &Value, base: Option<&Path>) -> Result<Built> {
     }
     let warnings = std::mem::take(&mut w.warnings);
     let now = props.now();
-    let (bytes, pages) = finish(pkg.to_bytes()?, now)?;
+    let (mut bytes, pages) = finish(pkg.to_bytes()?, now)?;
+    if w.pages_field == PagesField::LastPage {
+        bytes = fill_last_page(bytes)?;
+    }
     Ok(Built {
         bytes,
         pages,
@@ -2657,6 +2713,30 @@ pub fn finish(bytes: Vec<u8>, now: chrono::NaiveDateTime) -> Result<(Vec<u8>, us
     let out = doc.to_docx_bytes()?;
     let pages = docs_pdf::lay_out(&doc, &mut engine).paged.pages.len();
     Ok((Pkg::read(&out)?.to_bytes()?, pages))
+}
+
+/// `{pages}` as `PAGEREF _KantorEnd` in headers and footers: the last
+/// page's number from Kantor's layout as the field's result (Word works it
+/// out again when it lays the pages out).
+fn fill_last_page(bytes: Vec<u8>) -> Result<Vec<u8>> {
+    let read = docs_engine::docx::read(bytes.clone()).context("reading the document back")?;
+    let doc = docs_engine::Document::from_read(read, None);
+    let mut engine = docs_layout::Engine::new();
+    let laid = docs_pdf::lay_out(&doc, &mut engine);
+    let last = laid.paged.pages.last().map_or(1, |p| p.number);
+    let mut pkg = Pkg::read(&bytes)?;
+    let names: Vec<String> = pkg
+        .parts
+        .keys()
+        .filter(|n| n.starts_with("word/header") || n.starts_with("word/footer"))
+        .cloned()
+        .collect();
+    for n in names {
+        if let Some(x) = pkg.text(&n).filter(|x| x.contains(PAGES_MARK)) {
+            pkg.set_text(&n, x.replace(PAGES_MARK, &last.to_string()));
+        }
+    }
+    pkg.to_bytes()
 }
 
 /// Update every field in `doc` (twice: page numbers settle after the
@@ -2845,5 +2925,124 @@ mod tests {
             assert!(!looks_numeric(&json!(s)), "{s}");
         }
         assert!(looks_numeric(&json!(3)));
+    }
+
+    /// Per page of `bytes` as Kantor lays it out: the footer's "a / b"
+    /// numbers, if it shows any.
+    fn footer_numbers(bytes: &[u8]) -> Vec<Option<(u32, u32)>> {
+        let read = docs_engine::docx::read(bytes.to_vec()).unwrap();
+        let doc = docs_engine::Document::from_read(read, None);
+        let laid = docs_pdf::lay_out(&doc, &mut docs_layout::Engine::new());
+        laid.furniture
+            .iter()
+            .map(|placed| {
+                placed
+                    .iter()
+                    .filter(|p| p.kind == docs_engine::HfKind::Footer)
+                    .find_map(|p| {
+                        let t = p.layout.shown(0);
+                        let (a, b) = t.trim().split_once(" / ")?;
+                        Some((a.trim().parse().ok()?, b.trim().parse().ok()?))
+                    })
+            })
+            .collect()
+    }
+
+    #[std::prelude::v1::test]
+    fn pages_counts_the_body_after_the_front_matter() {
+        for sections in [false, true] {
+            let mut blocks = Vec::new();
+            for k in 0..5 {
+                if sections && k == 2 {
+                    blocks.push(json!({"type": "section", "orientation": "landscape"}));
+                }
+                if sections && k == 4 {
+                    blocks.push(json!({"type": "section", "orientation": "portrait"}));
+                }
+                blocks.push(json!({"h1": format!("Part {k}")}));
+                blocks.push(json!("Some text."));
+            }
+            let b = build(
+                &json!({
+                    "preset": "proposal",
+                    "cover": {"title": "Proposal"},
+                    "toc": true,
+                    "footer": "{page} / {pages}",
+                    "blocks": blocks
+                }),
+                None,
+            )
+            .unwrap();
+            let footers: String = (1..10)
+                .filter_map(|k| {
+                    let z = zip::ZipArchive::new(std::io::Cursor::new(&b.bytes)).ok()?;
+                    let name = format!("word/footer{k}.xml");
+                    z.file_names()
+                        .any(|n| n == name)
+                        .then(|| part(&b.bytes, &name))
+                })
+                .collect();
+            if sections {
+                assert!(footers.contains("PAGEREF _KantorEnd"), "{footers}");
+                assert!(!footers.contains(PAGES_MARK));
+                let d = part(&b.bytes, "word/document.xml");
+                assert!(d.contains("w:name=\"_KantorEnd\""));
+            } else {
+                assert!(footers.contains("SECTIONPAGES"), "{footers}");
+            }
+            assert!(!footers.contains("NUMPAGES"));
+            // Kantor's pages: the cover and contents show no footer, the
+            // body's pages count 1…n of n.
+            let numbers = footer_numbers(&b.bytes);
+            let body: Vec<(u32, u32)> = numbers.iter().flatten().copied().collect();
+            let n = body.len() as u32;
+            assert!(n >= 5, "{numbers:?}");
+            assert!(numbers.len() as u32 > n, "front matter: {numbers:?}");
+            for (k, (a, b)) in body.iter().enumerate() {
+                assert_eq!((*a, *b), (k as u32 + 1, n), "{numbers:?}");
+            }
+        }
+    }
+
+    #[std::prelude::v1::test]
+    fn code_runs_take_the_code_style() {
+        let b = build(
+            &json!({
+                "styles": {"Code": {"size": 9.5}},
+                "blocks": [
+                    "Run `cargo fmt` now.",
+                    {"text": [{"text": "Set "}, {"text": "x = 1", "code": true}]},
+                    {"type": "table", "header": ["Key"], "rows": [["`[update]`"]]}
+                ]
+            }),
+            None,
+        )
+        .unwrap();
+        let read = docs_engine::docx::read(b.bytes).unwrap();
+        let doc = docs_engine::Document::from_read(read, None);
+        let mut seen = BTreeSet::new();
+        for i in 0..doc.len() {
+            let p = doc.paragraph(i);
+            for (range, run) in p.run_ranges() {
+                let t = &p.text[range];
+                if ["cargo fmt", "x = 1", "[update]"].contains(&t) {
+                    seen.insert(t.to_owned());
+                    assert_eq!(run.props.style.as_deref(), Some("Code"), "{t}");
+                    assert!(
+                        run.props.fonts.is_empty() && run.props.size.is_none(),
+                        "{t}: no direct formatting"
+                    );
+                    let r = doc.resolve_run(p, &run.props);
+                    assert_eq!(r.size_pt, 9.5, "{t}");
+                    assert_eq!(r.font, "Courier New", "{t}");
+                }
+            }
+        }
+        assert_eq!(seen.len(), 3, "{seen:?}");
+        // The default mono font has a metric-compatible stand-in.
+        assert_eq!(
+            kantor_core::fonts::metric_substitute("Courier New"),
+            Some("Liberation Mono")
+        );
     }
 }
