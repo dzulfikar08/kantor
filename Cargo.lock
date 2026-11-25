@@ -4180,6 +4180,7 @@ dependencies = [
  "pdf_engine",
  "pdf_ui",
  "ring",
+ "roxmltree 0.21.2",
  "serde_json",
  "sheets_engine",
  "sheets_pdf",

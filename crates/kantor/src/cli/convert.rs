@@ -36,6 +36,9 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .pdf (printed as Excel prints:\n\
     \x20                                               every visible sheet and chart\n\
     \x20                                               sheet, or --sheet)\n\
+    \x20 .xlsx .xlsm .xls .xlt .xlsb .ods .csv .tsv -> .png (one picture per printed\n\
+    \x20                                               page, drawn as the PDF; or one\n\
+    \x20                                               contact sheet)\n\
     \n\
     Options:\n\
     \x20 -o, --output-dir DIR   write each INPUT to DIR/NAME.FORMAT\n\
@@ -44,7 +47,7 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \x20     --sheet N|NAME     sheet to write to .csv/.tsv or .pdf (1-based number\n\
     \x20                        or name; default: the active sheet for .csv/.tsv,\n\
     \x20                        every visible sheet for .pdf)\n\
-    \x20 Spreadsheet to PDF (each overrides the sheets' own page setup):\n\
+    \x20 Spreadsheet to PDF or PNG (each overrides the sheets' own page setup):\n\
     \x20     --fit-width        fit each sheet to one page wide\n\
     \x20     --fit-page         fit each sheet on one page\n\
     \x20     --scale PERCENT    print at this scale (10-400)\n\
@@ -55,13 +58,14 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \x20 Presentation to PDF:\n\
     \x20     --notes            notes pages: each slide above its speaker notes (A4)\n\
     \x20     --handouts N       N slides per A4 page: 1, 2, 3 (with lines), 4, 6 or 9\n\
-    \x20 Presentation to PNG (-o DIR --to png writes DIR/NAME-01.png, -02…; with\n\
-    \x20 INPUT OUTPUT.png one slide is written to OUTPUT.png):\n\
+    \x20 Presentation or spreadsheet to PNG (-o DIR --to png writes\n\
+    \x20 DIR/NAME-01.png, -02… per slide or printed page; with INPUT OUTPUT.png\n\
+    \x20 one slide or page is written to OUTPUT.png):\n\
     \x20     --slide LIST       slides to draw: 3, 2-5, 1,3,7-9 or 4- (default:\n\
     \x20                        every slide not hidden)\n\
     \x20     --width PX         width of each picture (default 1600; 480 in a\n\
     \x20                        contact sheet; 16-6000)\n\
-    \x20     --contact-sheet    one PNG of all the slides in a numbered grid\n\
+    \x20     --contact-sheet    one PNG of all the slides (pages) in a numbered grid\n\
     \x20                        (NAME-sheet.png with -o DIR)\n\
     \x20 Password-protected files (.docx .xlsx .pptx, .odt .ods .odp):\n\
     \x20     --password PW      the password that opens them (or set\n\
@@ -144,6 +148,8 @@ enum Kind {
     Sheets,
     /// Slides as PNG pictures.
     SlidesToPng,
+    /// A workbook's printed pages as PNG pictures.
+    SheetsToPng,
 }
 
 /// Which converter handles `input` → `output`, or why none does.
@@ -180,6 +186,9 @@ fn kind(input: &Path, output: &Path) -> Result<Kind, Usage> {
     }
     if SHEET_INPUTS.contains(&i.as_str()) && o == "pdf" {
         return Ok(Kind::SheetsToPdf);
+    }
+    if SHEET_INPUTS.contains(&i.as_str()) && o == "png" {
+        return Ok(Kind::SheetsToPng);
     }
     let later = i == "pdf" && matches!(o.as_str(), "png" | "jpg" | "jpeg");
     let why = if later {
@@ -313,7 +322,7 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
     let to_pdf = |opts: &Options| {
         opts.jobs
             .iter()
-            .any(|(i, o)| kind(i, o).ok() == Some(Kind::SheetsToPdf))
+            .any(|(i, o)| matches!(kind(i, o).ok(), Some(Kind::SheetsToPdf | Kind::SheetsToPng)))
     };
     if opts.sheet.is_some()
         && !to_pdf(&opts)
@@ -335,14 +344,22 @@ fn parse(args: &[OsString]) -> Result<Option<Options>, Usage> {
     {
         return usage("--notes and --handouts only apply to presentations converted to .pdf");
     }
-    if opts.png.given()
+    if opts.png.slides.is_some()
         && !opts
             .jobs
             .iter()
             .all(|(i, o)| kind(i, o).ok() == Some(Kind::SlidesToPng))
     {
+        return usage("--slide only applies to presentations converted to .png");
+    }
+    if opts.png.given()
+        && !opts
+            .jobs
+            .iter()
+            .all(|(i, o)| matches!(kind(i, o).ok(), Some(Kind::SlidesToPng | Kind::SheetsToPng)))
+    {
         return usage(
-            "--slide, --width and --contact-sheet only apply to presentations converted to .png",
+            "--width and --contact-sheet only apply to presentations and spreadsheets converted to .png",
         );
     }
     if opts.print.fit.is_some() && opts.print.scale.is_some() {
@@ -432,6 +449,7 @@ fn convert(
         Kind::Sheets => sheets(input, output, opts.sheet.as_deref(), pw),
         Kind::SheetsToPdf => sheets_to_pdf(input, output, opts, pw),
         Kind::SlidesToPng => slides_to_png(input, output, opts, pw),
+        Kind::SheetsToPng => sheets_to_png(input, output, opts, pw),
     }
 }
 
@@ -654,7 +672,8 @@ fn sheet_index(names: &[String], want: &str) -> Result<u32> {
         })
 }
 
-fn sheets_to_pdf(input: &Path, output: &Path, opts: &Options, pw: Pw) -> Result<String> {
+/// The workbook printed as PDF: its bytes and pages.
+fn sheets_pdf_bytes(input: &Path, opts: &Options, pw: Pw) -> Result<(Vec<u8>, usize)> {
     let mut book = pw.opened(
         "workbook",
         sheets_engine::Workbook::open_with_password(input, pw.open),
@@ -679,13 +698,22 @@ fn sheets_to_pdf(input: &Path, output: &Path, opts: &Options, pw: Pw) -> Result<
     }
     .now()
     .with_path(input.canonicalize().ok().as_deref());
-    let (bytes, pages) = sheets_pdf::export(&mut book, &print)?;
+    sheets_pdf::export(&mut book, &print)
+}
+
+fn sheets_to_pdf(input: &Path, output: &Path, opts: &Options, pw: Pw) -> Result<String> {
+    let (bytes, pages) = sheets_pdf_bytes(input, opts, pw)?;
     docs_pdf::write_file(output, &bytes)?;
     Ok(format!(
         "{pages} page{}, {}",
         if pages == 1 { "" } else { "s" },
         size(bytes.len())
     ))
+}
+
+fn sheets_to_png(input: &Path, output: &Path, opts: &Options, pw: Pw) -> Result<String> {
+    let (bytes, _) = sheets_pdf_bytes(input, opts, pw)?;
+    super::render_png::convert_pdf(bytes, output, opts.to_dir, &opts.png, opts.force)
 }
 
 fn size(bytes: usize) -> String {
@@ -786,7 +814,12 @@ mod tests {
         assert!(err(&["--width", "9", "a.pptx", "b.png"]).contains("from 16 to 6000"));
         assert!(
             err(&["--slide", "2", "a.pptx", "b.pdf"])
-                .contains("only apply to presentations converted to .png")
+                .contains("only applies to presentations converted to .png")
+        );
+        assert!(err(&["--slide", "2", "a.xlsx", "b.png"]).contains("--slide only applies"));
+        assert!(
+            err(&["--width", "200", "a.xlsx", "b.pdf"])
+                .contains("presentations and spreadsheets converted to .png")
         );
         assert!(err(&["a.docx"]).contains("expected INPUT and OUTPUT"));
         assert!(err(&["a.docx", "b.docx", "c.pdf"]).contains("-o DIR --to FORMAT"));
@@ -839,6 +872,10 @@ mod tests {
         assert_eq!(
             kind(Path::new("deck.pptx"), Path::new("deck.png")).unwrap(),
             Kind::SlidesToPng
+        );
+        assert_eq!(
+            kind(Path::new("book.xlsx"), Path::new("book.png")).unwrap(),
+            Kind::SheetsToPng
         );
         assert!(err(&["a.docx", "a.png"]).contains(".docx to .png is not supported ("));
         for ext in ["ppt", "PPS", "pot", "odp", "OTP"] {

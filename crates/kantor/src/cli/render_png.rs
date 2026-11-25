@@ -160,6 +160,108 @@ pub fn render(
         .collect()
 }
 
+/// Every page of a PDF, `width` px wide each.
+pub fn render_pdf(pdf: Vec<u8>, width: u32) -> Result<Vec<Image>> {
+    let doc =
+        pdf_engine::PdfDoc::open(Arc::new(pdf), "").map_err(|e| anyhow!("reading the PDF: {e}"))?;
+    let renderer = pdf_engine::Renderer::new(&doc);
+    doc.page_sizes()
+        .iter()
+        .enumerate()
+        .map(|(page, (w, _))| {
+            let scale = width.clamp(MIN_WIDTH, MAX_WIDTH) as f32 / w.max(1.0);
+            let r = renderer
+                .render(page, scale, pdf_engine::Turn(0))
+                .ok_or_else(|| anyhow!("can't draw page {}", page + 1))?;
+            let rgb = r
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .flat_map(|p| [p[0], p[1], p[2]])
+                .collect();
+            Ok(Image {
+                width: r.width,
+                height: r.height,
+                rgb,
+            })
+        })
+        .collect()
+}
+
+/// A PDF's pages (a printed workbook) as PNG files; returns the summary.
+pub fn convert_pdf(
+    pdf: Vec<u8>,
+    output: &Path,
+    numbered: bool,
+    opts: &PngOptions,
+    force: bool,
+) -> Result<String> {
+    let width = opts.width.unwrap_or(if opts.sheet {
+        SHEET_WIDTH
+    } else {
+        DEFAULT_WIDTH
+    });
+    let images = render_pdf(pdf, width)?;
+    if images.is_empty() {
+        bail!("nothing to print");
+    }
+    let pages: Vec<usize> = (0..images.len()).collect();
+    let total = pages.len();
+    write_images(
+        images, &pages, total, output, numbered, opts.sheet, force, "page",
+    )
+}
+
+/// Write `images` (of slides or pages `which`, 0-based) as PNG files, or
+/// one contact sheet.
+#[allow(clippy::too_many_arguments)]
+fn write_images(
+    images: Vec<Image>,
+    which: &[usize],
+    total: usize,
+    output: &Path,
+    numbered: bool,
+    sheet: bool,
+    force: bool,
+    what: &str,
+) -> Result<String> {
+    let files = names(output, numbered, which, total, sheet);
+    for f in &files {
+        if f.exists() && !force {
+            bail!("{} exists (use -f to overwrite)", f.display());
+        }
+    }
+    let (w, h) = images.first().map_or((0, 0), |i| (i.width, i.height));
+    if sheet {
+        let thumbs: Vec<(usize, Image)> = which.iter().map(|i| i + 1).zip(images).collect();
+        let picture = contact_sheet(&thumbs);
+        docs_pdf::write_file(&files[0], &picture.png())
+            .with_context(|| format!("can't write {}", files[0].display()))?;
+        return Ok(format!(
+            "contact sheet of {} {what}{}, {} × {} px",
+            thumbs.len(),
+            if thumbs.len() == 1 { "" } else { "s" },
+            picture.width,
+            picture.height
+        ));
+    }
+    for (img, f) in images.iter().zip(&files) {
+        docs_pdf::write_file(f, &img.png())
+            .with_context(|| format!("can't write {}", f.display()))?;
+    }
+    let shown = match files.as_slice() {
+        [one] => one.display().to_string(),
+        [a, .., b] => format!("{} … {}", a.display(), b.display()),
+        [] => String::new(),
+    };
+    Ok(format!(
+        "{} PNG{}, {w} × {h} px: {shown}",
+        files.len(),
+        if files.len() == 1 { "" } else { "s" }
+    ))
+}
+
 /// Slide numbers `spec` names: `3`, `2-5`, `1,3,7-9`, `4-` (to the end);
 /// 0-based, in order, each once. `n` is the slide count.
 pub fn parse_slides(spec: &str, n: usize) -> Result<Vec<usize>, String> {
@@ -336,42 +438,11 @@ pub fn convert(
     } else {
         DEFAULT_WIDTH
     });
-    let files = names(output, numbered, &slides, n, opts.sheet);
-    for f in &files {
-        if f.exists() && !force {
-            bail!("{} exists (use -f to overwrite)", f.display());
-        }
-    }
     let mut engine = Engine::new();
     let images = render(pres, &mut engine, &slides, width)?;
-    let (w, h) = images.first().map_or((0, 0), |i| (i.width, i.height));
-    if opts.sheet {
-        let thumbs: Vec<(usize, Image)> = slides.iter().map(|i| i + 1).zip(images).collect();
-        let sheet = contact_sheet(&thumbs);
-        docs_pdf::write_file(&files[0], &sheet.png())
-            .with_context(|| format!("can't write {}", files[0].display()))?;
-        return Ok(format!(
-            "contact sheet of {} slide{}, {} × {} px",
-            thumbs.len(),
-            if thumbs.len() == 1 { "" } else { "s" },
-            sheet.width,
-            sheet.height
-        ));
-    }
-    for (img, f) in images.iter().zip(&files) {
-        docs_pdf::write_file(f, &img.png())
-            .with_context(|| format!("can't write {}", f.display()))?;
-    }
-    let shown = match files.as_slice() {
-        [one] => one.display().to_string(),
-        [a, .., b] => format!("{} … {}", a.display(), b.display()),
-        [] => String::new(),
-    };
-    Ok(format!(
-        "{} PNG{}, {w} × {h} px: {shown}",
-        files.len(),
-        if files.len() == 1 { "" } else { "s" }
-    ))
+    write_images(
+        images, &slides, n, output, numbered, opts.sheet, force, "slide",
+    )
 }
 
 #[cfg(test)]
@@ -418,6 +489,33 @@ mod tests {
         let png = imgs[0].png();
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
         assert_eq!(&png[16..24], &[0, 0, 1, 64, 0, 0, 0, 180]);
+    }
+
+    #[std::prelude::v1::test]
+    fn workbooks_render_page_by_page() {
+        let mut b = crate::agent::sheets_author::build(
+            &json!({"sheets": [{"name": "S", "rows": [["A", 1], ["B", 2]],
+                "formats": [{"range": "A1:B2", "fill": "#C00000"}]}]}),
+            None,
+        )
+        .unwrap();
+        let (pdf, pages) = sheets_pdf::export(&mut b, &sheets_pdf::Options::default()).unwrap();
+        assert_eq!(pages, 1);
+        let imgs = render_pdf(pdf.clone(), 400).unwrap();
+        assert_eq!(imgs[0].width, 400);
+        assert!(
+            imgs[0]
+                .rgb
+                .chunks(3)
+                .any(|p| p[0] > 180 && p[1] < 40 && p[2] < 40)
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let opts = PngOptions {
+            sheet: true,
+            ..PngOptions::default()
+        };
+        let msg = convert_pdf(pdf, &dir.path().join("b.png"), true, &opts, false).unwrap();
+        assert!(dir.path().join("b-sheet.png").is_file(), "{msg}");
     }
 
     #[std::prelude::v1::test]

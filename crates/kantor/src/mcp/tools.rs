@@ -248,6 +248,68 @@ const SPECS: &[Spec] = &[
         &["range"],
         false,
     ),
+    (
+        "sheets_list",
+        "Describe a workbook",
+        "A workbook as JSON (as `kantor sheets list`): each sheet's used range, frozen panes, merged cells, column widths, tables, charts with their series' ranges, conditional formats, validation, pivot tables, a summary of each column (header, numbers/text/dates/formulas/blanks, min, max, number format) and one page of cells: `values` row by row, `formulas` and `number_formats` beside them, `next` where the next page starts. The open workbook (`document`), or a file without opening it (`path`).",
+        || {
+            json!({
+                "document": document(),
+                "path": {"type": "string", "description": "Absolute path of a workbook to read without opening it (~ allowed); instead of document."},
+                "sheet": {"type": ["string", "integer"], "description": "Only this sheet (name or number from 1)."},
+                "range": {"type": "string", "description": "The cells to show, e.g. A1:H200 or Data!A31:H60 (default: the used range's first rows)."},
+                "formulas": {"type": "boolean", "description": "Formulas in the grid in place of their values."},
+                "max_rows": {"type": "integer", "minimum": 0, "maximum": 5000, "description": "Rows of cells per sheet (default 30; 0: summaries only)."},
+            })
+        },
+        &[],
+        true,
+    ),
+    (
+        "sheets_check",
+        "Audit a workbook",
+        "Check a workbook for the mistakes reviewers look for (as `kantor sheets check`): formula errors (#REF!, #DIV/0!, #N/A, #VALUE!, #NAME?), circular references, numbers and dates stored as text, a formula that differs from its neighbours, numbers typed into formulas (=B2*1.11), totals typed as numbers, SUMs that miss rows, formulas using empty cells, mixed number formats or units in a column, duplicate rows, extra spaces, merged cells in data, volatile functions, external links, broken names, hidden data. Each finding has a severity, check, sheet, range, message and details. The open workbook (`document`) or a file (`path`). Fix with sheets_edit (to_numbers, to_dates, trim, remove_duplicates, write_range...).",
+        || {
+            json!({
+                "document": document(),
+                "path": {"type": "string", "description": "Absolute path of a workbook to check without opening it (~ allowed); instead of document."},
+                "sheet": {"type": ["string", "integer"], "description": "Only this sheet."},
+            })
+        },
+        &[],
+        true,
+    ),
+    (
+        "sheets_edit",
+        "Edit a workbook (tools)",
+        "Run editing tools on a workbook, as one undo step (the same JSON as `kantor sheets edit FILE --ops`): `ops` is a list of {tool, args}. Tools: write_range, write_columns, clear, fill_down, fill_right (a formula down a column), format (font, size, colours, fill, alignment, wrap, any number format code, indent, rotation, borders {edges, style, color}, merge), column_width, autofit, row_height, freeze, insert_rows, delete_rows, insert_columns, delete_columns, hide, add_sheet, delete_sheet, rename_sheet, move_sheet, copy_sheet, hide_sheet, sort, remove_duplicates, trim, to_numbers, to_dates, split_column, combine_columns, find_replace, add_table (with style and totals), add_chart (column, bar, line, area, pie, doughnut, scatter, combo of cell ranges: `data` or categories/series ranges, placed `at`/`to` cells; the slides chart options), add_conditional_format (data_bar, color_scale, icon_set, cell_value, text, top, bottom, above_average, below_average, duplicates, unique, blanks, formula, dates), clear_conditional_formats, add_validation (list, whole, decimal, date, time, text_length, custom), clear_validation, define_name, delete_name, add_pivot (rows, columns, values by field name), page_setup, recalculate. Cells are A1-style (Data!A1:D20, C:E, 3:5); `sheet` is a name or number. Each tool's arguments are in `kantor sheets schema` and docs/sheets-json.md. Returns each tool's result (written formulas' values and errors).",
+        || {
+            json!({
+                "document": document(),
+                "ops": {"type": "array", "minItems": 1, "items": {"type": "object", "properties": {
+                    "tool": {"type": "string", "description": "A tool name, e.g. fill_down."},
+                    "args": {"type": "object", "description": "Its arguments, e.g. {\"range\": \"E2:E200\", \"formula\": \"=C2*D2\"}."}},
+                    "required": ["tool"]}},
+            })
+        },
+        &["ops"],
+        false,
+    ),
+    (
+        "sheets_build",
+        "Build a .xlsx from JSON",
+        "Write a new .xlsx from a workbook description without opening it (as `kantor sheets build`): sheets with rows or columns of values and formulas, cells, formats, widths, frozen panes, tables, charts placed by cell, conditional formats, validation, pivot tables, names, and any editing tools (`ops`). The same JSON always gives the same file. open=true then opens it in Kantor.",
+        || {
+            json!({
+                "workbook": {"type": "object", "description": "{sheets: [{name, rows | columns, cells, formats, widths, freeze, tables, charts, conditional_formats, validations, pivots, ops}], names, active, ops}; see `kantor sheets schema` or docs/sheets-json.md."},
+                "path": {"type": "string", "description": "Absolute path of the .xlsx to write (~ allowed)."},
+                "overwrite": {"type": "boolean", "default": false, "description": "Replace an existing file."},
+                "open": {"type": "boolean", "default": false, "description": "Open the new file in Kantor."},
+            })
+        },
+        &["workbook", "path"],
+        false,
+    ),
     // ── Docs ───────────────────────────────────────────────────────────────
     (
         "docs_get_paragraphs",
