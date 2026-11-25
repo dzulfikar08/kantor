@@ -9,13 +9,35 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-11-26
+
+Paparan AI Chat: describe a deck, document or workbook, attach your files, and an agent builds it in Kantor, checks it and hands back the file.
+
 ### Added
 
+- Paparan AI Chat, a panel on the right (the sparkle button in the tab strip, or *Paparan AI Chat* in the command
+  palette). Type a request and attach source files (paper clip, or drop them on the panel); the job kind (deck,
+  document, workbook) is guessed from the words and files, or picked. An agent builds or fixes a native .pptx, .docx or
+  .xlsx with Kantor's own tools, runs the check commands, looks at rendered pages, and finishes with the output files
+  (Open in a tab, Reveal). Each step shows in the list: the model's text, tool calls (click for the result), the
+  pictures it looked at, credits or tokens used. Follow-ups continue the same job and folder; Stop ends it after the
+  current step. Every job gets its own work folder, and attached files are copies that are never overwritten.
+- With Paparan AI as the provider, jobs use Paparan AI's own deck, document and workbook skills and its
+  `paparan-agent` model, paid with credits; signed out, out of credits or offline, the panel says so and offers Sign in,
+  Top up or Try again. With your own OpenAI-compatible key or Ollama, jobs run on that model and read the skills
+  from local folders (`~/.claude/skills/paparan-deck|doc|sheet`, or `ai.skills_dir` in settings.toml).
+- `kantor agent run` runs the same agent from a terminal (`--provider paparan --skill deck|doc|sheet`, or any
+  OpenAI-compatible API with `--base-url`/`--model`, `--json` events, spending limits). See `docs/paparan-agent.md`.
 - `kantor sheets check` (and the `sheets_check` tool) finds text that doesn't fit where it prints, measured with the
   fonts the PDF and PNG use (`text_cut_off`: wider than its merged cells, blocked by a full neighbour, cut at the page's
   edge, taller than its row), numbers shown as `####` (`number_hashes`), content outside the print area
   (`outside_print_area`), charts and pictures split by page breaks (`split_by_page`), and bar or column charts of
   categories not sorted by value (`unsorted_bars`, info).
+
+### Fixed
+
+- Paparan AI sign-in: the account's device list and the Connect page show the computer's name instead of
+  "Kantor on Kantor on …".
 
 ## [0.24.0] - 2026-11-25
 
@@ -2426,7 +2448,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.25.0...HEAD
+[0.25.0]: https://github.com/dzulfikar08/kantor/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/dzulfikar08/kantor/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/dzulfikar08/kantor/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/dzulfikar08/kantor/compare/v0.21.1...v0.22.0
