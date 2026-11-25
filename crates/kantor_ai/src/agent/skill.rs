@@ -303,6 +303,17 @@ impl ServedSkill {
     }
 }
 
+/// Name, version and file names only: the text is never printed.
+impl std::fmt::Debug for ServedSkill {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServedSkill")
+            .field("name", &self.name)
+            .field("version", &self.version)
+            .field("files", &self.files.keys().collect::<Vec<_>>())
+            .finish()
+    }
+}
+
 impl PromptSource for ServedSkill {
     fn name(&self) -> String {
         self.name.clone()
