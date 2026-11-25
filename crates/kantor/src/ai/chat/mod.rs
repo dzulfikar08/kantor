@@ -19,7 +19,6 @@ use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
@@ -672,7 +671,7 @@ impl ChatPanel {
                 .text_color(if r.ok { t.fg_muted } else { t.danger })
                 .child(r.text.clone())
         });
-        let pictures = row.pictures.iter().filter_map(|(id, label)| {
+        let pictures = row.pictures.iter().filter_map(|(id, _)| {
             let pic = self.pictures.get(id)?;
             let size = pic.thumb.size(0);
             let (w, h) = (size.width.0.max(1) as f32, size.height.0.max(1) as f32);
@@ -693,10 +692,6 @@ impl ChatPanel {
                     .border_color(t.border)
                     .cursor_pointer()
                     .hover(|s| s.border_color(t.accent))
-                    .tooltip({
-                        let label = label.clone();
-                        move |window, cx| Tooltip::new(label.clone()).build(window, cx)
-                    })
                     .child(
                         img(ImageSource::Render(pic.thumb.clone()))
                             .w(px(shown_w))
