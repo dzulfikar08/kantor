@@ -14,6 +14,7 @@
 //! is [`ProviderId::Paparan`]: OpenAI-compatible chat plus the account API
 //! in [`paparan`].
 
+pub mod agent;
 pub mod client;
 pub mod error;
 pub mod keys;
@@ -23,7 +24,7 @@ pub mod provider;
 pub mod sample;
 pub mod transport;
 
-pub use client::{Cancel, ChatRequest, Client, Reply, ToolCall};
+pub use client::{Cancel, ChatRequest, Client, Reply, ToolCall, Usage};
 pub use error::AiError;
 pub use provider::{Api, PROVIDERS, ProviderConfig, ProviderId, ProviderInfo};
 pub use transport::{HttpRequest, HttpResponse, Transport, UreqTransport};

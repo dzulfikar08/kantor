@@ -124,11 +124,17 @@ impl UreqTransport {
     /// `read_timeout` bounds each wait for data (first token included);
     /// local models loading into memory can take a while.
     pub fn new(read_timeout: Duration) -> Self {
+        Self::with_timeouts(read_timeout, Duration::from_secs(300))
+    }
+
+    /// [`UreqTransport::new`] with a whole-request limit too (the agent's
+    /// steps can stream a long file for minutes).
+    pub fn with_timeouts(read_timeout: Duration, global: Duration) -> Self {
         let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_per_read(Some(read_timeout))
-            .timeout_global(Some(Duration::from_secs(300)))
+            .timeout_global(Some(global))
             .user_agent(concat!("Kantor/", env!("CARGO_PKG_VERSION")))
             .build();
         Self {

@@ -441,6 +441,20 @@ pub fn main(args: &[OsString]) -> i32 {
     i32::from(failed > 0)
 }
 
+/// Convert `input` to `output` (the kinds from their extensions) with
+/// default options, overwriting `output` when `force`; returns the summary.
+/// For callers without a command line (the agent's `convert` tool).
+pub fn convert_file(input: &Path, output: &Path, force: bool) -> Result<String> {
+    let opts = Options {
+        force,
+        password: std::env::var("KANTOR_OFFICE_PASSWORD")
+            .ok()
+            .filter(|p| !p.is_empty()),
+        ..Options::default()
+    };
+    convert(input, output, &opts, &mut None)
+}
+
 fn convert(
     input: &Path,
     output: &Path,

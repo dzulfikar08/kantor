@@ -30,6 +30,11 @@ pub struct ChatRequest {
     /// OpenAI-style tool definitions (`[{"type":"function",…}]`), for the
     /// OpenAI-compatible APIs.
     pub tools: Option<Value>,
+    /// A whole conversation (OpenAI chat messages after the system one:
+    /// user, assistant with `tool_calls`, `tool` results), for the
+    /// OpenAI-compatible APIs; replaces `user`. The agent loop
+    /// ([`crate::agent`]) sends these, and asks for token usage too.
+    pub messages: Option<Vec<Value>>,
 }
 
 impl ChatRequest {
@@ -41,7 +46,15 @@ impl ChatRequest {
             max_tokens: 1024,
             task: None,
             tools: None,
+            messages: None,
         }
+    }
+
+    /// Send `messages` instead of one user message (see
+    /// [`ChatRequest::messages`]).
+    pub fn messages(mut self, messages: Vec<Value>) -> Self {
+        self.messages = Some(messages);
+        self
     }
 
     /// Name the Kantor feature asking (see [`ChatRequest::task`]).
@@ -91,11 +104,56 @@ pub struct ToolCall {
     pub arguments: String,
 }
 
+/// Tokens one request used, as the server counted them (OpenAI-compatible
+/// APIs send them in the last streamed chunk when asked).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct Usage {
+    /// Prompt tokens, cached ones included.
+    pub input: u64,
+    /// The part of `input` read from the provider's prompt cache.
+    pub cached: u64,
+    pub output: u64,
+}
+
+impl Usage {
+    pub fn add(&mut self, other: Usage) {
+        self.input += other.input;
+        self.cached += other.cached;
+        self.output += other.output;
+    }
+
+    /// From an OpenAI-style `usage` object (`prompt_tokens`,
+    /// `completion_tokens`, `prompt_tokens_details.cached_tokens`;
+    /// DeepSeek's `prompt_cache_hit_tokens`).
+    pub fn from_json(v: &Value) -> Option<Usage> {
+        let n = |p: &str| v.pointer(p).and_then(Value::as_u64);
+        let input = n("/prompt_tokens").or_else(|| n("/input_tokens"))?;
+        Some(Usage {
+            input,
+            cached: n("/prompt_tokens_details/cached_tokens")
+                .or_else(|| n("/prompt_cache_hit_tokens"))
+                .or_else(|| n("/input_tokens_details/cached_tokens"))
+                .unwrap_or(0)
+                .min(input),
+            output: n("/completion_tokens")
+                .or_else(|| n("/output_tokens"))
+                .unwrap_or(0),
+        })
+    }
+}
+
 /// A whole streamed reply: its text and any tool calls.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Reply {
     pub text: String,
     pub tool_calls: Vec<ToolCall>,
+    /// Thinking models' reasoning (`reasoning_content` / `reasoning`
+    /// deltas), kept apart from the answer.
+    pub reasoning: String,
+    /// Token usage, when the server sent it.
+    pub usage: Option<Usage>,
+    /// Why the model stopped (`stop`, `tool_calls`, `length`), when sent.
+    pub finish_reason: Option<String>,
 }
 
 /// The longest `Retry-After` waited out before trying once more; longer
@@ -211,7 +269,7 @@ impl Client {
 }
 
 /// Sleep `d`, waking to check `cancel`.
-fn wait(d: std::time::Duration, cancel: &Cancel) -> Result<(), AiError> {
+pub(crate) fn wait(d: std::time::Duration, cancel: &Cancel) -> Result<(), AiError> {
     let end = std::time::Instant::now() + d;
     loop {
         if cancel.is_cancelled() {
@@ -258,6 +316,12 @@ pub fn build_request(cfg: &ProviderConfig, req: &ChatRequest) -> HttpRequest {
                 ],
                 "stream": true,
             });
+            if let Some(messages) = &req.messages {
+                let mut all = vec![json!({"role": "system", "content": req.system})];
+                all.extend(messages.iter().cloned());
+                body["messages"] = Value::Array(all);
+                body["stream_options"] = json!({"include_usage": true});
+            }
             if let Some(tools) = &req.tools {
                 body["tools"] = tools.clone();
             }
@@ -349,6 +413,9 @@ pub fn read_reply(
 ) -> Result<Reply, AiError> {
     let mut out = String::new();
     let mut calls: Vec<ToolCall> = Vec::new();
+    let mut reasoning = String::new();
+    let mut usage = None;
+    let mut finish_reason = None;
     for line in reader.lines() {
         if cancel.is_cancelled() {
             return Err(AiError::Cancelled);
@@ -377,13 +444,31 @@ pub fn read_reply(
         let value: Value = serde_json::from_str(payload).map_err(|_| {
             AiError::BadReply(format!("unexpected data: {}", truncate(payload, 120)))
         })?;
-        if api == Api::OpenAi
-            && let Some(deltas) = value
+        if api == Api::OpenAi {
+            if let Some(deltas) = value
                 .pointer("/choices/0/delta/tool_calls")
                 .and_then(Value::as_array)
-        {
-            for d in deltas {
-                add_tool_delta(&mut calls, d);
+            {
+                for d in deltas {
+                    add_tool_delta(&mut calls, d);
+                }
+            }
+            for key in ["reasoning_content", "reasoning"] {
+                if let Some(t) = value
+                    .pointer(&format!("/choices/0/delta/{key}"))
+                    .and_then(Value::as_str)
+                {
+                    reasoning.push_str(t);
+                }
+            }
+            if let Some(r) = value
+                .pointer("/choices/0/finish_reason")
+                .and_then(Value::as_str)
+            {
+                finish_reason = Some(r.to_owned());
+            }
+            if let Some(u) = value.get("usage").and_then(Usage::from_json) {
+                usage = Some(u);
             }
         }
         match piece(api, &value)? {
@@ -397,12 +482,15 @@ pub fn read_reply(
             Piece::Skip => {}
         }
     }
-    if out.trim().is_empty() && calls.is_empty() {
+    if out.trim().is_empty() && calls.is_empty() && reasoning.trim().is_empty() {
         return Err(AiError::BadReply("the model sent an empty answer".into()));
     }
     Ok(Reply {
         text: out,
         tool_calls: calls,
+        reasoning,
+        usage,
+        finish_reason,
     })
 }
 
@@ -709,6 +797,72 @@ mod tests {
         );
         // Text-only callers still see an empty answer as an error.
         assert!(matches!(read(Api::OpenAi, s), Err(AiError::BadReply(_))));
+    }
+
+    #[test]
+    fn usage_reasoning_and_finish_reason_are_read() {
+        let s = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"hmm \"}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{\"reasoning\":\"ok\"}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"stop\"}]}\n\n\
+                 data: {\"choices\":[],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":7,\"prompt_tokens_details\":{\"cached_tokens\":100}}}\n\n\
+                 data: [DONE]\n\n";
+        let reply = read_reply(
+            Api::OpenAi,
+            Cursor::new(s.as_bytes().to_vec()),
+            &Cancel::default(),
+            &mut |_| {},
+            "test",
+        )
+        .unwrap();
+        assert_eq!(reply.text, "Hi");
+        assert_eq!(reply.reasoning, "hmm ok");
+        assert_eq!(reply.finish_reason.as_deref(), Some("stop"));
+        assert_eq!(
+            reply.usage,
+            Some(Usage {
+                input: 120,
+                cached: 100,
+                output: 7
+            })
+        );
+        // DeepSeek's own field for cache hits.
+        assert_eq!(
+            Usage::from_json(
+                &json!({"prompt_tokens": 10, "prompt_cache_hit_tokens": 4, "completion_tokens": 1})
+            ),
+            Some(Usage {
+                input: 10,
+                cached: 4,
+                output: 1
+            })
+        );
+        // Reasoning alone isn't an empty answer.
+        let only =
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"}}]}\n\ndata: [DONE]\n\n";
+        assert!(
+            read_reply(
+                Api::OpenAi,
+                Cursor::new(only.as_bytes().to_vec()),
+                &Cancel::default(),
+                &mut |_| {},
+                "test",
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn conversations_are_sent_after_the_system_prompt() {
+        let req = ChatRequest::new("sys", "ignored").messages(vec![
+            json!({"role": "user", "content": "make a deck"}),
+            json!({"role": "assistant", "content": null, "tool_calls": []}),
+        ]);
+        let b = body(&build_request(&cfg(ProviderId::Custom, None), &req));
+        let m = b["messages"].as_array().unwrap();
+        assert_eq!(m.len(), 3);
+        assert_eq!(m[0]["content"], "sys");
+        assert_eq!(m[1]["content"], "make a deck");
+        assert_eq!(b["stream_options"]["include_usage"], true);
     }
 
     #[test]

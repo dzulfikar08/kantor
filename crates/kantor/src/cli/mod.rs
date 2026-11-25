@@ -1,6 +1,7 @@
 //! Command-line tools that run without a window (`kantor convert …`,
-//! `kantor pdf …`, `kantor slides …`, `kantor docs …`).
+//! `kantor pdf …`, `kantor slides …`, `kantor docs …`, `kantor agent run`).
 
+pub mod agent;
 pub mod convert;
 pub mod docs;
 pub mod merge;
