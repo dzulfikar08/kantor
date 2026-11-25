@@ -174,9 +174,9 @@ Don't draw charts from shapes.
 | `type`, `axis` (per series) | a combo's series: `column`, `line` or `area`, on the `primary` or `secondary` axis. In a column, line or area chart they make it a combo. Combo default: the first series column, the rest lines |
 | `title` | the chart title (none by default) |
 | `legend` | `none`, `bottom`, `top`, `right`, `left` (default: bottom with several series or a pie, else none) |
-| `data_labels` | `true` (values; pie and doughnut: percentages) or `{show, position, format, size, bold, italic, color}`: `show` is `value`, `percent` (pie, doughnut), `category`, `series` or a list; `position` `center`, `inside_end`, `inside_base`, `outside_end` (bars, pies), `left`, `right`, `above`, `below` (lines, scatter), `best_fit` (pies); `format` a number format; `color` #RRGGBB. Per series too |
-| `number_format` | the values' Excel number format (labels and value axis follow it), see below |
-| `axis` | the value axis (horizontal in a bar chart): `title`, `min`, `max`, `major_unit`, `gridlines` (default true), `number_format`, `reverse`, `visible` (`false` hides the axis: no line, ticks or labels) |
+| `data_labels` | `true` (values; pie and doughnut: percentages) or `{show, position, number_format, size, bold, italic, color}`: `show` is `value`, `percent` (pie, doughnut), `category`, `series` or a list; `position` `center`, `inside_end`, `inside_base`, `outside_end` (bars, pies), `left`, `right`, `above`, `below` (lines, scatter), `best_fit` (pies); `number_format` (or `format`) the labels' number format (default: the chart's `number_format`; pie percentages `0%`); `color` #RRGGBB. Per series too |
+| `number_format` | the values' Excel number format, see below: the value axis (and a combo's secondary one) and the value labels show it unless `axis.number_format` or `data_labels.number_format` set their own. It is written on the axis and labels themselves, so they keep it whatever format the data cells have |
+| `axis` | the value axis (horizontal in a bar chart): `title`, `min`, `max`, `major_unit`, `gridlines` (default true), `number_format` (tick labels; default the chart's), `reverse`, `visible` (`false` hides the axis: no line, ticks or labels) |
 | `category_axis` | `title`, `reverse`, `visible`; scatter (its x axis): also `min`, `max`, `major_unit`, `number_format`. A bar chart lists its first category at the bottom, as Excel does; `"reverse": true` puts it at the top and keeps the value axis at the bottom (Excel's "at maximum category") |
 | `gap_width`, `overlap` | column/bar/combo: the gap between categories (% of a bar, default 150) and the overlap of a category's bars (-100 to 100) |
 | `hole` | doughnut: hole size in % (default 50) |
@@ -189,7 +189,11 @@ one, series take the theme's accents in order.
 
 **Number formats** are written as Excel stores them, whatever the language:
 `,` groups thousands and `.` is the decimal point in the code (`"#,##0.0"`,
-`"0%"`, `"0.0%"`, `"\"Rp\" #,##0"`). PowerPoint and Excel show the numbers
+`"0%"`, `"0.0%"`, `"\"Rp\" #,##0"`). Every part of a code works as in
+Excel: sections (`"#,##0;(#,##0)"`), quoted text, `%` (×100), and commas
+after the last digit scaling by thousands: 5200000 with `"#,##0"` shows
+`5,200,000`, with `"\"Rp\"#,##0.0,,"` `Rp5.2` (millions), and 0.123 with
+`"0.0%"` `12.3%`. PowerPoint and Excel show the numbers
 in the viewer's locale, so on an Indonesian system `"#,##0.0"` shows
 `1.234,5`.
 

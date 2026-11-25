@@ -174,11 +174,12 @@ pub fn table_props() -> Map<String, Value> {
 /// Keys of a chart (see [`super::slides_chart`]).
 pub fn chart_props() -> Map<String, Value> {
     let labels = json!({
-        "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+        "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, number_format (or format; e.g. \"#,##0\", \"0.0%\"; default: the chart's number_format), size, bold, italic, color (#RRGGBB)}.",
         "anyOf": [{"type": "boolean"}, {"type": "object", "additionalProperties": false, "properties": {
             "show": {"anyOf": [{"type": "string", "enum": ["value", "percent", "category", "series"]}, {"type": "array", "items": {"type": "string", "enum": ["value", "percent", "category", "series"]}}]},
             "position": {"type": "string", "enum": ["center", "inside_end", "inside_base", "outside_end", "left", "right", "above", "below", "best_fit"]},
-            "format": {"type": "string"},
+            "number_format": {"type": "string", "description": "The labels' number format, e.g. \"#,##0\" or \"0.0%\" (default: the chart's number_format; pie percentages: 0%)."},
+            "format": {"type": "string", "description": "Same as number_format."},
             "size": {"type": ["number", "string"]},
             "bold": {"type": "boolean"},
             "italic": {"type": "boolean"},
@@ -218,7 +219,7 @@ pub fn chart_props() -> Map<String, Value> {
         "title": {"type": "string"},
         "legend": {"type": "string", "enum": ["none", "bottom", "top", "right", "left"], "description": "Default: bottom with several series or a pie, else none."},
         "data_labels": labels,
-        "number_format": {"type": "string", "description": "Excel number format of the values (labels and value axis), written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."},
+        "number_format": {"type": "string", "description": "Excel number format of the values: the default of the value axis' and the data labels' number_format, written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."},
         "axis": axis("The value axis (horizontal in a bar chart)."),
         "category_axis": axis("The category axis: title, reverse, visible (scatter: the x axis, with min/max/major_unit)."),
         "gap_width": {"type": "number", "minimum": 0, "maximum": 500, "description": "Column/bar: gap between categories, % of a bar (default 150)."},

@@ -9,6 +9,10 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.24.0] - 2026-11-25
+
+A real slide show with presenter view, light mode, Paparan AI, and command-line tools that let AI agents build and check decks, Word documents and workbooks.
+
 ### Added
 
 - Slides: a real slide show. `F5` / `Shift F5` open a borderless fullscreen window with only the slides
@@ -33,11 +37,36 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - Paparan AI, a hosted AI provider: sign in with a Paparan account (a code confirmed in the browser), see the plan and
   credits left in *AI Settings*, and use every AI feature without an API key; *Top up* opens the payment page when
   credits run out or low. Your own API key and Ollama stay free with every feature.
+- `kantor slides build` makes designed decks from JSON: looks (`editorial`, `swiss`, `mono`) with the brand colour and
+  fonts as overrides, text styles, header and footer, ready-made components (stat cards, cards, steps, timeline,
+  callout, numbered list, comparison, table), Lucide icons, transitions, and real charts from data with an embedded
+  workbook. `kantor slides check` finds layout problems (text that doesn't fit, overlaps, off-slide shapes, low
+  contrast) and `build --check` runs it right away. MCP: `slides_check`, `slides_add_chart`.
+- `kantor docs build|list|edit|check|schema`: Word documents from JSON with the `report`, `proposal` and `letter`
+  presets (cover, contents, numbered headings, real Word styles, headers and footers, light markdown, footnotes,
+  cross-references, tables with totals, charts, landscape sections); `edit` changes an existing `.docx` (optionally
+  as tracked changes) and `check` finds layout and content problems. MCP: `docs_build`, `docs_edit`, `docs_check`.
+- `kantor sheets build|list|edit|check|schema`: workbooks from JSON (cells and formulas, formats, tables, charts,
+  conditional formats, validations, pivots, defined names, page setup, `show_gridlines`); `edit` applies a list of
+  operations to an existing `.xlsx` (write ranges, convert text to numbers or dates, trim, remove duplicates, add
+  sheets, tables, charts and pivots, among 40 tools); `check` audits a workbook (formula errors, typed totals, totals
+  that miss rows, numbers stored as text, inconsistent formulas and more). MCP: `sheets_list`, `sheets_check`,
+  `sheets_edit`, `sheets_build`.
+- `kantor convert --to png` renders `.pptx`, `.docx` and `.xlsx` to PNG pages (`--slide`, `--page`, `--width`), and
+  `--contact-sheet` puts every page on one image, so an AI agent can look at what it made.
+- Docs: headings keep with the paragraph after them; inline charts are drawn and table cell shading shows in PDF and
+  PNG output.
 
 ### Changed
 
 - The default theme is *Follow System* everywhere except Linux with Omarchy, which keeps following the Omarchy theme. A saved *Follow Omarchy* on a machine without Omarchy now follows the system, and *Follow Omarchy* is only offered where Omarchy is installed. On macOS the title bar matches the theme's light or dark look.
 - Status colours (warnings, unsaved dots, sync and signature states) are darkened where a light theme's colour would be hard to read.
+
+### Fixed
+
+- Charts made from data show the values' number format on the value axis and in data labels (`5,200,000` instead of
+  `5200000`), in Kantor and in Excel.
+- Slides: the *Speaker notes* button had no icon.
 
 ## [0.23.0] - 2026-11-23
 
@@ -2389,7 +2418,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.23.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.24.0...HEAD
+[0.24.0]: https://github.com/dzulfikar08/kantor/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/dzulfikar08/kantor/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/dzulfikar08/kantor/compare/v0.21.1...v0.22.0
 [0.21.1]: https://github.com/dzulfikar08/kantor/compare/v0.21.0...v0.21.1

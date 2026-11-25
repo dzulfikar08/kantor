@@ -1339,3 +1339,59 @@ fn labels_on_3d_lines_and_pies() {
         );
     }
 }
+
+/// Formats on the axis and labels themselves (`sourceLinked="0"`) win over
+/// the cached values' (a sheet chart's cells, often General); Excel codes
+/// scale by thousands, quote text and multiply percentages.
+#[test]
+fn own_number_formats_beat_the_cells() {
+    let chart = |vals: &[f64], axis_fmt: &str, label_fmt: &str| {
+        let axes = AXES.replace(
+            r#"<c:numFmt formatCode="General" sourceLinked="1"/>"#,
+            &format!(r#"<c:numFmt formatCode="{axis_fmt}" sourceLinked="0"/>"#),
+        );
+        space(
+            &format!(
+                r#"<c:barChart><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>{}<c:dLbls><c:numFmt formatCode="{label_fmt}" sourceLinked="0"/><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="0"/><c:showSerName val="0"/><c:showPercent val="0"/><c:showBubbleSize val="0"/></c:dLbls><c:gapWidth val="100"/><c:axId val="1"/><c:axId val="2"/></c:barChart>{axes}"#,
+                ser(0, "Revenue", &CATS[..vals.len()], vals, ""),
+            ),
+            r#"<c:autoTitleDeleted val="1"/>"#,
+        )
+    };
+    let m = marks(
+        &chart(
+            &[5_200_000.0, 3_100_000.0],
+            "&quot;Rp&quot;#,##0.0,,",
+            "#,##0",
+        ),
+        600.0,
+        400.0,
+    );
+    let t = texts(&m);
+    assert!(
+        t.contains(&"5,200,000".into()) && t.contains(&"3,100,000".into()),
+        "{t:?}"
+    );
+    // Axis 0 to 6,000,000 by 1,000,000, in millions.
+    assert!(
+        t.contains(&"Rp0.0".into()) && t.contains(&"Rp1.0".into()) && t.contains(&"Rp6.0".into()),
+        "{t:?}"
+    );
+    assert!(!t.iter().any(|s| s.contains("5200000")), "{t:?}");
+    let m = marks(&chart(&[0.123], "0%", "0.0%"), 600.0, 400.0);
+    let t = texts(&m);
+    assert!(t.contains(&"12.3%".into()), "{t:?}");
+    assert!(t.contains(&"0%".into()), "{t:?}");
+    // The labels' own text, as `label_text` gives it.
+    let c = parse(&chart(
+        &[5_200_000.0, 3_100_000.0],
+        "General",
+        "&quot;Rp&quot;#,##0.0,,",
+    ));
+    let g = &c.groups[0];
+    let l = g.labels.clone().expect("group labels");
+    assert_eq!(
+        label_text(&l, &g.series[0], 0, 5_200_000.0, None).as_deref(),
+        Some("Rp5.2")
+    );
+}

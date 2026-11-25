@@ -1438,7 +1438,7 @@
                 ]
               },
               "data_labels": {
-                "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+                "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, number_format (or format; e.g. \"#,##0\", \"0.0%\"; default: the chart's number_format), size, bold, italic, color (#RRGGBB)}.",
                 "anyOf": [
                   {
                     "type": "boolean"
@@ -1486,8 +1486,13 @@
                           "best_fit"
                         ]
                       },
+                      "number_format": {
+                        "type": "string",
+                        "description": "The labels' number format, e.g. \"#,##0\" or \"0.0%\" (default: the chart's number_format; pie percentages: 0%)."
+                      },
                       "format": {
-                        "type": "string"
+                        "type": "string",
+                        "description": "Same as number_format."
                       },
                       "size": {
                         "type": [
@@ -1526,7 +1531,7 @@
           "description": "Default: bottom with several series or a pie, else none."
         },
         "data_labels": {
-          "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+          "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, number_format (or format; e.g. \"#,##0\", \"0.0%\"; default: the chart's number_format), size, bold, italic, color (#RRGGBB)}.",
           "anyOf": [
             {
               "type": "boolean"
@@ -1574,8 +1579,13 @@
                     "best_fit"
                   ]
                 },
+                "number_format": {
+                  "type": "string",
+                  "description": "The labels' number format, e.g. \"#,##0\" or \"0.0%\" (default: the chart's number_format; pie percentages: 0%)."
+                },
                 "format": {
-                  "type": "string"
+                  "type": "string",
+                  "description": "Same as number_format."
                 },
                 "size": {
                   "type": [
@@ -1598,7 +1608,7 @@
         },
         "number_format": {
           "type": "string",
-          "description": "Excel number format of the values (labels and value axis), written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."
+          "description": "Excel number format of the values: the default of the value axis' and the data labels' number_format, written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."
         },
         "axis": {
           "type": "object",

@@ -164,7 +164,10 @@ A chart takes the slides charts' keys (`chart`, `stacked`, `title`,
 `gap_width`, `overlap`, `hole`, `font`, `colors`, `target_line`; see
 [slides-json.md](slides-json.md#charts)) with cells where slides take
 values. Its series refer to the cells, so Excel and Kantor redraw it when
-they change.
+they change. Without `number_format` (or `axis.number_format`,
+`data_labels.number_format`) the value axis and labels show the cells' own
+format; with it they show that format whatever the cells' (`"#,##0"`,
+`"\"Rp\"#,##0.0,,"` for millions, `"0.0%"`).
 
 ```json
 {"chart": "column", "data": "Data!A1:C13", "at": "E2", "to": "L18",
