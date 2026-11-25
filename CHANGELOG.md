@@ -36,6 +36,8 @@ Paparan AI Chat: describe a deck, document or workbook, attach your files, and a
 
 ### Fixed
 
+- Paparan AI deck jobs: the deck skill sent by Paparan AI was cut off at 64 KB and failed to load ("can't fetch the
+  paparan-deck skill").
 - Paparan AI sign-in: the account's device list and the Connect page show the computer's name instead of
   "Kantor on Kantor on …".
 
