@@ -237,7 +237,7 @@ pub fn preset(name: &str) -> Result<Value> {
                     "table": {"look": "header", "header_fill": "tint"},
                     "cover_style": {"kind": "band"},
                     "header": {"left": "{title}", "right": "{company}"},
-                    "footer": {"left": "{heading}", "right": "{page} / {pages}"}
+                    "footer": {"left": "{heading}", "right": "{page}"}
                 }),
             );
             v

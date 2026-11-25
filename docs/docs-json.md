@@ -193,7 +193,7 @@ error.
   Heading 2 is in the accent (a deep green by default). Table headers are
   tinted. The cover has an accent band across the top. The header shows
   the title and the company, the footer the current section and
-  "page / pages".
+  the page number.
 - `letter`: no cover, no numbering, no header; page numbers from page 2.
 
 Every look keeps to one accent with neutral inks; corners and rules are
