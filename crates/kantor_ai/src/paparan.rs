@@ -9,7 +9,9 @@
 //! - `POST device/revoke`: sign out;
 //! - `GET me`: account, plan and credit balance ([`Me`]);
 //! - `POST v1/chat/completions`: chat, answering with the balance left in
-//!   `X-Paparan-Credits-Remaining` ([`note_response`]).
+//!   `X-Paparan-Credits-Remaining` ([`note_response`]);
+//! - `GET skills`, `GET skills/NAME`: the agent's skills ([`SkillInfo`],
+//!   [`Skill`]), kept in memory for one job.
 //!
 //! The token lives in the keychain like an API key (entry `paparan` of
 //! [`keys::AI`]) and is never logged.
@@ -30,8 +32,10 @@ use crate::transport::{HttpRequest, HttpResponse, Transport};
 pub const DEFAULT_URL: &str = "https://app.paparanai.id/api/kantor/";
 
 /// Models Paparan AI offers; the server picks the underlying model.
-pub const MODELS: &[&str] = &["paparan-auto", "paparan-fast", "paparan-smart"];
+pub const MODELS: &[&str] = &["paparan-auto", "paparan-fast", "paparan-smart", AGENT_MODEL];
 pub const DEFAULT_MODEL: &str = "paparan-auto";
+/// The tier for agent jobs (`kantor agent run`): vision and tool calls.
+pub const AGENT_MODEL: &str = "paparan-agent";
 
 /// Sent as `client_version` and `X-Kantor-Version`.
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -483,6 +487,105 @@ impl Paparan {
         let v = self.call(HttpRequest::get(self.url("me"), Self::bearer(token)))?;
         Ok(Me::from_json(&v))
     }
+}
+
+/// One entry of `GET skills`.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct SkillInfo {
+    pub name: String,
+    /// A hash of the skill's content.
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub description: String,
+}
+
+/// `GET skills/NAME`: the skill's text files by path (`SKILL.md`,
+/// `references/x.md`, and other skills' files it points at under their
+/// skill's name, `paparan-deck/references/charts.md`).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Skill {
+    pub name: String,
+    #[serde(default)]
+    pub version: String,
+    pub files: std::collections::BTreeMap<String, String>,
+}
+
+impl Paparan {
+    /// The skills the account can use.
+    pub fn skills(&self, token: &str) -> Result<Vec<SkillInfo>, AiError> {
+        let v = self.call(HttpRequest::get(self.url("skills"), Self::bearer(token)))?;
+        let list = v.get("skills").cloned().unwrap_or(v);
+        serde_json::from_value(list).map_err(|e| AiError::BadReply(e.to_string()))
+    }
+
+    /// One skill's files. `Ok(None)` when there's no skill by that name.
+    pub fn skill(&self, token: &str, name: &str) -> Result<Option<Skill>, AiError> {
+        if name.is_empty()
+            || !name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            return Ok(None);
+        }
+        let req = HttpRequest::get(self.url(&format!("skills/{name}")), Self::bearer(token));
+        match self.call(req) {
+            Ok(v) => serde_json::from_value(v)
+                .map(Some)
+                .map_err(|e| AiError::BadReply(e.to_string())),
+            Err(AiError::Http { status: 404, .. }) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// Check the account can run a job, then fetch the skill. Errors say what
+/// to do: sign in, top up, check the connection, or which skills exist.
+pub fn fetch_skill(
+    api: &Paparan,
+    token: &str,
+    name: &str,
+) -> Result<crate::agent::ServedSkill, String> {
+    let explain = |e: AiError| match e {
+        AiError::SignedOut => "signed out of Paparan AI (the sign-in was revoked or expired): \
+             sign in again from Kantor's AI settings"
+            .to_owned(),
+        AiError::InsufficientCredits { topup_url, .. } => match topup_url {
+            Some(url) => format!("no Paparan AI credits left: top up at {url}"),
+            None => "no Paparan AI credits left: top up to continue".to_owned(),
+        },
+        AiError::Network(_) | AiError::Timeout => {
+            format!("can't reach Paparan AI to fetch the {name} skill: {e} (are you offline?)")
+        }
+        e => format!("can't fetch the {name} skill from Paparan AI: {e}"),
+    };
+    let me = api.me(token).map_err(explain)?;
+    if me.credits.remaining <= 0.0 {
+        return Err(match me.topup_url {
+            Some(url) => format!("no Paparan AI credits left: top up at {url}"),
+            None => "no Paparan AI credits left: top up to continue".to_owned(),
+        });
+    }
+    let Some(skill) = api.skill(token, name).map_err(explain)? else {
+        let names = api
+            .skills(token)
+            .map(|l| {
+                l.iter()
+                    .map(|s| s.name.trim_start_matches("paparan-").to_owned())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            })
+            .unwrap_or_default();
+        return Err(format!(
+            "Paparan AI has no skill {name}{}",
+            if names.is_empty() {
+                String::new()
+            } else {
+                format!(" (it has: {names})")
+            }
+        ));
+    };
+    crate::agent::ServedSkill::new(skill.name, skill.version, skill.files)
 }
 
 /// A finished sign-in.
@@ -990,5 +1093,124 @@ mod tests {
             stream_comment_credits(": paparan-credits-remaining 12297.5"),
             Some(12297.5)
         );
+    }
+
+    const ME_OK: &str = r#"{"account":{"id":"u1","email":"a@b.id","name":"Ana"},"plan":"free","credits":{"remaining":300,"unit":"credit","low":true},"topup_url":"https://app.paparanai.id/topup"}"#;
+
+    #[test]
+    fn served_skill_is_fetched_once_and_read_from_memory() {
+        use crate::agent::{PromptSource, SkillFile};
+        let skill = json!({
+            "name": "paparan-sheet",
+            "version": "abc123",
+            "files": {
+                "SKILL.md": "---\nname: paparan-sheet\ndescription: x\n---\n\n# Paparan sheet\nRead `references/calc.md`.\n",
+                "references/calc.md": "one\ntwo\n",
+                "paparan-deck/references/charts.md": "charts\n",
+            }
+        });
+        let t = Script::new(vec![ok(ME_OK), ok(&skill.to_string())]);
+        let api = Paparan::with_base("https://p.example/api/kantor", t.clone());
+        let s = fetch_skill(&api, "tok", "paparan-sheet").unwrap();
+        assert_eq!(s.name(), "paparan-sheet");
+        assert_eq!(s.version(), "abc123");
+        assert_eq!(
+            s.system().unwrap(),
+            "# Paparan sheet\nRead `references/calc.md`.\n"
+        );
+        assert_eq!(
+            s.files(),
+            vec![
+                "paparan-deck/references/charts.md (7 B)".to_owned(),
+                "references/calc.md (8 B)".to_owned(),
+            ]
+        );
+        let text = |p: &str| match s.read(p) {
+            Ok(SkillFile::Text(t)) => t,
+            other => panic!("{p}: {other:?}"),
+        };
+        assert_eq!(text("references/calc.md"), "one\ntwo\n");
+        assert_eq!(text("./references/calc.md"), "one\ntwo\n");
+        assert_eq!(text("paparan-sheet/references/calc.md"), "one\ntwo\n");
+        assert_eq!(
+            text("~/.claude/skills/paparan-sheet/references/calc.md"),
+            "one\ntwo\n"
+        );
+        // Another skill's file this one points at.
+        assert_eq!(text("paparan-deck/references/charts.md"), "charts\n");
+        assert_eq!(
+            text("~/.claude/skills/paparan-deck/references/charts.md"),
+            "charts\n"
+        );
+        for bad in ["../x.md", "/etc/passwd", "references/../SKILL.md", ""] {
+            assert!(s.read(bad).is_err(), "{bad}");
+        }
+        let missing = s.read("references/nope.md").unwrap_err();
+        assert!(missing.contains("references/calc.md"), "{missing}");
+
+        // Two requests, both with the token; reads don't go back to the server.
+        let seen = t.seen();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[0].url, "https://p.example/api/kantor/me");
+        assert_eq!(
+            seen[1].url,
+            "https://p.example/api/kantor/skills/paparan-sheet"
+        );
+        for r in &seen {
+            assert_eq!(r.method, Method::Get);
+            assert!(r.headers.contains(&("authorization", "Bearer tok".into())));
+        }
+    }
+
+    #[test]
+    fn served_skill_errors_say_what_to_do() {
+        let api = |replies: Vec<Canned>| {
+            Paparan::with_base("https://p.example/api/kantor", Script::new(replies))
+        };
+        let signed_out = api(vec![st(
+            401,
+            r#"{"error":{"code":"unauthorized","message":"revoked"}}"#,
+        )]);
+        let e = fetch_skill(&signed_out, "tok", "paparan-deck").unwrap_err();
+        assert!(e.contains("sign in again"), "{e}");
+
+        let broke = api(vec![ok(
+            r#"{"credits":{"remaining":0},"topup_url":"https://app.paparanai.id/topup"}"#,
+        )]);
+        let e = fetch_skill(&broke, "tok", "paparan-deck").unwrap_err();
+        assert!(
+            e.contains("no Paparan AI credits") && e.contains("https://app.paparanai.id/topup"),
+            "{e}"
+        );
+
+        let unknown = api(vec![
+            ok(ME_OK),
+            st(
+                404,
+                r#"{"error":{"code":"not_found","message":"No skill"}}"#,
+            ),
+            ok(
+                r#"{"skills":[{"name":"paparan-deck","version":"1","description":"d"},{"name":"paparan-doc","version":"2","description":"d"}]}"#,
+            ),
+        ]);
+        let e = fetch_skill(&unknown, "tok", "paparan-slides").unwrap_err();
+        assert!(
+            e.contains("no skill paparan-slides") && e.contains("deck, doc"),
+            "{e}"
+        );
+
+        // A name that can't be a skill isn't sent.
+        let odd = api(vec![ok(ME_OK), ok(r#"{"skills":[]}"#)]);
+        assert!(fetch_skill(&odd, "tok", "../me").is_err());
+
+        struct Down;
+        impl Transport for Down {
+            fn send(&self, _: &HttpRequest) -> Result<HttpResponse, AiError> {
+                Err(AiError::Network("connection refused".into()))
+            }
+        }
+        let offline = Paparan::with_base("https://p.example/api/kantor", Arc::new(Down));
+        let e = fetch_skill(&offline, "tok", "paparan-deck").unwrap_err();
+        assert!(e.contains("offline"), "{e}");
     }
 }

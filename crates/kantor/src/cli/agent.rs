@@ -15,7 +15,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use kantor_ai::agent::{self, Ending, Event, Limits, LocalSkill, Prices, PromptSource};
+use kantor_ai::agent::{
+    self, Ending, Event, Limits, LocalSkill, Prices, PromptSource, ServedSkill,
+};
+use kantor_ai::paparan::Paparan;
 use kantor_ai::{Cancel, Client, ProviderConfig, ProviderId, UreqTransport};
 use serde_json::json;
 
@@ -33,9 +36,10 @@ pub const USAGE: &str = "usage: kantor agent run [options] PROMPT\n\
     \x20     --base-url URL      the API's base URL (…/v1)\n\
     \x20     --api-key-env VAR   the environment variable holding the API key\n\
     \x20     --provider paparan  Paparan AI with the sign-in saved by Kantor\n\
-    \x20                         (credits; --model paparan-auto by default)\n\
+    \x20                         (credits; --model paparan-agent by default)\n\
     Job:\n\
     \x20     --skill DIR         a skill folder (SKILL.md, references/, examples/)\n\
+    \x20     --skill deck|doc|sheet  with --provider paparan: Paparan AI's skill\n\
     \x20     --dir DIR           the work folder (default: the current one)\n\
     \x20     --allow-overwrite   let the agent change files already in the folder\n\
     Limits:\n\
@@ -164,6 +168,38 @@ pub fn main(args: &[OsString]) -> i32 {
     }
 }
 
+/// The served skill `--skill` names (`deck`, `paparan-deck`,
+/// `paparan:deck`), or `None` for a folder.
+fn served_name(arg: &std::path::Path) -> Option<String> {
+    let s = arg.to_str()?;
+    let bare = s.strip_prefix("paparan:");
+    let name = bare.unwrap_or(s);
+    if bare.is_none() && (arg.is_dir() || name.contains(['/', '\\', '.'])) {
+        return None;
+    }
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return None;
+    }
+    Some(if name.starts_with("paparan-") {
+        name.to_owned()
+    } else {
+        format!("paparan-{name}")
+    })
+}
+
+/// Fetch a skill from Paparan AI for this run (kept in memory only).
+fn served_skill(token: &str, name: &str) -> Result<ServedSkill, String> {
+    let transport = Arc::new(UreqTransport::with_timeouts(
+        Duration::from_secs(30),
+        Duration::from_secs(60),
+    ));
+    kantor_ai::paparan::fetch_skill(&Paparan::new(transport), token, name)
+}
+
 fn run(o: Opts) -> Result<i32, String> {
     let prompt = o.prompt.join(" ");
     let prompt = match prompt.strip_prefix('@') {
@@ -183,7 +219,7 @@ fn run(o: Opts) -> Result<i32, String> {
             model: o
                 .model
                 .clone()
-                .unwrap_or_else(|| kantor_ai::paparan::DEFAULT_MODEL.to_owned()),
+                .unwrap_or_else(|| kantor_ai::paparan::AGENT_MODEL.to_owned()),
             base_url: o
                 .base_url
                 .clone()
@@ -212,16 +248,21 @@ fn run(o: Opts) -> Result<i32, String> {
             api_key,
         }
     };
-    // TODO: `--skill paparan:NAME` for prompts served by Paparan AI
-    // (agent::ServedSkill) once the backend serves them.
-    let skill = match &o.skill {
-        Some(dir) if dir.to_string_lossy().starts_with("paparan:") => {
-            return Err(
-                "skills served by Paparan AI aren't available yet; give a skill folder".into(),
-            );
-        }
-        Some(dir) => Some(LocalSkill::open(dir)?),
+    let skill: Option<Box<dyn PromptSource>> = match &o.skill {
         None => None,
+        Some(arg) => match served_name(arg) {
+            Some(name) if o.paparan => {
+                let token = config.api_key.as_deref().unwrap_or_default();
+                Some(Box::new(served_skill(token, &name)?))
+            }
+            Some(name) => {
+                return Err(format!(
+                    "{} is not a folder; Paparan AI's {name} skill needs --provider paparan",
+                    arg.display()
+                ));
+            }
+            None => Some(Box::new(LocalSkill::open(arg)?)),
+        },
     };
     let dir = match &o.dir {
         Some(d) => {
@@ -252,7 +293,7 @@ fn run(o: Opts) -> Result<i32, String> {
     let outcome = agent::run(
         &client,
         &mut tools,
-        skill.as_ref().map(|s| s as &dyn PromptSource),
+        skill.as_deref(),
         &prompt,
         &o.limits,
         &cancel,
@@ -401,4 +442,26 @@ fn print_event(out: &mut impl std::io::Write, e: &Event, streaming: &mut bool) {
         Event::Error { message } => writeln!(out, "\n== error: {message}"),
     };
     let _ = out.flush();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::served_name;
+
+    #[test]
+    fn skill_names_and_folders() {
+        let served = |s: &str| served_name(Path::new(s));
+        assert_eq!(served("deck").as_deref(), Some("paparan-deck"));
+        assert_eq!(served("sheet").as_deref(), Some("paparan-sheet"));
+        assert_eq!(served("paparan-doc").as_deref(), Some("paparan-doc"));
+        assert_eq!(served("paparan:deck").as_deref(), Some("paparan-deck"));
+        // Paths are folders.
+        assert_eq!(served("~/.claude/skills/paparan-deck"), None);
+        assert_eq!(served("./deck"), None);
+        assert_eq!(served("paparan:../x"), None);
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(served(dir.path().to_str().unwrap()), None);
+    }
 }
