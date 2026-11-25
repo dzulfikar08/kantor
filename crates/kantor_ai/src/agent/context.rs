@@ -223,12 +223,20 @@ fn shorten_strings(v: &mut Value, over: usize) -> bool {
             );
             true
         }
-        Value::Array(items) => items
-            .iter_mut()
-            .fold(false, |any, i| shorten_strings(i, over) || any),
-        Value::Object(map) => map
-            .values_mut()
-            .fold(false, |any, i| shorten_strings(i, over) || any),
+        Value::Array(items) => {
+            let mut any = false;
+            for i in items {
+                any |= shorten_strings(i, over);
+            }
+            any
+        }
+        Value::Object(map) => {
+            let mut any = false;
+            for i in map.values_mut() {
+                any |= shorten_strings(i, over);
+            }
+            any
+        }
         _ => false,
     }
 }
