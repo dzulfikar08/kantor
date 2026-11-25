@@ -1568,8 +1568,11 @@ enum Cut {
     /// The next cell isn't empty (or the text is right-aligned or
     /// centred against one), so it can't spill.
     Blocked,
-    /// The printed page's edge.
+    /// The printed page's edge, with more columns on the next page.
     PageEdge,
+    /// The end of what prints (the used range or the print area): there
+    /// is nothing past it to spill into.
+    RangeEnd,
     /// The row is too short.
     Short,
 }
@@ -1604,6 +1607,8 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
     let mut hashes: BTreeMap<u32, Vec<(u32, String, f32, f32)>> = BTreeMap::new();
     for i in 0..plan.pages.len().min(FIT_PAGES) {
         let page = sheets_pdf::extract_plain(book, &plan, i);
+        let pr = plan.pages[i];
+        let last_band = pr.cols + 1 >= sp.areas.get(pr.area).map_or(1, |a| a.1.cols.len());
         for t in &page.texts {
             let Some((r, c)) = t.at else { continue };
             if !seen.insert((r, c)) {
@@ -1664,6 +1669,8 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
             }
             let why = if !horizontal {
                 Cut::Short
+            } else if page_edge && last_band {
+                Cut::RangeEnd
             } else if page_edge {
                 Cut::PageEdge
             } else {
@@ -1694,6 +1701,10 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
                 )
             }
             Cut::PageEdge => "the printed page's edge cuts it; fit the sheet to the page width (page_setup fit: \"width\" or \"page\") or narrow the columns".to_owned(),
+            Cut::RangeEnd => format!(
+                "column {col} is the last one that prints, so it can't spill past it; widen column {col} (to about {} characters) or wrap the text",
+                chars(f64::from(cells.iter().map(|x| x.2).fold(0.0f32, f32::max)) + 6.0)
+            ),
             Cut::Short => format!(
                 "the row is too short for it; make row {} taller (or leave its height automatic)",
                 r + 1
@@ -2107,7 +2118,9 @@ mod tests {
             ["Mar", 90, 50, "=B4-C4"],
             ["Total", "=SUM(B2:B4)", "=SUM(C2:C4)", "=SUM(D2:D4)"],
             ["Share", "=B5/B5*100", null, "=ROUND(D5/B5, 2)"],
-        ], "cells": {"F1": "Code", "F2": "'00123", "F3": "'+62 812 1234"}}]}),
+        ], "cells": {"F1": "Code", "F2": "'00123", "F3": "'+62 812 1234"},
+            // F is the last column printed: its text can't spill.
+            "widths": {"F": 14}}]}),
             None,
         )
         .unwrap();
@@ -2307,7 +2320,8 @@ mod tests {
                 "A6": spill,
                 "A8": "Short note",
                 "B10": 123_456_789_012_i64,
-                "A12": "Big", "A14": "Wrapped and fits"
+                "A12": "Big", "A14": "Wrapped and fits",
+                "J1": "A note in the last column that prints"
             },
             "widths": {"A": 10, "B": 4, "C:H": 10},
             "heights": {"12": 9},
@@ -2347,6 +2361,16 @@ mod tests {
             .unwrap_or_else(|| panic!("{all:?}"));
         assert!(a12.message.contains("row 12"), "{}", a12.message);
         assert!(has(&r, "number_hashes", "B10"), "{all:?}");
+        // Nothing prints past the last column to spill into.
+        let j1 = cut
+            .iter()
+            .find(|f| f.range.unwrap().name() == "J1")
+            .unwrap_or_else(|| panic!("{all:?}"));
+        assert!(
+            j1.message.contains("last one that prints"),
+            "{}",
+            j1.message
+        );
         // Spilling into empty cells, a short text in a wide merge and wrapped
         // text in an automatic row are fine.
         for ok in ["A6", "A8:F8", "A8", "A14"] {
@@ -2357,7 +2381,7 @@ mod tests {
                 "{ok}: {all:?}"
             );
         }
-        assert_eq!(cut.len(), 3, "{all:?}");
+        assert_eq!(cut.len(), 4, "{all:?}");
     }
 
     /// A merged title wider than the printed page is cut at the page's

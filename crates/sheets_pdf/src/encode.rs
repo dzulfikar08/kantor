@@ -699,7 +699,7 @@ impl Pen<'_> {
             self.rotated(surface, t, &line);
             return;
         }
-        let p = place(&mut self.shaper, t, line, lead, trail, avail);
+        let p = place(self.shaper, t, line, lead, trail, avail);
         let (line, k, repeat, x, width, base, asc, desc) =
             (p.line, p.k, p.repeat, p.x, p.width, p.base, p.asc, p.desc);
         // Clip only when the text reaches out of its room.
