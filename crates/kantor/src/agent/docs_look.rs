@@ -208,7 +208,7 @@ fn base(fonts: Value, palette: Value) -> Value {
 pub fn preset(name: &str) -> Result<Value> {
     Ok(match name {
         "report" => base(
-            json!({"heading": "Cambria", "body": "Calibri", "mono": "Consolas"}),
+            json!({"heading": "Cambria", "body": "Calibri", "mono": "Courier New"}),
             json!({"accent": "#2F4B7C", "ink": "#1F2328", "muted": "#5C6672", "rule": "#C8CED6",
                    "tint": "#EDF1F6", "bullet": "ink", "link": "accent",
                    "accent2": "#8DA4C7", "accent3": "#C27A3A", "accent4": "#5C6672",
@@ -216,7 +216,7 @@ pub fn preset(name: &str) -> Result<Value> {
         ),
         "proposal" => {
             let mut v = base(
-                json!({"heading": "Calibri", "body": "Calibri", "mono": "Consolas"}),
+                json!({"heading": "Calibri", "body": "Calibri", "mono": "Courier New"}),
                 json!({"accent": "#1F5E5B", "ink": "#1E2326", "muted": "#5B666D", "rule": "#D2D9DB",
                        "tint": "#EAF2F0", "bullet": "accent", "link": "accent",
                        "accent2": "#8DB5AF", "accent3": "#C8843E", "accent4": "#5B666D",
@@ -244,7 +244,7 @@ pub fn preset(name: &str) -> Result<Value> {
         }
         "letter" => {
             let mut v = base(
-                json!({"heading": "Calibri", "body": "Calibri", "mono": "Consolas"}),
+                json!({"heading": "Calibri", "body": "Calibri", "mono": "Courier New"}),
                 json!({"accent": "#33415C", "ink": "#1F1F1F", "muted": "#5F6368", "rule": "#CFD3D8",
                        "tint": "#F0F2F5", "bullet": "ink", "link": "accent",
                        "accent2": "#8C99AD", "accent3": "#B07A45", "accent4": "#5F6368",
@@ -1216,7 +1216,7 @@ impl Look {
         for (k, d) in [
             ("heading", "Calibri"),
             ("body", "Calibri"),
-            ("mono", "Consolas"),
+            ("mono", "Courier New"),
         ] {
             fonts.entry(k.to_owned()).or_insert_with(|| d.to_owned());
         }

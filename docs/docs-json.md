@@ -63,7 +63,10 @@ Top-level keys:
 - `accent`: the client's brand colour. Headings, numbers, bullets, links,
   table rules and the first chart series follow it; the preset's tints are
   mixed from it.
-- `fonts`: `{"heading", "body", "mono"}` font names.
+- `fonts`: `{"heading", "body", "mono"}` font names. The mono font (inline
+  code, the `Code` character style) is Courier New by default: an Office
+  font with a metric-compatible stand-in (Liberation Mono) where it isn't
+  installed.
 - `lang`: a language tag (`en-US` default). `id-ID` (Indonesian) also
   sets the labels (Gambar, Tabel, Daftar Isi) and the decimal comma.
 - `properties`: `title`, `subject`, `author`, `company`, `keywords`,
@@ -84,6 +87,14 @@ Top-level keys:
   `{section_pages}`, `{title}`, `{subject}`, `{author}`, `{company}`,
   `{heading}` (the page's Heading 1, a STYLEREF field), `{date}`,
   `{version}`, `{status}`. Page numbers and the title are fields.
+  `{pages}` counts the pages that are numbered: with a cover or contents
+  the body's pages (numbered from 1), so the last page reads "8 / 8", not
+  "8 / 10". It is a `NUMPAGES` field without front matter, `SECTIONPAGES`
+  when the body is one section (the front matter is a section of its
+  own), and with `section` blocks a `PAGEREF` to the hidden bookmark
+  `_KantorEnd` at the end of the document (the last page's number;
+  Kantor fills it in when building, Word updates it as it lays out the
+  pages, or with F9). Word keeps all three right as the text changes.
 - `first_page_header`: `false` leaves the header and footer off the body's
   first page (letters).
 - `numbered_headings`: `false` turns heading numbers off.
@@ -103,7 +114,7 @@ markdown:
 
 | write | get |
 |---|---|
-| `**bold**`, `*italic*`, `` `code` `` | bold, italic, the mono font |
+| `**bold**`, `*italic*`, `` `code` `` | the character styles Strong, Emphasis and Code (the mono font) |
 | `[label](https://example.com)` | a hyperlink (`[label](#id)` links inside the document) |
 | `[^Source: annual report 2025.]` | a footnote (the note's own text may use markdown) |
 | `{ref:id}` | a cross-reference to the heading, figure or table with that `id` |
@@ -240,7 +251,10 @@ List Bullet (2, 3), List Number (2, 3), TOC Heading, TOC 1–3, Table of
 Figures, Header, Footer, Footnote Text, No Spacing; the characters styles
 Strong, Emphasis, Hyperlink, Footnote Reference; and Kantor's Figure,
 Table Text, Table Header, Callout, Callout Title, Cover Label, Cover Meta
-and Code. The table style is "Document Table".
+and Code. The table style is "Document Table". Inline code (`` `x` `` and
+`"code": true` runs) takes the Code style, so `"styles": {"Code": {"size":
+9.5}}` changes all of it. Header rows of tables keep with the first body
+row, and rows don't break across pages.
 
 Palette names (anywhere a colour goes): `accent`, `ink`, `muted`, `rule`,
 `tint`, `bullet`, `link`, `accent2`–`accent6` (chart series), `white`,
@@ -336,6 +350,7 @@ PNGs use the same layout). Findings name the paragraph id and the page:
 | `cell_overflow` | error | text wider than its table cell (a long word, number or link that can't wrap) |
 | `past_margin` | warning | text, a table or a picture reaching past the right margin |
 | `heading_at_page_bottom` | warning / info | a heading alone at the bottom of a page, its text on the next (info when the heading keeps with the next paragraph: Word moves it) |
+| `table_at_page_bottom` | warning / info | a table whose header row sits alone at the bottom of a page, its body rows on the next (warning), or that starts with one body row before a page break (info) |
 | `mixed_fonts` | warning | body text in more than one font family |
 | `placeholder_text` | error | text left from a template: Lorem ipsum, TBD, TODO, XXX, [Client name], <insert …>, {{field}} |
 | `double_space` | info | two spaces in a row inside a sentence |

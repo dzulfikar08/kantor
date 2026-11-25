@@ -293,8 +293,14 @@ fn run(o: &Map<String, Value>, look: &Look, base: &RunFmt, out: &mut Vec<Piece>)
     if opt_bool(o, "subscript")? == Some(true) {
         f.vert = Some("subscript");
     }
+    // Code is the Code character style (so overriding the style changes
+    // every code run); a run that already has a style gets the mono font.
     if opt_bool(o, "code")? == Some(true) {
-        f.font = Some(look.font("mono"));
+        if f.style.is_none() {
+            f.style = Some("Code".into());
+        } else {
+            f.font = Some(look.font("mono"));
+        }
     }
     if let Some(v) = get(o, "size") {
         points(v, "size")?;

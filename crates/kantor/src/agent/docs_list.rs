@@ -99,6 +99,7 @@ pub fn bookmarks(doc: &Document) -> Vec<Value> {
                 && let Some(n) = el.attr("name")
                 && !n.starts_with("_Toc")
                 && n != "_GoBack"
+                && n != "_KantorEnd"
                 && !n.ends_with("_text")
             {
                 out.push(json!({"name": n, "id": i, "text": shown(doc, i).trim().chars().take(80).collect::<String>()}));
