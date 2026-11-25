@@ -215,6 +215,7 @@ impl Cx<'_> {
         message: String,
         details: Value,
     ) {
+        debug_assert!(CHECKS.iter().any(|c| c.0 == check), "{check} isn't listed");
         let page = para.and_then(|p| self.pages.page(p));
         self.out.push(Finding {
             severity,
@@ -477,8 +478,7 @@ fn check_fields(cx: &mut Cx) {
         }
     }
     for (id, list) in seq {
-        let mut expect = 1;
-        for (para, shown_n) in &list {
+        for (expect, (para, shown_n)) in (1u32..).zip(list.iter()) {
             let n = shown_n.parse::<u32>().ok();
             if n != Some(expect) {
                 cx.add(
@@ -490,7 +490,6 @@ fn check_fields(cx: &mut Cx) {
                 );
                 break;
             }
-            expect += 1;
         }
     }
     // Tables of contents: rebuilt, do they read the same?

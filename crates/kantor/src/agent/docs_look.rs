@@ -648,10 +648,6 @@ fn on_off(name: &str, v: Option<bool>) -> String {
 }
 
 impl RunFmt {
-    pub fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-
     /// The `w:rPr` children, in schema order.
     pub fn children(&self) -> String {
         let mut x = String::new();
@@ -742,10 +738,6 @@ pub struct ParaFmt {
 }
 
 impl ParaFmt {
-    pub fn is_empty(&self) -> bool {
-        *self == Self::default()
-    }
-
     /// The `w:pPr` children before `rPr` (style first), in schema order.
     pub fn children(&self, style: Option<&str>) -> String {
         let mut x = String::new();
@@ -803,30 +795,6 @@ impl ParaFmt {
             x.push_str(&format!("<w:outlineLvl w:val=\"{o}\"/>"));
         }
         x
-    }
-
-    pub fn overlay(&mut self, o: &ParaFmt) {
-        macro_rules! take {
-            ($($f:ident),*) => {$( if o.$f.is_some() { self.$f = o.$f; } )*};
-        }
-        take!(
-            align,
-            before,
-            after,
-            line,
-            indent,
-            indent_right,
-            first_line,
-            keep_next,
-            keep_lines,
-            page_break_before,
-            outline,
-            contextual,
-            num
-        );
-        if !o.tabs.is_empty() {
-            self.tabs = o.tabs.clone();
-        }
     }
 }
 
@@ -951,9 +919,6 @@ pub struct PageSpec {
 impl PageSpec {
     pub fn text_width(&self) -> i64 {
         (self.width - self.left - self.right).max(720)
-    }
-    pub fn text_height(&self) -> i64 {
-        (self.height - self.top - self.bottom).max(720)
     }
 }
 
@@ -1094,11 +1059,6 @@ pub struct Look {
     pub labels: Labels,
     pub lang: String,
 }
-
-pub const PALETTE_NAMES: &[&str] = &[
-    "accent", "ink", "muted", "rule", "tint", "bullet", "link", "white", "black", "accent2",
-    "accent3", "accent4", "accent5", "accent6",
-];
 
 impl Look {
     /// A colour: a palette name or `#RRGGBB` → `RRGGBB`.

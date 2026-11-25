@@ -183,19 +183,21 @@ pub fn markdown(s: &str, base: &RunFmt, mono: &str, notes: bool) -> Vec<Piece> {
                 }
             }
         }
-        if c == '[' && next == Some('^') && notes {
-            if let Some(end) = find(&chars, i + 2, "]") {
-                flush(&mut buf, &mut out, m);
-                let inner: String = chars[i + 2..end].iter().collect();
-                out.push(Piece::Note(markdown(
-                    inner.trim(),
-                    &RunFmt::default(),
-                    mono,
-                    false,
-                )));
-                i = end + 1;
-                continue;
-            }
+        if c == '['
+            && next == Some('^')
+            && notes
+            && let Some(end) = find(&chars, i + 2, "]")
+        {
+            flush(&mut buf, &mut out, m);
+            let inner: String = chars[i + 2..end].iter().collect();
+            out.push(Piece::Note(markdown(
+                inner.trim(),
+                &RunFmt::default(),
+                mono,
+                false,
+            )));
+            i = end + 1;
+            continue;
         }
         if c == '['
             && let Some(mid) = find(&chars, i + 1, "](")

@@ -309,7 +309,6 @@ enum Item {
 /// Numbering ids a writer uses.
 #[derive(Clone, Copy, Debug)]
 pub struct Nums {
-    pub headings: u32,
     pub bullets: u32,
     pub bullets_abs: u32,
     pub numbers_abs: u32,
@@ -439,7 +438,6 @@ impl<'a> Writer<'a> {
         let max_abs = max_attr(&numbering, "w:abstractNumId").max(0) as u32;
         let max_num = max_attr(&numbering, "w:numId").max(0) as u32;
         let nums = Nums {
-            headings: 0,
             bullets: max_num + 1,
             bullets_abs: max_abs + 1,
             numbers_abs: max_abs + 2,
@@ -2477,7 +2475,6 @@ pub fn build(json: &Value, base: Option<&Path>) -> Result<Built> {
         Some(_) => bail!("`blocks` must be an array"),
     };
     let nums = Nums {
-        headings: super::docs_look::NUM_HEADINGS,
         bullets: super::docs_look::NUM_BULLETS,
         bullets_abs: 2,
         numbers_abs: 3,

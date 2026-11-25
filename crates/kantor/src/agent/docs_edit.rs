@@ -583,7 +583,7 @@ impl Session {
         }
         // Markers, highest place first so the lower ids hold.
         let mut places = vec![(b, 'B'), (a, 'A'), (dest, 'C')];
-        places.sort_by(|x, y| y.0.cmp(&x.0));
+        places.sort_by_key(|x| std::cmp::Reverse(x.0));
         for (at, tag) in &places {
             let d = self.doc()?;
             d.insert_paragraphs(
@@ -810,10 +810,10 @@ impl Session {
         if sects.is_empty() {
             bail!("the document has no sections");
         }
-        if let Some(n) = section {
-            if n == 0 || n > sects.len() {
-                bail!("there is no section {n} (the document has {})", sects.len());
-            }
+        if let Some(n) = section
+            && (n == 0 || n > sects.len())
+        {
+            bail!("there is no section {n} (the document has {})", sects.len());
         }
         let mut out = xml.clone();
         let mut changed = 0;
