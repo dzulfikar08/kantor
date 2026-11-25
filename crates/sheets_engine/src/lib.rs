@@ -8,6 +8,7 @@
 //! (one sheet, values only); `.ods` / `.xls` / `.xlsb` open read-only and save
 //! as `.xlsx`. See [`SourceFormat`] and the `import` module docs.
 
+mod author;
 mod batch;
 mod cf_edit;
 mod cf_x14;
@@ -63,6 +64,7 @@ mod xls_formula;
 mod xls_ftab;
 mod xlsb;
 
+pub use author::{BorderEdges, DefinedName};
 pub use cf_edit::{
     AVERAGE_CHOICES, COLOR_SCALES, CfBarAxis, CfBarDirection, CfBarOptions, CfCompare, CfFormat,
     CfIconRef, CfIconStep, CfPeriod, CfRuleDef, CfRuleInfo, CfSpec, CfTextOp, CfValue, CfValueKind,
@@ -75,7 +77,9 @@ pub use chart_options::{
     AxisOptions, AxisType, DataLabels, DisplayUnits, LabelFont, LabelPos, TimeUnit,
 };
 pub use chart_sheet::sheet_name_problem;
-pub use chart_style::from_data::{DataCategory, DataChart, DataSeries, data_chart_part};
+pub use chart_style::from_data::{
+    DataCategory, DataChart, DataSeries, SeriesRefs, data_chart_part,
+};
 pub use drawing::Tab;
 pub use grid::{
     BREAK_PREVIEW_ZOOM, BUILTIN_LISTS, SHEET_ZOOM_MAX, SHEET_ZOOM_MIN, parse_custom_list,

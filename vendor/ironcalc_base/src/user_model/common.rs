@@ -178,6 +178,35 @@ fn update_style(old_value: &Style, style_path: &str, value: &str) -> Result<Styl
                 style.alignment = Some(alignment)
             }
         },
+        // KANTOR PATCH (author styles): the font's typeface (no longer the
+        // theme's), indent and text rotation, for `kantor sheets`.
+        "font.name" => {
+            let name = value.trim();
+            if name.is_empty() || name.chars().count() > 31 {
+                return Err(format!("Invalid value for font name: '{value}'."));
+            }
+            name.clone_into(&mut style.font.name);
+            style.font.scheme = crate::types::FontScheme::None;
+        }
+        "alignment.indent" | "alignment.text_rotation" => {
+            let n: u32 = value
+                .parse()
+                .map_err(|_| format!("Invalid value for {style_path}: '{value}'."))?;
+            let ok = if style_path == "alignment.indent" {
+                n <= 250
+            } else {
+                n <= 180 || n == 255
+            };
+            if !ok {
+                return Err(format!("Invalid value for {style_path}: '{value}'."));
+            }
+            let a = style.alignment.get_or_insert_with(Alignment::default);
+            if style_path == "alignment.indent" {
+                a.indent = n;
+            } else {
+                a.text_rotation = n;
+            }
+        }
         _ => {
             return Err(format!("Invalid style path: '{style_path}'."));
         }

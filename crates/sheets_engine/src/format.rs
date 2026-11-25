@@ -707,7 +707,7 @@ impl Workbook {
     }
 }
 
-fn check_style_range(range: CellRange) -> Result<()> {
+pub(crate) fn check_style_range(range: CellRange) -> Result<()> {
     if range.bottom >= MAX_ROWS || range.right >= MAX_COLS {
         bail!("range out of bounds");
     }

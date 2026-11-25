@@ -922,6 +922,19 @@ as Excel writes them.
 Tests: `test/test_kantor_ref_names.rs` (`deleted_sheet_names_keep_the_cell_part`);
 Kantor's office scenario `sheets_deleted_sheet_name.xlsx` (tools/fidelity).
 
+## 35. Typeface, indent and rotation through style paths
+
+Why: `kantor sheets edit` sets any cell formatting by style path
+(`update_range_style`); upstream's paths stop at the font flags, size,
+colours, number format and three alignment fields.
+
+What: `user_model/common.rs` `update_style` takes `font.name` (the typeface;
+the font's `scheme` becomes `none`, so Excel shows that typeface and not the
+theme's), `alignment.indent` (0-250 steps) and `alignment.text_rotation`
+(0-180, or 255 for stacked letters).
+
+Tests: Kantor's `crates/sheets_engine/tests/author.rs`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

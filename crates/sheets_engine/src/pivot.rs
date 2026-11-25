@@ -3981,7 +3981,7 @@ impl Workbook {
         rc
     }
 
-    fn pivot_info(&self, p: &Placed) -> PivotInfo {
+    pub(crate) fn pivot_info(&self, p: &Placed) -> PivotInfo {
         let state = self.pivot_state();
         let cache = self.pivot_cache(&state, p.def.cache);
         PivotInfo {
