@@ -3,7 +3,8 @@
 Kantor builds, reads, edits and audits Excel workbooks from the command line,
 with no window and without openpyxl. Formulas stay formulas (Kantor's
 engine calculates them, and the saved file carries their values), and the
-files open in Excel.
+files open in Excel. Presentations and Word documents have the same kind of
+commands: [slides-json.md](slides-json.md), [docs-json.md](docs-json.md).
 
 ```sh
 kantor sheets build book.json -o book.xlsx        # a whole workbook (-f to overwrite)
@@ -250,7 +251,8 @@ fix with `edit` (`to_numbers`, `to_dates`, `trim`, `remove_duplicates`,
 `kantor convert book.xlsx -o shots/ --to png` draws each printed page (as
 the PDF export prints it: every visible sheet, or `--sheet`) as
 `shots/book-01.png`, `-02`…; `--contact-sheet` puts the pages in one
-picture, `--width` sets the width in pixels. The page setup options
+picture, `--page 2-4` draws only those pages, `--width` sets the width in
+pixels. The page setup options
 (`--fit-page`, `--landscape`, `--paper`...) apply; for a dashboard,
 `page_setup` with `"fit": "page"` and `"landscape": true` makes one page.
 

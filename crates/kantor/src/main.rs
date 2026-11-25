@@ -8,6 +8,7 @@
 //! kantor pdf TOOL ...       PDF tools without a window (see cli/pdf.rs)
 //! kantor convert IN OUT     convert without a window (see cli/convert.rs)
 //! kantor slides build ...   build and edit .pptx from JSON (see cli/slides.rs)
+//! kantor docs build ...     build, check and edit .docx from JSON (see cli/docs.rs)
 //! ```
 //!
 //! On Windows a release kantor.exe is a GUI program (no console window pops up
@@ -47,7 +48,7 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
     \x20      kantor pdf <tool> [options]\n\
     \x20      kantor convert [options] INPUT OUTPUT\n\
     \x20      kantor slides <build|list|edit|schema|merge> ...\n\
-    \x20      kantor docs merge TEMPLATE.docx [DATA] -o DIR [options]\n\
+    \x20      kantor docs <build|list|check|edit|schema|merge> ...\n\
     \x20      kantor sheets <build|list|edit|check|schema> ...\n\
     \x20      kantor sheets merge TEMPLATE.xlsx DATA -o DIR [options]\n\
     \n\
@@ -60,6 +61,7 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
     `kantor convert` converts .docx to .pdf and between spreadsheet formats\n\
     without opening a window (kantor convert --help).\n\
     `kantor slides` builds and edits presentations from JSON (kantor slides --help).\n\
+    `kantor docs` builds, checks and revises Word documents from JSON (kantor docs --help).\n\
     `kantor sheets` builds, edits, lists and checks workbooks from JSON (kantor sheets --help).\n\
     `kantor docs merge`, `kantor slides merge` and `kantor sheets merge` fill a template\n\
     in once per row of a workbook or CSV file (mail merge; add --help).";
@@ -127,6 +129,11 @@ fn main() {
         let args: Vec<_> = std::env::args_os().skip(2).collect();
         std::process::exit(cli::slides::main(&args));
     }
+    if raw.first().map(String::as_str) == Some("docs") {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+        let args: Vec<_> = std::env::args_os().skip(2).collect();
+        std::process::exit(cli::docs::main(&args));
+    }
     if raw.first().map(String::as_str) == Some("sheets")
         && raw.get(1).map(String::as_str) != Some("merge")
     {
@@ -134,15 +141,11 @@ fn main() {
         let args: Vec<_> = std::env::args_os().skip(2).collect();
         std::process::exit(cli::sheets::main(&args));
     }
-    if matches!(raw.first().map(String::as_str), Some("docs" | "sheets"))
+    if raw.first().map(String::as_str) == Some("sheets")
         && raw.get(1).map(String::as_str) == Some("merge")
     {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
-        let app = if raw[0] == "docs" {
-            cli::merge::App::Docs
-        } else {
-            cli::merge::App::Sheets
-        };
+        let app = cli::merge::App::Sheets;
         let args: Vec<_> = std::env::args_os().skip(3).collect();
         std::process::exit(cli::merge::main(app, &args));
     }

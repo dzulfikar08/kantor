@@ -382,7 +382,7 @@ pub struct Float {
     /// Charts inside a group or canvas (`c:chart` in a graphic frame): the
     /// relationship id and the chart part's name.
     pub group_charts: Vec<(String, String)>,
-    /// In line with the text (`wp:inline`; SmartArt only): a box of its
+    /// In line with the text (`wp:inline`; SmartArt and charts): a box of its
     /// size in the line, like an inline picture, not placed on its own.
     pub inline: bool,
 }
@@ -1739,9 +1739,9 @@ pub(crate) fn read(xml_src: &str, rel_part: &dyn Fn(&str) -> Option<String>) -> 
     } else {
         FloatKind::Other("Drawing".into())
     };
-    // In line with text, only SmartArt is drawn this way (pictures are
-    // `Image`s; other inline drawings stay placeholders).
-    if inline && !matches!(kind, FloatKind::SmartArt { .. }) {
+    // In line with text, SmartArt and charts are drawn this way (pictures
+    // are `Image`s; other inline drawings stay placeholders).
+    if inline && !matches!(kind, FloatKind::SmartArt { .. } | FloatKind::Chart { .. }) {
         return None;
     }
     let group_charts = match kind {

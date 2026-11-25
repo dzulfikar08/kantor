@@ -49,7 +49,7 @@ mod table_props;
 pub mod tabs;
 mod track;
 mod track_table;
-mod xml;
+pub mod xml;
 
 pub use columns::{COLUMN_BREAK, Column, ColumnPreset, Columns, ColumnsApply};
 pub use document::{

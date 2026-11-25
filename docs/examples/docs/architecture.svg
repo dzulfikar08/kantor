@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="760" viewBox="0 0 1600 760" font-family="Carlito, Calibri, sans-serif">
+  <rect width="1600" height="760" fill="#FFFFFF"/>
+  <!-- Columns: plant floor, edge, platform, people -->
+  <g font-size="26" fill="#5B666D" font-weight="700" letter-spacing="2">
+    <text x="130" y="60">PLANT FLOOR</text>
+    <text x="545" y="60">EDGE</text>
+    <text x="860" y="60">PLATFORM</text>
+    <text x="1290" y="60">PEOPLE</text>
+  </g>
+  <g fill="#EAF2F0" stroke="#1F5E5B" stroke-width="3">
+    <rect x="60" y="100" width="340" height="120"/>
+    <rect x="60" y="260" width="340" height="120"/>
+    <rect x="60" y="420" width="340" height="120"/>
+    <rect x="60" y="580" width="340" height="120"/>
+  </g>
+  <g font-size="30" fill="#1E2326">
+    <text x="90" y="152">Filling lines 1-4</text><text x="90" y="192" font-size="24" fill="#5B666D">vibration, current, heat</text>
+    <text x="90" y="312">Compressors</text><text x="90" y="352" font-size="24" fill="#5B666D">pressure, run hours</text>
+    <text x="90" y="472">Boiler house</text><text x="90" y="512" font-size="24" fill="#5B666D">flue gas, water quality</text>
+    <text x="90" y="632">Existing PLCs</text><text x="90" y="672" font-size="24" fill="#5B666D">OPC UA, Modbus TCP</text>
+  </g>
+  <rect x="500" y="260" width="250" height="280" fill="#1F5E5B"/>
+  <g font-size="30" fill="#FFFFFF"><text x="530" y="380">Edge gateway</text><text x="530" y="420" font-size="24">buffers 72 h</text><text x="530" y="452" font-size="24">offline</text></g>
+  <rect x="830" y="140" width="360" height="520" fill="#FFFFFF" stroke="#1F5E5B" stroke-width="3"/>
+  <g font-size="28" fill="#1E2326">
+    <rect x="860" y="175" width="300" height="90" fill="#EAF2F0"/><text x="885" y="230">Condition models</text>
+    <rect x="860" y="290" width="300" height="90" fill="#EAF2F0"/><text x="885" y="345">Work orders</text>
+    <rect x="860" y="405" width="300" height="90" fill="#EAF2F0"/><text x="885" y="460">Spare parts</text>
+    <rect x="860" y="520" width="300" height="90" fill="#EAF2F0"/><text x="885" y="575">Reports</text>
+  </g>
+  <g fill="#FFFFFF" stroke="#C8843E" stroke-width="3">
+    <rect x="1270" y="180" width="280" height="110"/>
+    <rect x="1270" y="340" width="280" height="110"/>
+    <rect x="1270" y="500" width="280" height="110"/>
+  </g>
+  <g font-size="28" fill="#1E2326">
+    <text x="1295" y="245">Technicians</text>
+    <text x="1295" y="405">Planners</text>
+    <text x="1295" y="565">Plant manager</text>
+  </g>
+  <g stroke="#5B666D" stroke-width="4" fill="none" marker-end="url(#a)">
+    <path d="M400 160 C460 160 450 330 500 330"/>
+    <path d="M400 320 L500 360"/>
+    <path d="M400 480 L500 440"/>
+    <path d="M400 640 C460 640 450 480 500 480"/>
+    <path d="M750 400 L830 400"/>
+    <path d="M1190 235 L1270 235"/>
+    <path d="M1190 395 L1270 395"/>
+    <path d="M1190 555 L1270 555"/>
+  </g>
+  <defs><marker id="a" markerUnits="userSpaceOnUse" markerWidth="16" markerHeight="16" refX="14" refY="8" orient="auto"><path d="M0,0 L16,8 L0,16 z" fill="#5B666D"/></marker></defs>
+</svg>

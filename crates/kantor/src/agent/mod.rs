@@ -4,6 +4,14 @@
 //! views' `agent_edit` hooks (undo step, redraw, highlight) and answers.
 
 pub mod docs;
+pub mod docs_author;
+pub mod docs_check;
+pub mod docs_edit;
+pub mod docs_inline;
+pub mod docs_list;
+pub mod docs_look;
+pub mod docs_pkg;
+pub mod docs_schema;
 pub mod sheets;
 pub mod sheets_author;
 pub mod sheets_chart;

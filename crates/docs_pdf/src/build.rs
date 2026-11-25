@@ -165,6 +165,7 @@ pub fn layout_paragraph(
     lp.indent_right_pt = rp.indent_right_pt;
     lp.first_line_pt = rp.first_line_pt;
     lp.page_break_before = rp.page_break_before;
+    lp.keep_next = keeps_with_next(doc, p);
     lp.align = match rp.align {
         Align::Left => docs_layout::Align::Start,
         Align::Center => docs_layout::Align::Center,
@@ -617,6 +618,45 @@ pub fn table_x(
     }
 }
 
+/// Whether paragraph `p` keeps with the next one (`w:keepNext` on it or
+/// on its style, or the style it's based on…).
+pub fn keeps_with_next(doc: &Document, p: &docs_engine::Paragraph) -> bool {
+    let found = |e: &docs_engine::model::Extras| -> Option<bool> {
+        e.iter()
+            .find(|x| docs_engine::model::element_name(x) == "keepNext")
+            .map(|x| docs_engine::xml::parse(x).is_none_or(|el| el.on()))
+    };
+    if p.cell.is_some() {
+        return false;
+    }
+    if let Some(v) = found(&p.props.extras) {
+        return v;
+    }
+    let mut id = p.props.style.clone();
+    for _ in 0..16 {
+        let Some(s) = id.as_deref().and_then(|i| doc.styles.get(i)) else {
+            return false;
+        };
+        if let Some(v) = found(&s.para.extras) {
+            return v;
+        }
+        id = s.based_on.clone();
+    }
+    false
+}
+
+/// A cell's own shading (`w:shd/@w:fill` in its `w:tcPr`), if it has one.
+pub fn cell_shading(tc_pr: Option<&str>) -> Option<docs_layout::Rgba> {
+    let el = docs_engine::xml::parse(tc_pr?)?;
+    let shd = el.child("shd")?;
+    let fill = shd.attr("fill")?;
+    if fill.eq_ignore_ascii_case("auto") || shd.attr("val") == Some("nil") {
+        return None;
+    }
+    let rgb = docs_engine::Rgb::parse(&fill.to_ascii_uppercase())?;
+    Some(rgba(rgb))
+}
+
 /// Word's shading of cells merged with Track Changes on (light yellow).
 pub const MERGED_FILL: docs_layout::Rgba = docs_layout::Rgba([0xFF, 0xFF, 0x99, 0xA0]);
 
@@ -718,7 +758,8 @@ fn table_block(
                     .tracked()
                     .or(row.tracked())
                     .map(tracked_fill)
-                    .or(cell.merge_tracked().then_some(MERGED_FILL)),
+                    .or(cell.merge_tracked().then_some(MERGED_FILL))
+                    .or_else(|| cell_shading(cell.tc_pr.as_deref())),
             });
         }
         let (min_height, exact) = row.height.map_or((0.0, false), |(h, e)| (tw(h), e));
@@ -864,6 +905,24 @@ fn table_range(paras: &[docs_engine::Paragraph], id: u32) -> std::ops::Range<usi
             s..s + len
         }
         None => 0..0,
+    }
+}
+
+#[cfg(test)]
+mod shading_tests {
+    #[test]
+    fn cell_shading_reads_the_fill() {
+        let f = super::cell_shading(Some(
+            r#"<w:tcPr><w:shd w:val="clear" w:color="auto" w:fill="EAF2F0"/></w:tcPr>"#,
+        ));
+        assert_eq!(f.map(|c| c.0), Some([0xEA, 0xF2, 0xF0, 0xFF]));
+        assert!(
+            super::cell_shading(Some(
+                r#"<w:tcPr><w:shd w:val="clear" w:fill="auto"/></w:tcPr>"#
+            ))
+            .is_none()
+        );
+        assert!(super::cell_shading(None).is_none());
     }
 }
 

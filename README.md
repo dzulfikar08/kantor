@@ -175,6 +175,8 @@ kantor convert --sheet Sales --fit-width --landscape --paper f4 book.xlsx sales.
 kantor convert -o out/ --to pdf a.docx b.docx
 kantor convert deck.pptx -o shots/ --to png     # shots/deck-01.png … as the PDF draws them;
                                                # --slide 2-4, --width 1600, --contact-sheet
+kantor convert doc.docx -o shots/ --to png      # a document's pages; a workbook's printed
+                                               # pages (book.xlsx); --page 2-4
 kantor pdf merge a.pdf b.pdf -o both.pdf       # also split, extract, delete, reorder, rotate,
                                                # info, images, watermark, page-numbers, compress
 kantor pdf verify signed.pdf                   # signature report; exit 0 if all valid,

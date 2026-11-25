@@ -133,17 +133,43 @@ pub fn render(
             .collect(),
     };
     let pdf = slides_pdf::write(&deck)?;
-    let doc = pdf_engine::PdfDoc::open(Arc::new(pdf), "")
-        .map_err(|e| anyhow!("reading the slides' PDF: {e}"))?;
-    let renderer = pdf_engine::Renderer::new(&doc);
     // Page width in points (px × 0.75).
     let page_w = (deck.width * 0.75).max(1.0);
     let scale = width.clamp(MIN_WIDTH, MAX_WIDTH) as f32 / page_w;
-    (0..slides.len())
-        .map(|page| {
+    let pages: Vec<usize> = (0..slides.len()).collect();
+    rasterize(pdf, &pages, |_| scale)
+        .map_err(|(k, e)| e.unwrap_or_else(|| anyhow!("can't draw slide {}", slides[k] + 1)))
+}
+
+/// Pages `pages` (0-based) of a PDF, each drawn at `scale(page size in
+/// points)` px per point. An error names the page it failed on (index into
+/// `pages`).
+fn rasterize(
+    pdf: Vec<u8>,
+    pages: &[usize],
+    scale: impl Fn((f32, f32)) -> f32,
+) -> std::result::Result<Vec<Image>, (usize, Option<anyhow::Error>)> {
+    let doc = pdf_engine::PdfDoc::open(Arc::new(pdf), "")
+        .map_err(|e| (0, Some(anyhow!("reading the PDF: {e}"))))?;
+    rasterize_open(&doc, pages, scale)
+}
+
+/// [`rasterize`] for a PDF already open.
+fn rasterize_open(
+    doc: &pdf_engine::PdfDoc,
+    pages: &[usize],
+    scale: impl Fn((f32, f32)) -> f32,
+) -> std::result::Result<Vec<Image>, (usize, Option<anyhow::Error>)> {
+    let renderer = pdf_engine::Renderer::new(doc);
+    let sizes = doc.page_sizes();
+    pages
+        .iter()
+        .enumerate()
+        .map(|(k, &page)| {
+            let size = sizes.get(page).copied().ok_or((k, None))?;
             let r = renderer
-                .render(page, scale, pdf_engine::Turn(0))
-                .ok_or_else(|| anyhow!("can't draw slide {}", slides[page] + 1))?;
+                .render(page, scale(size), pdf_engine::Turn(0))
+                .ok_or((k, None))?;
             let rgb = r
                 .rgba
                 .as_chunks::<4>()
@@ -160,33 +186,51 @@ pub fn render(
         .collect()
 }
 
-/// Every page of a PDF, `width` px wide each.
-pub fn render_pdf(pdf: Vec<u8>, width: u32) -> Result<Vec<Image>> {
+/// Pages `pages` (0-based) of a document, the first page's width `width`
+/// px (every page at that scale: landscape pages come out wider).
+pub fn render_doc(
+    doc: &docs_engine::Document,
+    engine: &mut docs_pdf::Engine,
+    pages: &[usize],
+    width: u32,
+) -> Result<Vec<Image>> {
+    if pages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let laid = docs_pdf::lay_out(doc, engine);
+    let scene = docs_pdf::scene(doc, &laid);
+    let first_w = laid
+        .paged
+        .pages
+        .first()
+        .map_or(794.0, |p| p.setup.width.min(p.setup.height));
+    let pdf = docs_pdf::write(&scene)?;
+    let scale = width.clamp(MIN_WIDTH, MAX_WIDTH) as f32 / (first_w * 0.75).max(1.0);
+    rasterize(pdf, pages, |_| scale)
+        .map_err(|(k, e)| e.unwrap_or_else(|| anyhow!("can't draw page {}", pages[k] + 1)))
+}
+
+/// Pages `pages` (0-based) of a PDF (a printed workbook), each `width` px
+/// wide.
+pub fn render_pdf(pdf: Vec<u8>, pages: &[usize], width: u32) -> Result<Vec<Image>> {
     let doc =
         pdf_engine::PdfDoc::open(Arc::new(pdf), "").map_err(|e| anyhow!("reading the PDF: {e}"))?;
-    let renderer = pdf_engine::Renderer::new(&doc);
-    doc.page_sizes()
-        .iter()
-        .enumerate()
-        .map(|(page, (w, _))| {
-            let scale = width.clamp(MIN_WIDTH, MAX_WIDTH) as f32 / w.max(1.0);
-            let r = renderer
-                .render(page, scale, pdf_engine::Turn(0))
-                .ok_or_else(|| anyhow!("can't draw page {}", page + 1))?;
-            let rgb = r
-                .rgba
-                .as_chunks::<4>()
-                .0
-                .iter()
-                .flat_map(|p| [p[0], p[1], p[2]])
-                .collect();
-            Ok(Image {
-                width: r.width,
-                height: r.height,
-                rgb,
-            })
-        })
-        .collect()
+    render_pdf_doc(&doc, pages, width)
+}
+
+fn render_pdf_doc(doc: &pdf_engine::PdfDoc, pages: &[usize], width: u32) -> Result<Vec<Image>> {
+    let w = width.clamp(MIN_WIDTH, MAX_WIDTH) as f32;
+    rasterize_open(doc, pages, |(pw, _)| w / pw.max(1.0))
+        .map_err(|(k, e)| e.unwrap_or_else(|| anyhow!("can't draw page {}", pages[k] + 1)))
+}
+
+/// The pages `--page` names (all without it) of `n`, 0-based.
+fn chosen_pages(opts: &PngOptions, n: usize, what: &str) -> Result<Vec<usize>> {
+    match &opts.slides {
+        Some(spec) => parse_slides(spec, n)
+            .map_err(|e| anyhow!(e.replace("slide", "page").replace("deck", what))),
+        None => Ok((0..n).collect()),
+    }
 }
 
 /// A PDF's pages (a printed workbook) as PNG files; returns the summary.
@@ -197,60 +241,81 @@ pub fn convert_pdf(
     opts: &PngOptions,
     force: bool,
 ) -> Result<String> {
+    let doc =
+        pdf_engine::PdfDoc::open(Arc::new(pdf), "").map_err(|e| anyhow!("reading the PDF: {e}"))?;
+    let n = doc.page_sizes().len();
+    if n == 0 {
+        bail!("nothing to print");
+    }
+    let pages = chosen_pages(opts, n, "workbook")?;
     let width = opts.width.unwrap_or(if opts.sheet {
         SHEET_WIDTH
     } else {
         DEFAULT_WIDTH
     });
-    let images = render_pdf(pdf, width)?;
-    if images.is_empty() {
-        bail!("nothing to print");
-    }
-    let pages: Vec<usize> = (0..images.len()).collect();
-    let total = pages.len();
-    write_images(
-        images, &pages, total, output, numbered, opts.sheet, force, "page",
-    )
-}
-
-/// Write `images` (of slides or pages `which`, 0-based) as PNG files, or
-/// one contact sheet.
-#[allow(clippy::too_many_arguments)]
-fn write_images(
-    images: Vec<Image>,
-    which: &[usize],
-    total: usize,
-    output: &Path,
-    numbered: bool,
-    sheet: bool,
-    force: bool,
-    what: &str,
-) -> Result<String> {
-    let files = names(output, numbered, which, total, sheet);
+    let files = names(output, numbered, &pages, n, opts.sheet);
     for f in &files {
         if f.exists() && !force {
             bail!("{} exists (use -f to overwrite)", f.display());
         }
     }
+    let images = render_pdf_doc(&doc, &pages, width)?;
+    write_images(images, &pages, &files, opts.sheet, "page")
+}
+
+/// Convert a document to PNG files; returns the summary line.
+pub fn convert_doc(
+    doc: &docs_engine::Document,
+    output: &Path,
+    numbered: bool,
+    opts: &PngOptions,
+    force: bool,
+) -> Result<String> {
+    let mut engine = docs_pdf::Engine::new();
+    let n = docs_pdf::lay_out(doc, &mut engine).paged.pages.len().max(1);
+    let pages = chosen_pages(opts, n, "document")?;
+    let width = opts.width.unwrap_or(if opts.sheet {
+        SHEET_WIDTH
+    } else {
+        DEFAULT_WIDTH
+    });
+    let files = names(output, numbered, &pages, n, opts.sheet);
+    for f in &files {
+        if f.exists() && !force {
+            bail!("{} exists (use -f to overwrite)", f.display());
+        }
+    }
+    let images = render_doc(doc, &mut engine, &pages, width)?;
+    write_images(images, &pages, &files, opts.sheet, "page")
+}
+
+/// Write `images` (of `items`, 0-based) as `files`, or one contact sheet.
+fn write_images(
+    images: Vec<Image>,
+    items: &[usize],
+    files: &[PathBuf],
+    sheet: bool,
+    what: &str,
+) -> Result<String> {
     let (w, h) = images.first().map_or((0, 0), |i| (i.width, i.height));
     if sheet {
-        let thumbs: Vec<(usize, Image)> = which.iter().map(|i| i + 1).zip(images).collect();
-        let picture = contact_sheet(&thumbs);
-        docs_pdf::write_file(&files[0], &picture.png())
+        let thumbs: Vec<(usize, Image)> = items.iter().map(|i| i + 1).zip(images).collect();
+        let s = contact_sheet(&thumbs);
+        docs_pdf::write_file(&files[0], &s.png())
             .with_context(|| format!("can't write {}", files[0].display()))?;
         return Ok(format!(
             "contact sheet of {} {what}{}, {} × {} px",
             thumbs.len(),
             if thumbs.len() == 1 { "" } else { "s" },
-            picture.width,
-            picture.height
+            s.width,
+            s.height
         ));
     }
-    for (img, f) in images.iter().zip(&files) {
+    for (img, f) in images.iter().zip(files) {
         docs_pdf::write_file(f, &img.png())
             .with_context(|| format!("can't write {}", f.display()))?;
     }
-    let shown = match files.as_slice() {
+    let shown = match files {
         [one] => one.display().to_string(),
         [a, .., b] => format!("{} … {}", a.display(), b.display()),
         [] => String::new(),
@@ -337,8 +402,8 @@ fn columns(n: usize, w: u32, h: u32) -> usize {
     c.clamp(1, 8).min(n.max(1))
 }
 
-/// One picture of `thumbs` (slide number from 1, picture) in a grid,
-/// each numbered below.
+/// One picture of `thumbs` (slide or page number from 1, picture) in a
+/// grid of cells as big as the largest, each numbered below.
 pub fn contact_sheet(thumbs: &[(usize, Image)]) -> Image {
     const GAP: u32 = 24;
     const LABEL: u32 = 30;
@@ -348,7 +413,9 @@ pub fn contact_sheet(thumbs: &[(usize, Image)]) -> Image {
     let Some((_, first)) = thumbs.first() else {
         return Image::new(GAP * 2, GAP * 2, BACK);
     };
-    let (tw, th) = (first.width, first.height);
+    let _ = first;
+    let tw = thumbs.iter().map(|t| t.1.width).max().unwrap_or(1);
+    let th = thumbs.iter().map(|t| t.1.height).max().unwrap_or(1);
     let cols = columns(thumbs.len(), tw, th + LABEL) as u32;
     let rows = (thumbs.len() as u32).div_ceil(cols);
     let width = GAP + cols * (tw + GAP);
@@ -358,6 +425,7 @@ pub fn contact_sheet(thumbs: &[(usize, Image)]) -> Image {
         let (c, r) = (k as u32 % cols, k as u32 / cols);
         let x = GAP + c * (tw + GAP);
         let y = GAP + r * (th + LABEL + GAP);
+        let x = x + (tw - img.width) / 2;
         sheet.rect(x - 1, y - 1, img.width + 2, img.height + 2, EDGE);
         sheet.paste(img, x, y);
         draw_number(&mut sheet, *n, x, y + th + 6, 4, INK);
@@ -368,11 +436,12 @@ pub fn contact_sheet(thumbs: &[(usize, Image)]) -> Image {
 /// What `kantor convert … --to png` was asked for.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PngOptions {
-    /// `--slide`: which slides (default: every slide shown in the show).
+    /// `--slide` / `--page`: which slides or pages (default: every slide
+    /// shown in the show, every page).
     pub slides: Option<String>,
-    /// `--width`: px per slide.
+    /// `--width`: px per slide or page.
     pub width: Option<u32>,
-    /// `--contact-sheet`: one PNG of all the slides.
+    /// `--contact-sheet`: one PNG of all the slides or pages.
     pub sheet: bool,
 }
 
@@ -438,11 +507,15 @@ pub fn convert(
     } else {
         DEFAULT_WIDTH
     });
+    let files = names(output, numbered, &slides, n, opts.sheet);
+    for f in &files {
+        if f.exists() && !force {
+            bail!("{} exists (use -f to overwrite)", f.display());
+        }
+    }
     let mut engine = Engine::new();
     let images = render(pres, &mut engine, &slides, width)?;
-    write_images(
-        images, &slides, n, output, numbered, opts.sheet, force, "slide",
-    )
+    write_images(images, &slides, &files, opts.sheet, "slide")
 }
 
 #[cfg(test)]
@@ -501,7 +574,7 @@ mod tests {
         .unwrap();
         let (pdf, pages) = sheets_pdf::export(&mut b, &sheets_pdf::Options::default()).unwrap();
         assert_eq!(pages, 1);
-        let imgs = render_pdf(pdf.clone(), 400).unwrap();
+        let imgs = render_pdf(pdf.clone(), &[0], 400).unwrap();
         assert_eq!(imgs[0].width, 400);
         assert!(
             imgs[0]
@@ -514,8 +587,18 @@ mod tests {
             sheet: true,
             ..PngOptions::default()
         };
-        let msg = convert_pdf(pdf, &dir.path().join("b.png"), true, &opts, false).unwrap();
+        let msg = convert_pdf(pdf.clone(), &dir.path().join("b.png"), true, &opts, false).unwrap();
         assert!(dir.path().join("b-sheet.png").is_file(), "{msg}");
+        let opts = PngOptions {
+            slides: Some("2".into()),
+            ..PngOptions::default()
+        };
+        let e = convert_pdf(pdf, &dir.path().join("c.png"), true, &opts, false).unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("there is no page 2; the workbook has 1"),
+            "{e}"
+        );
     }
 
     #[std::prelude::v1::test]
@@ -559,6 +642,36 @@ mod tests {
             names(out, false, &[3], 9, false),
             vec![PathBuf::from("out/deck.png")]
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn documents_render_page_by_page() {
+        let built = crate::agent::docs_author::build(
+            &json!({"blocks": [{"h1": "One"}, "Text", {"type": "page_break"}, {"h1": "Two"},
+                {"type": "section", "orientation": "landscape"}, "Wide"]}),
+            None,
+        )
+        .unwrap();
+        let doc =
+            docs_engine::Document::from_read(docs_engine::docx::read(built.bytes).unwrap(), None);
+        let mut engine = docs_pdf::Engine::new();
+        let imgs = render_doc(&doc, &mut engine, &[0, 1, 2], 200).unwrap();
+        assert_eq!(imgs.len(), 3);
+        assert_eq!(imgs[0].width, 200);
+        assert!(imgs[0].height > imgs[0].width, "A4 portrait");
+        assert!(imgs[2].width > imgs[2].height, "the landscape page");
+        // Not blank: some ink on the first page.
+        assert!(imgs[0].rgb.iter().any(|&c| c < 128));
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join("doc.png");
+        let sheet = PngOptions {
+            sheet: true,
+            width: Some(120),
+            ..PngOptions::default()
+        };
+        let msg = convert_doc(&doc, &out, true, &sheet, false).unwrap();
+        assert!(msg.starts_with("contact sheet of 3 pages"), "{msg}");
+        assert!(dir.path().join("doc-sheet.png").is_file());
     }
 
     #[std::prelude::v1::test]
