@@ -617,18 +617,50 @@ impl<'a> Writer<'a> {
 
     /// A run, inside a tracked insertion when tracking.
     fn r(&mut self, rpr: &str, inner: &str) -> String {
-        let run = format!("<w:r>{rpr}{inner}</w:r>");
-        match self.track.clone() {
-            Some(t) => {
-                let id = self.id();
-                format!(
-                    "<w:ins w:id=\"{id}\" w:author=\"{}\" w:date=\"{}\">{run}</w:ins>",
+        format!("<w:r>{rpr}{inner}</w:r>")
+    }
+
+    /// A paragraph's content with its runs in tracked insertions when
+    /// tracking: consecutive runs share one `w:ins` (a field's runs stay
+    /// together), hyperlinks hold their own.
+    fn tracked(&mut self, content: String) -> String {
+        let Some(t) = self.track.clone() else {
+            return content;
+        };
+        let mut out = String::with_capacity(content.len() + 64);
+        let mut group = String::new();
+        let flush = |w: &mut Self, group: &mut String, out: &mut String| {
+            if !group.is_empty() {
+                let id = w.id();
+                out.push_str(&format!(
+                    "<w:ins w:id=\"{id}\" w:author=\"{}\" w:date=\"{}\">{group}</w:ins>",
                     esc(&t.author),
                     esc(&t.date)
-                )
+                ));
+                group.clear();
             }
-            None => run,
+        };
+        for el in super::docs_edit::children(&content) {
+            if el.starts_with("<w:r>") || el.starts_with("<w:r ") {
+                group.push_str(&el);
+                continue;
+            }
+            flush(self, &mut group, &mut out);
+            if el.starts_with("<w:hyperlink")
+                && let Some(open_end) = el.find('>')
+                && let Some(close) = el.rfind("</w:hyperlink>")
+                && open_end < close
+            {
+                let inner = self.tracked(el[open_end + 1..close].to_owned());
+                out.push_str(&el[..=open_end]);
+                out.push_str(&inner);
+                out.push_str("</w:hyperlink>");
+            } else {
+                out.push_str(&el);
+            }
         }
+        flush(self, &mut group, &mut out);
+        out
     }
 
     /// The paragraph mark's `w:rPr` (a tracked insertion when tracking).
@@ -856,6 +888,7 @@ impl<'a> Writer<'a> {
         }
         let style = style.map(|s| self.style(s));
         let ppr = format!("{}{}", fmt.children(style.as_deref()), self.mark());
+        let content = self.tracked(content);
         self.items.push(Item::P {
             ppr,
             content,
@@ -867,6 +900,7 @@ impl<'a> Writer<'a> {
     fn raw(&mut self, xml: String) {
         if std::mem::take(&mut self.page_break) {
             let br = self.r("", "<w:br w:type=\"page\"/>");
+            let br = self.tracked(br);
             let mark = self.mark();
             self.items.push(Item::P {
                 ppr: mark,
@@ -1921,6 +1955,7 @@ impl<'a> Writer<'a> {
         // moves the text down (space before is dropped at a page top).
         let room = (start - page.top).clamp(20, 31_000);
         let mark = self.mark();
+        let shape = self.tracked(shape);
         self.items.push(Item::P {
             ppr: format!(
                 "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{room}\" w:lineRule=\"exact\"/>{mark}"
@@ -2276,6 +2311,7 @@ impl<'a> Writer<'a> {
         if self.page_break {
             self.page_break = false;
             let br = self.r("", "<w:br w:type=\"page\"/>");
+            let br = self.tracked(br);
             let mark = self.mark();
             self.items.push(Item::P {
                 ppr: mark,

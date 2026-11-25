@@ -259,11 +259,14 @@ columns), `headings` (a tree: `id`, `level`, `number`, `text`, `style`,
 formatting), `direct_formatting`, `tables` (`id`, rows, columns, header
 rows, caption, page), `pictures` and `charts` (alt text, page),
 `field_counts` and the `fields` that reference (TOC, REF, PAGEREF, SEQ,
-NOTEREF), `comments`, `tracked_changes`, `notes`, `track_changes_on`.
+NOTEREF), `comments`, `tracked_changes`, `notes`, `bookmarks` (the names
+headings and captions carry: blocks inserted later can point at them with
+`{ref:_Ref100000003}`), `track_changes_on`.
 
 `--text` prints the paragraphs: `id`, `style`, `text` (pictures as
 `[picture]`, charts as `[chart]`), `number` (a list or heading number),
-`heading` level, `table` (row and cell), `page`. Long documents come in
+`heading` level, `table` (row and cell), `page`. Tracked deletions show
+as `[-deleted text-]`. Long documents come in
 pages of 500 (`--start`, `--limit`; `next_start` says where to go on).
 
 A paragraph id is its index from 0, counting table cells' paragraphs in

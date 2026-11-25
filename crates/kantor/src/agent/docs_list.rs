@@ -41,32 +41,68 @@ impl Pages {
 pub fn shown(doc: &Document, i: usize) -> String {
     let p = doc.paragraph(i);
     let mut out = String::with_capacity(p.text.len());
-    for (offset, c) in p.text.char_indices() {
-        if c != docs_engine::OBJECT {
-            out.push(if c == docs_engine::LINE_BREAK {
-                '\n'
-            } else {
-                c
-            });
-            continue;
+    for (range, run) in p.run_ranges() {
+        let deleted = run
+            .rev
+            .as_ref()
+            .is_some_and(|r| r.kind == docs_engine::RevKind::Delete);
+        let mut piece = String::new();
+        for (k, c) in p.text[range.clone()].char_indices() {
+            if c != docs_engine::OBJECT {
+                piece.push(if c == docs_engine::LINE_BREAK {
+                    '\n'
+                } else {
+                    c
+                });
+                continue;
+            }
+            match p.object_at(range.start + k) {
+                Some(o) if o.is_zero_width() => {}
+                // Comment marks: not text.
+                Some(Object::Opaque(o)) if o.xml.contains("commentReference") => {}
+                Some(Object::Image(_)) => piece.push_str("[picture]"),
+                Some(Object::Float(f)) if matches!(f.kind, FloatKind::Chart { .. }) => {
+                    piece.push_str("[chart]")
+                }
+                Some(Object::Float(f)) if matches!(f.kind, FloatKind::Picture { .. }) => {
+                    piece.push_str("[picture]")
+                }
+                Some(Object::Opaque(o)) if !o.label.is_empty() => {
+                    piece.push('[');
+                    piece.push_str(&o.label);
+                    piece.push(']');
+                }
+                _ => piece.push_str("[object]"),
+            }
         }
-        match p.object_at(offset) {
-            Some(o) if o.is_zero_width() => {}
-            // Comment marks: not text.
-            Some(Object::Opaque(o)) if o.xml.contains("commentReference") => {}
-            Some(Object::Image(_)) => out.push_str("[picture]"),
-            Some(Object::Float(f)) if matches!(f.kind, FloatKind::Chart { .. }) => {
-                out.push_str("[chart]")
+        if deleted && !piece.is_empty() {
+            out.push_str("[-");
+            out.push_str(&piece);
+            out.push_str("-]");
+        } else {
+            out.push_str(&piece);
+        }
+    }
+    out
+}
+
+/// Bookmarks (not Word's own `_Toc`/`_GoBack` ones): name, paragraph,
+/// the text they mark. Cross-references inserted by `insert_blocks` may
+/// point at these names (`{ref:_Ref100000003}`).
+pub fn bookmarks(doc: &Document) -> Vec<Value> {
+    let mut out = Vec::new();
+    for i in 0..doc.len() {
+        for (_, o) in doc.paragraph(i).objects() {
+            if let Object::Opaque(op) = o
+                && docs_engine::model::element_name(&op.xml) == "bookmarkStart"
+                && let Some(el) = docs_engine::xml::parse(&op.xml)
+                && let Some(n) = el.attr("name")
+                && !n.starts_with("_Toc")
+                && n != "_GoBack"
+                && !n.ends_with("_text")
+            {
+                out.push(json!({"name": n, "id": i, "text": shown(doc, i).trim().chars().take(80).collect::<String>()}));
             }
-            Some(Object::Float(f)) if matches!(f.kind, FloatKind::Picture { .. }) => {
-                out.push_str("[picture]")
-            }
-            Some(Object::Opaque(o)) if !o.label.is_empty() => {
-                out.push('[');
-                out.push_str(&o.label);
-                out.push(']');
-            }
-            _ => out.push_str("[object]"),
         }
     }
     out
@@ -360,6 +396,7 @@ pub fn outline(doc: &Document) -> Value {
         "comments": comments,
         "tracked_changes": changes,
         "notes": notes,
+        "bookmarks": bookmarks(doc),
         "track_changes_on": doc.track_changes(),
     })
 }
