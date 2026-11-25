@@ -1112,14 +1112,22 @@ pub struct Overrun {
     pub hashes: bool,
 }
 
-/// Cuts smaller than this don't count, points.
+/// Cuts smaller than these don't count, points: across (a glyph's side
+/// bearing) and down.
 const CUT_SLACK: f32 = 1.0;
+const CUT_SLACK_V: f32 = 0.5;
+/// Glyph tops and bottoms from the baseline, in font sizes: ascenders
+/// (`l`, `d`, the dot of `i`) and descenders, without the font's empty
+/// line gap.
+const GLYPH_TOP: f32 = 0.75;
+const GLYPH_BOTTOM: f32 = 0.2;
 
 /// What of `t` its room cuts off, as [`Encoder`] draws it; `None` when
 /// all of it shows (or it is turned, stacked, shrunk to fit or repeated
-/// to fill). Glyph tops and bottoms are taken as 0.7 and 0.2 of the font
+/// to fill). Glyph tops and bottoms are taken as 0.75 and 0.2 of the font
 /// size from the baseline, so the empty part of a font's ascent above its
-/// capitals doesn't count as cut.
+/// letters doesn't count as cut. A cut text's `need` down is its line
+/// height (wrapped: all its lines).
 pub fn overrun(shaper: &mut Shaper, t: &CellText) -> Option<Overrun> {
     if t.rotation != 0 || t.text.trim().is_empty() {
         return None;
@@ -1131,11 +1139,11 @@ pub fn overrun(shaper: &mut Shaper, t: &CellText) -> Option<Overrun> {
         let block = shaper.wrapped(&t.text, &t.font, avail.max(1.0), t.align == Align::Justify);
         let top = wrapped_top(t, block.height);
         let (first, last) = (block.lines.first()?, block.lines.last()?);
-        let glyph_top = top + first.1 - 0.7 * size;
-        let glyph_bottom = top + last.1 + 0.2 * size;
+        let glyph_top = top + first.1 - GLYPH_TOP * size;
+        let glyph_bottom = top + last.1 + GLYPH_BOTTOM * size;
         let cut_top = (clip[1] - glyph_top).max(0.0);
         let cut_bottom = (glyph_bottom - (clip[1] + clip[3])).max(0.0);
-        return (cut_top > CUT_SLACK || cut_bottom > CUT_SLACK).then_some(Overrun {
+        return (cut_top > CUT_SLACK_V || cut_bottom > CUT_SLACK_V).then_some(Overrun {
             need: block.height,
             room: clip[3],
             top: cut_top,
@@ -1159,18 +1167,14 @@ pub fn overrun(shaper: &mut Shaper, t: &CellText) -> Option<Overrun> {
         left = (c[0] - p.x).max(0.0);
         right = (p.x + p.width - (c[0] + c[2])).max(0.0);
     }
-    let glyph_top = p.base - 0.7 * size * p.k;
-    let glyph_bottom = p.base + 0.2 * size * p.k;
+    let glyph_top = p.base - GLYPH_TOP * size * p.k;
+    let glyph_bottom = p.base + GLYPH_BOTTOM * size * p.k;
     let top = (c[1] - glyph_top).max(0.0);
     let bottom = (glyph_bottom - (c[1] + c[3])).max(0.0);
     let horizontal = left > CUT_SLACK || right > CUT_SLACK;
-    let vertical = top > CUT_SLACK || bottom > CUT_SLACK;
+    let vertical = top > CUT_SLACK_V || bottom > CUT_SLACK_V;
     (horizontal || vertical).then_some(Overrun {
-        need: if horizontal {
-            p.width
-        } else {
-            glyph_bottom - glyph_top
-        },
+        need: if horizontal { p.width } else { p.asc + p.desc },
         room: if horizontal { c[2] } else { c[3] },
         left: if horizontal { left } else { 0.0 },
         right: if horizontal { right } else { 0.0 },

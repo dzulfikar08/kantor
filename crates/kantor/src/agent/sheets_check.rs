@@ -1638,10 +1638,27 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
                     || (merge.is_none() && (right - page.block[0]).abs() < 0.5)))
                 || (o.left > 0.0 && t.cell[0] < t.clip[0] - 0.5 && merge.is_some());
             let horizontal = o.left > 0.0 || o.right > 0.0;
-            if let Some(m) = merge
-                && horizontal
-            {
-                let (msg, fix) = if page_edge {
+            if let Some(m) = merge {
+                let (msg, fix) = if !horizontal {
+                    (
+                        format!(
+                            "\"{shown}\" is cut off at the {}: it needs {} of height and the merged cells {} are {} tall",
+                            if o.top > 0.0 { "top" } else { "bottom" },
+                            pt(o.need),
+                            m.name(),
+                            pt(o.room)
+                        ),
+                        format!(
+                            "rows don't grow to fit merged cells, so set the height of row{} (about {} in all)",
+                            if m.rows_count() > 1 {
+                                format!("s {}–{}", m.top + 1, m.bottom + 1)
+                            } else {
+                                format!(" {}", m.top + 1)
+                            },
+                            pt(o.need + 4.0)
+                        ),
+                    )
+                } else if page_edge {
                     (
                         format!(
                             "\"{shown}\" is cut off at the printed page's edge: the merged cells {} run past it",
@@ -1710,8 +1727,9 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
                 chars(f64::from(cells.iter().map(|x| x.2).fold(0.0f32, f32::max)) + 6.0)
             ),
             Cut::Short => format!(
-                "the row is too short for it; make row {} taller (or leave its height automatic)",
-                r + 1
+                "the row is too short for it; make row {} at least {} tall (or leave its height automatic)",
+                r + 1,
+                pt(need + 4.0)
             ),
         };
         let what = if why == Cut::Short {
@@ -2398,7 +2416,7 @@ mod tests {
             let mut s = json!({"name": "Dash",
                 "rows": [[title], [], ["Outlet", "Revenue"], ["Dago", 5], ["Kopo", 9], ["Antapani", 7], ["Buah Batu", 3]],
                 "widths": {"A:C": 60},
-                "formats": [{"range": "A1:C1", "merge": true, "align": "center", "size": 14}],
+                "formats": [{"range": "A1:C1", "merge": true, "align": "center", "size": 12}],
                 "charts": [{"chart": "line", "data": "Dash!A3:B7", "at": "B10", "to": "C30"}]});
             if fit {
                 s["page_setup"] = json!({"fit": "page", "landscape": true});
@@ -2438,6 +2456,31 @@ mod tests {
         ] {
             assert!(found(&r, c).is_empty(), "{c}: {all:?}");
         }
+    }
+
+    /// Rows don't grow to fit merged cells: a big title in a merged row
+    /// is cut at the top; a stored height that fits it is fine.
+    #[std::prelude::v1::test]
+    fn merged_titles_taller_than_their_row() {
+        let book = |height: Option<u32>| {
+            let mut s = json!({"name": "S",
+                "rows": [["Sales summary"], [], ["Region", "Units"], ["North", 5]],
+                "formats": [{"range": "A1:D1", "merge": true, "size": 24, "bold": true}]});
+            if let Some(h) = height {
+                s["heights"] = json!({"1": h});
+            }
+            build(&json!({"sheets": [s]}), None).unwrap()
+        };
+        let r = check(&book(None), None);
+        let all = checks(&r);
+        let f = found(&r, "text_cut_off")
+            .into_iter()
+            .find(|f| f.range.unwrap().name() == "A1:D1")
+            .unwrap_or_else(|| panic!("{all:?}"));
+        assert!(f.message.contains("cut off at the top"), "{}", f.message);
+        assert!(f.message.contains("row 1"), "{}", f.message);
+        let r = check(&book(Some(36)), None);
+        assert!(found(&r, "text_cut_off").is_empty(), "{:?}", checks(&r));
     }
 
     #[std::prelude::v1::test]
