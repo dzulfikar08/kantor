@@ -83,7 +83,14 @@ const AXIS_KEYS: &[&str] = &[
     "visible",
 ];
 const LABEL_KEYS: &[&str] = &[
-    "show", "position", "format", "size", "bold", "italic", "color",
+    "show",
+    "position",
+    "format",
+    "number_format",
+    "size",
+    "bold",
+    "italic",
+    "color",
 ];
 const FONT_KEYS: &[&str] = &["font", "size", "color", "bold", "italic"];
 const TARGET_KEYS: &[&str] = &["value", "label", "color", "width", "dash"];
@@ -192,8 +199,10 @@ fn label_pos(s: &str) -> Result<LabelPos> {
     })
 }
 
-/// `data_labels`: true / false, or {show, position, format, size, bold,
-/// italic, color}. `round`: a pie or doughnut (percentages by default).
+/// `data_labels`: true / false, or {show, position, format (or
+/// number_format), size, bold, italic, color}. Without a format, labels
+/// showing values take the chart's `number_format` (see
+/// [`sheets_engine::data_chart_part`]). `round`: a pie or doughnut (percentages by default).
 fn data_labels(v: &Value, round: bool) -> Result<Option<DataLabels>> {
     let default_show = |l: &mut DataLabels| {
         if round {
@@ -238,7 +247,13 @@ fn data_labels(v: &Value, round: bool) -> Result<Option<DataLabels>> {
             if let Some(p) = opt_str(o, "position")? {
                 l.pos = Some(label_pos(p)?);
             }
-            l.num_fmt = opt_str(o, "format")?.map(str::to_owned);
+            // `number_format` as on the chart and axes; `format` too.
+            l.num_fmt = match (opt_str(o, "format")?, opt_str(o, "number_format")?) {
+                (Some(_), Some(_)) => {
+                    bail!("`data_labels` takes `number_format` or `format`, not both")
+                }
+                (a, b) => a.or(b).map(str::to_owned),
+            };
             l.font = LabelFont {
                 size: get(o, "size")
                     .map(font_size)
@@ -806,6 +821,49 @@ mod tests {
         );
         assert_eq!(p.xfrm.cx, 6 * 914_400);
         assert!(p.data.text.as_deref().unwrap().contains("sz=\"1200\""));
+    }
+
+    #[std::prelude::v1::test]
+    fn number_formats_reach_the_axis_and_labels() {
+        let part = |v: Value| {
+            let p = plan(&v, &cx()).unwrap();
+            sheets_engine::data_chart_part(&p.data).unwrap()
+        };
+        let val_ax = |xml: &str| {
+            let a = xml.find("<c:valAx>").unwrap();
+            let b = xml[a..].find("</c:valAx>").unwrap();
+            xml[a..a + b].to_owned()
+        };
+        // The chart's format: on the value axis and the value labels.
+        let xml = part(json!({"type": "chart", "chart": "column", "w": 4, "h": 3,
+            "categories": ["a", "b"], "series": [{"values": [5200000, 3100000]}],
+            "number_format": "\"Rp\"#,##0.0,,", "data_labels": true}));
+        let code = "<c:numFmt formatCode=\"&quot;Rp&quot;#,##0.0,,\" sourceLinked=\"0\"/>";
+        assert!(val_ax(&xml).contains(code), "{xml}");
+        assert_eq!(xml.matches(code).count(), 2, "{xml}");
+        // Their own formats win; `number_format` on labels as on the axis.
+        let xml = part(json!({"type": "chart", "chart": "column", "w": 4, "h": 3,
+            "categories": ["a", "b"], "series": [{"values": [5200000, 3100000]}],
+            "number_format": "0", "axis": {"number_format": "#,##0"},
+            "data_labels": {"number_format": "0.0%"}}));
+        assert!(
+            val_ax(&xml).contains("<c:numFmt formatCode=\"#,##0\" sourceLinked=\"0\"/>"),
+            "{xml}"
+        );
+        assert!(
+            xml.contains("<c:numFmt formatCode=\"0.0%\" sourceLinked=\"0\"/>"),
+            "{xml}"
+        );
+        assert!(!xml.contains("formatCode=\"0\""), "{xml}");
+        assert!(
+            plan(
+                &json!({"type": "chart", "chart": "column", "w": 4, "h": 3,
+                    "categories": ["a"], "series": [{"values": [1]}],
+                    "data_labels": {"number_format": "0", "format": "0"}}),
+                &cx()
+            )
+            .is_err()
+        );
     }
 
     #[std::prelude::v1::test]

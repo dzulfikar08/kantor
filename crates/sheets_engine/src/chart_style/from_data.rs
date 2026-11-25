@@ -367,6 +367,53 @@ fn axes_look(xml: &str, hidden: [bool; 2]) -> Result<String> {
     Ok(splice(xml, edits))
 }
 
+/// The values' number format `code` written on every value axis that has
+/// no format of its own (`sourceLinked="1"`), as `sourceLinked="0"`: a
+/// linked axis shows the source cells' format, which on a worksheet is
+/// often General. Scatter charts' x axes keep theirs.
+fn value_axis_formats(xml: &str, code: &str) -> Result<String> {
+    let doc = reparse(xml)?;
+    let (_, plot) = plot_area(&doc)?;
+    let all = axes(plot);
+    let mut edits = Vec::new();
+    let mut done = Vec::new();
+    for g in groups(plot) {
+        let ids: Vec<&str> = kids(g, "axId").filter_map(|a| a.attribute("val")).collect();
+        let mine: Vec<Node> = all
+            .iter()
+            .copied()
+            .filter(|ax| val(*ax, "axId").is_some_and(|i| ids.contains(&i)))
+            .collect();
+        let has_cat = mine.iter().any(|ax| !is_value_axis(*ax));
+        // With a category axis, the value axis; a scatter's two value
+        // axes: the vertical one (the y values).
+        let Some(ax) = mine.into_iter().find(|ax| {
+            is_value_axis(*ax) && (has_cat || matches!(val(*ax, "axPos"), Some("l" | "r")))
+        }) else {
+            continue;
+        };
+        if done.contains(&ax.range().start) {
+            continue;
+        }
+        done.push(ax.range().start);
+        let linked = kid(ax, "numFmt")
+            .is_none_or(|f| matches!(f.attribute("sourceLinked"), Some("1" | "true")));
+        if !linked {
+            continue;
+        }
+        let p = prefix_of(xml, ax);
+        let text = format!(
+            "<{p}numFmt formatCode=\"{}\" sourceLinked=\"0\"/>",
+            esc(code)
+        );
+        edits.push(match kid(ax, "numFmt") {
+            Some(n) => (n.range(), text),
+            None => insert_ordered(xml, ax, "numFmt", VAL_AX, &text),
+        });
+    }
+    Ok(splice(xml, edits))
+}
+
 /// Value axes' major gridlines shown or not.
 fn gridlines(xml: &str, on: bool) -> Result<String> {
     let doc = reparse(xml)?;
@@ -536,6 +583,19 @@ pub fn data_chart_part(d: &DataChart) -> Result<String> {
         xml = gridlines(&xml, on)?;
     }
     xml = axes_look(&xml, d.hidden_axes)?;
+    // The values' format on the axes and labels themselves, not only in the
+    // cached values: sheet charts' caches follow their cells' formats.
+    let values_format = d
+        .number_format
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty() && !c.eq_ignore_ascii_case("general"));
+    if let Some(code) = values_format
+        && kind != ChartType::Pie
+        && !d.percent
+    {
+        xml = value_axis_formats(&xml, code)?;
+    }
     for (i, s) in d.series.iter().enumerate() {
         if let Some(f) = &s.fill {
             xml = set_fill(&xml, i, Some(&NewFill::Raw(f.clone())))?;
@@ -545,7 +605,13 @@ pub fn data_chart_part(d: &DataChart) -> Result<String> {
         }
         xml = point_fills(&xml, i, &s.point_fills)?;
         if let Some(l) = s.labels.as_ref().filter(|l| l.shown()) {
-            xml = set_labels(&xml, i, l)?;
+            // Percentages (pies) keep their own format: Excel would apply
+            // the values' code to them too.
+            let mut l = l.clone();
+            if l.num_fmt.is_none() && l.value && !l.percent {
+                l.num_fmt = values_format.map(str::to_owned);
+            }
+            xml = set_labels(&xml, i, &l)?;
         }
     }
     xml = drop_bad_positions(&xml);
@@ -719,6 +785,92 @@ mod tests {
             "{xml}"
         );
         assert_eq!(xml.matches("<c:valAx>").count(), 2);
+    }
+
+    /// The section of `xml` from `<c:{tag}>` to its end.
+    fn section<'a>(xml: &'a str, tag: &str, nth: usize) -> &'a str {
+        let a = xml
+            .match_indices(&format!("<c:{tag}>"))
+            .nth(nth)
+            .unwrap_or_else(|| panic!("no {tag} {nth} in {xml}"))
+            .0;
+        let b = xml[a..].find(&format!("</c:{tag}>")).unwrap();
+        &xml[a..a + b]
+    }
+
+    #[test]
+    fn the_values_format_is_on_the_axis_and_labels() {
+        // A sheet chart: the cells may be General, the chart's format wins.
+        let mut d = chart(ChartType::Column);
+        d.number_format = Some("\"Rp\"#,##0.0,,".into());
+        d.series[0].labels = Some(DataLabels {
+            value: true,
+            ..DataLabels::default()
+        });
+        d.series[1].labels = Some(DataLabels {
+            value: true,
+            num_fmt: Some("#,##0".into()),
+            ..DataLabels::default()
+        });
+        let xml = data_chart_part(&d).unwrap();
+        Document::parse(&xml).unwrap();
+        let code = "<c:numFmt formatCode=\"&quot;Rp&quot;#,##0.0,,\" sourceLinked=\"0\"/>";
+        assert!(section(&xml, "valAx", 0).contains(code), "{xml}");
+        assert!(!section(&xml, "catAx", 0).contains("Rp"), "{xml}");
+        assert!(section(&xml, "dLbls", 0).contains(code), "{xml}");
+        assert!(
+            section(&xml, "dLbls", 1)
+                .contains("<c:numFmt formatCode=\"#,##0\" sourceLinked=\"0\"/>"),
+            "{xml}"
+        );
+        // The axis' own format stays.
+        d.spec.y_axis.num_fmt = Some("0%".into());
+        let xml = data_chart_part(&d).unwrap();
+        assert!(
+            section(&xml, "valAx", 0).contains("<c:numFmt formatCode=\"0%\" sourceLinked=\"0\"/>"),
+            "{xml}"
+        );
+        assert_eq!(section(&xml, "valAx", 0).matches("numFmt").count(), 1);
+
+        // A bar chart's value axis is the horizontal one; a combo's
+        // secondary axis takes the format too.
+        let mut d = chart(ChartType::Bar);
+        d.number_format = Some("#,##0".into());
+        let xml = data_chart_part(&d).unwrap();
+        let fmt = "<c:numFmt formatCode=\"#,##0\" sourceLinked=\"0\"/>";
+        assert!(section(&xml, "valAx", 0).contains(fmt), "{xml}");
+        assert!(!section(&xml, "catAx", 0).contains(fmt), "{xml}");
+        let mut d = chart(ChartType::Combo);
+        d.number_format = Some("#,##0".into());
+        d.spec.series_types = vec![
+            SeriesType::default(),
+            SeriesType {
+                kind: ChartType::Line,
+                secondary: true,
+            },
+        ];
+        let xml = data_chart_part(&d).unwrap();
+        assert_eq!(xml.matches(fmt).count(), 2, "{xml}");
+
+        // A scatter's x values keep theirs; General writes nothing.
+        let mut d = chart(ChartType::Scatter);
+        d.categories = (1..=3).map(|x| DataCategory::Number(x as f64)).collect();
+        d.number_format = Some("#,##0".into());
+        let xml = data_chart_part(&d).unwrap();
+        assert_eq!(xml.matches(fmt).count(), 1, "{xml}");
+        d.number_format = Some("General".into());
+        let xml = data_chart_part(&d).unwrap();
+        assert!(!xml.contains("sourceLinked=\"0\""), "{xml}");
+
+        // Pie percentages keep their own format.
+        let mut d = chart(ChartType::Pie);
+        d.series.truncate(1);
+        d.series[0].labels = Some(DataLabels {
+            percent: true,
+            ..DataLabels::default()
+        });
+        let xml = data_chart_part(&d).unwrap();
+        assert!(!xml.contains("sourceLinked=\"0\""), "{xml}");
     }
 
     #[test]
