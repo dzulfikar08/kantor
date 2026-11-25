@@ -176,8 +176,8 @@ Don't draw charts from shapes.
 | `legend` | `none`, `bottom`, `top`, `right`, `left` (default: bottom with several series or a pie, else none) |
 | `data_labels` | `true` (values; pie and doughnut: percentages) or `{show, position, format, size, bold, italic, color}`: `show` is `value`, `percent` (pie, doughnut), `category`, `series` or a list; `position` `center`, `inside_end`, `inside_base`, `outside_end` (bars, pies), `left`, `right`, `above`, `below` (lines, scatter), `best_fit` (pies); `format` a number format; `color` #RRGGBB. Per series too |
 | `number_format` | the values' Excel number format (labels and value axis follow it), see below |
-| `axis` | the value axis (horizontal in a bar chart): `title`, `min`, `max`, `major_unit`, `gridlines` (default true), `number_format`, `reverse` |
-| `category_axis` | `title`, `reverse`; scatter (its x axis): also `min`, `max`, `major_unit`, `number_format` |
+| `axis` | the value axis (horizontal in a bar chart): `title`, `min`, `max`, `major_unit`, `gridlines` (default true), `number_format`, `reverse`, `visible` (`false` hides the axis: no line, ticks or labels) |
+| `category_axis` | `title`, `reverse`, `visible`; scatter (its x axis): also `min`, `max`, `major_unit`, `number_format`. A bar chart lists its first category at the bottom, as Excel does; `"reverse": true` puts it at the top and keeps the value axis at the bottom (Excel's "at maximum category") |
 | `gap_width`, `overlap` | column/bar/combo: the gap between categories (% of a bar, default 150) and the overlap of a category's bars (-100 to 100) |
 | `hole` | doughnut: hole size in % (default 50) |
 | `font` | `{font, size, color, bold, italic}` for all the chart's text; the title is 1.2 × `size` (default: the deck's `text` typeface and colour, PowerPoint's size) |

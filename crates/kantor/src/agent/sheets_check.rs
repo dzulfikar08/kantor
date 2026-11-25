@@ -84,12 +84,12 @@ pub const CHECKS: &[(&str, &str, &str)] = &[
     (
         "typed_total",
         "error / warning",
-        "a total row or column (\"Total\", \"Jumlah\", \"Subtotal\"...) with a typed number where a formula should add the numbers above (or left): error when it doesn't match their sum, warning when it does (it won't follow changes)",
+        "a total row or column (\"Total\", \"Jumlah\", \"Subtotal\"...) with a typed number where a formula should add the numbers above (or left): error when it doesn't match their sum, warning when it does (it won't follow changes). The block is the column's (row's) whole run of data up to its header, blanks and numbers stored as text included; text numbers are named, as SUM skips them until converted",
     ),
     (
         "sum_misses_rows",
-        "warning",
-        "a SUM under (or beside) a block of numbers that leaves out some of the block's rows (columns)",
+        "error / warning",
+        "a SUM under (or beside) a block of numbers that leaves out some of the block's rows (columns): error when they hold numbers (the total is wrong), warning when they hold only numbers stored as text",
     ),
     (
         "refers_to_empty",
@@ -99,7 +99,7 @@ pub const CHECKS: &[(&str, &str, &str)] = &[
     (
         "mixed_formats",
         "warning",
-        "one column's numbers in different kinds of number format (percent and plain, two currencies, dates and numbers)",
+        "one column's numbers in different kinds of number format (percent and plain, two currencies, dates and numbers), or its dates in different date formats (yyyy-mm-dd next to dd/mm/yyyy)",
     ),
     (
         "mixed_units",
@@ -453,6 +453,28 @@ fn format_kind(code: &str, date: bool) -> &'static str {
     }
 }
 
+/// A date format reduced to what it shows (`[$-421]dd/mm/yyyy;@` and
+/// `DD/MM/YYYY` are the same), to compare a column's date formats.
+fn date_shape(code: &str) -> String {
+    let mut out = String::new();
+    let mut in_bracket = false;
+    let mut in_quote = false;
+    for ch in code.split(';').next().unwrap_or("").chars() {
+        match ch {
+            '"' => {
+                in_quote = !in_quote;
+                out.push(ch);
+            }
+            '[' if !in_quote => in_bracket = true,
+            ']' if !in_quote => in_bracket = false,
+            '\\' | '@' if !in_quote => {}
+            _ if in_bracket => {}
+            _ => out.extend(ch.to_lowercase()),
+        }
+    }
+    out.trim().to_owned()
+}
+
 /// The unit after a number in text (`12 kg` → `kg`).
 fn unit_of(t: &str) -> Option<String> {
     let t = t.trim();
@@ -561,6 +583,158 @@ struct Cell {
     formula: bool,
 }
 
+/// The data block a total or a SUM adds up (see [`Region::block`]).
+struct Block {
+    /// From the first to the last cell of data.
+    range: CellRange,
+    /// Numbers (formulas' too): what SUM adds.
+    numbers: usize,
+    sum: f64,
+    /// Numbers stored as text (SUM skips them) and what they add up to.
+    texts: Vec<(u32, u32)>,
+    text_sum: f64,
+    /// Formulas showing errors (SUM shows the error too).
+    errors: usize,
+}
+
+impl Block {
+    /// The cells stored as text, for a message: `E8, E15 and 3 more`.
+    fn text_list(&self) -> String {
+        let names: Vec<String> = self
+            .texts
+            .iter()
+            .take(4)
+            .map(|(r, c)| cell_name(*r, *c))
+            .collect();
+        let more = self.texts.len().saturating_sub(4);
+        if more > 0 {
+            format!("{} and {more} more", names.join(", "))
+        } else {
+            names.join(", ")
+        }
+    }
+}
+
+/// A sheet's cells with what block searches need.
+struct Region<'a> {
+    book: &'a Workbook,
+    s: u32,
+    grid: &'a HashMap<(u32, u32), Cell>,
+    /// Rows (columns) with any filled cell.
+    rows: HashSet<u32>,
+    cols: HashSet<u32>,
+    /// Rows whose first cell is a total's label, columns whose top cell is.
+    total_rows: HashSet<u32>,
+    total_cols: HashSet<u32>,
+}
+
+impl<'a> Region<'a> {
+    fn new(book: &'a Workbook, s: u32, grid: &'a HashMap<(u32, u32), Cell>) -> Self {
+        let mut first_in_row: HashMap<u32, u32> = HashMap::new();
+        let mut first_in_col: HashMap<u32, u32> = HashMap::new();
+        for &(r, c) in grid.keys() {
+            let e = first_in_row.entry(r).or_insert(c);
+            *e = (*e).min(c);
+            let e = first_in_col.entry(c).or_insert(r);
+            *e = (*e).min(r);
+        }
+        let label = |r: u32, c: u32| {
+            let cell = &grid[&(r, c)];
+            cell.kind == ValueKind::Text
+                && !cell.formula
+                && is_total_label(&book.display_value(s, r, c))
+        };
+        Self {
+            book,
+            s,
+            grid,
+            rows: first_in_row.keys().copied().collect(),
+            cols: first_in_col.keys().copied().collect(),
+            total_rows: first_in_row
+                .iter()
+                .filter(|&(&r, &c)| label(r, c))
+                .map(|(r, _)| *r)
+                .collect(),
+            total_cols: first_in_col
+                .iter()
+                .filter(|&(&c, &r)| label(r, c))
+                .map(|(c, _)| *c)
+                .collect(),
+        }
+    }
+
+    /// The block of data above `(r, c)` (`up`), or left of it: the run of
+    /// the column's (row's) numbers, numbers stored as text, formula errors
+    /// and blank cells, up to a header or other text, a subtotal (SUM,
+    /// SUBTOTAL), another total row (column) or an empty row (column),
+    /// the region's edge. `None` without two cells of data.
+    fn block(&self, r: u32, c: u32, up: bool) -> Option<Block> {
+        let mut b = Block {
+            range: CellRange::from_corners((r, c), (r, c)),
+            numbers: 0,
+            sum: 0.0,
+            texts: Vec::new(),
+            text_sum: 0.0,
+            errors: 0,
+        };
+        let (mut first, mut last) = (None, None);
+        let mut i = if up { r } else { c };
+        while i > 0 {
+            i -= 1;
+            let (x, y) = if up { (i, c) } else { (r, i) };
+            let Some(cell) = self.grid.get(&(x, y)) else {
+                let empty_line = if up {
+                    !self.rows.contains(&i)
+                } else {
+                    !self.cols.contains(&i)
+                };
+                if empty_line {
+                    break;
+                }
+                continue;
+            };
+            if (up && self.total_rows.contains(&i)) || (!up && self.total_cols.contains(&i)) {
+                break;
+            }
+            if cell.formula && is_subtotal(&cell.input) {
+                break;
+            }
+            match cell.kind {
+                ValueKind::Number => {
+                    b.numbers += 1;
+                    b.sum += self.book.number_at(self.s, x, y).map_or(0.0, |n| n.0);
+                }
+                ValueKind::Error if cell.formula => b.errors += 1,
+                ValueKind::Text if !cell.formula => {
+                    match numeric_text(&self.book.display_value(self.s, x, y)) {
+                        Some(v) => {
+                            b.texts.push((x, y));
+                            b.text_sum += v;
+                        }
+                        None => break,
+                    }
+                }
+                _ => break,
+            }
+            first = Some(i);
+            last.get_or_insert(i);
+        }
+        let (Some(first), Some(last)) = (first, last) else {
+            return None;
+        };
+        if b.numbers + b.texts.len() < 2 {
+            return None;
+        }
+        b.texts.reverse();
+        b.range = if up {
+            CellRange::from_corners((first, c), (last, c))
+        } else {
+            CellRange::from_corners((r, first), (r, last))
+        };
+        Some(b)
+    }
+}
+
 fn check_sheet(book: &Workbook, s: u32, total_formulas: usize) -> (Vec<Finding>, u64) {
     let filled = book.filled_cells(s);
     let mut grid: HashMap<(u32, u32), Cell> = HashMap::with_capacity(filled.len());
@@ -579,12 +753,7 @@ fn check_sheet(book: &Workbook, s: u32, total_formulas: usize) -> (Vec<Finding>,
     let n = filled.len() as u64;
     let mut out = Vec::new();
     let mut hits = Hits::new();
-    // A number, or a formula's error among numbers (still a row of data).
-    let number = |r: u32, c: u32| {
-        grid.get(&(r, c)).is_some_and(|x| {
-            x.kind == ValueKind::Number || (x.formula && x.kind == ValueKind::Error)
-        })
-    };
+    let region = Region::new(book, s, &grid);
     let mut volatile = 0usize;
     let mut volatile_at = None;
 
@@ -714,64 +883,13 @@ fn check_sheet(book: &Workbook, s: u32, total_formulas: usize) -> (Vec<Finding>,
                     && f.span.end + 1 == cell.input.len()
                 {
                     let g = f.range;
-                    if g.left == g.right && g.left == c && g.bottom < r {
-                        // The numbers directly above the formula.
-                        let mut top = r;
-                        while top > 0
-                            && number(top - 1, c)
-                            && !is_subtotal(&grid[&(top - 1, c)].input)
-                        {
-                            top -= 1;
-                        }
-                        if top < r {
-                            let block = CellRange::from_corners((top, c), (r - 1, c));
-                            let missing_bottom =
-                                g.bottom + 1 < r && (g.bottom + 1..r).any(|x| number(x, c));
-                            let missing_top = g.top > top;
-                            if missing_bottom || missing_top {
-                                hits.add(
-                                    "sum_misses_rows",
-                                    Severity::Warning,
-                                    format!(
-                                        "{} adds {} but the numbers above run {}",
-                                        cell.input,
-                                        g.name(),
-                                        block.name()
-                                    ),
-                                    r,
-                                    c,
-                                    cell.input.clone(),
-                                );
-                            }
-                        }
-                    } else if g.top == g.bottom && g.top == r && g.right < c {
-                        let mut left = c;
-                        while left > 0
-                            && number(r, left - 1)
-                            && !is_subtotal(&grid[&(r, left - 1)].input)
-                        {
-                            left -= 1;
-                        }
-                        if left < c {
-                            let block = CellRange::from_corners((r, left), (r, c - 1));
-                            if (g.right + 1 < c && (g.right + 1..c).any(|x| number(r, x)))
-                                || g.left > left
-                            {
-                                hits.add(
-                                    "sum_misses_rows",
-                                    Severity::Warning,
-                                    format!(
-                                        "{} adds {} but the numbers beside it run {}",
-                                        cell.input,
-                                        g.name(),
-                                        block.name()
-                                    ),
-                                    r,
-                                    c,
-                                    cell.input.clone(),
-                                );
-                            }
-                        }
+                    let down = g.left == g.right && g.left == c && g.bottom < r;
+                    let across = g.top == g.bottom && g.top == r && g.right < c;
+                    if (down || across)
+                        && let Some(b) = region.block(r, c, down)
+                        && let Some((sev, key)) = sum_misses(&region, &cell.input, g, &b, down)
+                    {
+                        hits.add("sum_misses_rows", sev, key, r, c, cell.input.clone());
                     }
                 }
             }
@@ -900,21 +1018,88 @@ fn check_sheet(book: &Workbook, s: u32, total_formulas: usize) -> (Vec<Finding>,
             details: json!({"cells": volatile}),
         });
     }
-    out.extend(totals(book, s, &grid));
+    out.extend(totals(book, s, &region));
     out.extend(columns(book, s, &grid));
     out.extend(duplicates_and_merges(book, s, &grid));
     out.extend(hidden(book, s, &grid));
     (out, n)
 }
 
+/// A SUM (`input`, adding `g`) under (beside) block `b` that leaves out
+/// some of its rows (columns): error when they hold numbers (the total is
+/// wrong), warning when they hold only numbers stored as text.
+fn sum_misses(
+    region: &Region,
+    input: &str,
+    g: CellRange,
+    b: &Block,
+    down: bool,
+) -> Option<(Severity, String)> {
+    let (lo, hi, glo, ghi) = if down {
+        (b.range.top, b.range.bottom, g.top, g.bottom)
+    } else {
+        (b.range.left, b.range.right, g.left, g.right)
+    };
+    let missed: Vec<u32> = (lo..=hi).filter(|i| *i < glo || *i > ghi).collect();
+    if missed.is_empty() {
+        return None;
+    }
+    let at = |i: u32| {
+        let (b0, b1) = (b.range.top, b.range.left);
+        if down { (i, b1) } else { (b0, i) }
+    };
+    let numbers = missed
+        .iter()
+        .filter(|i| {
+            region
+                .grid
+                .get(&at(**i))
+                .is_some_and(|x| x.kind == ValueKind::Number)
+        })
+        .count();
+    let texts = missed.iter().filter(|i| b.texts.contains(&at(**i))).count();
+    if numbers == 0 && texts == 0 {
+        return None;
+    }
+    let way = if down { "above" } else { "beside it" };
+    let mut msg = format!(
+        "{input} adds {} but the data {way} runs {}",
+        g.name(),
+        b.range.name()
+    );
+    if numbers > 0 {
+        msg.push_str(&format!(
+            ": it leaves out {numbers} number(s), so the total is wrong; use =SUM({})",
+            b.range.name()
+        ));
+    } else {
+        msg.push_str(&format!(
+            ": the cells it leaves out are numbers stored as text; convert them (to_numbers) and use =SUM({})",
+            b.range.name()
+        ));
+    }
+    if !b.texts.is_empty() && numbers > 0 {
+        msg.push_str(&format!(
+            "; {} cell(s) in it are numbers stored as text ({}), which SUM skips: convert them first (to_numbers)",
+            b.texts.len(),
+            b.text_list()
+        ));
+    }
+    Some((
+        if numbers > 0 {
+            Severity::Error
+        } else {
+            Severity::Warning
+        },
+        msg,
+    ))
+}
+
 /// Typed totals: rows (columns) labelled as totals with typed numbers
 /// under (beside) a block of numbers.
-fn totals(book: &Workbook, s: u32, grid: &HashMap<(u32, u32), Cell>) -> Vec<Finding> {
+fn totals(book: &Workbook, s: u32, region: &Region) -> Vec<Finding> {
+    let grid = region.grid;
     let mut out = Vec::new();
-    let is_num = |r: u32, c: u32| {
-        grid.get(&(r, c))
-            .is_some_and(|x| x.kind == ValueKind::Number)
-    };
     let (rows, cols) = book.used_size(s);
     let mut seen = HashSet::new();
     // Pivot tables' totals are values Excel recalculates on refresh.
@@ -938,19 +1123,11 @@ fn totals(book: &Workbook, s: u32, grid: &HashMap<(u32, u32), Cell>) -> Vec<Find
             if x.kind != ValueKind::Number || x.formula || !seen.insert((r, cc)) {
                 continue;
             }
-            let mut top = r;
-            while top > 0 && is_num(top - 1, cc) {
-                top -= 1;
-            }
-            if r - top < 2 {
+            let Some(b) = region.block(r, cc, true) else {
                 continue;
-            }
-            let sum: f64 = (top..r)
-                .filter_map(|x| book.number_at(s, x, cc).map(|n| n.0))
-                .sum();
+            };
             let typed = book.number_at(s, r, cc).map_or(0.0, |n| n.0);
-            let block = CellRange::from_corners((top, cc), (r - 1, cc));
-            out.push(total_finding(s, r, cc, typed, sum, block));
+            out.push(total_finding(s, r, cc, typed, &b));
         }
         // A total column: numbers under the label.
         for rr in r + 1..rows.min(r + 100_000) {
@@ -961,50 +1138,96 @@ fn totals(book: &Workbook, s: u32, grid: &HashMap<(u32, u32), Cell>) -> Vec<Find
             if x.formula || !seen.insert((rr, c)) {
                 continue;
             }
-            let mut left = c;
-            while left > 0 && is_num(rr, left - 1) {
-                left -= 1;
-            }
-            if c - left < 2 {
+            let Some(b) = region.block(rr, c, false) else {
                 continue;
-            }
-            let sum: f64 = (left..c)
-                .filter_map(|x| book.number_at(s, rr, x).map(|n| n.0))
-                .sum();
+            };
             let typed = book.number_at(s, rr, c).map_or(0.0, |n| n.0);
-            let block = CellRange::from_corners((rr, left), (rr, c - 1));
-            out.push(total_finding(s, rr, c, typed, sum, block));
+            out.push(total_finding(s, rr, c, typed, &b));
         }
     }
     out
 }
 
-fn total_finding(s: u32, r: u32, c: u32, typed: f64, sum: f64, block: CellRange) -> Finding {
-    let same = (typed - sum).abs() <= 1e-9 * sum.abs().max(1.0);
-    let fix = format!("=SUM({})", block.name());
-    Finding {
-        severity: if same {
-            Severity::Warning
+fn total_finding(s: u32, r: u32, c: u32, typed: f64, b: &Block) -> Finding {
+    let near = |a: f64, x: f64| (a - x).abs() <= 1e-9 * x.abs().max(a.abs()).max(1.0);
+    let n = super::sheets_author::number;
+    let block = b.range.name();
+    let fix = format!("=SUM({block})");
+    let with_text = b.sum + b.text_sum;
+    let (severity, mut message) = if b.texts.is_empty() {
+        if near(typed, b.sum) {
+            (
+                Severity::Warning,
+                format!(
+                    "total typed as a number ({}); it won't follow changes: use {fix}",
+                    n(typed)
+                ),
+            )
         } else {
-            Severity::Error
-        },
+            (
+                Severity::Error,
+                format!(
+                    "total typed as {} but {block} adds up to {}: use {fix}",
+                    n(typed),
+                    n(b.sum)
+                ),
+            )
+        }
+    } else {
+        let texts = format!(
+            "{} cell(s) of {block} are numbers stored as text ({}), which SUM skips",
+            b.texts.len(),
+            b.text_list()
+        );
+        if near(typed, with_text) {
+            (
+                Severity::Warning,
+                format!(
+                    "total typed as {}, which is {block} with its numbers stored as text; {texts}: convert them first (to_numbers), then use {fix}",
+                    n(typed)
+                ),
+            )
+        } else {
+            (
+                Severity::Error,
+                format!(
+                    "total typed as {} but {block} adds up to {} ({} with its numbers stored as text); {texts}: convert them first (to_numbers), then use {fix}",
+                    n(typed),
+                    n(b.sum),
+                    n(with_text)
+                ),
+            )
+        }
+    };
+    if b.errors > 0 {
+        message.push_str(&format!(
+            "; {} formula(s) in {block} show errors (SUM will too): fix them",
+            b.errors
+        ));
+    }
+    let text_cells: Vec<String> = b
+        .texts
+        .iter()
+        .take(20)
+        .map(|(r, c)| cell_name(*r, *c))
+        .collect();
+    Finding {
+        severity,
         check: "typed_total",
         sheet: Some(s),
         range: Some(CellRange::from_corners((r, c), (r, c))),
-        message: if same {
-            format!(
-                "total typed as a number ({}); it won't follow changes: use {fix}",
-                super::sheets_author::number(typed)
-            )
-        } else {
-            format!(
-                "total typed as {} but {} adds up to {}: use {fix}",
-                super::sheets_author::number(typed),
-                block.name(),
-                super::sheets_author::number(sum)
-            )
-        },
-        details: json!({"typed": typed, "sum": sum, "block": block.name(), "fix": fix}),
+        message,
+        details: json!({
+            "typed": typed,
+            "sum": b.sum,
+            "block": block,
+            "numbers": b.numbers,
+            "numbers_as_text": b.texts.len(),
+            "sum_with_text": with_text,
+            "text_cells": text_cells,
+            "formula_errors": b.errors,
+            "fix": fix,
+        }),
     }
 }
 
@@ -1020,14 +1243,23 @@ fn columns(book: &Workbook, s: u32, grid: &HashMap<(u32, u32), Cell>) -> Vec<Fin
         let mut kinds: BTreeMap<&'static str, (u32, String)> = BTreeMap::new();
         let mut units: BTreeMap<String, (u32, String)> = BTreeMap::new();
         let mut numbers = 0;
+        let mut dates = 0;
+        let mut date_formats: BTreeMap<String, (u32, String)> = BTreeMap::new();
         for &r in &rows {
             let cell = &grid[&(r, c)];
             match cell.kind {
                 ValueKind::Number => {
                     numbers += 1;
                     let st = book.cell_style(s, r, c);
-                    let k = format_kind(&st.num_fmt, book.is_date_format(s, r, c));
+                    let date = book.is_date_format(s, r, c);
+                    let k = format_kind(&st.num_fmt, date);
                     kinds.entry(k).or_insert((r, st.num_fmt.clone()));
+                    if date {
+                        dates += 1;
+                        date_formats
+                            .entry(date_shape(&st.num_fmt))
+                            .or_insert((r, st.num_fmt.clone()));
+                    }
                 }
                 ValueKind::Text if !cell.formula => {
                     if let Some(u) = unit_of(&book.display_value(s, r, c)) {
@@ -1055,6 +1287,24 @@ fn columns(book: &Workbook, s: u32, grid: &HashMap<(u32, u32), Cell>) -> Vec<Fin
                     list.join(", ")
                 ),
                 details: json!({"formats": kinds.keys().collect::<Vec<_>>()}),
+            });
+        }
+        if dates >= 3 && date_formats.len() > 1 {
+            let list: Vec<String> = date_formats
+                .values()
+                .map(|(r, f)| format!("{f} in {}", cell_name(*r, c)))
+                .collect();
+            out.push(Finding {
+                severity: Severity::Warning,
+                check: "mixed_formats",
+                sheet: Some(s),
+                range: Some(range),
+                message: format!(
+                    "column {} shows its dates in different formats: {}; fix: format the column with one date format",
+                    column_name(c),
+                    list.join(", ")
+                ),
+                details: json!({"date_formats": date_formats.values().map(|(_, f)| f).collect::<Vec<_>>()}),
             });
         }
         if units.len() > 1 {
@@ -1330,8 +1580,17 @@ mod tests {
             .find(|f| f.check == "typed_total" && f.range.unwrap().name() == "D7")
             .unwrap();
         assert_eq!(total.severity, Severity::Error);
-        // B7: the numbers above (B4:B6, under the text "4") add up to 22.
-        assert!(has(&r, "typed_total", "B7"));
+        // B7: 36 is B2:B6 with the "4" stored as text in B3 (SUM gives 32).
+        let b7 = r
+            .findings
+            .iter()
+            .find(|f| f.check == "typed_total" && f.range.unwrap().name() == "B7")
+            .unwrap();
+        assert_eq!(b7.severity, Severity::Warning, "{}", b7.message);
+        assert!(b7.message.contains("B2:B6"), "{}", b7.message);
+        assert!(b7.message.contains("B3"), "{}", b7.message);
+        assert_eq!(b7.details["sum"], json!(32.0));
+        assert_eq!(b7.details["numbers_as_text"], json!(1));
         assert!(r.has_errors());
         let j = r.json();
         assert!(j["errors"].as_u64().unwrap() >= 3);
@@ -1392,6 +1651,14 @@ mod tests {
         let r = check(&b, None);
         let all = checks(&r);
         assert!(has(&r, "sum_misses_rows", "B6"), "{all:?}");
+        // B5 holds a number the SUM leaves out: the total is wrong.
+        let miss = r
+            .findings
+            .iter()
+            .find(|f| f.check == "sum_misses_rows")
+            .unwrap();
+        assert_eq!(miss.severity, Severity::Error, "{}", miss.message);
+        assert!(miss.message.contains("B2:B5"), "{}", miss.message);
         assert!(
             r.findings.iter().any(|f| f.check == "hidden_data"),
             "{all:?}"
@@ -1400,7 +1667,12 @@ mod tests {
             r.findings.iter().any(|f| f.check == "mixed_units"),
             "{all:?}"
         );
-        assert!(!r.has_errors(), "{all:?}");
+        assert!(
+            r.findings
+                .iter()
+                .all(|f| f.severity != Severity::Error || f.check == "sum_misses_rows"),
+            "{all:?}"
+        );
         // R1C1 forms.
         assert_eq!(
             r1c1("=B2*$C$1+Data!A1", 1, 3),
@@ -1418,5 +1690,103 @@ mod tests {
         assert!(is_total_label("Grand Total"));
         assert!(is_total_label("Jumlah"));
         assert!(!is_total_label("Totally"));
+    }
+
+    /// A long column with numbers stored as text here and there, as an
+    /// export makes them: the total's block is the whole column.
+    #[std::prelude::v1::test]
+    fn typed_totals_see_the_whole_column() {
+        let mut rows = vec![json!(["Order", "Units", "Price"])];
+        for i in 0..40 {
+            let units = if i % 10 == 3 {
+                json!(format!("'{}", i + 1))
+            } else {
+                json!(i + 1)
+            };
+            let price = if i == 20 { Value::Null } else { json!(100) };
+            rows.push(json!([format!("SO-{i}"), units, price]));
+        }
+        rows.push(json!(["Total", 999, 3900]));
+        let b = build(&json!({"sheets": [{"name": "S", "rows": rows}]}), None).unwrap();
+        let r = check(&b, None);
+        let all = checks(&r);
+        let b42 = r
+            .findings
+            .iter()
+            .find(|f| f.check == "typed_total" && f.range.unwrap().name() == "B42")
+            .unwrap_or_else(|| panic!("{all:?}"));
+        assert_eq!(b42.severity, Severity::Error);
+        assert_eq!(b42.details["block"], "B2:B41", "{}", b42.message);
+        // 1..40 = 820; the four text ones (4, 14, 24, 34) = 76.
+        assert_eq!(b42.details["sum"], json!(744.0));
+        assert_eq!(b42.details["sum_with_text"], json!(820.0));
+        assert_eq!(b42.details["numbers_as_text"], json!(4));
+        assert!(b42.message.contains("B5, B15, B25, B35"), "{}", b42.message);
+        assert!(
+            b42.message.contains("convert them first"),
+            "{}",
+            b42.message
+        );
+        // A blank cell inside the column doesn't end the block.
+        let c42 = r
+            .findings
+            .iter()
+            .find(|f| f.check == "typed_total" && f.range.unwrap().name() == "C42")
+            .unwrap_or_else(|| panic!("{all:?}"));
+        assert_eq!(c42.details["block"], "C2:C41", "{}", c42.message);
+        assert_eq!(c42.severity, Severity::Warning, "{}", c42.message);
+    }
+
+    #[std::prelude::v1::test]
+    fn sums_missing_only_text_numbers_warn() {
+        let b = build(
+            &json!({"sheets": [{"name": "S", "rows": [
+                ["Item", "Amount"], ["a", "'5"], ["b", 2], ["c", 3], ["Total", "=SUM(B3:B4)"],
+            ]}]}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        let miss = r
+            .findings
+            .iter()
+            .find(|f| f.check == "sum_misses_rows")
+            .unwrap_or_else(|| panic!("{:?}", checks(&r)));
+        assert_eq!(miss.severity, Severity::Warning, "{}", miss.message);
+        assert!(miss.message.contains("stored as text"), "{}", miss.message);
+    }
+
+    #[std::prelude::v1::test]
+    fn dates_in_different_formats() {
+        let mut b = build(
+            &json!({"sheets": [{"name": "S", "rows": [
+                ["Date"], [46037], [46038], [46039], [46040],
+            ]}]}),
+            None,
+        )
+        .unwrap();
+        let one = |r: u32| CellRange::from_corners((r, 0), (r, 0));
+        for r in 1..=4 {
+            let f = if r == 3 { "dd/mm/yyyy" } else { "yyyy-mm-dd" };
+            b.set_range_style_value(0, one(r), "num_fmt", f).unwrap();
+        }
+        let r = check(&b, None);
+        let f = r
+            .findings
+            .iter()
+            .find(|f| f.check == "mixed_formats")
+            .unwrap_or_else(|| panic!("{:?}", checks(&r)));
+        assert!(f.message.contains("dd/mm/yyyy in A4"), "{}", f.message);
+        assert!(f.message.contains("yyyy-mm-dd in A2"), "{}", f.message);
+        // One shape written two ways is one format.
+        b.set_range_style_value(0, one(3), "num_fmt", "[$-421]YYYY-MM-DD;@")
+            .unwrap();
+        let r = check(&b, None);
+        assert!(
+            !r.findings.iter().any(|f| f.check == "mixed_formats"),
+            "{:?}",
+            checks(&r)
+        );
+        assert_eq!(date_shape("[$-421]dd/mm/yyyy;@"), "dd/mm/yyyy");
     }
 }

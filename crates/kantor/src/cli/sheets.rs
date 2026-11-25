@@ -44,7 +44,7 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20          panes, merged cells, tables, charts and their series ranges,\n\
     \x20          conditional formats, validation, pivot tables, a summary of\n\
     \x20          each column, and a page of cells (values, formulas, number\n\
-    \x20          formats; 30 rows unless --max-rows, --range for another page;\n\
+    \x20          formats; 30 rows unless --max-rows, a --range up to 500 rows;\n\
     \x20          \"next\" says where to continue).\n\
     \x20 check    audit the workbook: formula errors, circular references,\n\
     \x20          numbers and dates stored as text, inconsistent formulas,\n\

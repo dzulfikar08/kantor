@@ -16,6 +16,8 @@ use super::sheets_author::{cell_value, number, parse_ref, px_to_chars, used_part
 
 /// Rows of cells shown per sheet unless asked for more.
 pub const DEFAULT_ROWS: u32 = 30;
+/// Rows shown of a range asked for (`--range`) unless asked for more.
+pub const DEFAULT_RANGE_ROWS: u32 = 500;
 /// The most rows one listing shows of a sheet.
 pub const MAX_ROWS: u32 = 5_000;
 /// Cells profiled per sheet (the column summaries).
@@ -102,6 +104,9 @@ fn sheet_json(book: &Workbook, s: u32, page: Option<CellRange>, opts: &ListOpts)
         "columns": cols,
         "frozen": if fr == 0 && fc == 0 { Value::Null } else { json!(cell_name(fr, fc)) },
     });
+    if !book.show_gridlines(s) {
+        v["show_gridlines"] = json!(false);
+    }
     let Some(used) = used else {
         return v;
     };
@@ -187,7 +192,12 @@ fn sheet_json(book: &Workbook, s: u32, page: Option<CellRange>, opts: &ListOpts)
         v["pivots"] = json!(pivots);
     }
     v["column_summary"] = json!(profile(book, s, used));
-    let max_rows = opts.max_rows.unwrap_or(DEFAULT_ROWS).min(MAX_ROWS);
+    let default = if page.is_some() {
+        DEFAULT_RANGE_ROWS
+    } else {
+        DEFAULT_ROWS
+    };
+    let max_rows = opts.max_rows.unwrap_or(default).min(MAX_ROWS);
     if max_rows > 0 {
         let want = page.map_or(used, |p| used_part(book, s, p));
         v["cells"] = cells(book, s, want, max_rows, opts.formulas);
@@ -431,15 +441,19 @@ fn cells(book: &Workbook, s: u32, want: CellRange, max_rows: u32, show_formulas:
     }
     if shown.bottom < want.bottom || shown.right < want.right {
         v["truncated"] = json!(true);
+        let mut note = format!("cut: shows {} of {}", shown.name(), want.name());
         if shown.bottom < want.bottom {
-            v["next"] = json!(
-                CellRange {
-                    top: shown.bottom + 1,
-                    ..want
-                }
-                .name()
-            );
+            let next = CellRange {
+                top: shown.bottom + 1,
+                ..want
+            }
+            .name();
+            note.push_str(&format!(
+                "; list --range {next} (or --max-rows) for the rest"
+            ));
+            v["next"] = json!(next);
         }
+        v["note"] = json!(note);
     }
     v
 }
@@ -504,6 +518,26 @@ mod tests {
         assert_eq!(v["sheets"].as_array().unwrap().len(), 1);
         assert_eq!(v["sheets"][0]["cells"]["range"], "C99:E100");
         assert_eq!(v["sheets"][0]["cells"]["next"], "C101:E101");
+        assert_eq!(v["sheets"][0]["cells"]["truncated"], true);
+        assert!(
+            v["sheets"][0]["cells"]["note"]
+                .as_str()
+                .unwrap()
+                .contains("C101:E101")
+        );
+        // A range asked for shows all of it (up to 500 rows), not 30.
+        let v = list(
+            &b,
+            &ListOpts {
+                range: Some("Data!A31:E101".into()),
+                ..ListOpts::default()
+            },
+        )
+        .unwrap();
+        let cells = &v["sheets"][0]["cells"];
+        assert_eq!(cells["range"], "A31:E101");
+        assert_eq!(cells["values"].as_array().unwrap().len(), 71);
+        assert!(cells.get("truncated").is_none() && cells.get("next").is_none());
         let v = list(
             &b,
             &ListOpts {

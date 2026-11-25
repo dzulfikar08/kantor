@@ -163,6 +163,27 @@ fn add_table(book: &mut Workbook, o: &Map<String, Value>) -> Result<(String, Val
             .into_iter()
             .find(|t| t.name == name)
             .context("the new table")?;
+        let mut named = Vec::new();
+        for col in m.keys() {
+            named.push(
+                info.columns
+                    .iter()
+                    .position(|c| c.eq_ignore_ascii_case(col))
+                    .with_context(|| {
+                        format!(
+                            "`totals`: the table has no column \"{col}\" (columns: {})",
+                            info.columns.join(", ")
+                        )
+                    })?,
+            );
+        }
+        // Only the named columns get totals (turning the total row on
+        // totals the last column); the first keeps its "Total" label.
+        for i in 1..info.columns.len() {
+            if !named.contains(&i) {
+                book.set_table_total(&name, i, TotalFunc::None)?;
+            }
+        }
         for (col, f) in m {
             let i = info
                 .columns
@@ -875,6 +896,18 @@ mod tests {
         assert_eq!(out["table"], "Sales");
         assert_eq!(out["range"], "A1:D6");
         assert_eq!(cell_value(&b, 0, 5, 3), json!(368));
+        // Columns not named get no total (not even the last); the first
+        // keeps its label.
+        let mut c = data();
+        run_ok(
+            &mut c,
+            "add_table",
+            json!({"range": "A1:D5", "totals": {"Units": "sum"}}),
+        );
+        assert_eq!(cell_value(&c, 0, 5, 0), json!("Total"));
+        assert_eq!(cell_value(&c, 0, 5, 2), json!(24));
+        assert!(c.input(0, 5, 3).is_empty(), "{}", c.input(0, 5, 3));
+        assert!(c.input(0, 5, 1).is_empty(), "{}", c.input(0, 5, 1));
         assert_eq!(b.tables(0)[0].style.as_deref(), Some("TableStyleMedium9"));
         assert!(
             run_tool(

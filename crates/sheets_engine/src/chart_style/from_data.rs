@@ -81,6 +81,12 @@ pub struct DataChart {
     pub overlap: Option<i32>,
     /// Gridlines of the value axis (`None`: Insert Chart's, shown).
     pub gridlines: Option<bool>,
+    /// Hide the primary category (x) axis and the primary value (y) axis
+    /// (`c:delete`): no line, ticks or labels. A category axis in reverse
+    /// order (`spec`'s axis options) also moves the value axis to the
+    /// category axis' far end (`c:crosses val="max"`), so a bar chart
+    /// listing its categories from the top keeps its values at the bottom.
+    pub hidden_axes: [bool; 2],
     /// The chart's text formatting: an `a:defRPr` element.
     pub text: Option<String>,
     /// The title's size (hundredths of a point; `None`: from `text`, as
@@ -317,6 +323,50 @@ fn bar_spacing(xml: &str, gap: Option<u32>, overlap: Option<i32>) -> Result<Stri
     Ok(splice(xml, edits))
 }
 
+/// Hidden primary axes (`[category, value]`), and the value axis crossing
+/// a reversed category axis at its far end (see [`DataChart::hidden_axes`]).
+fn axes_look(xml: &str, hidden: [bool; 2]) -> Result<String> {
+    let doc = reparse(xml)?;
+    let (_, plot) = plot_area(&doc)?;
+    let (h, v) = primary_axes(plot);
+    // A bar chart's category axis is the vertical one.
+    let (cat, value) = match (h, v) {
+        (Some(h), Some(v)) if is_value_axis(h) && !is_value_axis(v) => (Some(v), Some(h)),
+        other => other,
+    };
+    let mut edits = Vec::new();
+    let set = |ax: Node, name: &str, v: &str, edits: &mut Vec<Edit>| {
+        let p = prefix_of(xml, ax);
+        let order: &[&str] = match ax.tag_name().name() {
+            "valAx" => VAL_AX,
+            "catAx" => CAT_AX,
+            "dateAx" => DATE_AX,
+            _ => AX_ORDER,
+        };
+        let text = format!("<{p}{name} val=\"{v}\"/>");
+        edits.push(match kid(ax, name) {
+            Some(n) => (n.range(), text),
+            None => insert_ordered(xml, ax, name, order, &text),
+        });
+    };
+    for (ax, hide) in [(cat, hidden[0]), (value, hidden[1])] {
+        if let Some(ax) = ax
+            && hide
+        {
+            set(ax, "delete", "1", &mut edits);
+        }
+    }
+    if let (Some(cat), Some(value)) = (cat, value)
+        && !is_value_axis(cat)
+        && kid(cat, "scaling").and_then(|s| val(s, "orientation")) == Some("maxMin")
+        && kid(value, "crossesAt").is_none()
+        && val(value, "crosses").is_none_or(|c| c == "autoZero")
+    {
+        set(value, "crosses", "max", &mut edits);
+    }
+    Ok(splice(xml, edits))
+}
+
 /// Value axes' major gridlines shown or not.
 fn gridlines(xml: &str, on: bool) -> Result<String> {
     let doc = reparse(xml)?;
@@ -324,7 +374,8 @@ fn gridlines(xml: &str, on: bool) -> Result<String> {
     let mut edits = Vec::new();
     for ax in axes(plot).into_iter().filter(|a| is_value_axis(*a)) {
         // Secondary axes (crossing at the maximum) keep none.
-        let secondary = val(ax, "crosses") == Some("max");
+        let secondary =
+            val(ax, "crosses") == Some("max") && matches!(val(ax, "axPos"), Some("r" | "t"));
         match kid(ax, "majorGridlines") {
             Some(g) if !on => edits.push((g.range(), String::new())),
             None if on && !secondary => {
@@ -484,6 +535,7 @@ pub fn data_chart_part(d: &DataChart) -> Result<String> {
     if let Some(on) = d.gridlines {
         xml = gridlines(&xml, on)?;
     }
+    xml = axes_look(&xml, d.hidden_axes)?;
     for (i, s) in d.series.iter().enumerate() {
         if let Some(f) = &s.fill {
             xml = set_fill(&xml, i, Some(&NewFill::Raw(f.clone())))?;
@@ -552,6 +604,7 @@ mod tests {
             gap_width: None,
             overlap: None,
             gridlines: None,
+            hidden_axes: [false; 2],
             text: None,
             title_size: None,
             area: None,
@@ -666,6 +719,39 @@ mod tests {
             "{xml}"
         );
         assert_eq!(xml.matches("<c:valAx>").count(), 2);
+    }
+
+    #[test]
+    fn reversed_categories_keep_the_values_at_the_bottom() {
+        let part = |xml: &str, tag: &str| -> String {
+            let a = xml.find(&format!("<c:{tag}>")).unwrap();
+            let b = xml[a..].find(&format!("</c:{tag}>")).unwrap();
+            xml[a..a + b].to_owned()
+        };
+        let mut d = chart(ChartType::Bar);
+        d.spec.y_axis.reverse = true;
+        let xml = data_chart_part(&d).unwrap();
+        Document::parse(&xml).unwrap();
+        let cat = part(&xml, "catAx");
+        let val = part(&xml, "valAx");
+        assert!(cat.contains("<c:orientation val=\"maxMin\"/>"), "{cat}");
+        assert!(val.contains("<c:crosses val=\"max\"/>"), "{val}");
+        assert!(val.contains("<c:majorGridlines/>"), "{val}");
+        // Not reversed: the value axis crosses at zero as usual.
+        let d = chart(ChartType::Bar);
+        let xml = data_chart_part(&d).unwrap();
+        assert!(part(&xml, "valAx").contains("<c:crosses val=\"autoZero\"/>"));
+        // Hidden axes.
+        let mut d = chart(ChartType::Column);
+        d.hidden_axes = [false, true];
+        let xml = data_chart_part(&d).unwrap();
+        assert!(part(&xml, "catAx").contains("<c:delete val=\"0\"/>"));
+        assert!(part(&xml, "valAx").contains("<c:delete val=\"1\"/>"));
+        let mut d = chart(ChartType::Bar);
+        d.hidden_axes = [true, false];
+        let xml = data_chart_part(&d).unwrap();
+        assert!(part(&xml, "catAx").contains("<c:delete val=\"1\"/>"));
+        assert!(part(&xml, "valAx").contains("<c:delete val=\"0\"/>"));
     }
 
     #[test]

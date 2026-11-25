@@ -123,6 +123,12 @@ pub const TOOLS: &[ToolSpec] = &[
         []
     ),
     tool!(
+        "sheet_view",
+        "How a sheet shows on screen: `show_gridlines` false hides the gridlines (Excel's View > Gridlines; printing them is page_setup's `gridlines`).",
+        ["sheet", "show_gridlines"],
+        ["show_gridlines"]
+    ),
+    tool!(
         "insert_rows",
         "Insert empty rows before row `before_row` (from 1).",
         ["sheet", "before_row", "count"],
@@ -203,13 +209,13 @@ pub const TOOLS: &[ToolSpec] = &[
     ),
     tool!(
         "to_numbers",
-        "Turn numbers stored as text (\"1,234.50\", \"Rp 12.000\", \"(500)\", \"15%\") into numbers. `decimal`: \".\", \",\" or \"auto\".",
+        "Turn numbers stored as text (\"1,234.50\", \"Rp 12.000\", \"(500)\", \"15%\") into numbers. `decimal`: \".\", \",\" or \"auto\". `number_format` is applied to the whole range (numbers already there too).",
         ["sheet", "range", "decimal", "number_format"],
         ["range"]
     ),
     tool!(
         "to_dates",
-        "Turn dates stored as text (\"15/01/2026\", \"2026-01-15\", \"15 Jan 2026\", \"15 Januari 2026\") into dates. `order`: dmy, mdy, ymd or auto.",
+        "Turn dates stored as text (\"15/01/2026\", \"2026-01-15\", \"15 Jan 2026\", \"15 Januari 2026\") into dates. `order`: dmy, mdy, ymd or auto. `number_format` (default yyyy-mm-dd) is applied to the whole range when given, else to the converted cells and the range's existing dates.",
         ["sheet", "range", "order", "number_format"],
         ["range"]
     ),
@@ -1298,6 +1304,19 @@ fn run(book: &mut Workbook, tool: &str, o: &Map<String, Value>) -> Result<(Strin
                 json!({}),
             ))
         }
+        "sheet_view" => {
+            let sheet = sheet_arg(book, o)?;
+            let show = opt_bool(o, "show_gridlines")?.context("no show_gridlines")?;
+            book.set_show_gridlines(sheet, show)?;
+            Ok((
+                if show {
+                    "showed the gridlines".to_owned()
+                } else {
+                    "hid the gridlines".to_owned()
+                },
+                json!({"show_gridlines": show}),
+            ))
+        }
         "freeze" => {
             let sheet = sheet_arg(book, o)?;
             let (rows, cols) = match opt_str(o, "cell")? {
@@ -1585,6 +1604,7 @@ pub const SHEET_KEYS: &[&str] = &[
     "hidden",
     "tab_color",
     "gridlines",
+    "show_gridlines",
     "page_setup",
     "ops",
 ];
@@ -1710,6 +1730,12 @@ fn sheet_steps(s: &Map<String, Value>, name: &str) -> Result<Vec<Step>> {
     }
     if let Some(g) = get(s, "gridlines") {
         steps.push(("page_setup".into(), json!({"sheet": name, "gridlines": g})));
+    }
+    if let Some(g) = get(s, "show_gridlines") {
+        steps.push((
+            "sheet_view".into(),
+            json!({"sheet": name, "show_gridlines": g}),
+        ));
     }
     if let Some(v) = get(s, "ops") {
         for (i, op) in v
@@ -2071,7 +2097,7 @@ mod tests {
             "sheets": [
                 {"name": "Data", "rows": [["Month", "Sales"], ["Jan", 10], ["Feb", 12], ["Mar", 9]],
                  "cells": {"A5": "Total", "B5": "=SUM(B2:B4)"},
-                 "widths": {"A": 12}, "freeze": "A2",
+                 "widths": {"A": 12}, "freeze": "A2", "show_gridlines": false,
                  "formats": [{"range": "A1:B1", "bold": true}],
                  "tables": [{"range": "A1:B4", "name": "Sales"}]},
                 {"name": "Notes", "columns": [["Note", "Checked"]], "hidden": true}
@@ -2095,6 +2121,23 @@ mod tests {
         std::fs::write(&p, &one).unwrap();
         let again = Workbook::open(&p).unwrap();
         assert_eq!(again.input(0, 4, 1), "=SUM(B2:B4)");
+        assert!(!b.show_gridlines(0) && b.show_gridlines(1));
+        assert!(!again.show_gridlines(0) && again.show_gridlines(1));
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(&one)).unwrap();
+        let mut sheet1 = String::new();
+        std::io::Read::read_to_string(
+            &mut zip.by_name("xl/worksheets/sheet1.xml").unwrap(),
+            &mut sheet1,
+        )
+        .unwrap();
+        assert!(sheet1.contains("showGridLines=\"0\""), "{sheet1}");
+        let mut c = again;
+        run_ok(
+            &mut c,
+            "sheet_view",
+            json!({"sheet": "Data", "show_gridlines": true}),
+        );
+        assert!(c.show_gridlines(0));
         assert!(build(&json!({"sheets": []}), None).is_err());
         assert!(build(&json!({"sheets": [{"nme": "x"}]}), None).is_err());
         assert!(build(&json!({"sheets": [{"name": "A"}, {"name": "a"}]}), None).is_err());

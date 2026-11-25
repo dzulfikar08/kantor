@@ -259,7 +259,7 @@ const SPECS: &[Spec] = &[
                 "sheet": {"type": ["string", "integer"], "description": "Only this sheet (name or number from 1)."},
                 "range": {"type": "string", "description": "The cells to show, e.g. A1:H200 or Data!A31:H60 (default: the used range's first rows)."},
                 "formulas": {"type": "boolean", "description": "Formulas in the grid in place of their values."},
-                "max_rows": {"type": "integer", "minimum": 0, "maximum": 5000, "description": "Rows of cells per sheet (default 30; 0: summaries only)."},
+                "max_rows": {"type": "integer", "minimum": 0, "maximum": 5000, "description": "Rows of cells per sheet (default 30, or 500 of a `range`; 0: summaries only). Cut listings say \"truncated\": true and \"next\"."},
             })
         },
         &[],

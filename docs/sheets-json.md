@@ -92,6 +92,7 @@ A sheet:
 | `tables`, `charts`, `conditional_formats`, `validations` | `add_table`, `add_chart`, `add_conditional_format`, `add_validation` arguments |
 | `pivots` | `add_pivot` arguments; `at` is a cell of this sheet |
 | `page_setup`, `gridlines` | `page_setup` arguments; gridlines in print and PNG |
+| `show_gridlines` | `false` hides the gridlines on screen (Excel's View > Gridlines), e.g. on a dashboard sheet; `gridlines` is about printing |
 | `hidden`, `tab_color` | hide the sheet, colour its tab |
 | `ops` | any editing tools, run on this sheet last |
 
@@ -117,18 +118,19 @@ written cells' values and formula errors right away.
 | `autofit` | `columns`, `min`, `max` | fit columns to their text (estimated) |
 | `row_height` | `rows`, `height` | heights in points |
 | `freeze` | `cell`, or `rows`/`columns` | freeze panes (`A1` unfreezes) |
+| `sheet_view` | `show_gridlines` | `false` hides the on-screen gridlines (`true` shows them); printing them is `page_setup`'s `gridlines` |
 | `insert_rows`, `delete_rows`, `insert_columns`, `delete_columns` | `before_row`/`first_row`/`last_row`, `before_column`/... , `count` | formulas follow |
 | `hide` | `rows` and/or `columns`, `hidden` | hide or show |
 | `add_sheet`, `delete_sheet`, `rename_sheet`, `move_sheet`, `copy_sheet`, `hide_sheet` | `name`, `sheet`, `position` | sheets |
 | `sort` | `range`, `by` (`"C"`, `{column, order}` or a list), `descending`, `header` | sort rows; the header row stays |
 | `remove_duplicates` | `range`, `columns`, `header` | delete repeated rows (case and outer spaces ignored), keep the first |
 | `trim` | `range`, `collapse` | TRIM + CLEAN text cells (non-breaking spaces too) |
-| `to_numbers` | `range`, `decimal` (`.`, `,`, `auto`), `number_format` | numbers stored as text to numbers: `1,250.50`, `1.250,50`, `Rp 12.000`, `(500)`, `500-`, `15%` |
-| `to_dates` | `range`, `order` (`dmy`, `mdy`, `ymd`, `auto`), `number_format` | dates stored as text to dates: `15/01/2026`, `2026-01-15`, `15 Jan 2026`, `15 Januari 2026`, `Jan 15, 2026`, with times |
+| `to_numbers` | `range`, `decimal` (`.`, `,`, `auto`), `number_format` | numbers stored as text to numbers: `1,250.50`, `1.250,50`, `Rp 12.000`, `(500)`, `500-`, `15%`. `number_format` is set on the whole range, numbers that were already numbers too, so the column ends up alike |
+| `to_dates` | `range`, `order` (`dmy`, `mdy`, `ymd`, `auto`), `number_format` | dates stored as text to dates: `15/01/2026`, `2026-01-15`, `15 Jan 2026`, `15 Januari 2026`, `Jan 15, 2026`, with times. The date format (`number_format`, default `yyyy-mm-dd`) goes on the whole range when given, else on the converted cells and the range's dates that were already dates |
 | `split_column` | `range` (one column), `delimiter`, `to`, `overwrite` | text to columns |
 | `combine_columns` | `range`, `to`, `separator`, `formulas` | join columns, as formulas (`=A2&" "&B2`) by default |
 | `find_replace` | `find`, `replace`, `range`/`sheet`/`all_sheets`, `match_case`, `whole_cell`, `in_formulas` | replace text |
-| `add_table` | `range`, `name`, `style`, `header`, `totals`, `banded_rows`, `first_column`, `last_column`, `filter_buttons` | an Excel table; `totals`: `true` or `{"Revenue": "sum", "Units": "average"}` |
+| `add_table` | `range`, `name`, `style`, `header`, `totals`, `banded_rows`, `first_column`, `last_column`, `filter_buttons` | an Excel table; `totals`: `true` (a total row, the last column totalled) or `{"Revenue": "sum", "Units": "average"}` (only those columns; the first column says "Total") |
 | `add_chart` | see below | a chart of cells |
 | `add_conditional_format` | `range`, `type`, ... | see below |
 | `clear_conditional_formats` | `range` (or the sheet) | remove rules |
@@ -201,8 +203,9 @@ they change.
 text, booleans, errors as `"#DIV/0!"`, null for empty; trailing empty cells
 left out), `formulas` (`{"E2": "=C2*D2"}`) and `number_formats` (runs down
 columns, `{"D2:D31": "#,##0"}`). Only 30 rows are shown unless `--max-rows`
-(up to 5000; 0 for summaries only); `next` names the next page for
-`--range`. `--formulas` puts formulas in the grid. Defined names are in
+(up to 5000; 0 for summaries only); a `--range` shows the whole range up to
+500 rows. When rows are left out, `cells` says so: `"truncated": true`,
+`next` (the rest, for `--range`) and a `note`. `--formulas` puts formulas in the grid. Defined names are in
 `names`.
 
 ## Checking a workbook
@@ -228,10 +231,10 @@ gives `{"sheets", "cells_checked", "errors", "warnings", "info",
 | `date_as_text` | warning | dates stored as text. Fix: `to_dates` |
 | `inconsistent_formula` | warning | a formula that differs (in R1C1 form) from the formulas above and below, or left and right, which agree with each other |
 | `hardcoded_number` | warning | a number typed as an operand next to a reference (`=B2*1.11`, `=C5+500`); 0, 0.5, 1, 2, 10, 12, 24, 60, 100, 1000, 365, comparisons and function arguments (`ROUND(x, 2)`) are left alone. Put the number in a cell or a name |
-| `typed_total` | error / warning | a row or column labelled Total, Grand total, Subtotal, Jumlah… holding a typed number below (beside) at least two numbers: error when it isn't their sum, warning when it is (it won't follow changes). `fix` gives the SUM |
-| `sum_misses_rows` | warning | `=SUM(...)` under (beside) a run of numbers that leaves some of them out |
+| `typed_total` | error / warning | a row or column labelled Total, Grand total, Subtotal, Jumlah… holding a typed number below (beside) at least two numbers: error when it isn't their sum, warning when it is (it won't follow changes). The numbers are the column's (row's) whole block up to its header, a subtotal, another total or an empty row, blank cells and numbers stored as text included (`block`). Numbers stored as text are named (`numbers_as_text`, `text_cells`, `sum_with_text`): SUM skips them, so convert them first. `fix` gives the SUM |
+| `sum_misses_rows` | error / warning | `=SUM(...)` under (beside) a block of numbers (found as for `typed_total`) that leaves some of it out: error when the cells left out hold numbers (the total is wrong), warning when they are only numbers stored as text |
 | `refers_to_empty` | warning | a formula using an empty cell on its own (not in a range), unless it tests for blanks (IF, ISBLANK) |
-| `mixed_formats` | warning | a column of 5+ numbers in different kinds of format (plain and percent, two currencies, dates and numbers) |
+| `mixed_formats` | warning | a column of 5+ numbers in different kinds of format (plain and percent, two currencies, dates and numbers), or of 3+ dates in different date formats (`yyyy-mm-dd` next to `dd/mm/yyyy`). Fix: `format` the column with one `number_format` |
 | `mixed_units` | warning | a column with values like `12 kg` and `3 lb` |
 | `duplicate_rows` | warning | rows of a data block (3+ rows, 2+ columns) repeating an earlier row. Fix: `remove_duplicates` |
 | `extra_spaces` | warning | text with leading, trailing, doubled or non-breaking spaces. Fix: `trim` |

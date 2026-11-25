@@ -193,7 +193,8 @@ pub fn chart_props() -> Map<String, Value> {
             "major_unit": {"type": "number", "description": "Distance between gridlines / tick labels."},
             "gridlines": {"type": "boolean", "description": "Value axis: major gridlines (default true)."},
             "number_format": {"type": "string", "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."},
-            "reverse": {"type": "boolean", "description": "Values (categories) in reverse order."},
+            "reverse": {"type": "boolean", "description": "Values (categories) in reverse order. A bar chart's categories reversed (first at the top) keep the value axis at the bottom."},
+            "visible": {"type": "boolean", "description": "false hides the axis (line, ticks and labels); default true."},
         }})
     };
     let mut m = box_props("chart");
@@ -219,7 +220,7 @@ pub fn chart_props() -> Map<String, Value> {
         "data_labels": labels,
         "number_format": {"type": "string", "description": "Excel number format of the values (labels and value axis), written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."},
         "axis": axis("The value axis (horizontal in a bar chart)."),
-        "category_axis": axis("The category axis: title, reverse (scatter: the x axis, with min/max/major_unit)."),
+        "category_axis": axis("The category axis: title, reverse, visible (scatter: the x axis, with min/max/major_unit)."),
         "gap_width": {"type": "number", "minimum": 0, "maximum": 500, "description": "Column/bar: gap between categories, % of a bar (default 150)."},
         "overlap": {"type": "number", "minimum": -100, "maximum": 100, "description": "Column/bar: overlap of a category's bars in % (stacked: 100)."},
         "hole": {"type": "number", "minimum": 10, "maximum": 90, "description": "Doughnut hole size in % (default 50)."},

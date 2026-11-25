@@ -80,6 +80,7 @@ const AXIS_KEYS: &[&str] = &[
     "gridlines",
     "number_format",
     "reverse",
+    "visible",
 ];
 const LABEL_KEYS: &[&str] = &[
     "show", "position", "format", "size", "bold", "italic", "color",
@@ -256,11 +257,13 @@ fn data_labels(v: &Value, round: bool) -> Result<Option<DataLabels>> {
 }
 
 /// An axis: {title, min, max, major_unit, gridlines, number_format,
-/// reverse}.
+/// reverse, visible}.
 struct Axis {
     title: String,
     options: AxisOptions,
     gridlines: Option<bool>,
+    /// `visible: false`: no line, ticks or labels.
+    hidden: bool,
 }
 
 fn axis(v: Option<&Value>, key: &str) -> Result<Axis> {
@@ -268,6 +271,7 @@ fn axis(v: Option<&Value>, key: &str) -> Result<Axis> {
         title: String::new(),
         options: AxisOptions::default(),
         gridlines: None,
+        hidden: false,
     };
     let Some(v) = v else { return Ok(out) };
     let o = object(v, &format!("`{key}`"), AXIS_KEYS)?;
@@ -286,6 +290,7 @@ fn axis(v: Option<&Value>, key: &str) -> Result<Axis> {
     out.options.num_fmt = opt_str(o, "number_format")?.map(str::to_owned);
     out.options.reverse = opt_bool(o, "reverse")?.unwrap_or(false);
     out.gridlines = opt_bool(o, "gridlines")?;
+    out.hidden = opt_bool(o, "visible")? == Some(false);
     Ok(out)
 }
 
@@ -698,6 +703,7 @@ pub fn plan(v: &Value, cx: &Ctx) -> Result<ChartPlan> {
         gap_width: gap_width.map(|g| g.round() as u32),
         overlap: overlap.map(|g| g.round() as i32),
         gridlines: value_axis.gridlines,
+        hidden_axes: [cat_axis.hidden, value_axis.hidden],
         text: text_props(get(o, "font"), cx)?,
         title_size: get(o, "font")
             .and_then(|f| f.get("size"))
@@ -800,6 +806,28 @@ mod tests {
         );
         assert_eq!(p.xfrm.cx, 6 * 914_400);
         assert!(p.data.text.as_deref().unwrap().contains("sz=\"1200\""));
+    }
+
+    #[std::prelude::v1::test]
+    fn reversed_bars_and_hidden_axes() {
+        let bar = json!({"type": "chart", "chart": "bar", "w": 4, "h": 3,
+            "categories": ["a", "b", "c"], "series": [{"values": [1, 2, 3]}],
+            "category_axis": {"reverse": true}, "axis": {"visible": false}});
+        let p = plan(&bar, &cx()).unwrap();
+        assert!(p.data.spec.y_axis.reverse);
+        assert_eq!(p.data.hidden_axes, [false, true]);
+        let xml = sheets_engine::data_chart_part(&p.data).unwrap();
+        let val = &xml[xml.find("<c:valAx>").unwrap()..];
+        let val = &val[..val.find("</c:valAx>").unwrap()];
+        assert!(val.contains("<c:crosses val=\"max\"/>"), "{val}");
+        assert!(val.contains("<c:delete val=\"1\"/>"), "{val}");
+        let col = json!({"type": "chart", "chart": "column", "w": 4, "h": 3,
+            "categories": ["a", "b"], "series": [{"values": [1, 2]}],
+            "category_axis": {"visible": false}});
+        assert_eq!(plan(&col, &cx()).unwrap().data.hidden_axes, [true, false]);
+        let bad = json!({"type": "chart", "chart": "column", "w": 4, "h": 3,
+            "categories": ["a"], "series": [{"values": [1]}], "axis": {"visible": "no"}});
+        assert!(plan(&bad, &cx()).is_err());
     }
 
     #[std::prelude::v1::test]

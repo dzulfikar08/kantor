@@ -169,6 +169,9 @@ fn prop(tool: &str, key: &str) -> Value {
             json!({"type": ["string", "integer", "null"], "description": "Rows repeated at the top of each page, e.g. \"1\" or \"1:2\"."})
         }
         ("page_setup", "gridlines") => b("Print the gridlines."),
+        ("sheet_view", "show_gridlines") => {
+            b("false hides the gridlines on screen (true shows them).")
+        }
         ("page_setup", "center") => b("Centre the sheet across the page."),
         (_, "color") => s(colour),
         (t, k) => s(&format!("{t}: {k}")),
@@ -433,6 +436,9 @@ pub fn workbook() -> Value {
             "hidden" => b("Hide the sheet."),
             "tab_color" => s("The tab's colour, #RRGGBB."),
             "gridlines" => b("Print (and draw in PDF/PNG) the gridlines."),
+            "show_gridlines" => b(
+                "false hides the gridlines on screen (Excel's View > Gridlines), e.g. for a dashboard.",
+            ),
             "page_setup" => on_sheet("page_setup"),
             "ops" => {
                 json!({"type": "array", "description": "Any editing tools, run on this sheet after the rest.", "items": r("op")})

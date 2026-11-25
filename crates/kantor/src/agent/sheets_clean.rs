@@ -399,15 +399,9 @@ fn to_numbers(book: &mut Workbook, o: &Map<String, Value>) -> Result<(String, Va
     let n = cells.len();
     book.set_inputs(sheet, &cells)?;
     if let Some(f) = opt_str(o, "number_format")? {
+        // The whole range, so the column's numbers end up alike.
         let code = super::sheets_author::number_format_code(f);
-        for (row, c, _) in &cells {
-            book.set_range_style_value(
-                sheet,
-                CellRange::from_corners((*row, *c), (*row, *c)),
-                "num_fmt",
-                &code,
-            )?;
-        }
+        book.set_range_style_value(sheet, r, "num_fmt", &code)?;
     } else {
         for p in percents {
             book.set_range_style_value(sheet, p, "num_fmt", "0%")?;
@@ -650,18 +644,37 @@ fn to_dates(book: &mut Workbook, o: &Map<String, Value>) -> Result<(String, Valu
     }
     let n = cells.len();
     book.set_inputs(sheet, &cells)?;
-    let code = if with_time && opt_str(o, "number_format")?.is_none() {
+    let given = opt_str(o, "number_format")?.is_some();
+    let code = if with_time && !given {
         "yyyy-mm-dd hh:mm".to_owned()
     } else {
         code
     };
-    for (row, c, _) in &cells {
-        book.set_range_style_value(
-            sheet,
-            CellRange::from_corners((*row, *c), (*row, *c)),
-            "num_fmt",
-            &code,
-        )?;
+    if given {
+        // The whole range, so the column's dates end up alike.
+        book.set_range_style_value(sheet, r, "num_fmt", &code)?;
+    } else {
+        // The converted cells and the range's dates already stored as
+        // dates (in whatever format they had).
+        let mut at: Vec<(u32, u32)> = cells.iter().map(|(row, c, _)| (*row, *c)).collect();
+        for row in r.top..=r.bottom {
+            for c in r.left..=r.right {
+                if book.value_kind(sheet, row, c) == ValueKind::Number
+                    && !book.input(sheet, row, c).starts_with('=')
+                    && book.is_date_format(sheet, row, c)
+                {
+                    at.push((row, c));
+                }
+            }
+        }
+        for (row, c) in at {
+            book.set_range_style_value(
+                sheet,
+                CellRange::from_corners((row, c), (row, c)),
+                "num_fmt",
+                &code,
+            )?;
+        }
     }
     let mut out = json!({"converted": n, "order": format!("{order:?}").to_lowercase()});
     if !skipped.is_empty() {
@@ -932,6 +945,48 @@ mod tests {
             order_of(&["15/01/2026".into()], "auto").unwrap(),
             DateOrder::Dmy
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn conversions_format_the_whole_range() {
+        let mut b = Workbook::new_empty().unwrap();
+        run_ok(
+            &mut b,
+            "write_range",
+            json!({"top_left": "A1", "values": [
+                ["Units", "Date"],
+                [12, "'15/01/2026"],
+                ["'1,250", 46040],
+                [7, "'16/01/2026"],
+            ]}),
+        );
+        let one = |r: u32, c: u32| CellRange::from_corners((r, c), (r, c));
+        b.set_range_style_value(0, one(1, 0), "num_fmt", "0.00")
+            .unwrap();
+        b.set_range_style_value(0, one(2, 1), "num_fmt", "dd/mm/yyyy")
+            .unwrap();
+        let out = run_ok(
+            &mut b,
+            "to_numbers",
+            json!({"range": "A2:A4", "number_format": "#,##0"}),
+        );
+        assert_eq!(out["converted"], 1, "{out}");
+        for r in 1..=3 {
+            assert_eq!(b.cell_style(0, r, 0).num_fmt, "#,##0", "row {r}");
+        }
+        let out = run_ok(&mut b, "to_dates", json!({"range": "B2:B4"}));
+        assert_eq!(out["converted"], 2, "{out}");
+        for r in 1..=3 {
+            assert_eq!(b.cell_style(0, r, 1).num_fmt, "yyyy-mm-dd", "row {r}");
+        }
+        run_ok(
+            &mut b,
+            "to_dates",
+            json!({"range": "B2:B4", "number_format": "dd mmm yyyy"}),
+        );
+        for r in 1..=3 {
+            assert_eq!(b.cell_style(0, r, 1).num_fmt, "dd mmm yyyy", "row {r}");
+        }
     }
 
     #[std::prelude::v1::test]

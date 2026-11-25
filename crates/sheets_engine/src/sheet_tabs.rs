@@ -700,6 +700,21 @@ impl Workbook {
         }
     }
 
+    /// Show or hide sheet `sheet`'s gridlines on screen (Excel's View >
+    /// Gridlines, the sheet view's `showGridLines`); printing them is a
+    /// page setup option. One undo step.
+    pub fn set_show_gridlines(&mut self, sheet: u32, show: bool) -> Result<()> {
+        self.check_sheet(sheet)?;
+        if self.show_gridlines(sheet) == show {
+            return Ok(());
+        }
+        self.model
+            .set_show_grid_lines(sheet, show)
+            .map_err(|e| anyhow!("{e}"))?;
+        self.history.edited();
+        Ok(())
+    }
+
     /// Tab Color: worksheet `sheet`'s tab gets `color` (`None`: No Color).
     /// One undo step.
     pub fn set_tab_color(&mut self, sheet: u32, color: Option<TabColor>) -> Result<()> {
