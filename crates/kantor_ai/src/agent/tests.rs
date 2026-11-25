@@ -539,3 +539,49 @@ fn paging_and_truncating_text() {
     assert!(cut.starts_with(&"é".repeat(10)));
     assert!(cut.contains("showed 10 of 30 characters"));
 }
+
+#[test]
+fn steps_left_and_unchanged_pictures_are_pointed_out() {
+    let look = || {
+        call(
+            "look",
+            json!({"file": "d.pptx", "page": "1", "version": "v1"}),
+        )
+    };
+    let limits = Limits {
+        max_steps: 10,
+        ..Limits::default()
+    };
+    let (_, model, _dir) = run_script(vec![look(), look(), look(), look()], limits);
+    let s2 = serde_json::to_string(&model.sent(2)).unwrap();
+    assert!(!s2.contains("Unchanged since"));
+    assert!(!s2.contains("steps left"));
+    let s3 = serde_json::to_string(&model.sent(3)).unwrap();
+    assert!(
+        s3.contains("Unchanged since you last saw them (no need to look again): d.pptx page 1")
+    );
+    // Steps 7 to 9 leave 3 to 1: the model is told.
+    let mut many = vec![look()];
+    many.extend((0..9).map(|_| call("big", json!({}))));
+    let limits = Limits {
+        max_steps: 10,
+        ..Limits::default()
+    };
+    let (r, model, _dir) = run_script(many, limits);
+    assert!(matches!(
+        r.outcome.ending,
+        Ending::Stopped {
+            reason: StopReason::Steps,
+            ..
+        }
+    ));
+    let last = |n: usize| {
+        model.sent(n).last().unwrap()["content"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    };
+    assert!(!last(7).contains("steps left"));
+    assert!(last(8).contains("3 steps left of 10"), "{}", last(8));
+    assert!(last(10).contains("One step left"), "{}", last(10));
+}

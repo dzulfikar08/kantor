@@ -354,7 +354,10 @@ is missing or its check reports errors: fix them and call it again.
 - Fewer, bigger steps cost less: each step resends the whole conversation. Batch work, \
 write whole files at once, and read only the skill files the job needs.
 - Pictures and long results from earlier steps may be replaced by a note to save space; \
-look again if you need them.";
+look again if you need them.
+- Stop when the outputs are built, the check is clean and you have looked at the pages once \
+after the last change. Don't polish beyond what the skill's review asks; you have a limited \
+number of steps.";
 
 /// The system prompt: the rules, the tools' primer, the skill.
 pub fn system_prompt(
@@ -507,6 +510,7 @@ pub fn run(
     let mut reported = true;
     let mut last_step = Usage::default();
     let mut nudges = 0;
+    let mut seen = std::collections::HashSet::new();
     let mut step = 0;
     let cost = |u: Usage| limits.prices.map(|p| p.cost(u));
     let end = |ending: Ending, ctx: Context, total: Usage, step: u32, reported: bool| Outcome {
@@ -862,18 +866,45 @@ pub fn run(
             );
         }
         if !images.is_empty() {
-            let dropped = ctx.push_images(
-                step,
-                "The pictures you asked for:",
-                images,
-                limits.max_images,
-            );
+            // Looking again at a page that didn't change is a wasted step:
+            // say so.
+            let unchanged: Vec<String> = images
+                .iter()
+                .filter(|i| !seen.insert((i.file.clone(), i.page.clone(), i.version.clone())))
+                .map(|i| i.label.clone())
+                .collect();
+            let intro = if unchanged.is_empty() {
+                "The pictures you asked for:".to_owned()
+            } else {
+                format!(
+                    "The pictures you asked for. Unchanged since you last saw them (no need to look again): {}.",
+                    unchanged.join(", ")
+                )
+            };
+            let dropped = ctx.push_images(step, &intro, images, limits.max_images);
             if !dropped.is_empty() {
                 on_event(&Event::ImagesDropped {
                     step,
                     labels: dropped,
                 });
             }
+        }
+        // Near the step limit, say how many are left (models polish
+        // forever otherwise).
+        let left = limits.max_steps.saturating_sub(step);
+        if left <= (limits.max_steps / 5).max(3) {
+            let note = if left <= 1 {
+                "One step left: call `finish` now with the summary and the outputs \
+                 (list what you would still improve in the summary)."
+                    .to_owned()
+            } else {
+                format!(
+                    "{left} steps left of {}. If the outputs are built and the check is clean, \
+                     call `finish` now; put further polish in the summary as suggestions.",
+                    limits.max_steps
+                )
+            };
+            ctx.push(step, json!({"role": "user", "content": note}));
         }
     }
 }

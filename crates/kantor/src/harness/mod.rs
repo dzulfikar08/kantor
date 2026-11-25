@@ -821,7 +821,7 @@ impl DocTools {
         let width = args
             .get("width")
             .and_then(Value::as_u64)
-            .map(|w| w.clamp(160, 2000) as u32);
+            .map(|w| w.clamp(160, 1200) as u32);
         self.render(&file, pages, sheet, width)
     }
 
@@ -899,7 +899,14 @@ impl DocTools {
             });
         }
         let _ = std::fs::remove_dir_all(&tmp);
-        let summary = result?;
+        // The summary names the temporary folder: name shots/ instead.
+        let summary = result?
+            .replace(&tmp.display().to_string(), &shots.display().to_string())
+            .replace(
+                &format!("{}{}", self.root.display(), std::path::MAIN_SEPARATOR),
+                "",
+            )
+            .replace('\\', "/");
         let mut text = format!("{summary}; saved {}", saved.join(", "));
         if saved.len() > MAX_LOOK {
             text.push_str(&format!(
@@ -1065,7 +1072,7 @@ impl Tools for DocTools {
                         "file": s("File"),
                         "pages": s("Slides or pages: 3, 2-5, 1,3,7-9 or 4- (at most 4 come back)"),
                         "contact_sheet": b("One numbered picture of all pages (default when no pages)"),
-                        "width": i("Width of each page in px (default 1000; 400 in a contact sheet)"),
+                        "width": i("Width of each page in px (default 1000, at most 1200; 400 in a contact sheet)"),
                     }),
                     &["file"],
                 ),
