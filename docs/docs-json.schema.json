@@ -1,1 +1,2076 @@
-{}
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kantor.paparanai.id/schema/docs-json.schema.json",
+  "title": "Kantor document",
+  "description": "A Word document for `kantor docs build doc.json -o doc.docx`; blocks also go to `kantor docs edit … insert_blocks`.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "preset": {
+      "type": "string",
+      "enum": [
+        "report",
+        "proposal",
+        "letter"
+      ],
+      "description": "report (serif headings, calm), proposal (sans, sections on new pages, cover band), letter (no cover or numbering). Default report."
+    },
+    "lang": {
+      "type": "string",
+      "description": "Language tag (en-US default; id-ID gives Indonesian labels)."
+    },
+    "accent": {
+      "type": "string",
+      "description": "The brand colour #RRGGBB: headings, numbers, rules, chart series; tints follow it."
+    },
+    "fonts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "heading": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "mono": {
+          "type": "string"
+        }
+      }
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "description": "Named colours over the preset's (accent, ink, muted, rule, tint, bullet, link, accent2-accent6)."
+    },
+    "styles": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/style"
+      },
+      "description": "Style changes by name, and new styles."
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "look": {
+          "type": "string",
+          "enum": [
+            "rules",
+            "grid",
+            "header",
+            "plain"
+          ]
+        },
+        "header_fill": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        },
+        "rule": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        },
+        "edge": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        },
+        "banded": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        }
+      }
+    },
+    "callout": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fill": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        },
+        "bar": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        }
+      }
+    },
+    "cover_style": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "bar",
+            "band",
+            "plain",
+            "none"
+          ]
+        },
+        "color": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        }
+      }
+    },
+    "header": {
+      "$ref": "#/$defs/header_footer"
+    },
+    "footer": {
+      "$ref": "#/$defs/header_footer"
+    },
+    "page": {
+      "$ref": "#/$defs/page"
+    },
+    "labels": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "figure": {
+          "type": "string"
+        },
+        "table": {
+          "type": "string"
+        },
+        "contents": {
+          "type": "string"
+        },
+        "figures": {
+          "type": "string"
+        },
+        "tables": {
+          "type": "string"
+        }
+      }
+    },
+    "numbered_headings": {
+      "type": "boolean"
+    },
+    "first_page_header": {
+      "type": "boolean",
+      "description": "false: no header or footer on the body's first page (letters)."
+    },
+    "markdown": {
+      "type": "boolean",
+      "description": "Read **bold**, *italic*, [link](url), [^note], {ref:id} in strings (default true)."
+    },
+    "properties": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "author": {
+          "type": "string"
+        },
+        "company": {
+          "type": "string"
+        },
+        "keywords": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string",
+          "description": "YYYY-MM-DD."
+        },
+        "version": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      }
+    },
+    "cover": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A cover page (front matter: no header or footer; the body starts at page 1).",
+      "properties": {
+        "label": {
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/run"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "title": {
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/run"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "subtitle": {
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/run"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "meta": {
+          "description": "[[label, value], …] lines, e.g. [[\"Prepared for\", \"PT Example\"]].",
+          "anyOf": [
+            {
+              "type": "array"
+            },
+            {
+              "type": "object"
+            }
+          ]
+        },
+        "note": {
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/run"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "logo": {
+          "type": "string"
+        },
+        "logo_width": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "A length, or a share of the text width: \"60%\" (default 100%)."
+        }
+      }
+    },
+    "toc": {
+      "description": "true or {title, levels}: a table of contents after the cover.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "levels": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 4
+            }
+          }
+        }
+      ]
+    },
+    "blocks": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/block"
+      }
+    }
+  },
+  "$defs": {
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "strike": {
+          "type": "boolean"
+        },
+        "caps": {
+          "type": "boolean"
+        },
+        "small_caps": {
+          "type": "boolean"
+        },
+        "color": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        },
+        "highlight": {
+          "type": "string"
+        },
+        "size": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points."
+        },
+        "font": {
+          "type": "string",
+          "description": "heading, body, mono, or a font name."
+        },
+        "style": {
+          "type": "string",
+          "description": "A character style (Strong, Emphasis, Code, Hyperlink, or one of the document's)."
+        },
+        "superscript": {
+          "type": "boolean"
+        },
+        "subscript": {
+          "type": "boolean"
+        },
+        "code": {
+          "type": "boolean"
+        },
+        "link": {
+          "type": "string",
+          "description": "A URL, or #id for a heading, figure or table of the document."
+        },
+        "footnote": {
+          "description": "A footnote placed after the text.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array"
+            }
+          ]
+        },
+        "ref": {
+          "type": "string",
+          "description": "A cross-reference to the heading, figure or table with this id (a REF / PAGEREF field)."
+        },
+        "show": {
+          "type": "string",
+          "enum": [
+            "number",
+            "text",
+            "page",
+            "label",
+            "full"
+          ],
+          "description": "number: the heading's number (2.3); text: its words; page: its page; label: \"Figure 2\"; full: \"Figure 2: caption\". Default: number for numbered headings, text for others, label for figures and tables."
+        },
+        "field": {
+          "type": "string",
+          "description": "A Word field instruction, e.g. DATE \\@ \"d MMMM yyyy\"."
+        },
+        "result": {
+          "type": "string",
+          "description": "What the field shows until updated."
+        }
+      }
+    },
+    "text": {
+      "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/run"
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "style": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A style's settings. Built-in names (Normal, Title, Subtitle, Heading 1-4, Quote, Caption, Figure, List Bullet, List Number, Table Text, Table Header, Callout, Callout Title, Cover Label, Cover Meta, TOC Heading, TOC 1-3, Header, Footer, Footnote Text, No Spacing, Strong, Emphasis, Code, Hyperlink) change those; other names add a style.",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": [
+            "paragraph",
+            "character"
+          ]
+        },
+        "based_on": {
+          "type": "string"
+        },
+        "next": {
+          "type": "string"
+        },
+        "font": {
+          "type": "string",
+          "description": "heading, body, mono, or a font name."
+        },
+        "size": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "strike": {
+          "type": "boolean"
+        },
+        "caps": {
+          "type": "boolean"
+        },
+        "small_caps": {
+          "type": "boolean"
+        },
+        "color": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        },
+        "highlight": {
+          "type": "string"
+        },
+        "letter_spacing": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points."
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justify"
+          ]
+        },
+        "space_before": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points."
+        },
+        "space_after": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points."
+        },
+        "line_spacing": {
+          "type": "number",
+          "description": "A multiple of single spacing (1.15)."
+        },
+        "indent": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+        },
+        "indent_right": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+        },
+        "first_line": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "First-line indent; negative for hanging."
+        },
+        "keep_with_next": {
+          "type": "boolean"
+        },
+        "keep_together": {
+          "type": "boolean"
+        },
+        "page_break_before": {
+          "type": "boolean"
+        },
+        "outline_level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9
+        }
+      }
+    },
+    "header_footer": {
+      "description": "A header or footer: {left, center, right} texts with tokens {page}, {pages}, {section_pages}, {title}, {subject}, {author}, {company}, {heading} (the page's Heading 1), {date}, {version}, {status}; a string (right-aligned); or \"none\" / null.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "left": {
+              "type": "string"
+            },
+            "center": {
+              "type": "string"
+            },
+            "right": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean",
+          "const": false
+        }
+      ]
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "description": "A4 (default), Letter, Legal, A5, A3, F4, or {w, h}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "w": {
+                  "type": [
+                    "number",
+                    "string"
+                  ],
+                  "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+                },
+                "h": {
+                  "type": [
+                    "number",
+                    "string"
+                  ],
+                  "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+                }
+              },
+              "required": [
+                "w",
+                "h"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "orientation": {
+          "type": "string",
+          "enum": [
+            "portrait",
+            "landscape"
+          ]
+        },
+        "margins": {
+          "description": "One length for all, or {top, bottom, left, right}.",
+          "anyOf": [
+            {
+              "type": [
+                "number",
+                "string"
+              ],
+              "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "top": {
+                  "type": [
+                    "number",
+                    "string"
+                  ],
+                  "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+                },
+                "bottom": {
+                  "type": [
+                    "number",
+                    "string"
+                  ],
+                  "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+                },
+                "left": {
+                  "type": [
+                    "number",
+                    "string"
+                  ],
+                  "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+                },
+                "right": {
+                  "type": [
+                    "number",
+                    "string"
+                  ],
+                  "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+                }
+              }
+            }
+          ]
+        },
+        "header": {
+          "description": "Distance from the page top to the header.",
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "footer": {
+          "description": "Distance from the page bottom to the footer.",
+          "type": [
+            "number",
+            "string"
+          ]
+        }
+      }
+    },
+    "heading": {
+      "type": "object",
+      "description": "A heading: real Heading 1-4 style, numbered (1, 1.1, 1.1.1) unless numbered is false. Shorthand {\"h2\": \"Text\"}.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "heading"
+        },
+        "text": {
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/run"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "level": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4,
+          "default": 1
+        },
+        "id": {
+          "type": "string",
+          "description": "Name it for cross-references ({ref:id}); needs a caption on figures and tables."
+        },
+        "numbered": {
+          "type": "boolean"
+        },
+        "page_break_before": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ]
+    },
+    "paragraph": {
+      "type": "object",
+      "description": "A paragraph. A plain string is one too; shorthand {\"p\": …}.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "paragraph"
+        },
+        "text": {
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/run"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "style": {
+          "type": "string",
+          "description": "A paragraph style by name (Normal, Quote, Caption, or one in `styles`)."
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right",
+            "justify"
+          ]
+        },
+        "space_before": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "space_after": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "line_spacing": {
+          "type": "number"
+        },
+        "indent": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+        },
+        "indent_right": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+        },
+        "first_line": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+        },
+        "keep_with_next": {
+          "type": "boolean"
+        },
+        "keep_together": {
+          "type": "boolean"
+        },
+        "page_break_before": {
+          "type": "boolean"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "italic": {
+          "type": "boolean"
+        },
+        "underline": {
+          "type": "boolean"
+        },
+        "color": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        },
+        "size": {
+          "type": [
+            "number",
+            "string"
+          ]
+        },
+        "font": {
+          "type": "string"
+        },
+        "highlight": {
+          "type": "string"
+        },
+        "caps": {
+          "type": "boolean"
+        },
+        "small_caps": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ]
+    },
+    "list": {
+      "type": "object",
+      "description": "A bullet or numbered list (real Word numbering), nested with items. Shorthands {\"bullets\": […]}, {\"numbers\": […]}.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "list"
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "bullet",
+            "number"
+          ]
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "$ref": "#/$defs/run"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "text": {
+                    "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "$ref": "#/$defs/run"
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  },
+                  "items": {
+                    "type": "array"
+                  },
+                  "bullets": {
+                    "type": "array"
+                  },
+                  "numbers": {
+                    "type": "array"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "start": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "continue": {
+          "type": "boolean",
+          "description": "Numbers go on from the previous numbered list."
+        }
+      },
+      "required": [
+        "type",
+        "items"
+      ]
+    },
+    "table": {
+      "type": "object",
+      "description": "A table in the document's table style: header row repeated on each page, numbers right-aligned, merged cells.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "table"
+        },
+        "columns": {
+          "description": "Column widths: weights [3, 1, 1], lengths or percentages; or a count.",
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "array"
+            }
+          ]
+        },
+        "header": {
+          "type": "array",
+          "description": "The header row (or rows: an array of rows)."
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "array"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "text": {
+                      "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "$ref": "#/$defs/run"
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "col_span": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "row_span": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "align": {
+                      "type": "string",
+                      "enum": [
+                        "left",
+                        "center",
+                        "right",
+                        "justify"
+                      ]
+                    },
+                    "valign": {
+                      "type": "string",
+                      "enum": [
+                        "top",
+                        "middle",
+                        "bottom"
+                      ]
+                    },
+                    "bold": {
+                      "type": "boolean"
+                    },
+                    "italic": {
+                      "type": "boolean"
+                    },
+                    "color": {
+                      "type": "string",
+                      "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+                    },
+                    "fill": {
+                      "type": "string",
+                      "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+                    },
+                    "bullets": {
+                      "type": "array"
+                    }
+                  }
+                }
+              ],
+              "description": "A cell: text, a number, null (under a span), or {text, col_span, row_span, align, valign, bold, italic, color, fill, bullets}."
+            }
+          }
+        },
+        "align": {
+          "description": "Per column (or all): left, center, right.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array"
+            }
+          ]
+        },
+        "caption": {
+          "description": "A numbered caption (Figure 3. …) below a figure, above a table.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array"
+            }
+          ]
+        },
+        "id": {
+          "type": "string",
+          "description": "Name it for cross-references ({ref:id}); needs a caption on figures and tables."
+        },
+        "width": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "A length, or a share of the text width: \"60%\" (default 100%)."
+        },
+        "look": {
+          "type": "string",
+          "enum": [
+            "rules",
+            "grid",
+            "header",
+            "plain"
+          ]
+        },
+        "total": {
+          "type": "boolean",
+          "description": "The last row is a total (bold, rule above)."
+        },
+        "header_rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "repeat_header": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type",
+        "rows"
+      ]
+    },
+    "picture": {
+      "type": "object",
+      "description": "A PNG or JPEG picture in line, centred, with an optional caption.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "picture"
+        },
+        "path": {
+          "type": "string",
+          "description": "Relative to the JSON file (MCP: absolute)."
+        },
+        "width": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "A length, or a share of the text width: \"60%\" (default 100%)."
+        },
+        "height": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Points (12), or a length with its unit: \"2.5cm\", \"18mm\", \"1in\", \"12pt\"."
+        },
+        "alt": {
+          "type": "string"
+        },
+        "caption": {
+          "description": "A numbered caption (Figure 3. …) below a figure, above a table.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array"
+            }
+          ]
+        },
+        "id": {
+          "type": "string",
+          "description": "Name it for cross-references ({ref:id}); needs a caption on figures and tables."
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "path"
+      ]
+    },
+    "chart": {
+      "type": "object",
+      "description": "A real Word chart with its data in an embedded workbook (the slides chart JSON: chart, categories, series, title, legend, data_labels, number_format, axis, …).",
+      "properties": {
+        "hole": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 90,
+          "description": "Doughnut hole size in % (default 50)."
+        },
+        "type": {
+          "const": "chart"
+        },
+        "target_line": {
+          "description": "A dashed horizontal line at a value (column, line, area, combo): a number or {value, label (default Target), color, width, dash}. It is a line series, so it shows in the legend and in Edit Data.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "number"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "color": {
+                  "type": [
+                    "string",
+                    "object"
+                  ],
+                  "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+                },
+                "width": {
+                  "description": "A length: a number in `units` (default emu: 914400 per inch, 12700 per point, 360000 per cm) or a string with a unit: \"1.5in\", \"2.5cm\", \"40mm\", \"18pt\", \"120px\", \"914400emu\".",
+                  "type": [
+                    "number",
+                    "string"
+                  ]
+                },
+                "dash": {
+                  "type": "string",
+                  "enum": [
+                    "solid",
+                    "dot",
+                    "dash",
+                    "lgDash",
+                    "dashDot",
+                    "lgDashDot",
+                    "lgDashDotDot",
+                    "sysDash",
+                    "sysDot",
+                    "sysDashDot",
+                    "sysDashDotDot"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        "colors": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": [
+                  "string",
+                  "object"
+                ],
+                "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "A one-series column, bar, pie or doughnut chart: each bar's or slice's colour (null: automatic), e.g. to highlight bars below target."
+        },
+        "font": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The chart's text (default: the deck's typeface and colour).",
+          "properties": {
+            "font": {
+              "type": "string"
+            },
+            "size": {
+              "type": [
+                "number",
+                "string"
+              ]
+            },
+            "color": {
+              "type": [
+                "string",
+                "object"
+              ],
+              "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+            },
+            "bold": {
+              "type": "boolean"
+            },
+            "italic": {
+              "type": "boolean"
+            }
+          }
+        },
+        "chart": {
+          "type": "string",
+          "enum": [
+            "column",
+            "bar",
+            "line",
+            "area",
+            "pie",
+            "doughnut",
+            "scatter",
+            "combo"
+          ],
+          "description": "Chart type. combo: columns with lines/areas (series `type`, `axis`)."
+        },
+        "stacked": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "stacked",
+                "percent"
+              ]
+            }
+          ],
+          "description": "Column, bar, line, area: stack the series (true / \"stacked\") or stack to 100% (\"percent\")."
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number"
+            ]
+          },
+          "description": "Labels along the category axis (scatter: the x values, numbers)."
+        },
+        "series": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "values"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "number",
+                    "null"
+                  ]
+                },
+                "description": "One per category; null leaves a gap."
+              },
+              "color": {
+                "type": [
+                  "string",
+                  "object"
+                ],
+                "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+              },
+              "colors": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": [
+                        "string",
+                        "object"
+                      ],
+                      "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "description": "Bars or slices of their own colour, one per category (null: the series colour)."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "column",
+                  "line",
+                  "area"
+                ],
+                "description": "Combo (or column/line/area chart): this series' type (combo default: first column, others line)."
+              },
+              "axis": {
+                "type": "string",
+                "enum": [
+                  "primary",
+                  "secondary"
+                ]
+              },
+              "line": {
+                "description": "A line series' line: width, dash, colour.",
+                "allOf": [
+                  {
+                    "type": [
+                      "string",
+                      "object"
+                    ],
+                    "description": "\"none\", a colour, or {color, opacity, width, dash (solid, dash, sysDash, dot, lgDash, dashDot, ...), head, tail (arrowheads: triangle, stealth, diamond, oval, arrow, or {type, width, length} small|medium|large), cap (flat|round)}."
+                  }
+                ]
+              },
+              "data_labels": {
+                "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "show": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "value",
+                              "percent",
+                              "category",
+                              "series"
+                            ]
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "value",
+                                "percent",
+                                "category",
+                                "series"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "position": {
+                        "type": "string",
+                        "enum": [
+                          "center",
+                          "inside_end",
+                          "inside_base",
+                          "outside_end",
+                          "left",
+                          "right",
+                          "above",
+                          "below",
+                          "best_fit"
+                        ]
+                      },
+                      "format": {
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": [
+                          "number",
+                          "string"
+                        ]
+                      },
+                      "bold": {
+                        "type": "boolean"
+                      },
+                      "italic": {
+                        "type": "boolean"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string",
+          "enum": [
+            "none",
+            "bottom",
+            "top",
+            "right",
+            "left"
+          ],
+          "description": "Default: bottom with several series or a pie, else none."
+        },
+        "data_labels": {
+          "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "show": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "value",
+                        "percent",
+                        "category",
+                        "series"
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "value",
+                          "percent",
+                          "category",
+                          "series"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "position": {
+                  "type": "string",
+                  "enum": [
+                    "center",
+                    "inside_end",
+                    "inside_base",
+                    "outside_end",
+                    "left",
+                    "right",
+                    "above",
+                    "below",
+                    "best_fit"
+                  ]
+                },
+                "format": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": [
+                    "number",
+                    "string"
+                  ]
+                },
+                "bold": {
+                  "type": "boolean"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "color": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "number_format": {
+          "type": "string",
+          "description": "Excel number format of the values (labels and value axis), written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."
+        },
+        "axis": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The value axis (horizontal in a bar chart).",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            },
+            "major_unit": {
+              "type": "number",
+              "description": "Distance between gridlines / tick labels."
+            },
+            "gridlines": {
+              "type": "boolean",
+              "description": "Value axis: major gridlines (default true)."
+            },
+            "number_format": {
+              "type": "string",
+              "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
+            },
+            "reverse": {
+              "type": "boolean",
+              "description": "Values (categories) in reverse order."
+            }
+          }
+        },
+        "category_axis": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The category axis: title, reverse (scatter: the x axis, with min/max/major_unit).",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            },
+            "major_unit": {
+              "type": "number",
+              "description": "Distance between gridlines / tick labels."
+            },
+            "gridlines": {
+              "type": "boolean",
+              "description": "Value axis: major gridlines (default true)."
+            },
+            "number_format": {
+              "type": "string",
+              "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
+            },
+            "reverse": {
+              "type": "boolean",
+              "description": "Values (categories) in reverse order."
+            }
+          }
+        },
+        "gap_width": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 500,
+          "description": "Column/bar: gap between categories, % of a bar (default 150)."
+        },
+        "overlap": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "Column/bar: overlap of a category's bars in % (stacked: 100)."
+        },
+        "width": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "A length, or a share of the text width: \"60%\" (default 100%)."
+        },
+        "height": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Default: 55% of the width."
+        },
+        "caption": {
+          "description": "A numbered caption (Figure 3. …) below a figure, above a table.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array"
+            }
+          ]
+        },
+        "id": {
+          "type": "string",
+          "description": "Name it for cross-references ({ref:id}); needs a caption on figures and tables."
+        },
+        "alt": {
+          "type": "string",
+          "description": "Alt text (default: the caption)."
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "chart",
+        "categories",
+        "series"
+      ],
+      "additionalProperties": false
+    },
+    "callout": {
+      "type": "object",
+      "description": "A boxed note: tinted, with a bar down the left.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "callout"
+        },
+        "title": {
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/run"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "text": {
+          "description": "Text, or an array of paragraphs (text, runs, {\"bullets\": […]})."
+        },
+        "fill": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        },
+        "bar": {
+          "type": "string",
+          "description": "#RRGGBB or a palette name: accent, ink, muted, rule, tint, bullet, link, accent2-accent6, white, black."
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ]
+    },
+    "quote": {
+      "type": "object",
+      "description": "A quotation in the Quote style, with its source below.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "quote"
+        },
+        "text": {
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/run"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ]
+    },
+    "page_break": {
+      "type": "object",
+      "description": "The next block starts a new page.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "page_break"
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "section": {
+      "type": "object",
+      "description": "A new section from here: page size and orientation (a landscape appendix), margins, header and footer, page numbers, columns. Unset keys keep the previous section's.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "section"
+        },
+        "orientation": {
+          "type": "string",
+          "enum": [
+            "portrait",
+            "landscape"
+          ]
+        },
+        "size": {},
+        "margins": {},
+        "header": {
+          "description": "A header or footer: {left, center, right} texts with tokens {page}, {pages}, {section_pages}, {title}, {subject}, {author}, {company}, {heading} (the page's Heading 1), {date}, {version}, {status}; a string (right-aligned); or \"none\" / null.",
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "left": {
+                  "type": "string"
+                },
+                "center": {
+                  "type": "string"
+                },
+                "right": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "boolean",
+              "const": false
+            }
+          ]
+        },
+        "footer": {
+          "description": "A header or footer: {left, center, right} texts with tokens {page}, {pages}, {section_pages}, {title}, {subject}, {author}, {company}, {heading} (the page's Heading 1), {date}, {version}, {status}; a string (right-aligned); or \"none\" / null.",
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "left": {
+                  "type": "string"
+                },
+                "center": {
+                  "type": "string"
+                },
+                "right": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            },
+            {
+              "type": "boolean",
+              "const": false
+            }
+          ]
+        },
+        "page_numbers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "start": {
+              "type": "integer"
+            },
+            "format": {
+              "type": "string",
+              "enum": [
+                "decimal",
+                "lowerRoman",
+                "upperRoman",
+                "lowerLetter",
+                "upperLetter"
+              ]
+            }
+          }
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "start": {
+          "type": "string",
+          "enum": [
+            "next_page",
+            "continuous",
+            "odd_page",
+            "even_page"
+          ]
+        },
+        "first_page_header": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "toc": {
+      "type": "object",
+      "description": "A table of contents (a TOC field, filled in with page numbers when built).",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "toc"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "const": false
+            }
+          ]
+        },
+        "levels": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "list_of_figures": {
+      "type": "object",
+      "description": "A list of the figures' captions with pages.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "list_of_figures"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "const": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "list_of_tables": {
+      "type": "object",
+      "description": "A list of the tables' captions with pages.",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "list_of_tables"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "const": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "type"
+      ]
+    },
+    "block": {
+      "anyOf": [
+        {
+          "type": "string",
+          "description": "A paragraph."
+        },
+        {
+          "type": "object",
+          "description": "A shorthand: {\"h1\"…\"h4\": text}, {\"p\": text}, {\"bullets\": […]}, {\"numbers\": […]} (with id, numbered, style… beside it).",
+          "minProperties": 1,
+          "not": {
+            "required": [
+              "type"
+            ]
+          }
+        },
+        {
+          "$ref": "#/$defs/heading"
+        },
+        {
+          "$ref": "#/$defs/paragraph"
+        },
+        {
+          "$ref": "#/$defs/list"
+        },
+        {
+          "$ref": "#/$defs/table"
+        },
+        {
+          "$ref": "#/$defs/picture"
+        },
+        {
+          "$ref": "#/$defs/chart"
+        },
+        {
+          "$ref": "#/$defs/callout"
+        },
+        {
+          "$ref": "#/$defs/quote"
+        },
+        {
+          "$ref": "#/$defs/page_break"
+        },
+        {
+          "$ref": "#/$defs/section"
+        },
+        {
+          "$ref": "#/$defs/toc"
+        },
+        {
+          "$ref": "#/$defs/list_of_figures"
+        },
+        {
+          "$ref": "#/$defs/list_of_tables"
+        }
+      ]
+    }
+  }
+}

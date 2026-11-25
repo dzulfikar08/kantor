@@ -94,16 +94,29 @@ pub fn markdown(s: &str, base: &RunFmt, mono: &str, notes: bool) -> Vec<Piece> {
     let mut out: Vec<Piece> = Vec::new();
     let mut buf = String::new();
     let mut m = Marks::default();
+    // Marks become the character styles Strong, Emphasis and Code (real
+    // styles rather than formatting by hand).
     let fmt_of = |m: Marks| {
         let mut f = base.clone();
-        if m.bold {
-            f.bold = Some(true);
+        let free = f.style.is_none();
+        match (m.code, m.bold, m.italic) {
+            (true, _, _) if free => f.style = Some("Code".into()),
+            (true, _, _) => f.font = Some(mono.to_owned()),
+            (false, true, false) if free => f.style = Some("Strong".into()),
+            (false, false, true) if free => f.style = Some("Emphasis".into()),
+            (false, true, true) if free => {
+                f.style = Some("Strong".into());
+                f.italic = Some(true);
+            }
+            _ => {}
         }
-        if m.italic {
-            f.italic = Some(true);
-        }
-        if m.code {
-            f.font = Some(mono.to_owned());
+        if f.style.is_none() || !free {
+            if m.bold {
+                f.bold = Some(true);
+            }
+            if m.italic {
+                f.italic = Some(true);
+            }
         }
         f
     };
@@ -423,8 +436,8 @@ mod tests {
             .filter_map(|p| match p {
                 Piece::Text { text, fmt, .. } => Some((
                     text.clone(),
-                    fmt.bold == Some(true),
-                    fmt.italic == Some(true),
+                    fmt.bold == Some(true) || fmt.style.as_deref() == Some("Strong"),
+                    fmt.italic == Some(true) || fmt.style.as_deref() == Some("Emphasis"),
                 )),
                 _ => None,
             })
@@ -461,7 +474,7 @@ mod tests {
             true,
         );
         assert!(p.iter().any(|p| matches!(p, Piece::Text { link: Some(l), text, .. } if l == "https://example.com" && text == "the site")));
-        assert!(p.iter().any(|p| matches!(p, Piece::Text { fmt, text, .. } if fmt.font.as_deref() == Some("Mono") && text == "x_y")));
+        assert!(p.iter().any(|p| matches!(p, Piece::Text { fmt, text, .. } if fmt.style.as_deref() == Some("Code") && text == "x_y")));
         let p = markdown(
             "Growth[^Source: annual report.] is up, see {ref:fig-1} on {ref:fig-1:page}.",
             &b,

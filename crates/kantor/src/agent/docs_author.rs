@@ -1905,20 +1905,29 @@ impl<'a> Writer<'a> {
         }
         .to_owned();
         let color = self.look.cover.color.clone();
-        let mut shape = String::new();
-        let mut top: i64 = match kind.as_str() {
+        // Where the text starts, from the page's top edge (twips).
+        let (shape, start) = match kind.as_str() {
             "band" => {
                 let h = (page.height as f64 * 0.30) as i64;
-                shape = self.cover_shape(0, 0, page.width, h, &color);
-                (h + 900 - page.top).max(0)
+                (self.cover_shape(0, 0, page.width, h, &color), h + 1000)
             }
-            "bar" => {
-                shape = self.cover_shape(0, 0, 340, page.height, &color);
-                (page.height as f64 * 0.24) as i64 - page.top
-            }
-            _ => (page.height as f64 * 0.22) as i64 - page.top,
-        }
-        .max(0);
+            "bar" => (
+                self.cover_shape(0, 0, 340, page.height, &color),
+                (page.height as f64 * 0.28) as i64,
+            ),
+            _ => (String::new(), (page.height as f64 * 0.25) as i64),
+        };
+        // An empty line of exactly that height holds the accent shape and
+        // moves the text down (space before is dropped at a page top).
+        let room = (start - page.top).clamp(20, 31_000);
+        let mark = self.mark();
+        self.items.push(Item::P {
+            ppr: format!(
+                "<w:spacing w:before=\"0\" w:after=\"0\" w:line=\"{room}\" w:lineRule=\"exact\"/>{mark}"
+            ),
+            content: shape,
+            sect: None,
+        });
         if let Some(logo) = opt_str(o, "logo")? {
             let mut lo = Map::new();
             lo.insert("path".into(), json!(logo));
@@ -1929,54 +1938,36 @@ impl<'a> Writer<'a> {
             lo.insert("alt".into(), json!("Logo"));
             let d = self.picture_run(&lo)?;
             let run = self.r("", &d);
-            let before = if kind == "band" {
-                top
-            } else {
-                (top - 1800).max(0)
-            };
             self.para(
                 Some("Figure"),
                 ParaFmt {
                     align: Some("left"),
-                    before: Some(before),
                     after: Some(480),
                     keep_next: Some(false),
                     ..ParaFmt::default()
                 },
-                format!("{}{run}", std::mem::take(&mut shape)),
+                run,
             );
-            top = 0;
         }
         let title = match get(o, "title") {
             Some(t) => Some(t.clone()),
             None if !self.props.title.is_empty() => Some(json!(self.props.title)),
             None => None,
         };
-        let mut first = true;
-        let mut spaced = |w: &mut Self, style: &str, c: String| {
-            let fmt = ParaFmt {
-                before: first.then_some(top),
-                ..ParaFmt::default()
-            };
-            let c = if first {
-                format!("{}{c}", std::mem::take(&mut shape))
+        for (key, style) in [
+            ("label", "CoverLabel"),
+            ("title", "Title"),
+            ("subtitle", "Subtitle"),
+        ] {
+            let v = if key == "title" {
+                title.clone()
             } else {
-                c
+                get(o, key).cloned()
             };
-            first = false;
-            w.para(Some(style), fmt, c);
-        };
-        if let Some(l) = get(o, "label") {
-            let c = self.content(l, &RunFmt::default())?;
-            spaced(self, "CoverLabel", c);
-        }
-        if let Some(t) = title {
-            let c = self.content(&t, &RunFmt::default())?;
-            spaced(self, "Title", c);
-        }
-        if let Some(s) = get(o, "subtitle") {
-            let c = self.content(s, &RunFmt::default())?;
-            spaced(self, "Subtitle", c);
+            if let Some(v) = v {
+                let c = self.content(&v, &RunFmt::default())?;
+                self.para(Some(style), ParaFmt::default(), c);
+            }
         }
         let meta: Vec<(String, Value)> = match get(o, "meta") {
             None => Vec::new(),
@@ -2008,20 +1999,7 @@ impl<'a> Writer<'a> {
                 tabs: vec!["<w:tab w:val=\"left\" w:pos=\"2268\"/>".into()],
                 ..ParaFmt::default()
             };
-            if first {
-                let c = format!("{}{c}", std::mem::take(&mut shape));
-                first = false;
-                self.para(
-                    Some("CoverMeta"),
-                    ParaFmt {
-                        before: Some(top),
-                        ..fmt
-                    },
-                    c,
-                );
-            } else {
-                self.para(Some("CoverMeta"), fmt, c);
-            }
+            self.para(Some("CoverMeta"), fmt, c);
         }
         if let Some(n) = get(o, "note") {
             let c = self.content(n, &RunFmt::default())?;
@@ -2033,9 +2011,6 @@ impl<'a> Writer<'a> {
                 },
                 c,
             );
-        }
-        if !shape.is_empty() {
-            self.para(None, ParaFmt::default(), shape);
         }
         Ok(())
     }
@@ -2111,8 +2086,11 @@ impl<'a> Writer<'a> {
         let tabs = if width == self.look.page.text_width() {
             String::new()
         } else {
+            let lw = self.look.page.text_width();
             format!(
-                "<w:tabs><w:tab w:val=\"center\" w:pos=\"{}\"/><w:tab w:val=\"right\" w:pos=\"{width}\"/></w:tabs>",
+                "<w:tabs><w:tab w:val=\"clear\" w:pos=\"{}\"/><w:tab w:val=\"clear\" w:pos=\"{lw}\"/>\
+                 <w:tab w:val=\"center\" w:pos=\"{}\"/><w:tab w:val=\"right\" w:pos=\"{width}\"/></w:tabs>",
+                lw / 2,
                 width / 2
             )
         };

@@ -1502,11 +1502,26 @@ impl Look {
                 }
                 "Caption" => {}
                 "TOC1" | "TOC2" | "TOC3" | "TableofFigures" => {
-                    let ind = s.para.indent.unwrap_or(0);
-                    s.para.tabs = vec![format!(
+                    // A column for the heading's number, then its text
+                    // (wrapped lines line up with it), dots to the page.
+                    let base = s.para.indent.unwrap_or(0).max(0);
+                    let num = match s.id.as_str() {
+                        "TOC1" => 440,
+                        "TOC2" => 620,
+                        "TOC3" => 800,
+                        _ => 0,
+                    };
+                    let mut tabs = Vec::new();
+                    if num > 0 {
+                        s.para.indent = Some(base + num);
+                        s.para.first_line = Some(-num);
+                        tabs.push(format!("<w:tab w:val=\"left\" w:pos=\"{}\"/>", base + num));
+                    }
+                    tabs.push(format!(
                         "<w:tab w:val=\"right\" w:leader=\"dot\" w:pos=\"{}\"/>",
-                        (width - ind.max(0)).max(720) + ind.max(0)
-                    )];
+                        width.max(base + num + 720)
+                    ));
+                    s.para.tabs = tabs;
                 }
                 "Header" | "Footer" => {
                     s.para.tabs = vec![
