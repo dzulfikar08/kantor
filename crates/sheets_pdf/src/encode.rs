@@ -659,41 +659,18 @@ impl Pen<'_> {
     }
 
     fn cell_text(&mut self, surface: &mut Surface, t: &CellText) {
-        let [x0, y0, w, h] = t.cell;
-        let (x1, y1) = (x0 + w, y0 + h);
         let size = t.font.size_pt();
-        let lead = PAD_X
-            + t.icon_room
-            + if t.align == Align::Left {
-                t.indent
-            } else {
-                0.0
-            };
-        let trail = PAD_X
-            + if t.align == Align::Right {
-                t.indent
-            } else {
-                0.0
-            };
-        let avail = (w - lead - trail).max(0.0);
+        let (lead, trail, avail) = room(t);
 
         // Wrapped and justified text.
         if t.wrap && t.rotation == 0 {
             let block =
                 self.shaper
                     .wrapped(&t.text, &t.font, avail.max(1.0), t.align == Align::Justify);
-            let top = match t.valign {
-                VAlign::Top => y0 + PAD_Y,
-                VAlign::Center => y0 + (h - block.height) / 2.0,
-                VAlign::Bottom => y1 - PAD_Y - block.height,
-            };
+            let top = wrapped_top(t, block.height);
             let clip = clip_to(surface, intersect(t.clip, t.cell));
             for (line, base) in &block.lines {
-                let x = match t.align {
-                    Align::Center => x0 + lead + (avail - line.width) / 2.0,
-                    Align::Right => x1 - trail - line.width,
-                    _ => x0 + lead,
-                };
+                let x = wrapped_x(t, line.width, lead, trail, avail);
                 let tr = Transform::from_translate(x, top + base);
                 self.runs(surface, line, tr, t.color);
                 decorations(
@@ -717,50 +694,14 @@ impl Pen<'_> {
             return;
         }
 
-        let mut line = self.shaper.line(&t.text, &t.font);
+        let line = self.shaper.line(&t.text, &t.font);
         if t.rotation != 0 {
             self.rotated(surface, t, &line);
             return;
         }
-        let mut k = 1.0;
-        let mut repeat = 1;
-        if t.number && line.width > avail + 0.5 && !t.shrink {
-            // A number that doesn't fit: ####, as Excel shows it.
-            let hash = self.shaper.line("#", &t.font);
-            let n = ((avail / hash.width.max(0.1)).floor() as usize).max(1);
-            line = self.shaper.line(&"#".repeat(n), &t.font);
-        } else if let Some((ch, at)) = t.repeat {
-            // `*x` in the number format: x repeated to fill the cell.
-            let one = self.shaper.line(&ch.to_string(), &t.font);
-            let n = ((avail - line.width) / one.width.max(0.1)).floor().max(0.0) as usize;
-            if n > 0 && at <= t.text.len() && t.text.is_char_boundary(at) {
-                let mut s = String::with_capacity(t.text.len() + n);
-                s.push_str(&t.text[..at]);
-                s.extend(std::iter::repeat_n(ch, n.min(2000)));
-                s.push_str(&t.text[at..]);
-                line = self.shaper.line(&s, &t.font);
-            }
-        } else if t.align == Align::Fill && line.width > 0.0 {
-            repeat = ((avail / line.width).floor() as usize).clamp(1, 2000);
-        } else if t.shrink && line.width > avail && line.width > 0.0 {
-            k = avail / line.width;
-        }
-        let width = line.width * k * repeat as f32;
-        let x = if t.repeat.is_some() {
-            x0 + lead
-        } else {
-            match t.align {
-                Align::Center => x0 + lead + (avail - width) / 2.0,
-                Align::Right => x1 - trail - width,
-                _ => x0 + lead,
-            }
-        };
-        let (asc, desc) = (line.ascent * k, line.descent * k);
-        let base = match t.valign {
-            VAlign::Top => y0 + PAD_Y + asc,
-            VAlign::Center => y0 + (h - asc - desc) / 2.0 + asc,
-            VAlign::Bottom => y1 - PAD_Y - desc,
-        };
+        let p = place(self.shaper, t, line, lead, trail, avail);
+        let (line, k, repeat, x, width, base, asc, desc) =
+            (p.line, p.k, p.repeat, p.x, p.width, p.base, p.asc, p.desc);
         // Clip only when the text reaches out of its room.
         let inside = x >= t.clip[0] - 0.01
             && x + width <= t.clip[0] + t.clip[2] + 0.01
@@ -1026,6 +967,221 @@ fn decorations(
         fill_rect(surface, [0.0, -size * 0.28, width, thick], c);
     }
     surface.pop();
+}
+
+/// The room before and after a cell's text (padding, indent, an icon) and
+/// the width left between, points.
+fn room(t: &CellText) -> (f32, f32, f32) {
+    let w = t.cell[2];
+    let lead = PAD_X
+        + t.icon_room
+        + if t.align == Align::Left {
+            t.indent
+        } else {
+            0.0
+        };
+    let trail = PAD_X
+        + if t.align == Align::Right {
+            t.indent
+        } else {
+            0.0
+        };
+    (lead, trail, (w - lead - trail).max(0.0))
+}
+
+/// The top of a wrapped block `height` points tall in its cell.
+fn wrapped_top(t: &CellText, height: f32) -> f32 {
+    let [_, y0, _, h] = t.cell;
+    match t.valign {
+        VAlign::Top => y0 + PAD_Y,
+        VAlign::Center => y0 + (h - height) / 2.0,
+        VAlign::Bottom => y0 + h - PAD_Y - height,
+    }
+}
+
+/// The left edge of a wrapped line `width` points wide.
+fn wrapped_x(t: &CellText, width: f32, lead: f32, trail: f32, avail: f32) -> f32 {
+    let [x0, _, w, _] = t.cell;
+    match t.align {
+        Align::Center => x0 + lead + (avail - width) / 2.0,
+        Align::Right => x0 + w - trail - width,
+        _ => x0 + lead,
+    }
+}
+
+/// A one-line text placed in its cell.
+struct Placed {
+    /// The line drawn: `####` for a number that doesn't fit, a number
+    /// format's repeat character filled in.
+    line: Arc<Line>,
+    /// Shrink to fit's scale.
+    k: f32,
+    /// Times drawn side by side (fill alignment).
+    repeat: usize,
+    /// Left edge, width (all of it), baseline, ascent and descent, points.
+    x: f32,
+    width: f32,
+    base: f32,
+    asc: f32,
+    desc: f32,
+    /// `####` replaced a number wider than `avail`: the number's width.
+    hashes: Option<f32>,
+}
+
+/// Place one line of `t` (`line`, already shaped) in its cell, as
+/// [`Encoder`] draws it.
+fn place(
+    shaper: &mut Shaper,
+    t: &CellText,
+    mut line: Arc<Line>,
+    lead: f32,
+    trail: f32,
+    avail: f32,
+) -> Placed {
+    let [x0, y0, w, h] = t.cell;
+    let (x1, y1) = (x0 + w, y0 + h);
+    let mut k = 1.0;
+    let mut repeat = 1;
+    let mut hashes = None;
+    if t.number && line.width > avail + 0.5 && !t.shrink {
+        // A number that doesn't fit: ####, as Excel shows it.
+        hashes = Some(line.width);
+        let hash = shaper.line("#", &t.font);
+        let n = ((avail / hash.width.max(0.1)).floor() as usize).max(1);
+        line = shaper.line(&"#".repeat(n), &t.font);
+    } else if let Some((ch, at)) = t.repeat {
+        // `*x` in the number format: x repeated to fill the cell.
+        let one = shaper.line(&ch.to_string(), &t.font);
+        let n = ((avail - line.width) / one.width.max(0.1)).floor().max(0.0) as usize;
+        if n > 0 && at <= t.text.len() && t.text.is_char_boundary(at) {
+            let mut s = String::with_capacity(t.text.len() + n);
+            s.push_str(&t.text[..at]);
+            s.extend(std::iter::repeat_n(ch, n.min(2000)));
+            s.push_str(&t.text[at..]);
+            line = shaper.line(&s, &t.font);
+        }
+    } else if t.align == Align::Fill && line.width > 0.0 {
+        repeat = ((avail / line.width).floor() as usize).clamp(1, 2000);
+    } else if t.shrink && line.width > avail && line.width > 0.0 {
+        k = avail / line.width;
+    }
+    let width = line.width * k * repeat as f32;
+    let x = if t.repeat.is_some() {
+        x0 + lead
+    } else {
+        match t.align {
+            Align::Center => x0 + lead + (avail - width) / 2.0,
+            Align::Right => x1 - trail - width,
+            _ => x0 + lead,
+        }
+    };
+    let (asc, desc) = (line.ascent * k, line.descent * k);
+    let base = match t.valign {
+        VAlign::Top => y0 + PAD_Y + asc,
+        VAlign::Center => y0 + (h - asc - desc) / 2.0 + asc,
+        VAlign::Bottom => y1 - PAD_Y - desc,
+    };
+    Placed {
+        line,
+        k,
+        repeat,
+        x,
+        width,
+        base,
+        asc,
+        desc,
+        hashes,
+    }
+}
+
+/// What a cell's room cuts off of its text, as [`Encoder`] draws it (see
+/// [`overrun`]). Sizes in points.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Overrun {
+    /// The text's width (one line) or height (wrapped).
+    pub need: f32,
+    /// The room it has: the width it may use (the cell, or the empty cells
+    /// it overflows into, within the page) or the cell's height.
+    pub room: f32,
+    /// How much is cut at the left, right, top and bottom (0: nothing).
+    pub left: f32,
+    pub right: f32,
+    pub top: f32,
+    pub bottom: f32,
+    /// A number shown as `####`: it is wider than its cell.
+    pub hashes: bool,
+}
+
+/// Cuts smaller than these don't count, points: across (a glyph's side
+/// bearing) and down.
+const CUT_SLACK: f32 = 1.0;
+const CUT_SLACK_V: f32 = 0.5;
+/// Glyph tops and bottoms from the baseline, in font sizes: ascenders
+/// (`l`, `d`, the dot of `i`) and descenders, without the font's empty
+/// line gap.
+const GLYPH_TOP: f32 = 0.75;
+const GLYPH_BOTTOM: f32 = 0.2;
+
+/// What of `t` its room cuts off, as [`Encoder`] draws it; `None` when
+/// all of it shows (or it is turned, stacked, shrunk to fit or repeated
+/// to fill). Glyph tops and bottoms are taken as 0.75 and 0.2 of the font
+/// size from the baseline, so the empty part of a font's ascent above its
+/// letters doesn't count as cut. A cut text's `need` down is its line
+/// height (wrapped: all its lines).
+pub fn overrun(shaper: &mut Shaper, t: &CellText) -> Option<Overrun> {
+    if t.rotation != 0 || t.text.trim().is_empty() {
+        return None;
+    }
+    let size = t.font.size_pt();
+    let (lead, trail, avail) = room(t);
+    if t.wrap {
+        let clip = intersect(t.clip, t.cell);
+        let block = shaper.wrapped(&t.text, &t.font, avail.max(1.0), t.align == Align::Justify);
+        let top = wrapped_top(t, block.height);
+        let (first, last) = (block.lines.first()?, block.lines.last()?);
+        let glyph_top = top + first.1 - GLYPH_TOP * size;
+        let glyph_bottom = top + last.1 + GLYPH_BOTTOM * size;
+        let cut_top = (clip[1] - glyph_top).max(0.0);
+        let cut_bottom = (glyph_bottom - (clip[1] + clip[3])).max(0.0);
+        return (cut_top > CUT_SLACK_V || cut_bottom > CUT_SLACK_V).then_some(Overrun {
+            need: block.height,
+            room: clip[3],
+            top: cut_top,
+            bottom: cut_bottom,
+            ..Overrun::default()
+        });
+    }
+    let line = shaper.line(&t.text, &t.font);
+    let p = place(shaper, t, line, lead, trail, avail);
+    if let Some(need) = p.hashes {
+        return Some(Overrun {
+            need,
+            room: avail,
+            hashes: true,
+            ..Overrun::default()
+        });
+    }
+    let c = t.clip;
+    let (mut left, mut right) = (0.0, 0.0);
+    if !(t.shrink || t.align == Align::Fill || t.repeat.is_some()) {
+        left = (c[0] - p.x).max(0.0);
+        right = (p.x + p.width - (c[0] + c[2])).max(0.0);
+    }
+    let glyph_top = p.base - GLYPH_TOP * size * p.k;
+    let glyph_bottom = p.base + GLYPH_BOTTOM * size * p.k;
+    let top = (c[1] - glyph_top).max(0.0);
+    let bottom = (glyph_bottom - (c[1] + c[3])).max(0.0);
+    let horizontal = left > CUT_SLACK || right > CUT_SLACK;
+    let vertical = top > CUT_SLACK_V || bottom > CUT_SLACK_V;
+    (horizontal || vertical).then_some(Overrun {
+        need: if horizontal { p.width } else { p.asc + p.desc },
+        room: if horizontal { c[2] } else { c[3] },
+        left: if horizontal { left } else { 0.0 },
+        right: if horizontal { right } else { 0.0 },
+        top: if vertical { top } else { 0.0 },
+        bottom: if vertical { bottom } else { 0.0 },
+        hashes: false,
+    })
 }
 
 fn intersect(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {

@@ -51,8 +51,11 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20          numbers typed into formulas, typed totals, SUMs that miss\n\
     \x20          rows, formulas using empty cells, mixed formats and units,\n\
     \x20          duplicate rows, extra spaces, merged cells in data, volatile\n\
-    \x20          functions, external links, broken names, hidden data. Each\n\
-    \x20          finding has a sheet and range. Exit status 1 on errors.\n\
+    \x20          functions, external links, broken names, hidden data, text\n\
+    \x20          cut off or shown as #### (measured as the PDF draws it),\n\
+    \x20          content outside the print area or split by page breaks,\n\
+    \x20          unsorted bar charts. Each finding has a sheet and range.\n\
+    \x20          Exit status 1 on errors.\n\
     \x20 edit     run editing tools on a file and save it (in place unless -o):\n\
     \x20          TOOL is one of the tools below, ARGS its JSON arguments (or\n\
     \x20          @FILE); --ops runs a list of {\"tool\": ..., \"args\": {...}}.\n\

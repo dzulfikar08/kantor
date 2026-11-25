@@ -300,6 +300,7 @@ fn note_text(text: String, font: FontKey, rect: [f32; 4]) -> CellText {
         number: false,
         repeat: None,
         icon_room: 0.0,
+        at: None,
     }
 }
 
@@ -490,15 +491,66 @@ fn chart_sheet_page(
     out
 }
 
+/// Where [`extract`] reads the workbook: with its caches of conditional
+/// formatting and sparklines, or read-only without them.
+enum Source<'a> {
+    Cached(&'a mut Workbook),
+    Plain(&'a Workbook),
+}
+
+impl Source<'_> {
+    fn book(&self) -> &Workbook {
+        match self {
+            Source::Cached(b) => b,
+            Source::Plain(b) => b,
+        }
+    }
+
+    fn conditional(
+        &mut self,
+        sheet: u32,
+        row: u32,
+        col: u32,
+    ) -> Option<Arc<sheets_engine::Conditional>> {
+        match self {
+            Source::Cached(b) => b.conditional(sheet, row, col),
+            Source::Plain(_) => None,
+        }
+    }
+
+    fn sparkline(
+        &mut self,
+        sheet: u32,
+        row: u32,
+        col: u32,
+    ) -> Option<Arc<sheets_engine::Sparkline>> {
+        match self {
+            Source::Cached(b) => b.sparkline(sheet, row, col),
+            Source::Plain(_) => None,
+        }
+    }
+}
+
 /// The content of page `index` of `plan`.
 pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
+    extract_from(Source::Cached(book), plan, index)
+}
+
+/// [`extract`] from a workbook that can't be changed, for checks that need
+/// where cell text goes (`kantor sheets check`): conditional formatting and
+/// sparklines are left out.
+pub fn extract_plain(book: &Workbook, plan: &Plan, index: usize) -> PageContent {
+    extract_from(Source::Plain(book), plan, index)
+}
+
+fn extract_from(mut src: Source, plan: &Plan, index: usize) -> PageContent {
     let pr = plan.pages[index];
     let sp = &plan.sheets[pr.sheet];
     if sp.chart_sheet.is_some() {
-        return chart_sheet_page(book, plan, sp, pr);
+        return chart_sheet_page(src.book(), plan, sp, pr);
     }
     if let Some(k) = pr.notes {
-        return notes_page(book, plan, sp, pr, k);
+        return notes_page(src.book(), plan, sp, pr, k);
     }
     let (_, grid) = &sp.areas[pr.area];
     let sheet = sp.sheet;
@@ -529,9 +581,9 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
         origin[1] += ((avail_h - block_h * scale) / 2.0).max(0.0);
     }
 
-    let default_name = book.default_font_name();
-    let default_size = book.default_font_size() as f32;
-    let default_color = book.default_font_color();
+    let default_name = src.book().default_font_name();
+    let default_size = src.book().default_font_size() as f32;
+    let default_color = src.book().default_font_color();
     let default_family = family(&default_name);
     let indent_step = (sp.columns.digit_px * 10.0 / 7.0 * 0.75) as f32;
 
@@ -561,10 +613,10 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                 continue;
             }
             let c = cp.index;
-            let mut look = book.cell_look(sheet, r, c);
+            let mut look = src.book().cell_look(sheet, r, c);
             let (vr, vc) = look.merge.map_or((r, c), |mg| (mg.top, mg.left));
-            let shown = book.display(sheet, vr, vc);
-            let cond = book.conditional(sheet, vr, vc);
+            let shown = src.book().display(sheet, vr, vc);
+            let cond = src.conditional(sheet, vr, vc);
             let shown = cond
                 .as_ref()
                 .and_then(|x| x.display.clone())
@@ -578,7 +630,7 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                 .as_ref()
                 .and_then(|x| x.style.clone())
                 .unwrap_or_else(|| look.style.clone());
-            if let Some(tl) = book.table_cell_look(sheet, vr, vc) {
+            if let Some(tl) = src.book().table_cell_look(sheet, vr, vc) {
                 style = Arc::new(table_style(&style, &tl));
                 look.right = look.right.or(tl.right);
                 look.bottom = look.bottom.or(tl.bottom);
@@ -590,7 +642,7 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
             // own; elsewhere the page's first row / column shares them with
             // the cell above / to the left.
             let own = if look.merge.is_some() {
-                book.cell_style(sheet, r, c).borders
+                src.book().cell_style(sheet, r, c).borders
             } else {
                 style.borders
             };
@@ -598,19 +650,25 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
             let top = if look.top.is_some() || r == 0 {
                 look.top.or(own.top)
             } else if first_row && !inside(r - 1, c) {
-                BorderLine::shared(own.top, book.cell_style(sheet, r - 1, c).borders.bottom)
+                BorderLine::shared(
+                    own.top,
+                    src.book().cell_style(sheet, r - 1, c).borders.bottom,
+                )
             } else {
                 None
             };
             let left = if look.left.is_some() || c == 0 {
                 look.left.or(own.left)
             } else if first_col && !inside(r, c - 1) {
-                BorderLine::shared(own.left, book.cell_style(sheet, r, c - 1).borders.right)
+                BorderLine::shared(
+                    own.left,
+                    src.book().cell_style(sheet, r, c - 1).borders.right,
+                )
             } else {
                 None
             };
-            let kind = book.value_kind(sheet, vr, vc);
-            let halign = book.display_align_of(&style, sheet, vr, vc);
+            let kind = src.book().value_kind(sheet, vr, vc);
+            let halign = src.book().display_align_of(&style, sheet, vr, vc);
             cells.push(Cell {
                 col: ci,
                 text,
@@ -631,7 +689,7 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                     ],
                     None => [top, look.right, look.bottom, left],
                 },
-                pattern: book.fill_pattern(sheet, vr, vc),
+                pattern: src.book().fill_pattern(sheet, vr, vc),
                 style,
             });
         }
@@ -731,7 +789,7 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
         // Sparklines (black in black-and-white printing), under the text.
         for cell in cells.iter().filter(|c| c.merge.is_none()) {
             let cp = cols[cell.col];
-            if let Some(spark) = book.sparkline(sheet, rp.index, cp.index) {
+            if let Some(spark) = src.sparkline(sheet, rp.index, cp.index) {
                 out.sparklines.push(crate::Spark {
                     rect: [cp.start, rp.start, cp.size, rp.size],
                     spark,
@@ -783,7 +841,7 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
             };
             // An IMAGE formula's picture instead of its value (the alt text).
             if cell.merge.is_none()
-                && let Some(image) = book.cell_image(sheet, rp.index, cp.index)
+                && let Some(image) = src.book().cell_image(sheet, rp.index, cp.index)
             {
                 out.overlays.extend(image_overlay(image, rect, clip));
                 continue;
@@ -881,6 +939,7 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                 number,
                 repeat: cell.repeat,
                 icon_room,
+                at: Some(cell.merge.map_or((rp.index, cp.index), |m| (m.top, m.left))),
             });
         }
     }
@@ -905,6 +964,7 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
             number: false,
             repeat: None,
             icon_room: 0.0,
+            at: None,
         };
         let mut g = |from, to| {
             grid_lines.push(Line {
@@ -949,13 +1009,13 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
                 (yseg[1].1 - yseg[1].0).max(0.0),
             ];
             out.overlays
-                .extend(sp.drawings.overlays(book, bc, br, [cx, ry], clip));
+                .extend(sp.drawings.overlays(src.book(), bc, br, [cx, ry], clip));
         }
     }
 
     if p.setup.comments == sheets_engine::PrintComments::AsDisplayed {
         out.notes = shown_notes(
-            book,
+            src.book(),
             sp,
             &cols,
             &rows,
@@ -963,7 +1023,15 @@ pub fn extract(book: &mut Workbook, plan: &Plan, index: usize) -> PageContent {
             default_family.clone(),
         );
     }
-    header_footer(book, &mut out, plan, sp, pr, default_family, default_size);
+    header_footer(
+        src.book(),
+        &mut out,
+        plan,
+        sp,
+        pr,
+        default_family,
+        default_size,
+    );
     out
 }
 

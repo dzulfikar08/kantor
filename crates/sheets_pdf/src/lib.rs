@@ -48,8 +48,8 @@ use anyhow::Result;
 use sheets_engine::{CellRange, Paper, PrintColumns, SheetPrint, Workbook};
 
 pub use docs_pdf::write_file;
-pub use encode::{BadPicture, Encoder};
-pub use extract::extract;
+pub use encode::{BadPicture, Encoder, Overrun, overrun};
+pub use extract::{extract, extract_plain};
 pub use text::Shaper;
 
 /// Points per inch.
@@ -680,6 +680,9 @@ pub struct CellText {
     pub repeat: Option<(char, usize)>,
     /// Room kept at the left for an icon, points.
     pub icon_room: f32,
+    /// The cell it shows (a merged block's first cell), row and column;
+    /// `None` for headings and notes.
+    pub at: Option<(u32, u32)>,
 }
 
 pub use text::{FontKey, Span};

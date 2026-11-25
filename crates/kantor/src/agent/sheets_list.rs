@@ -207,6 +207,12 @@ fn sheet_json(book: &Workbook, s: u32, page: Option<CellRange>, opts: &ListOpts)
 
 /// A cell range's name from an anchor (the cells it covers).
 fn anchor_cells(a: &Anchor) -> Option<String> {
+    anchor_range(a).map(|r| r.name())
+}
+
+/// The cells an object covers (a cell it only touches at its edge left
+/// out); `None` when it is placed by position.
+pub fn anchor_range(a: &Anchor) -> Option<CellRange> {
     match a {
         Anchor::TwoCell { from, to, .. } => {
             let r = to
@@ -217,9 +223,12 @@ fn anchor_cells(a: &Anchor) -> Option<String> {
                 .col
                 .saturating_sub(u32::from(to.col_off == 0))
                 .max(from.col);
-            Some(CellRange::from_corners((from.row, from.col), (r, c)).name())
+            Some(CellRange::from_corners((from.row, from.col), (r, c)))
         }
-        Anchor::OneCell { from, .. } => Some(cell_name(from.row, from.col)),
+        Anchor::OneCell { from, .. } => Some(CellRange::from_corners(
+            (from.row, from.col),
+            (from.row, from.col),
+        )),
         Anchor::Absolute { .. } => None,
     }
 }

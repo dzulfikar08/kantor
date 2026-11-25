@@ -6,9 +6,9 @@
 //! every step once read, so it is read only when the job needs it.
 //!
 //! The source is pluggable: [`LocalSkill`] reads a folder on disk (BYOK and
-//! development); [`ServedSkill`] is the hook for prompts served by the
-//! Paparan backend, which keeps the paid prompts on the server (never
-//! compiled into the binary).
+//! development); [`ServedSkill`] holds a skill served by the Paparan
+//! backend, which keeps the paid prompts on the server (never compiled into
+//! the binary, never cached on disk).
 
 use std::path::{Component, Path, PathBuf};
 
@@ -230,18 +230,88 @@ impl PromptSource for LocalSkill {
     }
 }
 
-/// Fetches one skill file (`SKILL.md`, `references/x.md`; `""` for the
-/// list of files, one per line).
-pub type Fetch = Box<dyn Fn(&str) -> Result<SkillFile, String> + Send + Sync>;
-
-/// A skill served by a backend: the hook for Paparan AI's server-side
-/// prompts (the paid prompts stay on the server and are fetched per job).
+/// A skill served by the Paparan backend (`GET skills/NAME`): the paid
+/// prompts stay on the server and are fetched per job. The files are kept in
+/// memory for the run only (never written to disk) and are all text.
 ///
-/// TODO: the Paparan backend has no endpoint for skills yet; when it has,
-/// build `fetch` from [`crate::paparan`] (bearer token, `skills/NAME/PATH`).
+/// Paths are relative to the skill (`references/charts.md`). A file of
+/// another skill that this one points at is served under that skill's name
+/// (`paparan-deck/references/charts.md` in the sheet skill).
 pub struct ServedSkill {
-    pub name: String,
-    pub fetch: Fetch,
+    name: String,
+    version: String,
+    files: std::collections::BTreeMap<String, String>,
+}
+
+impl ServedSkill {
+    /// A skill from its files (`SKILL.md` required).
+    pub fn new(
+        name: impl Into<String>,
+        version: impl Into<String>,
+        files: std::collections::BTreeMap<String, String>,
+    ) -> Result<Self, String> {
+        let name = name.into();
+        if !files.contains_key("SKILL.md") {
+            return Err(format!("the served skill {name} has no SKILL.md"));
+        }
+        Ok(Self {
+            name,
+            version: version.into(),
+            files,
+        })
+    }
+
+    /// The server's content hash of the skill.
+    pub fn version(&self) -> &str {
+        &self.version
+    }
+
+    /// The key `path` names: `~/.claude/skills/NAME/x`, `NAME/x`, `./x`
+    /// and `x` all name `x` of this skill.
+    fn resolve(&self, path: &str) -> Result<&str, String> {
+        let mut p = path.trim().replace('\\', "/");
+        for prefix in ["~/.claude/skills/", ".claude/skills/"] {
+            if let Some(i) = p.find(prefix) {
+                p = p[i + prefix.len()..].to_owned();
+                break;
+            }
+        }
+        let mut p = p.trim_start_matches("./");
+        if let Some(rest) = p.strip_prefix(&format!("{}/", self.name)) {
+            p = rest;
+        }
+        if p.is_empty()
+            || p.starts_with('/')
+            || p.split('/').any(|c| c.is_empty() || c == "." || c == "..")
+        {
+            return Err(format!(
+                "\"{path}\" is not a file of this skill; give a path like references/x.md"
+            ));
+        }
+        match self.files.get_key_value(p) {
+            Some((k, _)) => Ok(k.as_str()),
+            None => Err(format!(
+                "no file \"{path}\" in the skill; its files are: {}",
+                self.files
+                    .keys()
+                    .filter(|k| *k != "SKILL.md")
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )),
+        }
+    }
+}
+
+/// Name, version and file names only: the text is never printed.
+impl std::fmt::Debug for ServedSkill {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServedSkill")
+            .field("name", &self.name)
+            .field("version", &self.version)
+            .field("files", &self.files.keys().collect::<Vec<_>>())
+            .finish()
+    }
 }
 
 impl PromptSource for ServedSkill {
@@ -250,29 +320,20 @@ impl PromptSource for ServedSkill {
     }
 
     fn system(&self) -> Result<String, String> {
-        match (self.fetch)("SKILL.md")? {
-            SkillFile::Text(t) => Ok(strip_front_matter(&t).to_owned()),
-            SkillFile::Image { .. } => Err("SKILL.md came back as a picture".into()),
-        }
+        Ok(strip_front_matter(&self.files["SKILL.md"]).to_owned())
     }
 
     fn files(&self) -> Vec<String> {
-        match (self.fetch)("") {
-            Ok(SkillFile::Text(t)) => t
-                .lines()
-                .map(str::trim)
-                .filter(|l| !l.is_empty())
-                .map(str::to_owned)
-                .collect(),
-            _ => Vec::new(),
-        }
+        self.files
+            .iter()
+            .filter(|(p, _)| *p != "SKILL.md")
+            .take(80)
+            .map(|(p, t)| format!("{p} ({})", size_hint(t.len() as u64)))
+            .collect()
     }
 
     fn read(&self, path: &str) -> Result<SkillFile, String> {
-        let p = path.trim();
-        if p.is_empty() || p.contains("..") {
-            return Err(format!("\"{path}\" is not a file of this skill"));
-        }
-        (self.fetch)(p)
+        let key = self.resolve(path)?;
+        Ok(SkillFile::Text(self.files[key].clone()))
     }
 }

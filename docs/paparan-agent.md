@@ -7,7 +7,7 @@ terminal; the chat panel (below) renders the same events in the app.
 | Part | Where |
 |---|---|
 | The loop: steps, budgets, nudges, `finish`, events, conversation pruning | `crates/kantor_ai/src/agent/` |
-| Skill prompts (local folder, hook for served prompts) | `kantor_ai/src/agent/skill.rs` |
+| Skill prompts (local folder, or served by Paparan AI) | `kantor_ai/src/agent/skill.rs`, `kantor_ai/src/paparan.rs` |
 | The document tools, confined to one work folder | `crates/kantor/src/harness/` |
 | `kantor agent run` | `crates/kantor/src/cli/agent.rs` |
 | The chat panel | `crates/kantor/src/ai/chat/` (docked by `workspace/chat.rs`) |
@@ -28,7 +28,13 @@ kantor agent run --skill ~/.claude/skills/paparan-deck --dir job \
   `images_dropped`, `nudge`, `usage`, `done`, `stopped`, `error`), then a `usage_total` line with
   input, cached input and output tokens (and the cost when prices are given). Without `--json` the
   same events are printed for people, ending with a `usage:` line.
-- `--provider paparan` uses the Paparan AI sign-in saved by Kantor (credits) instead of a key.
+- `--provider paparan` uses the Paparan AI sign-in saved by Kantor (credits) instead of a key,
+  with the `paparan-agent` model unless `--model` says otherwise. `--skill deck|doc|sheet` then
+  fetches Paparan AI's own skill (below); `--skill DIR` still reads a local folder.
+
+```sh
+kantor agent run --provider paparan --skill sheet --dir job "Check rekap.xlsx and fix the totals"
+```
 - Exit status 0 only when the model called `finish` and it was accepted.
 - Ctrl+C stops after the current step; twice quits.
 
@@ -111,13 +117,28 @@ The tools call the same Rust functions as the CLI, in process.
 ## Prompts
 
 `PromptSource` is pluggable. `LocalSkill` reads a skill folder (BYOK and development).
-`ServedSkill` takes a fetch function: the hook for prompts served by the Paparan backend, which
-keeps the paid prompts on the server; the skill text is never compiled into Kantor.
-TODO: the backend has no skills endpoint yet, so `--skill paparan:NAME` is refused for now.
+`ServedSkill` holds a skill served by the Paparan backend: the skill text is Paparan AI's paid
+product, so it is never compiled into Kantor or kept on disk.
+
+- `kantor_ai::paparan::fetch_skill` checks the account (`GET me`: signed in, credits left), then
+  fetches the whole skill once with `GET skills/NAME` (Bearer sign-in token; `GET skills` lists
+  them). The answer is `{name, version, files: {path: text}}`, text files only; the job keeps it
+  in memory and `read_skill_file` reads from there, never going back to the server.
+- Errors say what to do: signed out or revoked (sign in again), no credits (the top-up link),
+  offline (can't reach Paparan AI), unknown name (the skills there are).
+- Paths: the served copy names files relative to the skill (`references/charts.md`, `build.sh`).
+  A file of another skill it points at comes in the same answer under that skill's name
+  (`paparan-deck/references/charts.md` in the sheet skill), so a skill is one fetch. Paths as
+  local skills write them (`~/.claude/skills/NAME/…`, `NAME/…`, `./…`) resolve the same way.
+- The backend keeps its copy in sync with the local skills with `scripts/sync-skills.sh` (in the
+  Paparan repo), which rewrites the absolute paths to these forms.
 
 ## Tests
 
 `kantor_ai::agent::scripted::Scripted` plays back a script of replies (no network). The tests
 cover the nudge and `finish` rules, refusals for missing outputs and check errors, picture
 pruning, truncation and shortening of old steps, budgets, step limits, cancellation and skill
-files (`crates/kantor_ai/src/agent/tests.rs`, `crates/kantor/src/harness/tests.rs`).
+files (`crates/kantor_ai/src/agent/tests.rs`, `crates/kantor/src/harness/tests.rs`). Served
+skills are tested against a scripted Paparan server (`crates/kantor_ai/src/paparan.rs`): one
+fetch, reads from memory, path forms, and the signed-out, no-credit, unknown-skill and offline
+errors.
