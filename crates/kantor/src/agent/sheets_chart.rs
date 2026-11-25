@@ -77,13 +77,11 @@ fn labels(book: &Workbook, s: u32, r: CellRange, scatter: bool) -> Vec<Value> {
         .collect()
 }
 
+/// Categories, their cells, the series and the block (sheet, range).
+type Block = (Vec<Value>, Option<String>, Vec<Series>, (u32, CellRange));
+
 /// The chart's categories and series from `data` (a block).
-fn from_block(
-    book: &Workbook,
-    o: &Map<String, Value>,
-    sheet: u32,
-    scatter: bool,
-) -> Result<(Vec<Value>, Option<String>, Vec<Series>, (u32, CellRange))> {
+fn from_block(book: &Workbook, o: &Map<String, Value>, sheet: u32, scatter: bool) -> Result<Block> {
     let text = opt_str(o, "data")?.context("no data")?;
     let (s, d) = parse_ref(book, text, sheet).context("`data`")?;
     let d = used_part(book, s, d);
@@ -293,7 +291,10 @@ pub(super) fn run(book: &mut Workbook, o: &Map<String, Value>) -> Result<(String
     let sheet = sheet_arg(book, o)?;
     let kind = opt_str(o, "chart")?.context("a chart needs `chart`")?;
     let scatter = kind == "scatter";
-    let (mut categories, mut cat_ref, mut series, mut block) = (Vec::new(), None, Vec::new(), None);
+    let categories: Vec<Value>;
+    let mut cat_ref = None;
+    let mut series = Vec::new();
+    let mut block = None;
     if get(o, "data").is_some() {
         let (c, r, s, b) = from_block(book, o, sheet, scatter)?;
         (categories, cat_ref, series, block) = (c, r, s, Some(b));

@@ -501,7 +501,7 @@ fn date_parts(text: &str) -> Option<(Vec<String>, f64)> {
         None => 0.0,
     };
     let parts: Vec<String> = date
-        .split(|c: char| c == '/' || c == '-' || c == '.' || c == ' ' || c == ',')
+        .split(['/', '-', '.', ' ', ','])
         .filter(|p| !p.is_empty())
         .map(str::to_owned)
         .collect();

@@ -322,6 +322,7 @@ fn tool_schema(tool: &str) -> Option<Value> {
 }
 
 /// `v` with `#/$defs/...` references written out.
+#[cfg(test)]
 fn inline(v: &Value) -> Value {
     let defs = shared_defs();
     fn go(v: &Value, defs: &Map<String, Value>) -> Value {

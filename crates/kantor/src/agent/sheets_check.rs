@@ -180,6 +180,7 @@ impl Report {
             })
             .collect();
         json!({
+            "checks": CHECKS.iter().map(|c| c.0).collect::<Vec<_>>(),
             "sheets": self.sheets.len(),
             "cells_checked": self.cells,
             "errors": self.count(Severity::Error),
@@ -226,10 +227,13 @@ impl Report {
 }
 
 /// Cells found by one check, to be grouped into ranges down a column.
+/// `(check, severity, key)`: the key holds the part of the message cells
+/// must share to be grouped.
+type HitKey = (&'static str, Severity, String);
+
 struct Hits {
-    /// `(check, severity, key) -> [(row, col, sample)]`; the key holds the
-    /// part of the message cells must share to be grouped.
-    map: BTreeMap<(&'static str, Severity, String), Vec<(u32, u32, String)>>,
+    /// Cells with their sample text, `(row, col, sample)`.
+    map: BTreeMap<HitKey, Vec<(u32, u32, String)>>,
 }
 
 impl Hits {
@@ -509,12 +513,12 @@ fn check_inner(book: &Workbook, only: Option<u32>) -> Report {
     }
     findings.sort_by(|a, b| {
         (
-            a.sheet.map_or(u32::MAX, |s| s),
+            a.sheet.unwrap_or(u32::MAX),
             a.severity,
             a.range.map(|r| (r.left, r.top)),
         )
             .cmp(&(
-                b.sheet.map_or(u32::MAX, |s| s),
+                b.sheet.unwrap_or(u32::MAX),
                 b.severity,
                 b.range.map(|r| (r.left, r.top)),
             ))

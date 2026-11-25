@@ -4,7 +4,7 @@
 use anyhow::{Context as _, Result, anyhow, bail};
 use serde_json::{Map, Value, json};
 use sheets_engine::{
-    AxisEntry, CellRange, CfBarOptions, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfSpec, CfTextOp,
+    AxisEntry, CfBarOptions, CfCompare, CfFormat, CfPeriod, CfRuleDef, CfSpec, CfTextOp,
     ErrorStyle, Message, Paper, PivotDestination, PivotFunc, ReportLayout, TotalFunc, Validation,
     ValidationOperator, ValidationType, Workbook, default_icon_steps,
 };

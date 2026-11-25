@@ -504,13 +504,13 @@ fn col_letters(s: &str) -> Option<u32> {
     let n = s.chars().fold(0u32, |n, c| {
         n * 26 + (c.to_ascii_uppercase() as u32 - 'A' as u32 + 1)
     });
-    (n >= 1 && n <= MAX_COLS).then_some(n - 1)
+    (1..=MAX_COLS).contains(&n).then_some(n - 1)
 }
 
 fn row_digits(s: &str) -> Option<u32> {
     let s = s.trim().trim_start_matches('$');
     let n: u32 = s.parse().ok()?;
-    (n >= 1 && n <= MAX_ROWS).then_some(n - 1)
+    (1..=MAX_ROWS).contains(&n).then_some(n - 1)
 }
 
 /// `Data!A1:C9`, `'My sheet'!B2`, `A1:C9`, `C:E` (whole columns), `3:5`
@@ -709,6 +709,9 @@ pub fn number(n: f64) -> Value {
     }
 }
 
+/// A cell to write: row, column, what is typed.
+pub(super) type Input = (u32, u32, String);
+
 /// The cells of a 2-D array from `start`, row by row (`by_columns`: each
 /// inner array is a column).
 pub(super) fn grid_cells(
@@ -716,7 +719,7 @@ pub(super) fn grid_cells(
     rows: &Value,
     key: &str,
     by_columns: bool,
-) -> Result<(CellRange, Vec<(u32, u32, String)>)> {
+) -> Result<(CellRange, Vec<Input>)> {
     let list = rows
         .as_array()
         .with_context(|| format!("`{key}` must be an array of arrays"))?;
