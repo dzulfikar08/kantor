@@ -488,7 +488,7 @@ mod tests {
         assert_eq!(std::fs::read(job.join("data (3).xlsx")).unwrap(), b"one");
         assert_eq!(std::fs::read(job.join("data.xlsx")).unwrap(), b"there");
         assert!(
-            copy_into(&job, &[src.clone()]).is_err(),
+            copy_into(&job, std::slice::from_ref(&src)).is_err(),
             "folders aren't files"
         );
     }
