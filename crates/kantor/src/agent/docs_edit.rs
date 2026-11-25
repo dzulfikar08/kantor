@@ -13,7 +13,7 @@ use docs_engine::{Document, Position, Selection};
 use serde_json::{Map, Value, json};
 
 use super::docs_author::{Props, Writer, missing_styles, normalize};
-use super::docs_list::{find_heading, section_end, shown};
+use super::docs_list::{find_heading, section_end};
 use super::docs_look::{
     Look, RunFmt, STYLE_KEYS, get, hf_spec, look_json, object, opt_bool, opt_str, page_spec,
 };
@@ -1409,6 +1409,7 @@ fn with_reference(sp: &str, tag: &str, rel: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::super::docs_list::shown;
     use super::*;
 
     fn session(blocks: Value) -> Session {

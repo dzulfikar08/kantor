@@ -3,7 +3,7 @@
 //! `{ref:id}` / `{ref:id:page}`; `\` escapes) or a list of runs (strings
 //! and `{"text", "bold", "link", "footnote", "ref", "field", ...}`).
 
-use anyhow::{Context as _, Result, bail};
+use anyhow::{Result, bail};
 use serde_json::{Map, Value};
 
 use super::docs_look::{Look, RunFmt, get, object, opt_bool, opt_str, points};
@@ -409,25 +409,6 @@ pub fn plain(pieces: &[Piece]) -> String {
             Piece::Note(_) => String::new(),
         })
         .collect()
-}
-
-/// The text of a JSON paragraph value, without markdown marks.
-pub fn plain_of(v: &Value, look: &Look, md: bool) -> Result<String> {
-    Ok(plain(&pieces(v, look, &RunFmt::default(), md)?))
-}
-
-/// `v` as an object, or `{key: v}` when it is text.
-pub fn as_object(v: &Value, key: &str) -> Result<Map<String, Value>> {
-    match v {
-        Value::Object(o) => Ok(o.clone()),
-        Value::String(_) | Value::Array(_) => {
-            let mut m = Map::new();
-            m.insert(key.to_owned(), v.clone());
-            Ok(m)
-        }
-        _ => bail!("expected text or an object"),
-    }
-    .context("reading a block")
 }
 
 #[cfg(test)]
