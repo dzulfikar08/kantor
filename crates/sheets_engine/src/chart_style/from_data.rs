@@ -134,6 +134,19 @@ fn num_ref(f: &str, format: &str, values: &[Option<f64>]) -> String {
     x + "</c:numCache></c:numRef>"
 }
 
+/// Categories written into the chart itself (`c:strLit`).
+fn str_lit(cats: &[DataCategory]) -> String {
+    let mut x = format!("<c:strLit><c:ptCount val=\"{}\"/>", cats.len());
+    for (i, c) in cats.iter().enumerate() {
+        let t = match c {
+            DataCategory::Text(t) => t.clone(),
+            DataCategory::Number(v) => num(*v),
+        };
+        x.push_str(&format!("<c:pt idx=\"{i}\"><c:v>{}</c:v></c:pt>", esc(&t)));
+    }
+    x + "</c:strLit>"
+}
+
 /// Values written into the chart itself (`c:numLit`): a series with refs
 /// but no `values` reference (a target line).
 fn num_lit(format: &str, values: &[Option<f64>]) -> String {
@@ -198,6 +211,8 @@ fn new_series(d: &DataChart) -> Vec<NewSeries> {
                     let end = cat[at..].find("</c:f>").map_or(at, |i| at + i);
                     format!("{}{}{}", &cat[..at], esc(f), &cat[end..])
                 });
+                // Categories given as a list: written into the chart.
+                let cat = cat.or_else(|| (n > 0).then(|| str_lit(&d.categories)));
                 let val = if r.values.is_empty() {
                     num_lit(format, &s.values)
                 } else {

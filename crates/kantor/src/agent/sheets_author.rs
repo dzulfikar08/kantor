@@ -1841,7 +1841,7 @@ fn normalize_zip(bytes: &[u8]) -> Result<Vec<u8>> {
         .map_err(|_| anyhow!("bad zip date"))?;
     for i in 0..zin.len() {
         let mut f = zin.by_index(i)?;
-        let name = f.name().to_owned();
+        let name = f.name()?.into_owned();
         let mut data = Vec::new();
         f.read_to_end(&mut data)?;
         if name == "docProps/core.xml" {
