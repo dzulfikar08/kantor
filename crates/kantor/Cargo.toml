@@ -53,6 +53,9 @@ slides_pdf.workspace = true
 # `kantor slides check`: text layout and scenes as the PDF draws them.
 slides_scene.workspace = true
 slides_ui.workspace = true
+# `kantor sheets list`: the series of charts in a workbook.
+roxmltree.workspace = true
+# `kantor sheets build`: the same .xlsx bytes for the same JSON.
 zip.workspace = true
 
 [target.'cfg(unix)'.dependencies]

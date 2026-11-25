@@ -6,7 +6,9 @@ character styles, multilevel heading numbers, a table of contents field,
 SEQ captions, REF and PAGEREF cross-references, footnotes, sections,
 headers and footers with PAGE and NUMPAGES fields, tables with repeating
 header rows, inline pictures, and charts with their data in an embedded
-workbook (Word's *Edit Data* opens it).
+workbook (Word's *Edit Data* opens it). Presentations and workbooks have the
+same kind of commands: [slides-json.md](slides-json.md),
+[sheets-json.md](sheets-json.md).
 
 ```sh
 kantor docs build doc.json -o doc.docx          # a whole document (-f to overwrite)

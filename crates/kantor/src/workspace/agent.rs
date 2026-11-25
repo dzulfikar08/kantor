@@ -436,6 +436,28 @@ impl Workspace {
                     .read(cx)
                     .agent_read(cx, |book, _| sheets::read_range(book, sheet, args));
             }
+            "sheets_list" | "sheets_check" => {
+                return e.read(cx).agent_read(cx, |book, _| {
+                    crate::agent::sheets_author::read_tool(book, tool, args)
+                });
+            }
+            "sheets_edit" => {
+                let ops = args.get("ops").cloned().unwrap_or(Value::Null);
+                let done = e.update(cx, |v, cx| {
+                    v.agent_edit("edited the workbook", None, window, cx, |b| {
+                        crate::agent::sheets_author::run_ops(b, &ops, None)
+                    })
+                })?;
+                let what = format!("ran {} sheets tool(s)", done.len());
+                self.edited(pane, &what, cx);
+                let mut out = json!({"done": what, "results": done});
+                if self.focused_pane() != Some(pane) {
+                    out["note"] = json!(
+                        "This document isn't in front; activate_document shows it to the user."
+                    );
+                }
+                return Ok(out);
+            }
             "sheets_select" => {
                 let range = sheets::range_arg(args, "range")?;
                 self.show_pane(pane, window, cx);

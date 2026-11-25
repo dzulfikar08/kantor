@@ -517,6 +517,7 @@ pub fn plan(v: &Value, cx: &Ctx) -> Result<ChartPlan> {
             line: line_xml,
             point_fills,
             labels,
+            refs: None,
         });
     }
     if let Some(c) = get(o, "colors") {

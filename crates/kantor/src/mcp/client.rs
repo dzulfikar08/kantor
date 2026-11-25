@@ -164,6 +164,53 @@ pub fn build_deck(args: &Value) -> Result<Value, String> {
     run().map_err(|e| format!("{e:#}"))
 }
 
+/// `sheets_build`: write the workbook's `.xlsx` here, without the app.
+pub fn build_book(args: &Value) -> Result<Value, String> {
+    let run = || -> anyhow::Result<Value> {
+        use anyhow::{Context as _, bail};
+        let desc = args.get("workbook").context("`workbook` is required")?;
+        let path = crate::agent::path_arg(crate::agent::req_str(args, "path")?)?;
+        if !path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("xlsx"))
+        {
+            bail!("`path` must end in .xlsx");
+        }
+        let overwrite = crate::agent::opt_bool(args, "overwrite")?.unwrap_or(false);
+        if path.exists() && !overwrite {
+            bail!(
+                "{} exists; pass overwrite=true to replace it",
+                path.display()
+            );
+        }
+        let book = crate::agent::sheets_author::build(desc, None)?;
+        let bytes = crate::agent::sheets_author::to_bytes(&book)?;
+        crate::cli::slides::write_file(&path, &bytes)?;
+        let check = crate::agent::sheets_check::check(&book, None).json();
+        Ok(
+            json!({"path": path, "sheets": book.sheet_names(), "bytes": bytes.len(),
+            "errors": check["errors"], "warnings": check["warnings"]}),
+        )
+    };
+    run().map_err(|e| format!("{e:#}"))
+}
+
+/// `sheets_list` / `sheets_check` with a `path`: read the file without the
+/// app.
+fn sheets_file(tool: &str, args: &Value) -> Result<Value, String> {
+    let go = || -> anyhow::Result<Value> {
+        let path = crate::agent::path_arg(crate::agent::req_str(args, "path")?)?;
+        if !path.is_file() {
+            anyhow::bail!("{} is not a file", path.display());
+        }
+        let book = sheets_engine::Workbook::open(&path)?;
+        let mut out = crate::agent::sheets_author::read_tool(&book, tool, args)?;
+        out["file"] = json!(path.display().to_string());
+        Ok(out)
+    };
+    go().map_err(|e| format!("{e:#}"))
+}
+
 /// `docs_build`: write the document here, without the app.
 pub fn build_doc(args: &Value) -> Result<Value, String> {
     let run = || -> anyhow::Result<Value> {
@@ -351,6 +398,19 @@ impl Backend for AppClient {
         }
         if tool == "slides_check" && args.get("path").is_some_and(|p| !p.is_null()) {
             return check_file(&args);
+        }
+        if matches!(tool, "sheets_list" | "sheets_check")
+            && args.get("path").is_some_and(|p| !p.is_null())
+        {
+            return sheets_file(tool, &args);
+        }
+        if tool == "sheets_build" {
+            let mut out = build_book(&args)?;
+            if args.get("open").and_then(Value::as_bool) == Some(true) {
+                let opened = self.call("open_document", json!({"path": out["path"]}))?;
+                out["opened"] = opened;
+            }
+            return Ok(out);
         }
         match tool {
             "docs_edit" => return edit_doc(&args),

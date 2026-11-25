@@ -1,0 +1,4135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kantor.paparanai.id/schema/sheets-json.schema.json",
+  "title": "Kantor workbook (kantor sheets build) and sheets editing tools (kantor sheets edit)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "sheets"
+  ],
+  "properties": {
+    "sheets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/sheet"
+      },
+      "description": "The sheets, in tab order. Each sheet's parts are made in this order: rows/columns/cells, formats, widths, heights, tables, conditional formats, validation, charts, pivots, freeze, page setup, ops."
+    },
+    "names": {
+      "type": "array",
+      "description": "Defined names, made before the sheets' contents.",
+      "items": {
+        "$ref": "#/$defs/define_name_args"
+      }
+    },
+    "active": {
+      "type": [
+        "string",
+        "integer"
+      ],
+      "description": "The sheet shown when the file opens."
+    },
+    "ops": {
+      "type": "array",
+      "description": "Editing tools run after every sheet is made.",
+      "items": {
+        "$ref": "#/$defs/op"
+      }
+    },
+    "calc": {
+      "type": "string",
+      "enum": [
+        "automatic",
+        "manual"
+      ],
+      "description": "Calculation mode (default automatic)."
+    }
+  },
+  "$defs": {
+    "border": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "edges": {
+          "type": "string",
+          "enum": [
+            "all",
+            "outline",
+            "inside",
+            "top",
+            "bottom",
+            "left",
+            "right",
+            "inside_horizontal",
+            "inside_vertical",
+            "none"
+          ],
+          "description": "Default all."
+        },
+        "style": {
+          "type": "string",
+          "description": "thin (default), medium, thick, double, dotted, dashed, hair, dashDot, dashDotDot, mediumDashed, mediumDashDot, mediumDashDotDot, slantDashDot."
+        },
+        "color": {
+          "type": "string",
+          "description": "#RRGGBB (default black)."
+        }
+      }
+    },
+    "sort_key": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "column"
+      ],
+      "properties": {
+        "column": {
+          "type": "string"
+        },
+        "order": {
+          "type": "string",
+          "enum": [
+            "asc",
+            "desc"
+          ]
+        },
+        "descending": {
+          "type": "boolean"
+        }
+      }
+    },
+    "write_range_args": {
+      "type": "object",
+      "description": "Write rows of values and formulas (\"=...\") from a top-left cell, as typed. null leaves a cell, \"\" clears it.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "top_left": {
+          "type": "string",
+          "description": "The first cell, e.g. A1 or Data!B2."
+        },
+        "values": {
+          "type": "array",
+          "description": "Rows of cells from top_left: text, numbers, booleans, formulas (\"=SUM(B2:B9)\"), null to leave a cell, \"\" to clear it. Text that looks like a number stays text with a leading apostrophe (\"'00123\").",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        }
+      },
+      "required": [
+        "top_left",
+        "values"
+      ]
+    },
+    "write_columns_args": {
+      "type": "object",
+      "description": "Write columns of values from a top-left cell: each inner array is one column, top to bottom.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "top_left": {
+          "type": "string",
+          "description": "The first cell, e.g. A1 or Data!B2."
+        },
+        "columns": {
+          "type": "array",
+          "description": "Columns of cells from top_left, each top to bottom.",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            }
+          }
+        }
+      },
+      "required": [
+        "top_left",
+        "columns"
+      ]
+    },
+    "clear_args": {
+      "type": "object",
+      "description": "Clear the contents of a range (formats stay).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "fill_down_args": {
+      "type": "object",
+      "description": "Copy the top row of a range down through it, formulas adjusting their relative references (Ctrl+D). With `formula`, that formula is written to the top row first. A single cell fills down to the last row of the data beside it.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "formula": {
+          "type": "string",
+          "description": "A formula with =, its references as for the first cell (they adjust as it fills)."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "fill_right_args": {
+      "type": "object",
+      "description": "Copy the left column of a range across it (Ctrl+R); `formula` is written to it first.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "formula": {
+          "type": "string",
+          "description": "A formula with =, its references as for the first cell (they adjust as it fills)."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "format_args": {
+      "type": "object",
+      "description": "Format a range: font, size, bold, colours, fill, alignment, wrap, number format (a preset or any Excel code), indent, rotation, borders, merge.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "bold": {
+          "type": "boolean",
+          "description": "bold on or off."
+        },
+        "italic": {
+          "type": "boolean",
+          "description": "italic on or off."
+        },
+        "underline": {
+          "type": "boolean",
+          "description": "underline on or off."
+        },
+        "strikethrough": {
+          "type": "boolean",
+          "description": "strikethrough on or off."
+        },
+        "font": {
+          "type": "string",
+          "description": "Typeface, e.g. Calibri, Arial, Inter."
+        },
+        "size": {
+          "type": "number",
+          "description": "Font size in points."
+        },
+        "font_size_delta": {
+          "type": "integer",
+          "description": "Grow (or shrink) the font by this many points."
+        },
+        "font_color": {
+          "type": "string",
+          "description": "#RRGGBB, or none / auto."
+        },
+        "color": {
+          "type": "string",
+          "description": "#RRGGBB, or none / auto."
+        },
+        "fill": {
+          "type": "string",
+          "description": "#RRGGBB, or none / auto."
+        },
+        "align": {
+          "type": "string",
+          "enum": [
+            "general",
+            "left",
+            "center",
+            "right"
+          ]
+        },
+        "valign": {
+          "type": "string",
+          "enum": [
+            "top",
+            "center",
+            "bottom"
+          ]
+        },
+        "wrap": {
+          "type": "boolean",
+          "description": "wrap on or off."
+        },
+        "number_format": {
+          "type": "string",
+          "description": "An Excel number format code (\"#,##0.00\", \"0.0%\", \"\\\"Rp\\\"#,##0\", \"dd/mm/yyyy\", \"@\" for text) or a preset: general (General), number (#,##0.00), integer (#,##0), decimal1 (#,##0.0), percent (0.0%), percent0 (0%), percent2 (0.00%), rupiah (\"Rp\"#,##0), dollar (\"$\"#,##0.00), euro ([$€-x-euro2] #,##0.00), date (yyyy-mm-dd), datetime (yyyy-mm-dd hh:mm), time (hh:mm), text (@)."
+        },
+        "indent": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Indent steps (about three spaces each)."
+        },
+        "rotation": {
+          "type": "number",
+          "description": "Text angle in degrees, -90 to 90 (counter-clockwise), or 255 for stacked letters."
+        },
+        "borders": {
+          "description": "Borders: all, outline, inside, top, bottom, left, right, inside_horizontal, inside_vertical, none; or {edges, style (thin, medium, thick, double, dotted, dashed, hair, dashDot, ...), color}; or a list of these.",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "all",
+                "outline",
+                "inside",
+                "top",
+                "bottom",
+                "left",
+                "right",
+                "inside_horizontal",
+                "inside_vertical",
+                "none"
+              ]
+            },
+            {
+              "$ref": "#/$defs/border"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "outline",
+                      "inside",
+                      "top",
+                      "bottom",
+                      "left",
+                      "right",
+                      "inside_horizontal",
+                      "inside_vertical",
+                      "none"
+                    ]
+                  },
+                  {
+                    "$ref": "#/$defs/border"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "merge": {
+          "type": "boolean",
+          "description": "true merges the range (Merge & Center), false unmerges it."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "column_width_args": {
+      "type": "object",
+      "description": "Set column widths in characters (Excel's unit; 8.43 is the default), or \"auto\" to fit their contents.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "columns": {
+          "description": "A column (C), a span (A:F) or a list of them.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "width": {
+          "description": "Width in characters (Excel's unit; the default column is 8.43), or \"auto\".",
+          "anyOf": [
+            {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 255
+            },
+            {
+              "const": "auto"
+            }
+          ]
+        },
+        "widths": {
+          "type": "object",
+          "description": "Columns to widths, e.g. {\"A\": 14, \"B:D\": 10, \"E\": \"auto\"}.",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "const": "auto"
+              }
+            ]
+          }
+        }
+      },
+      "required": []
+    },
+    "autofit_args": {
+      "type": "object",
+      "description": "Widen columns to fit their contents (estimated from the text, as Excel's double-click does).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "columns": {
+          "description": "A column (C), a span (A:F) or a list of them.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "min": {
+          "type": "number",
+          "description": "Narrowest width (characters, default 4)."
+        },
+        "max": {
+          "type": "number",
+          "description": "Widest width (characters, default 60)."
+        }
+      },
+      "required": []
+    },
+    "row_height_args": {
+      "type": "object",
+      "description": "Set row heights in points (15 is the default for 11 pt text).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "rows": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "A row number from 1, or a span such as \"5:9\"."
+        },
+        "height": {
+          "type": "number",
+          "description": "Height in points."
+        }
+      },
+      "required": [
+        "rows",
+        "height"
+      ]
+    },
+    "freeze_args": {
+      "type": "object",
+      "description": "Freeze panes: the rows above and the columns left of `cell` stay in view (or `rows` / `columns` counts; 0 / \"A1\" unfreezes).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "cell": {
+          "type": "string",
+          "description": "The first cell that scrolls: B2 freezes row 1 and column A; A1 unfreezes."
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Rows frozen at the top."
+        },
+        "columns": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Columns frozen at the left."
+        }
+      },
+      "required": []
+    },
+    "insert_rows_args": {
+      "type": "object",
+      "description": "Insert empty rows before row `before_row` (from 1).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "before_row": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Row number from 1."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "before_row"
+      ]
+    },
+    "delete_rows_args": {
+      "type": "object",
+      "description": "Delete rows `first_row` to `last_row` (from 1).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "first_row": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Row number from 1."
+        },
+        "last_row": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Row number from 1."
+        }
+      },
+      "required": [
+        "first_row"
+      ]
+    },
+    "insert_columns_args": {
+      "type": "object",
+      "description": "Insert empty columns before column `before_column` (a letter).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "before_column": {
+          "type": "string",
+          "description": "Column letter, e.g. C."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "before_column"
+      ]
+    },
+    "delete_columns_args": {
+      "type": "object",
+      "description": "Delete columns `first_column` to `last_column` (letters).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "first_column": {
+          "type": "string",
+          "description": "Column letter, e.g. C."
+        },
+        "last_column": {
+          "type": "string",
+          "description": "Column letter, e.g. C."
+        }
+      },
+      "required": [
+        "first_column"
+      ]
+    },
+    "hide_args": {
+      "type": "object",
+      "description": "Hide or show rows (`rows`: \"5:9\") or columns (`columns`: \"C:D\").",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "rows": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "A row number from 1, or a span such as \"5:9\"."
+        },
+        "columns": {
+          "description": "A column (C), a span (A:F) or a list of them.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "hidden": {
+          "type": "boolean",
+          "description": "Hidden (true, the default) or shown (false)."
+        }
+      },
+      "required": []
+    },
+    "add_sheet_args": {
+      "type": "object",
+      "description": "Add a worksheet (after the last one, or at `position` from 1).",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Sheet name (up to 31 characters, none of : \\ / ? * [ ])."
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Tab position from 1."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "delete_sheet_args": {
+      "type": "object",
+      "description": "Delete a worksheet.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        }
+      },
+      "required": [
+        "sheet"
+      ]
+    },
+    "rename_sheet_args": {
+      "type": "object",
+      "description": "Rename a worksheet (formulas follow).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "name": {
+          "type": "string",
+          "description": "Sheet name (up to 31 characters, none of : \\ / ? * [ ])."
+        }
+      },
+      "required": [
+        "sheet",
+        "name"
+      ]
+    },
+    "move_sheet_args": {
+      "type": "object",
+      "description": "Move a worksheet's tab to `position` (from 1).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Tab position from 1."
+        }
+      },
+      "required": [
+        "sheet",
+        "position"
+      ]
+    },
+    "copy_sheet_args": {
+      "type": "object",
+      "description": "Copy a worksheet with its formats, tables and charts.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "name": {
+          "type": "string",
+          "description": "Sheet name (up to 31 characters, none of : \\ / ? * [ ])."
+        },
+        "position": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Tab position from 1."
+        }
+      },
+      "required": [
+        "sheet"
+      ]
+    },
+    "hide_sheet_args": {
+      "type": "object",
+      "description": "Hide (or show, with hidden false) a worksheet.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "hidden": {
+          "type": "boolean",
+          "description": "Hidden (true, the default) or shown (false)."
+        }
+      },
+      "required": [
+        "sheet"
+      ]
+    },
+    "sort_args": {
+      "type": "object",
+      "description": "Sort the rows of a range by one or more columns. The header row stays on top (`header`, default: guessed).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "by": {
+          "description": "A column letter, {column, order: asc|desc}, or a list of them (first is the main key).",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "$ref": "#/$defs/sort_key"
+            },
+            {
+              "type": "array",
+              "items": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "$ref": "#/$defs/sort_key"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "descending": {
+          "type": "boolean",
+          "description": "Every key descending (unless it gives its order)."
+        },
+        "header": {
+          "type": "boolean",
+          "description": "The range's first row is a header (default: sort and remove_duplicates guess, add_table assumes true)."
+        }
+      },
+      "required": [
+        "range",
+        "by"
+      ]
+    },
+    "remove_duplicates_args": {
+      "type": "object",
+      "description": "Delete rows of a range that repeat an earlier row (in `columns`, default all), keeping the first. Compares values, ignoring case and surrounding spaces.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "columns": {
+          "description": "The columns compared (default: all of the range's).",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "header": {
+          "type": "boolean",
+          "description": "The range's first row is a header (default: sort and remove_duplicates guess, add_table assumes true)."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "trim_args": {
+      "type": "object",
+      "description": "Remove leading, trailing and repeated spaces (and non-printing characters, non-breaking spaces) from text cells.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "collapse": {
+          "type": "boolean",
+          "description": "Also make runs of spaces inside the text one space (default true)."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "to_numbers_args": {
+      "type": "object",
+      "description": "Turn numbers stored as text (\"1,234.50\", \"Rp 12.000\", \"(500)\", \"15%\") into numbers. `decimal`: \".\", \",\" or \"auto\".",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "decimal": {
+          "type": "string",
+          "enum": [
+            ".",
+            ",",
+            "auto"
+          ],
+          "description": "The decimal separator in the text (auto: from the texts; Rupiah amounts such as \"Rp 12.000\" group with dots either way)."
+        },
+        "number_format": {
+          "type": "string",
+          "description": "An Excel number format code (\"#,##0.00\", \"0.0%\", \"\\\"Rp\\\"#,##0\", \"dd/mm/yyyy\", \"@\" for text) or a preset: general (General), number (#,##0.00), integer (#,##0), decimal1 (#,##0.0), percent (0.0%), percent0 (0%), percent2 (0.00%), rupiah (\"Rp\"#,##0), dollar (\"$\"#,##0.00), euro ([$€-x-euro2] #,##0.00), date (yyyy-mm-dd), datetime (yyyy-mm-dd hh:mm), time (hh:mm), text (@)."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "to_dates_args": {
+      "type": "object",
+      "description": "Turn dates stored as text (\"15/01/2026\", \"2026-01-15\", \"15 Jan 2026\", \"15 Januari 2026\") into dates. `order`: dmy, mdy, ymd or auto.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "order": {
+          "type": "string",
+          "enum": [
+            "dmy",
+            "mdy",
+            "ymd",
+            "auto"
+          ],
+          "description": "Order of day, month and year in numeric dates such as 01/02/2026 (auto: from the texts, else day first)."
+        },
+        "number_format": {
+          "type": "string",
+          "description": "An Excel number format code (\"#,##0.00\", \"0.0%\", \"\\\"Rp\\\"#,##0\", \"dd/mm/yyyy\", \"@\" for text) or a preset: general (General), number (#,##0.00), integer (#,##0), decimal1 (#,##0.0), percent (0.0%), percent0 (0%), percent2 (0.00%), rupiah (\"Rp\"#,##0), dollar (\"$\"#,##0.00), euro ([$€-x-euro2] #,##0.00), date (yyyy-mm-dd), datetime (yyyy-mm-dd hh:mm), time (hh:mm), text (@)."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "split_column_args": {
+      "type": "object",
+      "description": "Split the text of a one-column range at `delimiter` into the columns from `to` (default: the next column; they must be empty unless overwrite).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "delimiter": {
+          "type": "string",
+          "description": "Where to split, e.g. \",\" or \" \"."
+        },
+        "to": {
+          "type": "string",
+          "description": "The first cell to write to."
+        },
+        "overwrite": {
+          "type": "boolean",
+          "description": "Write over cells that aren't empty."
+        }
+      },
+      "required": [
+        "range",
+        "delimiter"
+      ]
+    },
+    "combine_columns_args": {
+      "type": "object",
+      "description": "Join the columns of a range into one column at `to` with `separator`, as formulas (=A2&\" \"&B2) unless formulas is false.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "to": {
+          "type": "string",
+          "description": "The first cell to write to."
+        },
+        "separator": {
+          "type": "string",
+          "description": "Put between the parts (default a space)."
+        },
+        "formulas": {
+          "type": "boolean",
+          "description": "Write formulas such as =A2&\" \"&B2 (default true) or the joined text."
+        }
+      },
+      "required": [
+        "range",
+        "to"
+      ]
+    },
+    "find_replace_args": {
+      "type": "object",
+      "description": "Replace text in cells of a range, a sheet or every sheet (`all_sheets`). Formulas are left alone unless in_formulas.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "all_sheets": {
+          "type": "boolean",
+          "description": "Every sheet."
+        },
+        "find": {
+          "type": "string",
+          "description": "Text to find."
+        },
+        "replace": {
+          "type": "string",
+          "description": "Text to put instead."
+        },
+        "match_case": {
+          "type": "boolean",
+          "description": "Case must match (default false)."
+        },
+        "whole_cell": {
+          "type": "boolean",
+          "description": "The whole cell must match (default false)."
+        },
+        "in_formulas": {
+          "type": "boolean",
+          "description": "Also change formulas' text (default false)."
+        }
+      },
+      "required": [
+        "find",
+        "replace"
+      ]
+    },
+    "add_table_args": {
+      "type": "object",
+      "description": "Make a range an Excel table (a ListObject with a style, filter buttons and an optional total row).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "name": {
+          "type": "string",
+          "description": "Table name (letters, digits, _; default Table1, Table2...)."
+        },
+        "style": {
+          "type": "string",
+          "description": "TableStyleLight1-21, TableStyleMedium1-28 (default TableStyleMedium2), TableStyleDark1-11, or none."
+        },
+        "header": {
+          "type": "boolean",
+          "description": "The range's first row is a header (default: sort and remove_duplicates guess, add_table assumes true)."
+        },
+        "totals": {
+          "description": "true adds a total row; or column names to functions: sum, average, count, count_numbers, max, min, stddev, var, none.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "banded_rows": {
+          "type": "boolean",
+          "description": "banded_rows (Table Design option)."
+        },
+        "first_column": {
+          "type": "string",
+          "description": "Column letter, e.g. C."
+        },
+        "last_column": {
+          "type": "string",
+          "description": "Column letter, e.g. C."
+        },
+        "filter_buttons": {
+          "type": "boolean",
+          "description": "filter_buttons (Table Design option)."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "add_chart_args": {
+      "type": "object",
+      "description": "Add a chart of cell ranges: column, bar, line, area, pie, doughnut, scatter or combo, placed by cell anchor (see `kantor sheets schema`).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "at": {
+          "type": "string",
+          "description": "Top-left cell of the chart (default: two columns right of `data`)."
+        },
+        "to": {
+          "type": "string",
+          "description": "Bottom-right cell the chart covers (inclusive), e.g. at G2, to N18."
+        },
+        "w": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Width / height when `to` isn't given: a number in `units` or a string such as \"6in\" or \"480px\"."
+        },
+        "h": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "Width / height when `to` isn't given: a number in `units` or a string such as \"6in\" or \"480px\"."
+        },
+        "units": {
+          "type": "string",
+          "enum": [
+            "emu",
+            "pt",
+            "in",
+            "cm",
+            "mm",
+            "px"
+          ],
+          "description": "What bare numbers in lengths mean (default emu). Strings such as \"1in\" always say their unit."
+        },
+        "data": {
+          "type": "string",
+          "description": "A block of cells: series names along the top row, categories down the first column (text or dates; a scatter chart's x values), one series per column. E.g. Data!A1:C13."
+        },
+        "series_in": {
+          "type": "string",
+          "enum": [
+            "columns",
+            "rows"
+          ],
+          "description": "The block's series are its columns (default) or rows."
+        },
+        "chart": {
+          "type": "string",
+          "enum": [
+            "column",
+            "bar",
+            "line",
+            "area",
+            "pie",
+            "doughnut",
+            "scatter",
+            "combo"
+          ],
+          "description": "Chart type. combo: columns with lines/areas (series `type`, `axis`)."
+        },
+        "stacked": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "stacked",
+                "percent"
+              ]
+            }
+          ],
+          "description": "Column, bar, line, area: stack the series (true / \"stacked\") or stack to 100% (\"percent\")."
+        },
+        "categories": {
+          "description": "With `series`: the category labels' cells (Data!A2:A13), or a list of labels.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": [
+                  "string",
+                  "number"
+                ]
+              }
+            }
+          ]
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The series' name: text, or a cell with = (=Data!B1)."
+              },
+              "values": {
+                "description": "The values' cells (Data!B2:B13), or numbers. With `data`, leave it out: the entries then only style the block's series.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": [
+                        "number",
+                        "null"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "color": {
+                "type": [
+                  "string",
+                  "object"
+                ],
+                "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+              },
+              "colors": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": [
+                        "string",
+                        "object"
+                      ],
+                      "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "description": "Bars or slices of their own colour, one per category (null: the series colour)."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "column",
+                  "line",
+                  "area"
+                ],
+                "description": "Combo (or column/line/area chart): this series' type (combo default: first column, others line)."
+              },
+              "axis": {
+                "type": "string",
+                "enum": [
+                  "primary",
+                  "secondary"
+                ]
+              },
+              "line": {
+                "description": "A line series' line: width, dash, colour.",
+                "allOf": [
+                  {
+                    "type": [
+                      "string",
+                      "object"
+                    ],
+                    "description": "\"none\", a colour, or {color, opacity, width, dash (solid, dash, sysDash, dot, lgDash, dashDot, ...), head, tail (arrowheads: triangle, stealth, diamond, oval, arrow, or {type, width, length} small|medium|large), cap (flat|round)}."
+                  }
+                ]
+              },
+              "data_labels": {
+                "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "show": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "value",
+                              "percent",
+                              "category",
+                              "series"
+                            ]
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "value",
+                                "percent",
+                                "category",
+                                "series"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "position": {
+                        "type": "string",
+                        "enum": [
+                          "center",
+                          "inside_end",
+                          "inside_base",
+                          "outside_end",
+                          "left",
+                          "right",
+                          "above",
+                          "below",
+                          "best_fit"
+                        ]
+                      },
+                      "format": {
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": [
+                          "number",
+                          "string"
+                        ]
+                      },
+                      "bold": {
+                        "type": "boolean"
+                      },
+                      "italic": {
+                        "type": "boolean"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "description": "The series: {name, values, color, colors, type, axis, line, data_labels}."
+        },
+        "title": {
+          "type": "string"
+        },
+        "legend": {
+          "type": "string",
+          "enum": [
+            "none",
+            "bottom",
+            "top",
+            "right",
+            "left"
+          ],
+          "description": "Default: bottom with several series or a pie, else none."
+        },
+        "data_labels": {
+          "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "show": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "value",
+                        "percent",
+                        "category",
+                        "series"
+                      ]
+                    },
+                    {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "value",
+                          "percent",
+                          "category",
+                          "series"
+                        ]
+                      }
+                    }
+                  ]
+                },
+                "position": {
+                  "type": "string",
+                  "enum": [
+                    "center",
+                    "inside_end",
+                    "inside_base",
+                    "outside_end",
+                    "left",
+                    "right",
+                    "above",
+                    "below",
+                    "best_fit"
+                  ]
+                },
+                "format": {
+                  "type": "string"
+                },
+                "size": {
+                  "type": [
+                    "number",
+                    "string"
+                  ]
+                },
+                "bold": {
+                  "type": "boolean"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "color": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "number_format": {
+          "type": "string",
+          "description": "Excel number format of the values (labels and value axis), written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."
+        },
+        "axis": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The value axis (horizontal in a bar chart).",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            },
+            "major_unit": {
+              "type": "number",
+              "description": "Distance between gridlines / tick labels."
+            },
+            "gridlines": {
+              "type": "boolean",
+              "description": "Value axis: major gridlines (default true)."
+            },
+            "number_format": {
+              "type": "string",
+              "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
+            },
+            "reverse": {
+              "type": "boolean",
+              "description": "Values (categories) in reverse order."
+            }
+          }
+        },
+        "category_axis": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The category axis: title, reverse (scatter: the x axis, with min/max/major_unit).",
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "min": {
+              "type": "number"
+            },
+            "max": {
+              "type": "number"
+            },
+            "major_unit": {
+              "type": "number",
+              "description": "Distance between gridlines / tick labels."
+            },
+            "gridlines": {
+              "type": "boolean",
+              "description": "Value axis: major gridlines (default true)."
+            },
+            "number_format": {
+              "type": "string",
+              "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
+            },
+            "reverse": {
+              "type": "boolean",
+              "description": "Values (categories) in reverse order."
+            }
+          }
+        },
+        "gap_width": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 500,
+          "description": "Column/bar: gap between categories, % of a bar (default 150)."
+        },
+        "overlap": {
+          "type": "number",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "Column/bar: overlap of a category's bars in % (stacked: 100)."
+        },
+        "hole": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 90,
+          "description": "Doughnut hole size in % (default 50)."
+        },
+        "font": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The chart's text (default: the deck's typeface and colour).",
+          "properties": {
+            "font": {
+              "type": "string"
+            },
+            "size": {
+              "type": [
+                "number",
+                "string"
+              ]
+            },
+            "color": {
+              "type": [
+                "string",
+                "object"
+              ],
+              "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+            },
+            "bold": {
+              "type": "boolean"
+            },
+            "italic": {
+              "type": "boolean"
+            }
+          }
+        },
+        "colors": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": [
+                  "string",
+                  "object"
+                ],
+                "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description": "A one-series column, bar, pie or doughnut chart: each bar's or slice's colour (null: automatic), e.g. to highlight bars below target."
+        },
+        "target_line": {
+          "description": "A dashed horizontal line at a value (column, line, area, combo): a number or {value, label (default Target), color, width, dash}. It is a line series, so it shows in the legend and in Edit Data.",
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "value"
+              ],
+              "properties": {
+                "value": {
+                  "type": "number"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "color": {
+                  "type": [
+                    "string",
+                    "object"
+                  ],
+                  "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+                },
+                "width": {
+                  "description": "A length: a number in `units` (default emu: 914400 per inch, 12700 per point, 360000 per cm) or a string with a unit: \"1.5in\", \"2.5cm\", \"40mm\", \"18pt\", \"120px\", \"914400emu\".",
+                  "type": [
+                    "number",
+                    "string"
+                  ]
+                },
+                "dash": {
+                  "type": "string",
+                  "enum": [
+                    "solid",
+                    "dot",
+                    "dash",
+                    "lgDash",
+                    "dashDot",
+                    "lgDashDot",
+                    "lgDashDotDot",
+                    "sysDash",
+                    "sysDot",
+                    "sysDashDot",
+                    "sysDashDotDot"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      },
+      "required": [
+        "chart"
+      ]
+    },
+    "add_conditional_format_args": {
+      "type": "object",
+      "description": "Add a conditional format to a range: data_bar, color_scale, icon_set, cell_value, text, top, bottom, above_average, below_average, duplicates, unique, blanks, not_blanks, formula or dates.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "data_bar",
+            "color_scale",
+            "icon_set",
+            "cell_value",
+            "text",
+            "top",
+            "bottom",
+            "above_average",
+            "below_average",
+            "duplicates",
+            "unique",
+            "blanks",
+            "not_blanks",
+            "formula",
+            "dates"
+          ]
+        },
+        "operator": {
+          "type": "string",
+          "description": "cell_value: >, <, >=, <=, =, !=, between, not_between. text: contains, not_contains, begins_with, ends_with, equals."
+        },
+        "value": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "cell_value: the bound(s): a number, text or =formula."
+        },
+        "value2": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "cell_value: the bound(s): a number, text or =formula."
+        },
+        "text": {
+          "type": "string",
+          "description": "text: the text looked for."
+        },
+        "formula": {
+          "type": "string",
+          "description": "formula: true for the cells to format, written for the range's first cell (=$D2>100)."
+        },
+        "rank": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "top/bottom: how many (default 10)."
+        },
+        "percent": {
+          "type": "boolean",
+          "description": "top/bottom: rank is a percentage."
+        },
+        "period": {
+          "type": "string",
+          "enum": [
+            "yesterday",
+            "today",
+            "tomorrow",
+            "last_7_days",
+            "last_week",
+            "this_week",
+            "next_week",
+            "last_month",
+            "this_month",
+            "next_month"
+          ]
+        },
+        "color": {
+          "type": "string",
+          "description": "data_bar: the bar's colour (default #638EC6)."
+        },
+        "colors": {
+          "description": "color_scale: red_yellow_green (default), green_yellow_red, red_white_green, green_white_red, red_white_blue, blue_white_red, white_green, white_red, or 2-3 colours, the lowest value's first.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "minItems": 2,
+              "maxItems": 3
+            }
+          ]
+        },
+        "gradient": {
+          "type": "boolean",
+          "description": "data_bar: gradient fill (default true)."
+        },
+        "show_value": {
+          "type": "boolean",
+          "description": "data_bar / icon_set: show the cell's value too (default true)."
+        },
+        "icons": {
+          "type": "string",
+          "description": "icon_set: arrows (default), arrows_gray, triangles, arrows4, arrows5, traffic_lights, traffic_lights4, signs, symbols, flags, stars, ratings (or Excel's names, 3Arrows...)."
+        },
+        "reverse": {
+          "type": "boolean",
+          "description": "icon_set: reverse the icons."
+        },
+        "format": {
+          "description": "What matching cells look like: red (default: light red fill, dark red text), yellow, green, red_fill, red_text, bold, or {fill, font_color, bold, italic, underline, strike}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "fill": {
+                  "type": "string"
+                },
+                "font_color": {
+                  "type": "string"
+                },
+                "bold": {
+                  "type": "boolean"
+                },
+                "italic": {
+                  "type": "boolean"
+                },
+                "underline": {
+                  "type": "boolean"
+                },
+                "strike": {
+                  "type": "boolean"
+                }
+              }
+            }
+          ]
+        },
+        "stop_if_true": {
+          "type": "boolean",
+          "description": "Later rules don't apply to cells this one matched."
+        }
+      },
+      "required": [
+        "range",
+        "type"
+      ]
+    },
+    "clear_conditional_formats_args": {
+      "type": "object",
+      "description": "Remove the conditional formats of a range (or the whole sheet).",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        }
+      },
+      "required": []
+    },
+    "add_validation_args": {
+      "type": "object",
+      "description": "Add data validation to a range: a drop-down `list`, whole, decimal, date, time, text_length or custom, with an input message and error alert.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "list",
+            "whole",
+            "decimal",
+            "date",
+            "time",
+            "text_length",
+            "custom",
+            "any"
+          ]
+        },
+        "values": {
+          "type": "array",
+          "items": {
+            "type": [
+              "string",
+              "number"
+            ]
+          },
+          "description": "list: the choices."
+        },
+        "source": {
+          "type": "string",
+          "description": "list: the cells holding the choices, e.g. Lists!A2:A20."
+        },
+        "operator": {
+          "type": "string",
+          "enum": [
+            "between",
+            "not_between",
+            "=",
+            "!=",
+            ">",
+            "<",
+            ">=",
+            "<="
+          ],
+          "description": "Default between."
+        },
+        "value": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "The bound(s): a number, a date (2026-01-31), a time (9:30) or =formula."
+        },
+        "value2": {
+          "type": [
+            "number",
+            "string"
+          ],
+          "description": "The bound(s): a number, a date (2026-01-31), a time (9:30) or =formula."
+        },
+        "formula": {
+          "type": "string",
+          "description": "custom: a formula true for allowed values, e.g. =LEN(A2)=8."
+        },
+        "allow_blank": {
+          "type": "boolean",
+          "description": "Blank cells pass (default true)."
+        },
+        "dropdown": {
+          "type": "boolean",
+          "description": "list: show the drop-down arrow (default true)."
+        },
+        "prompt": {
+          "description": "A message: text or {title, text}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "error": {
+          "description": "A message: text or {title, text}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "text": {
+                  "type": "string"
+                }
+              }
+            }
+          ]
+        },
+        "error_style": {
+          "type": "string",
+          "enum": [
+            "stop",
+            "warning",
+            "information"
+          ]
+        }
+      },
+      "required": [
+        "range",
+        "type"
+      ]
+    },
+    "clear_validation_args": {
+      "type": "object",
+      "description": "Remove data validation from a range.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "range": {
+          "type": "string",
+          "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+        }
+      },
+      "required": [
+        "range"
+      ]
+    },
+    "define_name_args": {
+      "type": "object",
+      "description": "Define a name for cells (`refers_to`, e.g. \"Data!$B$2:$B$100\"), for the workbook or one `sheet`.",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name, e.g. TaxRate."
+        },
+        "refers_to": {
+          "type": "string",
+          "description": "The cells it names, e.g. Data!$B$2:$B$100 (names of constants or formulas aren't supported: name a cell holding the value)."
+        },
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        }
+      },
+      "required": [
+        "name",
+        "refers_to"
+      ]
+    },
+    "delete_name_args": {
+      "type": "object",
+      "description": "Delete a defined name.",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name, e.g. TaxRate."
+        },
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        }
+      },
+      "required": [
+        "name"
+      ]
+    },
+    "add_pivot_args": {
+      "type": "object",
+      "description": "Add a pivot table of a range or table (its header row names the fields) at a cell or on a new sheet, with rows, columns, values and filters by field name.",
+      "additionalProperties": false,
+      "properties": {
+        "source": {
+          "type": "string",
+          "description": "The data: a range with a header row (Data!A1:F500) or a table name."
+        },
+        "at": {
+          "type": "string",
+          "description": "The pivot table's top-left cell, e.g. Summary!H2 (or give new_sheet)."
+        },
+        "new_sheet": {
+          "type": "string",
+          "description": "Put it on a new sheet with this name (the default is a new sheet)."
+        },
+        "rows": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "Field names down the side."
+        },
+        "columns": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "Field names across the top."
+        },
+        "values": {
+          "type": "array",
+          "description": "What to add up: field names, or {field, func: sum|count|average|max|min|product|count_numbers|stddev|stddevp|var|varp, name, number_format}.",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "field"
+                ],
+                "properties": {
+                  "field": {
+                    "type": "string"
+                  },
+                  "func": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "number_format": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "filters": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ],
+          "description": "Field names as report filters."
+        },
+        "layout": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "outline",
+            "tabular"
+          ]
+        },
+        "grand_totals": {
+          "type": "boolean",
+          "description": "Grand total row and column (default true)."
+        },
+        "style": {
+          "type": "string",
+          "description": "PivotStyleLight16 (default), PivotStyleMedium2... or none."
+        }
+      },
+      "required": [
+        "source",
+        "values"
+      ]
+    },
+    "page_setup_args": {
+      "type": "object",
+      "description": "Set how a sheet prints (and draws as PDF/PNG): orientation, paper, fit to pages, scale, print area, title rows, gridlines, centring.",
+      "additionalProperties": false,
+      "properties": {
+        "sheet": {
+          "type": [
+            "string",
+            "integer"
+          ],
+          "description": "Sheet name, or its number from 1 (default: the active sheet). References such as Data!A1:B9 name their own sheet."
+        },
+        "landscape": {
+          "type": "boolean",
+          "description": "Landscape (else portrait)."
+        },
+        "paper": {
+          "type": "string",
+          "description": "a4, letter, legal, f4, a3, a5, or WxHmm / WxHin."
+        },
+        "fit": {
+          "description": "\"width\" (one page wide), \"page\" (one page), \"none\", or [pages wide, pages tall] (0: any).",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "width",
+                "page",
+                "none"
+              ]
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "minItems": 2,
+              "maxItems": 2
+            }
+          ]
+        },
+        "scale": {
+          "type": "number",
+          "minimum": 10,
+          "maximum": 400
+        },
+        "print_area": {
+          "type": "string",
+          "description": "The range printed (\"\" for the whole sheet)."
+        },
+        "title_rows": {
+          "type": [
+            "string",
+            "integer",
+            "null"
+          ],
+          "description": "Rows repeated at the top of each page, e.g. \"1\" or \"1:2\"."
+        },
+        "gridlines": {
+          "type": "boolean",
+          "description": "Print the gridlines."
+        },
+        "center": {
+          "type": "boolean",
+          "description": "Centre the sheet across the page."
+        }
+      },
+      "required": []
+    },
+    "recalculate_args": {
+      "type": "object",
+      "description": "Recalculate every formula.",
+      "additionalProperties": false,
+      "properties": {},
+      "required": []
+    },
+    "op": {
+      "description": "One editing tool and its arguments, as `kantor sheets edit FILE TOOL ARGS` takes them.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "write_range"
+            },
+            "args": {
+              "$ref": "#/$defs/write_range_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "write_columns"
+            },
+            "args": {
+              "$ref": "#/$defs/write_columns_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "clear"
+            },
+            "args": {
+              "$ref": "#/$defs/clear_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "fill_down"
+            },
+            "args": {
+              "$ref": "#/$defs/fill_down_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "fill_right"
+            },
+            "args": {
+              "$ref": "#/$defs/fill_right_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "format"
+            },
+            "args": {
+              "$ref": "#/$defs/format_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "column_width"
+            },
+            "args": {
+              "$ref": "#/$defs/column_width_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "autofit"
+            },
+            "args": {
+              "$ref": "#/$defs/autofit_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "row_height"
+            },
+            "args": {
+              "$ref": "#/$defs/row_height_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "freeze"
+            },
+            "args": {
+              "$ref": "#/$defs/freeze_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "insert_rows"
+            },
+            "args": {
+              "$ref": "#/$defs/insert_rows_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "delete_rows"
+            },
+            "args": {
+              "$ref": "#/$defs/delete_rows_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "insert_columns"
+            },
+            "args": {
+              "$ref": "#/$defs/insert_columns_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "delete_columns"
+            },
+            "args": {
+              "$ref": "#/$defs/delete_columns_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "hide"
+            },
+            "args": {
+              "$ref": "#/$defs/hide_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "add_sheet"
+            },
+            "args": {
+              "$ref": "#/$defs/add_sheet_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "delete_sheet"
+            },
+            "args": {
+              "$ref": "#/$defs/delete_sheet_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "rename_sheet"
+            },
+            "args": {
+              "$ref": "#/$defs/rename_sheet_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "move_sheet"
+            },
+            "args": {
+              "$ref": "#/$defs/move_sheet_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "copy_sheet"
+            },
+            "args": {
+              "$ref": "#/$defs/copy_sheet_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "hide_sheet"
+            },
+            "args": {
+              "$ref": "#/$defs/hide_sheet_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "sort"
+            },
+            "args": {
+              "$ref": "#/$defs/sort_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "remove_duplicates"
+            },
+            "args": {
+              "$ref": "#/$defs/remove_duplicates_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "trim"
+            },
+            "args": {
+              "$ref": "#/$defs/trim_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "to_numbers"
+            },
+            "args": {
+              "$ref": "#/$defs/to_numbers_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "to_dates"
+            },
+            "args": {
+              "$ref": "#/$defs/to_dates_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "split_column"
+            },
+            "args": {
+              "$ref": "#/$defs/split_column_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "combine_columns"
+            },
+            "args": {
+              "$ref": "#/$defs/combine_columns_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "find_replace"
+            },
+            "args": {
+              "$ref": "#/$defs/find_replace_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "add_table"
+            },
+            "args": {
+              "$ref": "#/$defs/add_table_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "add_chart"
+            },
+            "args": {
+              "$ref": "#/$defs/add_chart_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "add_conditional_format"
+            },
+            "args": {
+              "$ref": "#/$defs/add_conditional_format_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "clear_conditional_formats"
+            },
+            "args": {
+              "$ref": "#/$defs/clear_conditional_formats_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "add_validation"
+            },
+            "args": {
+              "$ref": "#/$defs/add_validation_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "clear_validation"
+            },
+            "args": {
+              "$ref": "#/$defs/clear_validation_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "define_name"
+            },
+            "args": {
+              "$ref": "#/$defs/define_name_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "delete_name"
+            },
+            "args": {
+              "$ref": "#/$defs/delete_name_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "add_pivot"
+            },
+            "args": {
+              "$ref": "#/$defs/add_pivot_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "page_setup"
+            },
+            "args": {
+              "$ref": "#/$defs/page_setup_args"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "tool"
+          ],
+          "properties": {
+            "tool": {
+              "const": "recalculate"
+            },
+            "args": {
+              "$ref": "#/$defs/recalculate_args"
+            }
+          }
+        }
+      ]
+    },
+    "sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The sheet's name (default Sheet1, Sheet2...)."
+        },
+        "start": {
+          "type": "string",
+          "description": "Where `rows` or `columns` start (default A1)."
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "description": "The data row by row from `start`: text, numbers, booleans, formulas (\"=B2*C2\"), null for empty."
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "type": [
+                "string",
+                "number",
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "description": "The data column by column from `start` (each inner array is a column)."
+        },
+        "cells": {
+          "type": "object",
+          "description": "Single cells: {\"B9\": \"=SUM(B2:B8)\", \"A9\": \"Total\"}.",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "number",
+              "boolean",
+              "null"
+            ]
+          }
+        },
+        "widths": {
+          "type": "object",
+          "description": "Columns to widths, e.g. {\"A\": 14, \"B:D\": 10, \"E\": \"auto\"}.",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "const": "auto"
+              }
+            ]
+          }
+        },
+        "autofit": {
+          "description": "true fits every used column to its contents; or the columns to fit.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          ]
+        },
+        "heights": {
+          "type": "object",
+          "description": "Rows to heights in points: {\"1\": 30, \"2:5\": 18}.",
+          "additionalProperties": {
+            "type": "number"
+          }
+        },
+        "freeze": {
+          "description": "The first cell that scrolls (\"B2\": row 1 and column A stay), or {rows, columns}.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "rows": {
+                  "type": "integer"
+                },
+                "columns": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            }
+          ]
+        },
+        "formats": {
+          "type": "array",
+          "description": "Formats, each {range, ...} as the format tool takes them.",
+          "items": {
+            "type": "object",
+            "description": "Format a range: font, size, bold, colours, fill, alignment, wrap, number format (a preset or any Excel code), indent, rotation, borders, merge.",
+            "additionalProperties": false,
+            "properties": {
+              "merge": {
+                "type": "boolean",
+                "description": "true merges the range (Merge & Center), false unmerges it."
+              },
+              "range": {
+                "type": "string",
+                "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+              },
+              "bold": {
+                "type": "boolean",
+                "description": "bold on or off."
+              },
+              "italic": {
+                "type": "boolean",
+                "description": "italic on or off."
+              },
+              "underline": {
+                "type": "boolean",
+                "description": "underline on or off."
+              },
+              "strikethrough": {
+                "type": "boolean",
+                "description": "strikethrough on or off."
+              },
+              "font": {
+                "type": "string",
+                "description": "Typeface, e.g. Calibri, Arial, Inter."
+              },
+              "size": {
+                "type": "number",
+                "description": "Font size in points."
+              },
+              "font_size_delta": {
+                "type": "integer",
+                "description": "Grow (or shrink) the font by this many points."
+              },
+              "font_color": {
+                "type": "string",
+                "description": "#RRGGBB, or none / auto."
+              },
+              "color": {
+                "type": "string",
+                "description": "#RRGGBB, or none / auto."
+              },
+              "fill": {
+                "type": "string",
+                "description": "#RRGGBB, or none / auto."
+              },
+              "align": {
+                "type": "string",
+                "enum": [
+                  "general",
+                  "left",
+                  "center",
+                  "right"
+                ]
+              },
+              "valign": {
+                "type": "string",
+                "enum": [
+                  "top",
+                  "center",
+                  "bottom"
+                ]
+              },
+              "wrap": {
+                "type": "boolean",
+                "description": "wrap on or off."
+              },
+              "number_format": {
+                "type": "string",
+                "description": "An Excel number format code (\"#,##0.00\", \"0.0%\", \"\\\"Rp\\\"#,##0\", \"dd/mm/yyyy\", \"@\" for text) or a preset: general (General), number (#,##0.00), integer (#,##0), decimal1 (#,##0.0), percent (0.0%), percent0 (0%), percent2 (0.00%), rupiah (\"Rp\"#,##0), dollar (\"$\"#,##0.00), euro ([$€-x-euro2] #,##0.00), date (yyyy-mm-dd), datetime (yyyy-mm-dd hh:mm), time (hh:mm), text (@)."
+              },
+              "indent": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Indent steps (about three spaces each)."
+              },
+              "rotation": {
+                "type": "number",
+                "description": "Text angle in degrees, -90 to 90 (counter-clockwise), or 255 for stacked letters."
+              },
+              "borders": {
+                "description": "Borders: all, outline, inside, top, bottom, left, right, inside_horizontal, inside_vertical, none; or {edges, style (thin, medium, thick, double, dotted, dashed, hair, dashDot, ...), color}; or a list of these.",
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "all",
+                      "outline",
+                      "inside",
+                      "top",
+                      "bottom",
+                      "left",
+                      "right",
+                      "inside_horizontal",
+                      "inside_vertical",
+                      "none"
+                    ]
+                  },
+                  {
+                    "$ref": "#/$defs/border"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "all",
+                            "outline",
+                            "inside",
+                            "top",
+                            "bottom",
+                            "left",
+                            "right",
+                            "inside_horizontal",
+                            "inside_vertical",
+                            "none"
+                          ]
+                        },
+                        {
+                          "$ref": "#/$defs/border"
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "required": [
+              "range"
+            ]
+          }
+        },
+        "tables": {
+          "type": "array",
+          "description": "Excel tables, each as add_table takes it.",
+          "items": {
+            "type": "object",
+            "description": "Make a range an Excel table (a ListObject with a style, filter buttons and an optional total row).",
+            "additionalProperties": false,
+            "properties": {
+              "filter_buttons": {
+                "type": "boolean",
+                "description": "filter_buttons (Table Design option)."
+              },
+              "range": {
+                "type": "string",
+                "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+              },
+              "name": {
+                "type": "string",
+                "description": "Table name (letters, digits, _; default Table1, Table2...)."
+              },
+              "style": {
+                "type": "string",
+                "description": "TableStyleLight1-21, TableStyleMedium1-28 (default TableStyleMedium2), TableStyleDark1-11, or none."
+              },
+              "header": {
+                "type": "boolean",
+                "description": "The range's first row is a header (default: sort and remove_duplicates guess, add_table assumes true)."
+              },
+              "totals": {
+                "description": "true adds a total row; or column names to functions: sum, average, count, count_numbers, max, min, stddev, var, none.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  }
+                ]
+              },
+              "banded_rows": {
+                "type": "boolean",
+                "description": "banded_rows (Table Design option)."
+              },
+              "first_column": {
+                "type": "string",
+                "description": "Column letter, e.g. C."
+              },
+              "last_column": {
+                "type": "string",
+                "description": "Column letter, e.g. C."
+              }
+            },
+            "required": [
+              "range"
+            ]
+          }
+        },
+        "charts": {
+          "type": "array",
+          "description": "Charts, each as add_chart takes it (`at`/`to` place it on this sheet).",
+          "items": {
+            "type": "object",
+            "description": "Add a chart of cell ranges: column, bar, line, area, pie, doughnut, scatter or combo, placed by cell anchor (see `kantor sheets schema`).",
+            "additionalProperties": false,
+            "properties": {
+              "target_line": {
+                "description": "A dashed horizontal line at a value (column, line, area, combo): a number or {value, label (default Target), color, width, dash}. It is a line series, so it shows in the legend and in Edit Data.",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "value"
+                    ],
+                    "properties": {
+                      "value": {
+                        "type": "number"
+                      },
+                      "label": {
+                        "type": "string"
+                      },
+                      "color": {
+                        "type": [
+                          "string",
+                          "object"
+                        ],
+                        "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+                      },
+                      "width": {
+                        "description": "A length: a number in `units` (default emu: 914400 per inch, 12700 per point, 360000 per cm) or a string with a unit: \"1.5in\", \"2.5cm\", \"40mm\", \"18pt\", \"120px\", \"914400emu\".",
+                        "type": [
+                          "number",
+                          "string"
+                        ]
+                      },
+                      "dash": {
+                        "type": "string",
+                        "enum": [
+                          "solid",
+                          "dot",
+                          "dash",
+                          "lgDash",
+                          "dashDot",
+                          "lgDashDot",
+                          "lgDashDotDot",
+                          "sysDash",
+                          "sysDot",
+                          "sysDashDot",
+                          "sysDashDotDot"
+                        ]
+                      }
+                    }
+                  }
+                ]
+              },
+              "at": {
+                "type": "string",
+                "description": "Top-left cell of the chart (default: two columns right of `data`)."
+              },
+              "to": {
+                "type": "string",
+                "description": "Bottom-right cell the chart covers (inclusive), e.g. at G2, to N18."
+              },
+              "w": {
+                "type": [
+                  "number",
+                  "string"
+                ],
+                "description": "Width / height when `to` isn't given: a number in `units` or a string such as \"6in\" or \"480px\"."
+              },
+              "h": {
+                "type": [
+                  "number",
+                  "string"
+                ],
+                "description": "Width / height when `to` isn't given: a number in `units` or a string such as \"6in\" or \"480px\"."
+              },
+              "units": {
+                "type": "string",
+                "enum": [
+                  "emu",
+                  "pt",
+                  "in",
+                  "cm",
+                  "mm",
+                  "px"
+                ],
+                "description": "What bare numbers in lengths mean (default emu). Strings such as \"1in\" always say their unit."
+              },
+              "data": {
+                "type": "string",
+                "description": "A block of cells: series names along the top row, categories down the first column (text or dates; a scatter chart's x values), one series per column. E.g. Data!A1:C13."
+              },
+              "series_in": {
+                "type": "string",
+                "enum": [
+                  "columns",
+                  "rows"
+                ],
+                "description": "The block's series are its columns (default) or rows."
+              },
+              "chart": {
+                "type": "string",
+                "enum": [
+                  "column",
+                  "bar",
+                  "line",
+                  "area",
+                  "pie",
+                  "doughnut",
+                  "scatter",
+                  "combo"
+                ],
+                "description": "Chart type. combo: columns with lines/areas (series `type`, `axis`)."
+              },
+              "stacked": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "string",
+                    "enum": [
+                      "stacked",
+                      "percent"
+                    ]
+                  }
+                ],
+                "description": "Column, bar, line, area: stack the series (true / \"stacked\") or stack to 100% (\"percent\")."
+              },
+              "categories": {
+                "description": "With `series`: the category labels' cells (Data!A2:A13), or a list of labels.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": [
+                        "string",
+                        "number"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "series": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [],
+                  "properties": {
+                    "name": {
+                      "type": "string",
+                      "description": "The series' name: text, or a cell with = (=Data!B1)."
+                    },
+                    "values": {
+                      "description": "The values' cells (Data!B2:B13), or numbers. With `data`, leave it out: the entries then only style the block's series.",
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": [
+                              "number",
+                              "null"
+                            ]
+                          }
+                        }
+                      ]
+                    },
+                    "color": {
+                      "type": [
+                        "string",
+                        "object"
+                      ],
+                      "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+                    },
+                    "colors": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": [
+                              "string",
+                              "object"
+                            ],
+                            "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "description": "Bars or slices of their own colour, one per category (null: the series colour)."
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "column",
+                        "line",
+                        "area"
+                      ],
+                      "description": "Combo (or column/line/area chart): this series' type (combo default: first column, others line)."
+                    },
+                    "axis": {
+                      "type": "string",
+                      "enum": [
+                        "primary",
+                        "secondary"
+                      ]
+                    },
+                    "line": {
+                      "description": "A line series' line: width, dash, colour.",
+                      "allOf": [
+                        {
+                          "type": [
+                            "string",
+                            "object"
+                          ],
+                          "description": "\"none\", a colour, or {color, opacity, width, dash (solid, dash, sysDash, dot, lgDash, dashDot, ...), head, tail (arrowheads: triangle, stealth, diamond, oval, arrow, or {type, width, length} small|medium|large), cap (flat|round)}."
+                        }
+                      ]
+                    },
+                    "data_labels": {
+                      "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+                      "anyOf": [
+                        {
+                          "type": "boolean"
+                        },
+                        {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": {
+                            "show": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "enum": [
+                                    "value",
+                                    "percent",
+                                    "category",
+                                    "series"
+                                  ]
+                                },
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "enum": [
+                                      "value",
+                                      "percent",
+                                      "category",
+                                      "series"
+                                    ]
+                                  }
+                                }
+                              ]
+                            },
+                            "position": {
+                              "type": "string",
+                              "enum": [
+                                "center",
+                                "inside_end",
+                                "inside_base",
+                                "outside_end",
+                                "left",
+                                "right",
+                                "above",
+                                "below",
+                                "best_fit"
+                              ]
+                            },
+                            "format": {
+                              "type": "string"
+                            },
+                            "size": {
+                              "type": [
+                                "number",
+                                "string"
+                              ]
+                            },
+                            "bold": {
+                              "type": "boolean"
+                            },
+                            "italic": {
+                              "type": "boolean"
+                            },
+                            "color": {
+                              "type": "string"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  }
+                },
+                "description": "The series: {name, values, color, colors, type, axis, line, data_labels}."
+              },
+              "title": {
+                "type": "string"
+              },
+              "legend": {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "bottom",
+                  "top",
+                  "right",
+                  "left"
+                ],
+                "description": "Default: bottom with several series or a pie, else none."
+              },
+              "data_labels": {
+                "description": "Data labels: true (values; pie/doughnut: percentages), false, or {show: value|percent|category|series or a list, position: center|inside_end|inside_base|outside_end|left|right|above|below|best_fit, format (e.g. \"0.0%\"), size, bold, italic, color (#RRGGBB)}.",
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "show": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "enum": [
+                              "value",
+                              "percent",
+                              "category",
+                              "series"
+                            ]
+                          },
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "value",
+                                "percent",
+                                "category",
+                                "series"
+                              ]
+                            }
+                          }
+                        ]
+                      },
+                      "position": {
+                        "type": "string",
+                        "enum": [
+                          "center",
+                          "inside_end",
+                          "inside_base",
+                          "outside_end",
+                          "left",
+                          "right",
+                          "above",
+                          "below",
+                          "best_fit"
+                        ]
+                      },
+                      "format": {
+                        "type": "string"
+                      },
+                      "size": {
+                        "type": [
+                          "number",
+                          "string"
+                        ]
+                      },
+                      "bold": {
+                        "type": "boolean"
+                      },
+                      "italic": {
+                        "type": "boolean"
+                      },
+                      "color": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              "number_format": {
+                "type": "string",
+                "description": "Excel number format of the values (labels and value axis), written as Excel stores it: \"#,##0.0\", \"0%\", \"\\\"Rp\\\" #,##0\". `,` is the thousands and `.` the decimal separator in the code; PowerPoint and Excel show them in the viewer's locale (Indonesian: 1.234,5)."
+              },
+              "axis": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "The value axis (horizontal in a bar chart).",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "min": {
+                    "type": "number"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "major_unit": {
+                    "type": "number",
+                    "description": "Distance between gridlines / tick labels."
+                  },
+                  "gridlines": {
+                    "type": "boolean",
+                    "description": "Value axis: major gridlines (default true)."
+                  },
+                  "number_format": {
+                    "type": "string",
+                    "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
+                  },
+                  "reverse": {
+                    "type": "boolean",
+                    "description": "Values (categories) in reverse order."
+                  }
+                }
+              },
+              "category_axis": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "The category axis: title, reverse (scatter: the x axis, with min/max/major_unit).",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "min": {
+                    "type": "number"
+                  },
+                  "max": {
+                    "type": "number"
+                  },
+                  "major_unit": {
+                    "type": "number",
+                    "description": "Distance between gridlines / tick labels."
+                  },
+                  "gridlines": {
+                    "type": "boolean",
+                    "description": "Value axis: major gridlines (default true)."
+                  },
+                  "number_format": {
+                    "type": "string",
+                    "description": "Tick label format, e.g. \"#,##0\" or \"0%\" (default: the values' number_format)."
+                  },
+                  "reverse": {
+                    "type": "boolean",
+                    "description": "Values (categories) in reverse order."
+                  }
+                }
+              },
+              "gap_width": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 500,
+                "description": "Column/bar: gap between categories, % of a bar (default 150)."
+              },
+              "overlap": {
+                "type": "number",
+                "minimum": -100,
+                "maximum": 100,
+                "description": "Column/bar: overlap of a category's bars in % (stacked: 100)."
+              },
+              "hole": {
+                "type": "number",
+                "minimum": 10,
+                "maximum": 90,
+                "description": "Doughnut hole size in % (default 50)."
+              },
+              "font": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "The chart's text (default: the deck's typeface and colour).",
+                "properties": {
+                  "font": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": [
+                      "number",
+                      "string"
+                    ]
+                  },
+                  "color": {
+                    "type": [
+                      "string",
+                      "object"
+                    ],
+                    "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+                  },
+                  "bold": {
+                    "type": "boolean"
+                  },
+                  "italic": {
+                    "type": "boolean"
+                  }
+                }
+              },
+              "colors": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "type": [
+                        "string",
+                        "object"
+                      ],
+                      "description": "#RRGGBB (also #RGB, or #RRGGBBAA with opacity), a theme colour (accent1-accent6, tx1, tx2, bg1, bg2, dk1, lt1, dk2, lt2, hlink, folHlink), or {color, opacity}."
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "description": "A one-series column, bar, pie or doughnut chart: each bar's or slice's colour (null: automatic), e.g. to highlight bars below target."
+              }
+            },
+            "required": [
+              "chart"
+            ]
+          }
+        },
+        "conditional_formats": {
+          "type": "array",
+          "description": "Conditional formats, each as add_conditional_format takes it.",
+          "items": {
+            "type": "object",
+            "description": "Add a conditional format to a range: data_bar, color_scale, icon_set, cell_value, text, top, bottom, above_average, below_average, duplicates, unique, blanks, not_blanks, formula or dates.",
+            "additionalProperties": false,
+            "properties": {
+              "stop_if_true": {
+                "type": "boolean",
+                "description": "Later rules don't apply to cells this one matched."
+              },
+              "range": {
+                "type": "string",
+                "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "data_bar",
+                  "color_scale",
+                  "icon_set",
+                  "cell_value",
+                  "text",
+                  "top",
+                  "bottom",
+                  "above_average",
+                  "below_average",
+                  "duplicates",
+                  "unique",
+                  "blanks",
+                  "not_blanks",
+                  "formula",
+                  "dates"
+                ]
+              },
+              "operator": {
+                "type": "string",
+                "description": "cell_value: >, <, >=, <=, =, !=, between, not_between. text: contains, not_contains, begins_with, ends_with, equals."
+              },
+              "value": {
+                "type": [
+                  "number",
+                  "string"
+                ],
+                "description": "cell_value: the bound(s): a number, text or =formula."
+              },
+              "value2": {
+                "type": [
+                  "number",
+                  "string"
+                ],
+                "description": "cell_value: the bound(s): a number, text or =formula."
+              },
+              "text": {
+                "type": "string",
+                "description": "text: the text looked for."
+              },
+              "formula": {
+                "type": "string",
+                "description": "formula: true for the cells to format, written for the range's first cell (=$D2>100)."
+              },
+              "rank": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "top/bottom: how many (default 10)."
+              },
+              "percent": {
+                "type": "boolean",
+                "description": "top/bottom: rank is a percentage."
+              },
+              "period": {
+                "type": "string",
+                "enum": [
+                  "yesterday",
+                  "today",
+                  "tomorrow",
+                  "last_7_days",
+                  "last_week",
+                  "this_week",
+                  "next_week",
+                  "last_month",
+                  "this_month",
+                  "next_month"
+                ]
+              },
+              "color": {
+                "type": "string",
+                "description": "data_bar: the bar's colour (default #638EC6)."
+              },
+              "colors": {
+                "description": "color_scale: red_yellow_green (default), green_yellow_red, red_white_green, green_white_red, red_white_blue, blue_white_red, white_green, white_red, or 2-3 colours, the lowest value's first.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "minItems": 2,
+                    "maxItems": 3
+                  }
+                ]
+              },
+              "gradient": {
+                "type": "boolean",
+                "description": "data_bar: gradient fill (default true)."
+              },
+              "show_value": {
+                "type": "boolean",
+                "description": "data_bar / icon_set: show the cell's value too (default true)."
+              },
+              "icons": {
+                "type": "string",
+                "description": "icon_set: arrows (default), arrows_gray, triangles, arrows4, arrows5, traffic_lights, traffic_lights4, signs, symbols, flags, stars, ratings (or Excel's names, 3Arrows...)."
+              },
+              "reverse": {
+                "type": "boolean",
+                "description": "icon_set: reverse the icons."
+              },
+              "format": {
+                "description": "What matching cells look like: red (default: light red fill, dark red text), yellow, green, red_fill, red_text, bold, or {fill, font_color, bold, italic, underline, strike}.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "fill": {
+                        "type": "string"
+                      },
+                      "font_color": {
+                        "type": "string"
+                      },
+                      "bold": {
+                        "type": "boolean"
+                      },
+                      "italic": {
+                        "type": "boolean"
+                      },
+                      "underline": {
+                        "type": "boolean"
+                      },
+                      "strike": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "required": [
+              "range",
+              "type"
+            ]
+          }
+        },
+        "validations": {
+          "type": "array",
+          "description": "Data validation, each as add_validation takes it.",
+          "items": {
+            "type": "object",
+            "description": "Add data validation to a range: a drop-down `list`, whole, decimal, date, time, text_length or custom, with an input message and error alert.",
+            "additionalProperties": false,
+            "properties": {
+              "error_style": {
+                "type": "string",
+                "enum": [
+                  "stop",
+                  "warning",
+                  "information"
+                ]
+              },
+              "range": {
+                "type": "string",
+                "description": "Cells: A1:D20, Data!A1:D20, whole columns C:E or rows 3:5."
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "list",
+                  "whole",
+                  "decimal",
+                  "date",
+                  "time",
+                  "text_length",
+                  "custom",
+                  "any"
+                ]
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": [
+                    "string",
+                    "number"
+                  ]
+                },
+                "description": "list: the choices."
+              },
+              "source": {
+                "type": "string",
+                "description": "list: the cells holding the choices, e.g. Lists!A2:A20."
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "between",
+                  "not_between",
+                  "=",
+                  "!=",
+                  ">",
+                  "<",
+                  ">=",
+                  "<="
+                ],
+                "description": "Default between."
+              },
+              "value": {
+                "type": [
+                  "number",
+                  "string"
+                ],
+                "description": "The bound(s): a number, a date (2026-01-31), a time (9:30) or =formula."
+              },
+              "value2": {
+                "type": [
+                  "number",
+                  "string"
+                ],
+                "description": "The bound(s): a number, a date (2026-01-31), a time (9:30) or =formula."
+              },
+              "formula": {
+                "type": "string",
+                "description": "custom: a formula true for allowed values, e.g. =LEN(A2)=8."
+              },
+              "allow_blank": {
+                "type": "boolean",
+                "description": "Blank cells pass (default true)."
+              },
+              "dropdown": {
+                "type": "boolean",
+                "description": "list: show the drop-down arrow (default true)."
+              },
+              "prompt": {
+                "description": "A message: text or {title, text}.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              },
+              "error": {
+                "description": "A message: text or {title, text}.",
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "title": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "required": [
+              "range",
+              "type"
+            ]
+          }
+        },
+        "pivots": {
+          "type": "array",
+          "description": "Pivot tables placed on this sheet (`at`: a cell of it), each as add_pivot takes it.",
+          "items": {
+            "$ref": "#/$defs/add_pivot_args"
+          }
+        },
+        "hidden": {
+          "type": "boolean",
+          "description": "Hide the sheet."
+        },
+        "tab_color": {
+          "type": "string",
+          "description": "The tab's colour, #RRGGBB."
+        },
+        "gridlines": {
+          "type": "boolean",
+          "description": "Print (and draw in PDF/PNG) the gridlines."
+        },
+        "page_setup": {
+          "type": "object",
+          "description": "Set how a sheet prints (and draws as PDF/PNG): orientation, paper, fit to pages, scale, print area, title rows, gridlines, centring.",
+          "additionalProperties": false,
+          "properties": {
+            "center": {
+              "type": "boolean",
+              "description": "Centre the sheet across the page."
+            },
+            "landscape": {
+              "type": "boolean",
+              "description": "Landscape (else portrait)."
+            },
+            "paper": {
+              "type": "string",
+              "description": "a4, letter, legal, f4, a3, a5, or WxHmm / WxHin."
+            },
+            "fit": {
+              "description": "\"width\" (one page wide), \"page\" (one page), \"none\", or [pages wide, pages tall] (0: any).",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "width",
+                    "page",
+                    "none"
+                  ]
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "integer",
+                    "minimum": 0
+                  },
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              ]
+            },
+            "scale": {
+              "type": "number",
+              "minimum": 10,
+              "maximum": 400
+            },
+            "print_area": {
+              "type": "string",
+              "description": "The range printed (\"\" for the whole sheet)."
+            },
+            "title_rows": {
+              "type": [
+                "string",
+                "integer",
+                "null"
+              ],
+              "description": "Rows repeated at the top of each page, e.g. \"1\" or \"1:2\"."
+            },
+            "gridlines": {
+              "type": "boolean",
+              "description": "Print the gridlines."
+            }
+          },
+          "required": []
+        },
+        "ops": {
+          "type": "array",
+          "description": "Any editing tools, run on this sheet after the rest.",
+          "items": {
+            "$ref": "#/$defs/op"
+          }
+        }
+      }
+    }
+  }
+}

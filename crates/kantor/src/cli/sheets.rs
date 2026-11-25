@@ -1,0 +1,409 @@
+//! `kantor sheets`: build, list, edit and check workbooks without a window.
+//!
+//! ```text
+//! kantor sheets build book.json -o book.xlsx
+//! kantor sheets list book.xlsx [--sheet Data] [--range A1:H200] [--formulas] [--max-rows N]
+//! kantor sheets edit book.xlsx to_numbers '{"range": "Data!B2:B500"}'
+//! kantor sheets edit book.xlsx -o out.xlsx --ops ops.json
+//! kantor sheets check book.xlsx [--json] [--sheet Data]
+//! kantor sheets schema > sheets-json.schema.json
+//! ```
+//!
+//! The JSON is the MCP tool `sheets_edit`'s (see `agent/sheets_author.rs`
+//! and docs/sheets-json.md).
+
+use std::ffi::OsString;
+use std::io::Read as _;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context as _, Result, bail};
+use serde_json::{Value, json};
+use sheets_engine::Workbook;
+
+use crate::agent::{sheets_author, sheets_check, sheets_list, sheets_schema};
+
+pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [--check [--json]]\n\
+    \x20      kantor sheets list FILE [--sheet S] [--range R] [--formulas] [--max-rows N]\n\
+    \x20      kantor sheets check FILE [--json] [--sheet S]\n\
+    \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] TOOL ARGS\n\
+    \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] --ops OPS.json\n\
+    \x20      kantor sheets schema\n\
+    \x20      kantor sheets merge TEMPLATE.xlsx DATA -o DIR [options]\n\
+    \n\
+    Build, read, change and check workbooks without opening a window, with\n\
+    JSON (docs/sheets-json.md). Formulas stay formulas and are calculated;\n\
+    the files open in Excel.\n\
+    \n\
+    \x20 build    write a .xlsx from a workbook description: sheets with rows or\n\
+    \x20          columns of values and formulas, cells, number formats and\n\
+    \x20          styles, column widths, frozen panes, tables, charts placed by\n\
+    \x20          cell, conditional formats, validation, pivot tables, names.\n\
+    \x20          BOOK.json may be - (standard input). The same JSON always\n\
+    \x20          gives the same file. --check then checks it.\n\
+    \x20 list     print the workbook as JSON: each sheet's used range, frozen\n\
+    \x20          panes, merged cells, tables, charts and their series ranges,\n\
+    \x20          conditional formats, validation, pivot tables, a summary of\n\
+    \x20          each column, and a page of cells (values, formulas, number\n\
+    \x20          formats; 30 rows unless --max-rows, --range for another page;\n\
+    \x20          \"next\" says where to continue).\n\
+    \x20 check    audit the workbook: formula errors, circular references,\n\
+    \x20          numbers and dates stored as text, inconsistent formulas,\n\
+    \x20          numbers typed into formulas, typed totals, SUMs that miss\n\
+    \x20          rows, formulas using empty cells, mixed formats and units,\n\
+    \x20          duplicate rows, extra spaces, merged cells in data, volatile\n\
+    \x20          functions, external links, broken names, hidden data. Each\n\
+    \x20          finding has a sheet and range. Exit status 1 on errors.\n\
+    \x20 edit     run editing tools on a file and save it (in place unless -o):\n\
+    \x20          TOOL is one of the tools below, ARGS its JSON arguments (or\n\
+    \x20          @FILE); --ops runs a list of {\"tool\": ..., \"args\": {...}}.\n\
+    \x20          Each tool prints its result as one JSON line.\n\
+    \x20 schema   print the JSON Schema of workbooks and tool arguments\n\
+    \x20 merge    one workbook per record of a data file, {{Field}} filled in\n\
+    \x20          (kantor sheets merge --help)\n\
+    \n\
+    Tools: write_range write_columns clear fill_down fill_right format\n\
+    \x20 column_width autofit row_height freeze insert_rows delete_rows\n\
+    \x20 insert_columns delete_columns hide add_sheet delete_sheet rename_sheet\n\
+    \x20 move_sheet copy_sheet hide_sheet sort remove_duplicates trim\n\
+    \x20 to_numbers to_dates split_column combine_columns find_replace\n\
+    \x20 add_table add_chart add_conditional_format clear_conditional_formats\n\
+    \x20 add_validation clear_validation define_name delete_name add_pivot\n\
+    \x20 page_setup recalculate (kantor sheets schema has their arguments)\n\
+    \n\
+    See a sheet as a picture: kantor convert FILE.xlsx -o DIR --to png\n\
+    (one PNG per printed page; --contact-sheet for one picture).\n\
+    \n\
+    Options:\n\
+    \x20 -o, --output FILE   the .xlsx to write\n\
+    \x20 -f, --force         overwrite an existing output file\n\
+    \x20     --check         build: check the workbook it wrote\n\
+    \x20     --json          check: findings as JSON\n\
+    \x20     --sheet S       list, check: one sheet (name or number from 1)\n\
+    \x20     --range R       list: the cells to show (A1:H200, Data!A1:H200)\n\
+    \x20     --formulas      list: formulas in place of their values\n\
+    \x20     --max-rows N    list: rows of cells per sheet (0: summaries only)\n\
+    \x20 -h, --help          show this help\n\
+    \n\
+    Exit status: 0 on success, 1 when the work failed (or check found\n\
+    errors), 2 for usage errors.";
+
+/// A usage error (exit status 2).
+struct Usage(String);
+
+impl From<&str> for Usage {
+    fn from(s: &str) -> Self {
+        Usage(s.to_owned())
+    }
+}
+
+#[derive(Default)]
+struct Opts {
+    output: Option<PathBuf>,
+    force: bool,
+    ops: Option<String>,
+    check: bool,
+    json: bool,
+    sheet: Option<String>,
+    range: Option<String>,
+    formulas: bool,
+    max_rows: Option<u32>,
+    rest: Vec<String>,
+}
+
+fn parse(args: &[OsString]) -> Result<Opts, Usage> {
+    let mut o = Opts::default();
+    let mut it = args.iter();
+    let value = |it: &mut std::slice::Iter<OsString>, flag: &str| -> Result<String, Usage> {
+        it.next()
+            .map(|v| v.to_string_lossy().into_owned())
+            .ok_or_else(|| Usage(format!("{flag} needs a value")))
+    };
+    while let Some(a) = it.next() {
+        let a = a
+            .to_str()
+            .ok_or_else(|| Usage("arguments must be valid UTF-8".into()))?;
+        match a {
+            "-o" | "--output" => o.output = Some(PathBuf::from(value(&mut it, a)?)),
+            "-f" | "--force" => o.force = true,
+            "--check" => o.check = true,
+            "--json" => o.json = true,
+            "--formulas" => o.formulas = true,
+            "--sheet" => o.sheet = Some(value(&mut it, a)?),
+            "--range" => o.range = Some(value(&mut it, a)?),
+            "--ops" => o.ops = Some(value(&mut it, a)?),
+            "--max-rows" => {
+                let v = value(&mut it, a)?;
+                o.max_rows = Some(
+                    v.parse()
+                        .map_err(|_| Usage(format!("--max-rows {v}: give a number")))?,
+                );
+            }
+            "-" => o.rest.push(a.to_owned()),
+            s if s.starts_with('-') && !s.starts_with("-{") => {
+                return Err(Usage(format!("unknown option {s}")));
+            }
+            s => o.rest.push(s.to_owned()),
+        }
+    }
+    Ok(o)
+}
+
+fn is_xlsx(p: &Path) -> bool {
+    p.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("xlsx") || e.eq_ignore_ascii_case("xlsm"))
+}
+
+/// Read JSON from a file, `-` (standard input), or `@FILE`.
+fn read_json(arg: &str) -> Result<Value> {
+    let text = if arg == "-" {
+        let mut s = String::new();
+        std::io::stdin()
+            .read_to_string(&mut s)
+            .context("reading standard input")?;
+        s
+    } else {
+        let path = arg.strip_prefix('@').unwrap_or(arg);
+        std::fs::read_to_string(path).with_context(|| format!("can't read {path}"))?
+    };
+    serde_json::from_str(&text).with_context(|| format!("{arg} is not valid JSON"))
+}
+
+fn open(path: &str) -> Result<Workbook> {
+    let p = Path::new(path);
+    if !p.is_file() {
+        bail!("{path} is not a file");
+    }
+    let password = std::env::var("KANTOR_OFFICE_PASSWORD").ok();
+    let book = Workbook::open_with_password(p, password.as_deref())
+        .with_context(|| format!("can't open {path}"))?;
+    for note in book.import_notes() {
+        eprintln!("kantor sheets: note: {path}: {note}");
+    }
+    Ok(book)
+}
+
+/// Run `kantor sheets …`; returns the exit status.
+pub fn main(args: &[OsString]) -> i32 {
+    let Some(cmd) = args.first().and_then(|a| a.to_str()) else {
+        eprintln!("{USAGE}");
+        return 2;
+    };
+    if matches!(cmd, "-h" | "--help" | "help") || args.iter().any(|a| a == "-h" || a == "--help") {
+        println!("{USAGE}");
+        return 0;
+    }
+    let opts = match parse(&args[1..]) {
+        Ok(o) => o,
+        Err(Usage(msg)) => {
+            eprintln!("kantor sheets: {msg}\n\n{USAGE}");
+            return 2;
+        }
+    };
+    let result = match cmd {
+        "build" => build(&opts),
+        "list" => list(&opts),
+        "check" => match opts.rest.as_slice() {
+            [file] => return check(Path::new(file), &opts),
+            _ => Ok(Err("check takes one FILE".into())),
+        },
+        "edit" => edit(&opts),
+        "schema" => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&sheets_schema::workbook()).unwrap_or_default()
+            );
+            Ok(Ok(()))
+        }
+        other => Ok(Err(Usage(format!("unknown command {other}")))),
+    };
+    match result {
+        Ok(Ok(())) if cmd == "build" && opts.check => match &opts.output {
+            Some(out) => check(out, &opts),
+            None => 0,
+        },
+        Ok(Ok(())) => 0,
+        Ok(Err(Usage(msg))) => {
+            eprintln!("kantor sheets {cmd}: {msg}\n\n{USAGE}");
+            2
+        }
+        Err(e) => {
+            eprintln!("kantor sheets {cmd}: {e:#}");
+            1
+        }
+    }
+}
+
+type Outcome = Result<Result<(), Usage>>;
+
+fn build(o: &Opts) -> Outcome {
+    let [desc] = o.rest.as_slice() else {
+        return Ok(Err("build takes one BOOK.json".into()));
+    };
+    let Some(out) = &o.output else {
+        return Ok(Err("build needs -o OUT.xlsx".into()));
+    };
+    if !is_xlsx(out) {
+        return Ok(Err("the output must be a .xlsx file".into()));
+    }
+    if out.exists() && !o.force {
+        bail!("{} exists (use -f to overwrite)", out.display());
+    }
+    let json = read_json(desc)?;
+    let base = if desc == "-" {
+        std::env::current_dir().ok()
+    } else {
+        Path::new(desc)
+            .canonicalize()
+            .ok()
+            .and_then(|p| p.parent().map(Path::to_path_buf))
+    };
+    let book = sheets_author::build(&json, base.as_deref())?;
+    let bytes = sheets_author::to_bytes(&book)?;
+    super::slides::write_file(out, &bytes)?;
+    let n = book.sheet_names().len();
+    let line = format!(
+        "{desc} -> {} ({n} sheet{})",
+        out.display(),
+        if n == 1 { "" } else { "s" }
+    );
+    if o.check && o.json {
+        eprintln!("{line}");
+    } else {
+        println!("{line}");
+    }
+    Ok(Ok(()))
+}
+
+fn list(o: &Opts) -> Outcome {
+    let [file] = o.rest.as_slice() else {
+        return Ok(Err("list takes one FILE".into()));
+    };
+    let book = open(file)?;
+    let mut v = sheets_list::list(
+        &book,
+        &sheets_list::ListOpts {
+            sheet: o.sheet.clone(),
+            range: o.range.clone(),
+            formulas: o.formulas,
+            max_rows: o.max_rows,
+        },
+    )?;
+    v["file"] = json!(file);
+    println!("{}", serde_json::to_string_pretty(&v)?);
+    Ok(Ok(()))
+}
+
+fn check(file: &Path, o: &Opts) -> i32 {
+    let book = match open(&file.display().to_string()) {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("kantor sheets check: {e:#}");
+            return 1;
+        }
+    };
+    let only = match &o.sheet {
+        None => None,
+        Some(s) => {
+            let v = match s.parse::<u64>() {
+                Ok(n) => json!({"sheet": n}),
+                Err(_) => json!({"sheet": s}),
+            };
+            match crate::agent::sheets::sheet_index(&book, &v, 0) {
+                Ok(i) => Some(i),
+                Err(e) => {
+                    eprintln!("kantor sheets check: --sheet {s}: {e:#}");
+                    return 2;
+                }
+            }
+        }
+    };
+    let report = sheets_check::check(&book, only);
+    if o.json {
+        let mut v = report.json();
+        v["file"] = json!(file.display().to_string());
+        println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
+    } else {
+        print!("{}", report.text(&file.display().to_string()));
+    }
+    i32::from(report.has_errors())
+}
+
+fn edit(o: &Opts) -> Outcome {
+    let (file, ops) = match (o.rest.as_slice(), &o.ops) {
+        ([file], Some(ops)) => {
+            let list = read_json(ops)?;
+            let Some(items) = list.as_array() else {
+                bail!("--ops must hold an array of {{\"tool\", \"args\"}}");
+            };
+            let ops = items
+                .iter()
+                .enumerate()
+                .map(|(i, op)| {
+                    let tool = op
+                        .get("tool")
+                        .and_then(Value::as_str)
+                        .with_context(|| format!("operation {} has no `tool`", i + 1))?;
+                    Ok((
+                        tool.to_owned(),
+                        op.get("args").cloned().unwrap_or(json!({})),
+                    ))
+                })
+                .collect::<Result<Vec<_>>>()?;
+            (file, ops)
+        }
+        ([file, tool, args], None) => {
+            let args = if args.starts_with('@') || args == "-" {
+                read_json(args)?
+            } else {
+                serde_json::from_str(args).context("ARGS is not valid JSON")?
+            };
+            (file, vec![(tool.clone(), args)])
+        }
+        ([file, tool], None) => (file, vec![(tool.clone(), json!({}))]),
+        _ => {
+            return Ok(Err(
+                "edit takes FILE and TOOL ARGS, or --ops OPS.json".into()
+            ));
+        }
+    };
+    for (tool, _) in &ops {
+        if sheets_author::spec(tool).is_none() {
+            return Ok(Err(Usage(format!(
+                "{tool} is not a sheets editing tool (one of {})",
+                sheets_author::TOOLS
+                    .iter()
+                    .map(|t| t.name)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))));
+        }
+    }
+    let out = o.output.clone().unwrap_or_else(|| PathBuf::from(file));
+    if !is_xlsx(&out) {
+        return Ok(Err("the output must be a .xlsx file (give -o)".into()));
+    }
+    let in_place = o.output.is_none();
+    if !in_place && out.exists() && !o.force {
+        bail!("{} exists (use -f to overwrite)", out.display());
+    }
+    let mut book = open(file)?;
+    if in_place && !is_xlsx(Path::new(file)) {
+        bail!("{file} can't be saved in place (it is not a .xlsx); give -o NEW.xlsx");
+    }
+    let base = std::env::current_dir().ok();
+    for (n, (tool, args)) in ops.iter().enumerate() {
+        let (what, result) = sheets_author::run_tool(&mut book, tool, args, base.as_deref())
+            .with_context(|| format!("operation {} ({tool})", n + 1))?;
+        let mut line = result;
+        if let Some(m) = line.as_object_mut() {
+            m.insert("done".into(), json!(what));
+        }
+        println!("{line}");
+    }
+    book.save_as(&out)?;
+    for note in book.save_notes() {
+        eprintln!("kantor sheets: note: {}: {note}", out.display());
+    }
+    println!("saved {}", out.display());
+    Ok(Ok(()))
+}

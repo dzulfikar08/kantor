@@ -137,26 +137,38 @@ pub fn render(
     let page_w = (deck.width * 0.75).max(1.0);
     let scale = width.clamp(MIN_WIDTH, MAX_WIDTH) as f32 / page_w;
     let pages: Vec<usize> = (0..slides.len()).collect();
-    rasterize(pdf, &pages, scale)
+    rasterize(pdf, &pages, |_| scale)
         .map_err(|(k, e)| e.unwrap_or_else(|| anyhow!("can't draw slide {}", slides[k] + 1)))
 }
 
-/// Pages `pages` (0-based) of a PDF drawn at `scale` px per point. An
-/// error names the page it failed on (index into `pages`).
+/// Pages `pages` (0-based) of a PDF, each drawn at `scale(page size in
+/// points)` px per point. An error names the page it failed on (index into
+/// `pages`).
 fn rasterize(
     pdf: Vec<u8>,
     pages: &[usize],
-    scale: f32,
+    scale: impl Fn((f32, f32)) -> f32,
 ) -> std::result::Result<Vec<Image>, (usize, Option<anyhow::Error>)> {
     let doc = pdf_engine::PdfDoc::open(Arc::new(pdf), "")
         .map_err(|e| (0, Some(anyhow!("reading the PDF: {e}"))))?;
-    let renderer = pdf_engine::Renderer::new(&doc);
+    rasterize_open(&doc, pages, scale)
+}
+
+/// [`rasterize`] for a PDF already open.
+fn rasterize_open(
+    doc: &pdf_engine::PdfDoc,
+    pages: &[usize],
+    scale: impl Fn((f32, f32)) -> f32,
+) -> std::result::Result<Vec<Image>, (usize, Option<anyhow::Error>)> {
+    let renderer = pdf_engine::Renderer::new(doc);
+    let sizes = doc.page_sizes();
     pages
         .iter()
         .enumerate()
         .map(|(k, &page)| {
+            let size = sizes.get(page).copied().ok_or((k, None))?;
             let r = renderer
-                .render(page, scale, pdf_engine::Turn(0))
+                .render(page, scale(size), pdf_engine::Turn(0))
                 .ok_or((k, None))?;
             let rgb = r
                 .rgba
@@ -194,8 +206,62 @@ pub fn render_doc(
         .map_or(794.0, |p| p.setup.width.min(p.setup.height));
     let pdf = docs_pdf::write(&scene)?;
     let scale = width.clamp(MIN_WIDTH, MAX_WIDTH) as f32 / (first_w * 0.75).max(1.0);
-    rasterize(pdf, pages, scale)
+    rasterize(pdf, pages, |_| scale)
         .map_err(|(k, e)| e.unwrap_or_else(|| anyhow!("can't draw page {}", pages[k] + 1)))
+}
+
+/// Pages `pages` (0-based) of a PDF (a printed workbook), each `width` px
+/// wide.
+#[cfg(test)]
+pub fn render_pdf(pdf: Vec<u8>, pages: &[usize], width: u32) -> Result<Vec<Image>> {
+    let doc =
+        pdf_engine::PdfDoc::open(Arc::new(pdf), "").map_err(|e| anyhow!("reading the PDF: {e}"))?;
+    render_pdf_doc(&doc, pages, width)
+}
+
+fn render_pdf_doc(doc: &pdf_engine::PdfDoc, pages: &[usize], width: u32) -> Result<Vec<Image>> {
+    let w = width.clamp(MIN_WIDTH, MAX_WIDTH) as f32;
+    rasterize_open(doc, pages, |(pw, _)| w / pw.max(1.0))
+        .map_err(|(k, e)| e.unwrap_or_else(|| anyhow!("can't draw page {}", pages[k] + 1)))
+}
+
+/// The pages `--page` names (all without it) of `n`, 0-based.
+fn chosen_pages(opts: &PngOptions, n: usize, what: &str) -> Result<Vec<usize>> {
+    match &opts.slides {
+        Some(spec) => parse_slides(spec, n)
+            .map_err(|e| anyhow!(e.replace("slide", "page").replace("deck", what))),
+        None => Ok((0..n).collect()),
+    }
+}
+
+/// A PDF's pages (a printed workbook) as PNG files; returns the summary.
+pub fn convert_pdf(
+    pdf: Vec<u8>,
+    output: &Path,
+    numbered: bool,
+    opts: &PngOptions,
+    force: bool,
+) -> Result<String> {
+    let doc =
+        pdf_engine::PdfDoc::open(Arc::new(pdf), "").map_err(|e| anyhow!("reading the PDF: {e}"))?;
+    let n = doc.page_sizes().len();
+    if n == 0 {
+        bail!("nothing to print");
+    }
+    let pages = chosen_pages(opts, n, "workbook")?;
+    let width = opts.width.unwrap_or(if opts.sheet {
+        SHEET_WIDTH
+    } else {
+        DEFAULT_WIDTH
+    });
+    let files = names(output, numbered, &pages, n, opts.sheet);
+    for f in &files {
+        if f.exists() && !force {
+            bail!("{} exists (use -f to overwrite)", f.display());
+        }
+    }
+    let images = render_pdf_doc(&doc, &pages, width)?;
+    write_images(images, &pages, &files, opts.sheet, "page")
 }
 
 /// Convert a document to PNG files; returns the summary line.
@@ -208,11 +274,7 @@ pub fn convert_doc(
 ) -> Result<String> {
     let mut engine = docs_pdf::Engine::new();
     let n = docs_pdf::lay_out(doc, &mut engine).paged.pages.len().max(1);
-    let pages = match &opts.slides {
-        Some(spec) => parse_slides(spec, n)
-            .map_err(|e| anyhow!(e.replace("slide", "page").replace("deck", "document")))?,
-        None => (0..n).collect(),
-    };
+    let pages = chosen_pages(opts, n, "document")?;
     let width = opts.width.unwrap_or(if opts.sheet {
         SHEET_WIDTH
     } else {
@@ -375,11 +437,12 @@ pub fn contact_sheet(thumbs: &[(usize, Image)]) -> Image {
 /// What `kantor convert … --to png` was asked for.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PngOptions {
-    /// `--slide`: which slides (default: every slide shown in the show).
+    /// `--slide` / `--page`: which slides or pages (default: every slide
+    /// shown in the show, every page).
     pub slides: Option<String>,
-    /// `--width`: px per slide.
+    /// `--width`: px per slide or page.
     pub width: Option<u32>,
-    /// `--contact-sheet`: one PNG of all the slides.
+    /// `--contact-sheet`: one PNG of all the slides or pages.
     pub sheet: bool,
 }
 
@@ -500,6 +563,43 @@ mod tests {
         let png = imgs[0].png();
         assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
         assert_eq!(&png[16..24], &[0, 0, 1, 64, 0, 0, 0, 180]);
+    }
+
+    #[std::prelude::v1::test]
+    fn workbooks_render_page_by_page() {
+        let mut b = crate::agent::sheets_author::build(
+            &json!({"sheets": [{"name": "S", "rows": [["A", 1], ["B", 2]],
+                "formats": [{"range": "A1:B2", "fill": "#C00000"}]}]}),
+            None,
+        )
+        .unwrap();
+        let (pdf, pages) = sheets_pdf::export(&mut b, &sheets_pdf::Options::default()).unwrap();
+        assert_eq!(pages, 1);
+        let imgs = render_pdf(pdf.clone(), &[0], 400).unwrap();
+        assert_eq!(imgs[0].width, 400);
+        assert!(
+            imgs[0]
+                .rgb
+                .chunks(3)
+                .any(|p| p[0] > 180 && p[1] < 40 && p[2] < 40)
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let opts = PngOptions {
+            sheet: true,
+            ..PngOptions::default()
+        };
+        let msg = convert_pdf(pdf.clone(), &dir.path().join("b.png"), true, &opts, false).unwrap();
+        assert!(dir.path().join("b-sheet.png").is_file(), "{msg}");
+        let opts = PngOptions {
+            slides: Some("2".into()),
+            ..PngOptions::default()
+        };
+        let e = convert_pdf(pdf, &dir.path().join("c.png"), true, &opts, false).unwrap_err();
+        assert!(
+            e.to_string()
+                .contains("there is no page 2; the workbook has 1"),
+            "{e}"
+        );
     }
 
     #[std::prelude::v1::test]

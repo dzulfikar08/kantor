@@ -40,6 +40,23 @@ pub struct DataSeries {
     pub point_fills: Vec<(usize, String)>,
     /// Data labels (`None`: none).
     pub labels: Option<DataLabels>,
+    /// Where the series is on a worksheet (`None`: the data sheet's
+    /// layout, see the module docs). `name`, `categories` and `values` are
+    /// still its cached text and numbers.
+    pub refs: Option<SeriesRefs>,
+}
+
+/// References (`Data!$B$2:$B$13`, without `=`) of a series whose data is in
+/// a workbook's own cells (`kantor sheets` charts).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SeriesRefs {
+    /// The name's cell (`None`: the name is written as text).
+    pub name: Option<String>,
+    /// The categories' cells (`None`: no categories).
+    pub categories: Option<String>,
+    /// The values' cells; empty: the values are written into the chart
+    /// (`c:numLit`, a target line's).
+    pub values: String,
 }
 
 /// A chart from data (see the module docs).
@@ -117,6 +134,35 @@ fn num_ref(f: &str, format: &str, values: &[Option<f64>]) -> String {
     x + "</c:numCache></c:numRef>"
 }
 
+/// Categories written into the chart itself (`c:strLit`).
+fn str_lit(cats: &[DataCategory]) -> String {
+    let mut x = format!("<c:strLit><c:ptCount val=\"{}\"/>", cats.len());
+    for (i, c) in cats.iter().enumerate() {
+        let t = match c {
+            DataCategory::Text(t) => t.clone(),
+            DataCategory::Number(v) => num(*v),
+        };
+        x.push_str(&format!("<c:pt idx=\"{i}\"><c:v>{}</c:v></c:pt>", esc(&t)));
+    }
+    x + "</c:strLit>"
+}
+
+/// Values written into the chart itself (`c:numLit`): a series with refs
+/// but no `values` reference (a target line).
+fn num_lit(format: &str, values: &[Option<f64>]) -> String {
+    let mut x = format!(
+        "<c:numLit><c:formatCode>{}</c:formatCode><c:ptCount val=\"{}\"/>",
+        esc(format),
+        values.len()
+    );
+    for (i, v) in values.iter().enumerate() {
+        if let Some(v) = v.filter(|v| v.is_finite()) {
+            x.push_str(&format!("<c:pt idx=\"{i}\"><c:v>{}</c:v></c:pt>", num(v)));
+        }
+    }
+    x + "</c:numLit>"
+}
+
 /// The series as `c:tx` / `c:cat` / `c:val` content referring to the data
 /// sheet (names in row 1, categories in column A).
 fn new_series(d: &DataChart) -> Vec<NewSeries> {
@@ -154,6 +200,30 @@ fn new_series(d: &DataChart) -> Vec<NewSeries> {
         .enumerate()
         .map(|(i, s)| {
             let col = i as u32 + 1;
+            if let Some(r) = &s.refs {
+                let tx = match &r.name {
+                    Some(f) => str_ref(f, std::slice::from_ref(&s.name)),
+                    None => format!("<c:v>{}</c:v>", esc(&s.name)),
+                };
+                let cat = r.categories.as_ref().filter(|_| n > 0).map(|f| {
+                    // The cached categories, under this series' reference.
+                    let at = cat.find("<c:f>").map_or(0, |i| i + 5);
+                    let end = cat[at..].find("</c:f>").map_or(at, |i| at + i);
+                    format!("{}{}{}", &cat[..at], esc(f), &cat[end..])
+                });
+                // Categories given as a list: written into the chart.
+                let cat = cat.or_else(|| (n > 0).then(|| str_lit(&d.categories)));
+                let val = if r.values.is_empty() {
+                    num_lit(format, &s.values)
+                } else {
+                    num_ref(&r.values, format, &s.values)
+                };
+                return NewSeries {
+                    tx: Some(tx),
+                    cat,
+                    val,
+                };
+            }
             NewSeries {
                 tx: Some(str_ref(
                     &col_ref(&d.sheet, col, 1, 1),
@@ -504,6 +574,30 @@ mod tests {
         assert_eq!(style.names, vec!["2025".to_owned(), "2026".to_owned()]);
         // The same data, the same part.
         assert_eq!(xml, data_chart_part(&chart(ChartType::Column)).unwrap());
+    }
+
+    #[test]
+    fn series_can_refer_to_a_workbook() {
+        let mut d = chart(ChartType::Column);
+        d.workbook_rel = None;
+        d.series[0].refs = Some(SeriesRefs {
+            name: Some("Data!$B$1".into()),
+            categories: Some("Data!$A$2:$A$4".into()),
+            values: "Data!$B$2:$B$4".into(),
+        });
+        d.series[1].refs = Some(SeriesRefs {
+            name: None,
+            categories: Some("Data!$A$2:$A$4".into()),
+            values: String::new(),
+        });
+        let xml = data_chart_part(&d).unwrap();
+        Document::parse(&xml).unwrap();
+        assert!(xml.contains("<c:f>Data!$B$1</c:f>"), "{xml}");
+        assert!(xml.contains("<c:f>Data!$B$2:$B$4</c:f>"));
+        assert_eq!(xml.matches("<c:f>Data!$A$2:$A$4</c:f>").count(), 2);
+        assert!(xml.contains("<c:tx><c:v>2026</c:v></c:tx>"));
+        assert!(xml.contains("<c:numLit>"));
+        assert!(!xml.contains("Sheet1") && !xml.contains("externalData"));
     }
 
     #[test]

@@ -49,6 +49,7 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
     \x20      kantor convert [options] INPUT OUTPUT\n\
     \x20      kantor slides <build|list|edit|schema|merge> ...\n\
     \x20      kantor docs <build|list|check|edit|schema|merge> ...\n\
+    \x20      kantor sheets <build|list|edit|check|schema> ...\n\
     \x20      kantor sheets merge TEMPLATE.xlsx DATA -o DIR [options]\n\
     \n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
@@ -61,6 +62,7 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
     without opening a window (kantor convert --help).\n\
     `kantor slides` builds and edits presentations from JSON (kantor slides --help).\n\
     `kantor docs` builds, checks and revises Word documents from JSON (kantor docs --help).\n\
+    `kantor sheets` builds, edits, lists and checks workbooks from JSON (kantor sheets --help).\n\
     `kantor docs merge`, `kantor slides merge` and `kantor sheets merge` fill a template\n\
     in once per row of a workbook or CSV file (mail merge; add --help).";
 
@@ -131,6 +133,13 @@ fn main() {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
         let args: Vec<_> = std::env::args_os().skip(2).collect();
         std::process::exit(cli::docs::main(&args));
+    }
+    if raw.first().map(String::as_str) == Some("sheets")
+        && raw.get(1).map(String::as_str) != Some("merge")
+    {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+        let args: Vec<_> = std::env::args_os().skip(2).collect();
+        std::process::exit(cli::sheets::main(&args));
     }
     if raw.first().map(String::as_str) == Some("sheets")
         && raw.get(1).map(String::as_str) == Some("merge")

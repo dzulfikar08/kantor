@@ -227,6 +227,46 @@ pub fn references(formula: &str) -> Vec<FormulaRef> {
         .collect()
 }
 
+/// What a token of a formula is ([`tokens`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenKind {
+    /// A cell or range reference (with its sheet).
+    Ref,
+    /// A string literal.
+    Str,
+    /// A function name (before its `(`).
+    Func,
+    /// A name, `TRUE`, ...
+    Word,
+    /// A number literal.
+    Number,
+    Space,
+    Punct(char),
+}
+
+/// A formula's tokens (`=` included as punctuation), for checks such as
+/// numbers typed into formulas. Empty for plain values.
+pub fn tokens(formula: &str) -> Vec<(Range<usize>, TokenKind)> {
+    if !is_formula(formula) {
+        return Vec::new();
+    }
+    tokenize(formula)
+        .into_iter()
+        .map(|t| {
+            let k = match t.kind {
+                Kind::Ref(_) => TokenKind::Ref,
+                Kind::Str { .. } => TokenKind::Str,
+                Kind::Func => TokenKind::Func,
+                Kind::Word => TokenKind::Word,
+                Kind::Number => TokenKind::Number,
+                Kind::Space => TokenKind::Space,
+                Kind::Punct(c) => TokenKind::Punct(c),
+            };
+            (t.span, k)
+        })
+        .collect()
+}
+
 /// A colour slot for each of `refs`: the same cells share a slot, new cells
 /// take the next one (callers cycle through their palette).
 pub fn reference_colors(refs: &[FormulaRef]) -> Vec<usize> {
