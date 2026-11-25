@@ -1577,6 +1577,10 @@ enum Cut {
     Short,
 }
 
+/// A cell whose text doesn't fit: row, text, the size it needs and the
+/// room it has (points).
+type CutCell = (u32, String, f32, f32);
+
 /// Text cut off and numbers shown as `####`, where the print layout
 /// (`kantor convert`, PDF export) puts them: every cell's text is placed
 /// in its room as the PDF draws it and measured with the same fonts.
@@ -1602,9 +1606,9 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
     out.extend(outside_print_area(book, s, sp, &filled));
     let chars = |pt: f64| super::sheets_author::px_to_chars(book, s, pt / 0.75).ceil();
     let mut seen = HashSet::new();
-    // (column, cut) → cells (row, text, need, room).
-    let mut cut: BTreeMap<(u32, Cut), Vec<(u32, String, f32, f32)>> = BTreeMap::new();
-    let mut hashes: BTreeMap<u32, Vec<(u32, String, f32, f32)>> = BTreeMap::new();
+    // (column, cut) → cells.
+    let mut cut: BTreeMap<(u32, Cut), Vec<CutCell>> = BTreeMap::new();
+    let mut hashes: BTreeMap<u32, Vec<CutCell>> = BTreeMap::new();
     for i in 0..plan.pages.len().min(FIT_PAGES) {
         let page = sheets_pdf::extract_plain(book, &plan, i);
         let pr = plan.pages[i];
@@ -1681,7 +1685,7 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
                 .push((r, shown, o.need, o.room));
         }
     }
-    let range_of = |c: u32, cells: &[(u32, String, f32, f32)]| {
+    let range_of = |c: u32, cells: &[CutCell]| {
         let (r0, r1) = cells
             .iter()
             .fold((u32::MAX, 0), |(a, b), x| (a.min(x.0), b.max(x.0)));
