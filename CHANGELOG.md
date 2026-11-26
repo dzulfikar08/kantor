@@ -9,6 +9,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.26.0] - 2026-11-27
+
 ### Fixed
 
 - `kantor docs edit --track AUTHOR` (and the MCP docs tools with Track Changes on) now tracks `replace_paragraph`,
@@ -19,12 +21,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   and footers too, as Word's Replace All does, tracked with `--track`; `"in": "body"` or `"headers"` limits them.
   A line break in the replacement is a line break in the same paragraph, so one placeholder can hold a two-line
   letterhead.
+- Sheets: AutoFit Column Width measures each cell in the font it's drawn in, so bold from a PivotTable's grand
+  total, a table style or conditional formatting is counted (the bold total row was cut off before).
+- Sheets: a number too wide for its column no longer shows cut off with an ellipsis (`3...`). As in Excel, a
+  General number first loses decimals or turns scientific, otherwise the cell fills with `#`; the grid and
+  `kantor sheets check` decide it the same way.
+- Sheets in Indonesian: the formula bar no longer shows English month names for dates, and new sheets (Add Sheet,
+  a PivotTable on a new sheet) are named "Lembar1", "Lembar2"… instead of "Sheet1".
 
 ### Added
 
 - `kantor docs list` gives `tracked_change_count`, counting the changes in headers, footers and notes too (the
   `tracked_changes` list is the body's and stops at 500); `kantor docs check` counts those as well.
-
+- Sheets: dates typed with month names become dates, as in Excel: "15 Des 2026", "Dec 15, 2026", "15-des-26",
+  "Dec 2026" (Indonesian names with the Indonesian interface, English ones always). Text such as "Mei Ling" or
+  "Mar 2026 report" stays text. A date cell with a month-name format shows that way in the formula bar
+  ("15 Desember 2026"); other date cells show the short date ("15/12/2026"), and Enter keeps the date and format.
 - `kantor sheets check` notes General numbers shown rounded in a narrow column (`number_rounded`, info): the cell,
   its stored value, the text shown and the column width that shows it in full.
 
@@ -2520,7 +2532,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.25.2...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.26.0...HEAD
+[0.26.0]: https://github.com/dzulfikar08/kantor/compare/v0.25.2...v0.26.0
 [0.25.2]: https://github.com/dzulfikar08/kantor/compare/v0.25.1...v0.25.2
 [0.25.1]: https://github.com/dzulfikar08/kantor/compare/v0.25.0...v0.25.1
 [0.25.0]: https://github.com/dzulfikar08/kantor/compare/v0.24.0...v0.25.0
