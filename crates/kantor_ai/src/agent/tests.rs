@@ -461,7 +461,13 @@ fn indonesian_requests_get_indonesian_narration() {
         request_language("Tolong buat surat undangan rapat"),
         Some("Indonesian")
     );
-    assert_eq!(request_language("Make a 6-slide deck on Q3 sales"), None);
+    assert_eq!(
+        request_language(
+            "Make a 6-slide board deck on Q3 sales performance by branch (target vs actual) from penjualan-q3.csv"
+        ),
+        Some("English")
+    );
+    assert_eq!(request_language("Q3 2026"), None);
     assert_eq!(request_language(""), None);
 
     let dir = tempfile::tempdir().unwrap();

@@ -24,7 +24,7 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 - `kantor agent run --provider paparan` counts its budget in credits (`--max-credits N`), and takes `--reasoning
   low|medium|high|none` (low by default with Paparan AI).
 - Paparan AI answers in your language: an Indonesian request gets Indonesian notes and summary, even though the
-  skills are written in English.
+  skills are written in English, and an English request gets English documents even when the data is Indonesian.
 - Charts made by `kantor sheets build`, the Sheets editing tools and Insert Chart have a white chart area with a
   light border, as in Excel, so their text stays readable on Kantor's dark grid.
 - With your own key or Ollama and no local skill folder, Paparan AI Chat says that decks, documents and workbooks need

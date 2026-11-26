@@ -457,8 +457,9 @@ pass; leave the rest and name them in the summary. Don't chase every warning and
 polish beyond what the skill's review asks: steps and credits are limited, and a job that \
 runs out before `finish` hands over less.";
 
-/// The language of the user's request when the model must be told
-/// outright (cheap models narrate in the skill's English otherwise).
+/// The language of the user's request (Indonesian or English), told to
+/// the model outright: cheap models narrate in the skill's English, or
+/// follow the data's language, otherwise.
 pub fn request_language(task: &str) -> Option<&'static str> {
     const ID: &[&str] = &[
         "yang",
@@ -527,7 +528,18 @@ pub fn request_language(task: &str) -> Option<&'static str> {
         return None;
     }
     let hits = words.iter().filter(|w| ID.contains(&w.as_str())).count();
-    (hits >= 3 || (hits >= 2 && hits * 6 >= words.len())).then_some("Indonesian")
+    if hits >= 3 || (hits >= 2 && hits * 6 >= words.len()) {
+        return Some("Indonesian");
+    }
+    // English needs saying too: with Indonesian data and examples, the
+    // model otherwise answers an English request in Indonesian.
+    const EN: &[&str] = &[
+        "the", "a", "an", "and", "of", "for", "from", "on", "with", "to", "in", "by", "make",
+        "create", "write", "build", "please", "our", "my", "deck", "report", "letter", "workbook",
+        "sheet", "summary", "each", "per", "into", "about", "this", "that", "is", "are",
+    ];
+    let en = words.iter().filter(|w| EN.contains(&w.as_str())).count();
+    (en >= 3 || (en >= 2 && en * 4 >= words.len())).then_some("English")
 }
 
 /// The system prompt: the rules, the tools' primer, the skill.

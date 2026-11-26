@@ -105,9 +105,10 @@ These come from running the Paparan skills with a cheap model through a general 
   (`Tools::made_outputs`: new .pptx/.docx/.xlsx outside `shots/`, 0 errors) and, when there are
   any, ends `Finished` with them: a summary saying the limit was reached, the model's last note
   and the warnings left. `Event::Done` and `Outcome` carry the limit. Nothing made: `Stopped`.
-- **Language.** The rules ask for notes and the summary in the request's language; when the
-  request reads as Indonesian (`request_language`, a word list) the system prompt ends with an
-  explicit note, since the skills are in English and cheap models narrate in them otherwise.
+- **Language.** The rules ask for notes and the summary in the request's language, and the
+  system prompt ends with an explicit note when the request reads as Indonesian or English
+  (`request_language`, word lists): the skills are in English and cheap models narrate in them,
+  and with Indonesian data an English request got an Indonesian deck.
 - **Reasoning.** `Limits::reasoning` goes to every step as `reasoning_effort`. Thinking models'
   reasoning is paid as output (4 times input's price, 200 times cached input's) and was two
   thirds of a job's cost; `low` about halves it.
