@@ -223,6 +223,17 @@ impl NumberFormat {
         Some((parts().any(DatePart::is_calendar), parts().any(|d| !d.is_calendar())))
     }
 
+    /// For a date format whose section for `value` writes the month as a name (`mmm`, `mmmm`,
+    /// `mmmmm`): whether the month comes before the day of the month (`mmmm d, yyyy`, or no
+    /// day at all as in `mmm-yy`). `None` when the month is a number or not shown.
+    pub fn month_name_first(&self, value: f64) -> Option<bool> {
+        let s = self.select(value).map(|(s, _)| s).filter(|s| s.kind == SecKind::Date)?;
+        let parts: Vec<DatePart> = s.toks.iter().filter_map(|t| if let Tok::Date(d) = t { Some(*d) } else { None }).collect();
+        let month = parts.iter().position(|d| matches!(d, DatePart::Month(n) if *n >= 3))?;
+        let day = parts.iter().position(|d| matches!(d, DatePart::Day(1 | 2)));
+        Some(day.is_none_or(|day| month < day))
+    }
+
     pub fn is_percent(&self) -> bool {
         self.num_sections().iter().any(|s| s.kind == SecKind::Number && s.percent > 0)
     }
