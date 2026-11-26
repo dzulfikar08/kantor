@@ -23,7 +23,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ai::Cancel;
-use kantor_ai::agent::{Limits, StopReason};
+use kantor_ai::agent::StopReason;
 use kantor_core::settings::{AiSettings, Settings};
 use kantor_ui::components::{IconButtonExt as _, icon_button};
 use kantor_ui::i18n::{self, tf};
@@ -221,7 +221,7 @@ impl ChatPanel {
             attachments,
             ai: self.ai.clone(),
             skills: job::skill_loader(&self.ai),
-            limits: Limits::default(),
+            limits: job::limits(&self.ai),
             session: self.session.take(),
             script: Self::script(),
         };
@@ -289,7 +289,17 @@ impl ChatPanel {
                     let done = *done;
                     self.cancel = None;
                     self.session = done.session;
-                    if let Some(e) = &done.error {
+                    if done.needs_paparan {
+                        // The skills come with Paparan AI: say so and offer
+                        // Sign in (AI Settings), not a missing-folder error.
+                        self.chat.set_failure(
+                            i18n::t(
+                                "Decks, documents and workbooks need Paparan AI: its skills come with a Paparan AI account. Sign in to Paparan AI in AI Settings to run this job.",
+                            )
+                            .to_owned(),
+                        );
+                        self.fail_action = Some(FailAction::SignIn);
+                    } else if let Some(e) = &done.error {
                         let (message, action) = paparan::failure(e, cx);
                         if matches!(
                             e,
@@ -588,7 +598,11 @@ impl ChatPanel {
                     ),
                 ];
                 if let Some(c) = cost {
-                    parts.push(format!("${c:.4}"));
+                    if paparan::chosen(&self.ai) {
+                        parts.push(tf("about {} credits", &[&format!("{c:.0}")]));
+                    } else {
+                        parts.push(format!("${c:.4}"));
+                    }
                 }
                 if paparan::chosen(&self.ai)
                     && let Some(me) = paparan::state(cx).me

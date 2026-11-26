@@ -309,3 +309,60 @@ fn schema_keys_and_the_primer() {
     assert_eq!(App::for_skill("paparan-doc"), vec![App::Docs]);
     assert_eq!(App::for_skill("other"), App::ALL.to_vec());
 }
+
+#[std::prelude::v1::test]
+fn made_outputs_are_the_jobs_documents_without_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let book = |second: &str| {
+        json!({"sheets": [{"name": "S", "rows": [["Item", "Value"], ["A", 1], ["B", second]]}]})
+            .to_string()
+    };
+    std::fs::write(dir.path().join("user.json"), book("2")).unwrap();
+    let mut t = DocTools::new(dir.path(), vec![App::Sheets], true).unwrap();
+    let c = Cancel::default();
+    for (src, out, second) in [
+        ("good.json", "good.xlsx", "2"),
+        ("bad.json", "bad.xlsx", "=1/0"),
+    ] {
+        assert!(
+            !t.call(
+                "write_file",
+                &json!({"path": src, "content": book(second)}),
+                &c
+            )
+            .error
+        );
+        let built = t.call(
+            "build",
+            &json!({"source": src, "output": out, "look": "none"}),
+            &c,
+        );
+        assert!(!built.error, "{}", built.text);
+        if second == "2" {
+            assert!(
+                built
+                    .text
+                    .contains("No errors: the file can be handed over"),
+                "{}",
+                built.text
+            );
+        } else {
+            assert!(
+                built.text.contains("Fix the errors before finish"),
+                "{}",
+                built.text
+            );
+        }
+    }
+    // Only the job's document that passes its check.
+    let made = t.made_outputs();
+    assert_eq!(made.files, vec!["good.xlsx".to_owned()]);
+    let checked = t.check_outputs(&["good.xlsx".to_owned()]).unwrap();
+    assert_eq!(checked.files, vec!["good.xlsx".to_owned()]);
+    assert!(
+        checked
+            .warnings
+            .iter()
+            .all(|w| w.starts_with("good.xlsx: warning"))
+    );
+}

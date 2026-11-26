@@ -43,18 +43,28 @@ pub const USAGE: &str = "usage: kantor agent run [options] PROMPT\n\
     \x20     --dir DIR           the work folder (default: the current one)\n\
     \x20     --allow-overwrite   let the agent change files already in the folder\n\
     Limits:\n\
-    \x20     --max-steps N       model turns (default 40)\n\
+    \x20     --max-steps N       model turns (default 24; the last one can only\n\
+    \x20                         finish)\n\
     \x20     --max-tokens N      input + output tokens for the job\n\
     \x20     --max-cost USD      cost for the job (needs the prices)\n\
+    \x20     --max-credits N     with --provider paparan: credits for the job\n\
+    \x20     --reasoning LEVEL   reasoning_effort: low, medium, high or none\n\
+    \x20                         (default low with --provider paparan, else none)\n\
     \x20     --price-input USD   per million input tokens (and --price-cached,\n\
-    \x20     --price-output)     --price-output): the cost is shown with them\n\
+    \x20     --price-output)     --price-output): the cost is shown with them;\n\
+    \x20                         Paparan AI's prices in credits by default\n\
     \x20     --max-images N      pictures kept in the conversation (default 4)\n\
     Output:\n\
     \x20     --json              events as JSON lines\n\
     \x20 -h, --help             show this help\n\
     \n\
+    Budgets stop inside a step too: when little is left, the step's reply\n\
+    is capped to what remains. A job that runs out of steps or budget\n\
+    hands over the documents it made that pass their check.\n\
+    \n\
     The last line is the usage: input, cached input and output tokens.\n\
-    Exit status: 0 when the agent finished, 1 when it stopped or failed,\n\
+    Exit status: 0 when the agent finished (also with the documents made\n\
+    when it ran out of steps or budget), 1 when it stopped or failed,\n\
     2 for usage errors.";
 
 #[derive(Default)]
@@ -69,6 +79,8 @@ struct Opts {
     json: bool,
     limits: Limits,
     price: [Option<f64>; 3],
+    max_credits: Option<f64>,
+    reasoning: Option<String>,
     prompt: Vec<String>,
 }
 
@@ -111,6 +123,11 @@ fn parse(args: &[OsString]) -> Result<Opts, String> {
             "--max-tokens" => o.limits.max_tokens = Some(num(value("a number")?)? as u64),
             "--max-cost" => o.limits.max_cost = Some(num(value("an amount")?)?),
             "--max-images" => o.limits.max_images = num(value("a number")?)? as usize,
+            "--max-credits" => o.max_credits = Some(num(value("a number")?)?),
+            "--reasoning" => match value("a level")?.as_str() {
+                l @ ("low" | "medium" | "high" | "none") => o.reasoning = Some(l.to_owned()),
+                l => return Err(format!("--reasoning is low, medium, high or none, not {l}")),
+            },
             "--price-input" => o.price[0] = Some(num(value("a price")?)?),
             "--price-cached" => o.price[1] = Some(num(value("a price")?)?),
             "--price-output" => o.price[2] = Some(num(value("a price")?)?),
@@ -127,6 +144,23 @@ fn parse(args: &[OsString]) -> Result<Opts, String> {
     } else if o.price.iter().any(Option::is_some) {
         return Err("give --price-input and --price-output (and --price-cached)".into());
     }
+    if o.paparan {
+        // Counted in credits.
+        o.limits
+            .prices
+            .get_or_insert(kantor_ai::paparan::AGENT_PRICES);
+        if let Some(c) = o.max_credits {
+            o.limits.max_cost = Some(c);
+        }
+    } else if o.max_credits.is_some() {
+        return Err("--max-credits is for --provider paparan; use --max-cost".into());
+    }
+    o.limits.reasoning = match o.reasoning.as_deref() {
+        Some("none") => None,
+        Some(l) => Some(l.to_owned()),
+        None if o.paparan => Some(kantor_ai::paparan::AGENT_REASONING.to_owned()),
+        None => None,
+    };
     if o.limits.max_cost.is_some() && o.limits.prices.is_none() {
         return Err("--max-cost needs the prices (--price-input, --price-output)".into());
     }
@@ -288,6 +322,7 @@ fn run(o: Opts) -> Result<i32, String> {
     watch_interrupt(&cancel);
 
     let json = o.json;
+    let credits = o.paparan;
     let mut out = std::io::stdout().lock();
     let mut streaming = false;
     let outcome = agent::run(
@@ -306,7 +341,7 @@ fn run(o: Opts) -> Result<i32, String> {
                     let _ = out.flush();
                 }
             } else {
-                print_event(&mut out, e, &mut streaming);
+                print_event(&mut out, e, &mut streaming, credits);
             }
         },
     );
@@ -320,18 +355,26 @@ fn run(o: Opts) -> Result<i32, String> {
         let line = json!({
             "type": "usage_total",
             "ending": ending,
+            "limit": outcome.limit,
             "steps": outcome.steps,
             "input": u.input,
             "cached_input": u.cached,
             "output": u.output,
             "cost": outcome.cost,
+            "cost_unit": if credits { "credits" } else { "usd" },
             "reported": outcome.usage_reported,
         });
         let _ = writeln!(out, "{line}");
     } else {
         let cost = outcome
             .cost
-            .map(|c| format!(", cost ${c:.4}"))
+            .map(|c| {
+                if credits {
+                    format!(", about {c:.1} credits")
+                } else {
+                    format!(", cost ${c:.4}")
+                }
+            })
             .unwrap_or_default();
         let est = if outcome.usage_reported {
             ""
@@ -373,7 +416,7 @@ fn watch_interrupt(cancel: &Cancel) {
 }
 
 /// One line per event for people.
-fn print_event(out: &mut impl std::io::Write, e: &Event, streaming: &mut bool) {
+fn print_event(out: &mut impl std::io::Write, e: &Event, streaming: &mut bool, credits: bool) {
     let short = |s: &str, n: usize| {
         let s = s.replace('\n', " ");
         if s.chars().count() > n {
@@ -423,7 +466,13 @@ fn print_event(out: &mut impl std::io::Write, e: &Event, streaming: &mut bool) {
         Event::Nudge { count, reason, .. } => writeln!(out, "! nudge {count}: {reason}"),
         Event::Usage { usage, cost, .. } => {
             let c = cost
-                .map(|c| format!(", ${c:.4} so far"))
+                .map(|c| {
+                    if credits {
+                        format!(", about {c:.1} credits so far")
+                    } else {
+                        format!(", ${c:.4} so far")
+                    }
+                })
                 .unwrap_or_default();
             writeln!(
                 out,
@@ -431,10 +480,20 @@ fn print_event(out: &mut impl std::io::Write, e: &Event, streaming: &mut bool) {
                 usage.input, usage.cached, usage.output
             )
         }
-        Event::Done { summary, outputs } => {
+        Event::Done {
+            summary,
+            outputs,
+            limit,
+        } => {
+            let at = match limit {
+                Some(agent::StopReason::Steps) => " at the step limit",
+                Some(agent::StopReason::Budget) => " at the budget",
+                Some(_) => " at a limit",
+                None => "",
+            };
             writeln!(
                 out,
-                "\n== finished\n{summary}\nfiles: {}",
+                "\n== finished{at}\n{summary}\nfiles: {}",
                 outputs.join(", ")
             )
         }

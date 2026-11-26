@@ -1157,10 +1157,15 @@ pub(crate) fn chart_space(spec: &ChartSpec, series: &[NewSeries]) -> String {
     let xml = format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n\
 <c:chartSpace xmlns:c=\"http://schemas.openxmlformats.org/drawingml/2006/chart\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\">\
-<c:roundedCorners val=\"0\"/><c:chart>{title}<c:plotArea><c:layout/>{plot}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart></c:chartSpace>"
+<c:roundedCorners val=\"0\"/><c:chart>{title}<c:plotArea><c:layout/>{plot}{axes}</c:plotArea>{legend}<c:plotVisOnly val=\"1\"/><c:dispBlanksAs val=\"gap\"/></c:chart>{CHART_AREA}</c:chartSpace>"
     );
     styled(xml, spec)
 }
+
+/// The chart area of a chart made in Kantor, as Excel's default: the
+/// theme's background (white) with a light grey border. Without a fill the
+/// chart is see-through, and on a dark grid its dark text can't be read.
+const CHART_AREA: &str = "<c:spPr><a:solidFill><a:schemeClr val=\"bg1\"/></a:solidFill><a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\"><a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill><a:round/></a:ln></c:spPr>";
 
 /// `xml` with `spec`'s axis titles and series colours (a chart made in
 /// Kantor: the generated part has neither).
@@ -1239,5 +1244,22 @@ mod tests {
             "Data!$B$2:$B$13"
         );
         assert_eq!(abs_ref("My Data", &single(0, 0)), "'My Data'!$A$1");
+    }
+
+    /// Kantor's charts have Excel's white chart area: see-through ones put
+    /// black text on Kantor's dark grid.
+    #[test]
+    fn charts_have_a_chart_area_fill() {
+        let spec = ChartSpec {
+            kind: ChartType::Line,
+            title: "Sales".into(),
+            ..ChartSpec::placeholder()
+        };
+        let xml = chart_space(&spec, &[]);
+        assert!(
+            xml.ends_with(&format!("</c:chart>{CHART_AREA}</c:chartSpace>")),
+            "{xml}"
+        );
+        assert!(CHART_AREA.contains("<a:schemeClr val=\"bg1\"/>"));
     }
 }

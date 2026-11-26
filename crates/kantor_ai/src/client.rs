@@ -35,6 +35,14 @@ pub struct ChatRequest {
     /// OpenAI-compatible APIs; replaces `user`. The agent loop
     /// ([`crate::agent`]) sends these, and asks for token usage too.
     pub messages: Option<Vec<Value>>,
+    /// For the OpenAI-compatible APIs with `messages`: the most tokens
+    /// the reply may have (reasoning included), sent as `max_tokens`. The
+    /// agent sets it when a budget is nearly spent; otherwise the server's
+    /// own limit applies.
+    pub max_output: Option<u32>,
+    /// For the OpenAI-compatible APIs with `messages`: `reasoning_effort`
+    /// (`low`, `medium`, `high`) for models that think before answering.
+    pub reasoning_effort: Option<String>,
 }
 
 impl ChatRequest {
@@ -47,6 +55,8 @@ impl ChatRequest {
             task: None,
             tools: None,
             messages: None,
+            max_output: None,
+            reasoning_effort: None,
         }
     }
 
@@ -321,6 +331,12 @@ pub fn build_request(cfg: &ProviderConfig, req: &ChatRequest) -> HttpRequest {
                 all.extend(messages.iter().cloned());
                 body["messages"] = Value::Array(all);
                 body["stream_options"] = json!({"include_usage": true});
+                if let Some(n) = req.max_output {
+                    body["max_tokens"] = json!(n);
+                }
+                if let Some(e) = req.reasoning_effort.as_deref().filter(|e| !e.is_empty()) {
+                    body["reasoning_effort"] = json!(e);
+                }
             }
             if let Some(tools) = &req.tools {
                 body["tools"] = tools.clone();
@@ -863,6 +879,16 @@ mod tests {
         assert_eq!(m[0]["content"], "sys");
         assert_eq!(m[1]["content"], "make a deck");
         assert_eq!(b["stream_options"]["include_usage"], true);
+        // No output cap or reasoning effort unless asked for.
+        assert!(b.get("max_tokens").is_none());
+        assert!(b.get("reasoning_effort").is_none());
+
+        let mut req = req;
+        req.max_output = Some(3_000);
+        req.reasoning_effort = Some("low".into());
+        let b = body(&build_request(&cfg(ProviderId::Custom, None), &req));
+        assert_eq!(b["max_tokens"], 3_000);
+        assert_eq!(b["reasoning_effort"], "low");
     }
 
     #[test]
