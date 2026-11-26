@@ -1123,6 +1123,12 @@ impl Tools for DocTools {
         for app in &self.apps {
             out.push_str("\n\n");
             out.push_str(&keys::summary(*app, &app.schema()));
+            if *app == App::Sheets {
+                out.push_str(
+                    "\nA sheet's `csv` key copies a CSV file's rows (numbers and dates typed) \
+                     from `start`: use it for the user's data instead of retyping it in `rows`.",
+                );
+            }
         }
         let files = walk(&self.root, 2);
         out.push_str("\n\n# The work folder now\n");

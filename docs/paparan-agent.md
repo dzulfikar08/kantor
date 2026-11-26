@@ -111,7 +111,19 @@ These come from running the Paparan skills with a cheap model through a general 
   and with Indonesian data an English request got an Indonesian deck.
 - **Reasoning.** `Limits::reasoning` goes to every step as `reasoning_effort`. Thinking models'
   reasoning is paid as output (4 times input's price, 200 times cached input's) and was two
-  thirds of a job's cost; `low` about halves it.
+  thirds of a job's cost; `low` about halves it. Each step's reasoning goes back with its turn
+  as `reasoning_content` (`Limits::keep_reasoning`), so the model goes on from its plan instead
+  of working it out again on the next step; it is re-read from the cache at 2% of the price of
+  writing it. A follow-up request starts without the earlier reasoning.
+- **Batched steps.** The rules ask for a plan of about four steps: read the inputs and the skill
+  files the job needs in one step, write the JSON and `build` it in one reply, fix errors with
+  small `replace_in_file` patches plus `build` (never by rewriting the file), then `finish` with
+  a short summary. `build` already returns the check and the contact sheet.
+- **A failed build lists every problem.** The builders stop at their first error, so a model
+  paid a step and a rebuild per wrong key. When a build fails, the source is also checked
+  against the app's JSON Schema (`harness/validate.rs`: `$ref`, types, unknown and missing
+  keys, enums, `anyOf`) and every problem is listed with its JSON path. It only explains a
+  failed build, so a difference between schema and builder never refuses a good one.
 - **Cancellation** between steps and between streamed pieces.
 
 ## Keeping the conversation small
@@ -129,11 +141,13 @@ Every step resends the whole conversation, which dominates the cost.
   picture of a page drops older pictures of that page, a picture of a changed file drops every
   older picture of it, and at most `max_images` (default 4) stay; dropped ones become a one-line
   note.
-- Tool results over `max_result_chars` (12,000) are cut with a note on how to page. Every fourth
-  step, results at least four steps old are cut to about 1,500 characters (not every step: each
-  cut ends the provider's prompt cache there, and cached input costs 2% of fresh input), and
-  strings over 1,500 characters in older tool-call arguments (a whole `deck.json` sent to
-  `write_file`) are replaced by a note ("read the file") before they are first sent back. Old
+- Tool results over `max_result_chars` (12,000) are cut with a note on how to page. Once the
+  conversation is over `old_results_over` (160,000 characters, about 40k tokens), every fourth
+  step, results at least four steps old are cut to about 1,500 characters. Not earlier and not
+  every step: each cut ends the provider's prompt cache there, and cached input costs 2% of
+  fresh input, so in a job of normal size a cut cost more (the rest re-read fresh) than it
+  saved. Strings over 1,500 characters in older tool-call arguments (a whole `deck.json` sent
+  to `write_file`) are replaced by a note ("read the file") before they are first sent back. Old
   messages are changed only once, so the provider's prompt cache keeps the prefix up to them.
 
 ## Tools
@@ -145,7 +159,7 @@ can be read but not overwritten.
 | Tool | Does |
 |---|---|
 | `list_files`, `read_file`, `write_file`, `replace_in_file` | files; PNG/JPEG come back as pictures |
-| `build` | JSON → .pptx/.docx/.xlsx, then `check` and the contact sheet (the skills' `build.sh`) |
+| `build` | JSON → .pptx/.docx/.xlsx, then `check` and the contact sheet (the skills' `build.sh`); a sheet's `csv` key copies a CSV's rows, so the model doesn't retype the user's data |
 | `check`, `list`, `edit`, `schema` | as `kantor slides|docs|sheets …`; `edit` takes the ops inline |
 | `look` | contact sheet or pages as pictures (at most 4), saved under `shots/` |
 | `convert` | `kantor convert` (PDF copies, CSV ↔ xlsx, .doc → .docx, …) |
