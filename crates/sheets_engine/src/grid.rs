@@ -2070,16 +2070,16 @@ mod tests {
 
     #[test]
     fn general_numbers_shorten_before_hashes() {
-        let n = 3.14159265358979;
-        let shown = "3.141592654";
+        let n = 1.23456789123;
+        let shown = "1.234567891";
         assert_eq!(fit_number(shown, Some(n), chars_fit(11)), NumberFit::Fits);
         assert_eq!(
             fit_number(shown, Some(n), chars_fit(4)),
-            NumberFit::Shorter("3.14".into())
+            NumberFit::Shorter("1.23".into())
         );
         assert_eq!(
             fit_number(shown, Some(n), chars_fit(1)),
-            NumberFit::Shorter("3".into())
+            NumberFit::Shorter("1".into())
         );
         assert_eq!(fit_number(shown, Some(n), chars_fit(0)), NumberFit::Hashes);
         // Large General numbers go scientific, then `#`.
@@ -2098,8 +2098,8 @@ mod tests {
 
     #[test]
     fn general_number_only_for_general_cells() {
-        let mut wb = book(&[(0, 0, "3.14159265358979"), (1, 0, "text")]);
-        assert_eq!(wb.general_number(0, 0, 0), Some(3.14159265358979));
+        let mut wb = book(&[(0, 0, "1.23456789123"), (1, 0, "text")]);
+        assert_eq!(wb.general_number(0, 0, 0), Some(1.23456789123));
         assert_eq!(wb.general_number(0, 1, 0), None);
         wb.set_range_style(
             0,
