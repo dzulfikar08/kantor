@@ -338,7 +338,9 @@ impl Chat {
                 self.estimated |= !reported;
                 self.step = *step;
             }
-            Event::Done { summary, outputs } => {
+            Event::Done {
+                summary, outputs, ..
+            } => {
                 self.end_stream();
                 self.items.push(Item::Finished {
                     summary: summary.clone(),
@@ -623,6 +625,7 @@ mod tests {
         chat.apply(&Event::Done {
             summary: "Selesai".into(),
             outputs: vec!["deck.pptx".into()],
+            limit: None,
         });
         chat.ended();
         assert!(!chat.running);

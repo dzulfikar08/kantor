@@ -36,6 +36,17 @@ pub const MODELS: &[&str] = &["paparan-auto", "paparan-fast", "paparan-smart", A
 pub const DEFAULT_MODEL: &str = "paparan-auto";
 /// The tier for agent jobs (`kantor agent run`): vision and tool calls.
 pub const AGENT_MODEL: &str = "paparan-agent";
+/// What [`AGENT_MODEL`] costs, in credits per million tokens (the server's
+/// price list, Nov 2026): the agent's budget is counted in credits with it.
+/// The server's own count is what's charged.
+pub const AGENT_PRICES: crate::agent::Prices = crate::agent::Prices {
+    input: 1_500.0,
+    cached: 30.0,
+    output: 6_000.0,
+};
+/// `reasoning_effort` for agent jobs: the model's hidden reasoning is paid
+/// as output, and `low` about halves it without hurting the tool work.
+pub const AGENT_REASONING: &str = "low";
 
 /// Sent as `client_version` and `X-Kantor-Version`.
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -569,6 +580,11 @@ pub enum SkillError {
         skill: String,
         available: Vec<String>,
     },
+    /// Another provider (bring your own key, Ollama) and no local skill
+    /// folder: the skills come with a Paparan AI account.
+    NeedsPaparan {
+        skill: String,
+    },
     Other(String),
 }
 
@@ -598,6 +614,11 @@ impl std::fmt::Display for SkillError {
                 "Paparan AI has no skill {skill} (it has: {})",
                 available.join(", ")
             ),
+            Self::NeedsPaparan { skill } => write!(
+                f,
+                "document jobs need Paparan AI: the {skill} skill comes with a Paparan AI \
+                 account; sign in to Paparan AI in AI Settings"
+            ),
             Self::Other(m) => f.write_str(m),
         }
     }
@@ -614,7 +635,7 @@ impl SkillError {
                 topup_url: topup_url.clone(),
             }),
             Self::Offline { message, .. } => Some(AiError::Network(message.clone())),
-            Self::Unknown { .. } | Self::Other(_) => None,
+            Self::Unknown { .. } | Self::NeedsPaparan { .. } | Self::Other(_) => None,
         }
     }
 }

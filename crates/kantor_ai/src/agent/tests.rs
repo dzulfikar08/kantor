@@ -43,16 +43,35 @@ impl Tools for Fake {
         }
     }
 
-    fn check_outputs(&mut self, outputs: &[String]) -> Result<Vec<String>, String> {
+    fn check_outputs(&mut self, outputs: &[String]) -> Result<Checked, String> {
         let missing: Vec<&String> = outputs
             .iter()
             .filter(|o| !self.dir.join(o).is_file())
             .collect();
         if missing.is_empty() {
-            Ok(outputs.to_vec())
+            Ok(Checked {
+                files: outputs.to_vec(),
+                // Files named warn* have a warning left.
+                warnings: outputs
+                    .iter()
+                    .filter(|o| o.starts_with("warn"))
+                    .map(|o| format!("{o}: warning text_cut_off A1"))
+                    .collect(),
+            })
         } else {
             Err(format!("{missing:?} doesn't exist"))
         }
+    }
+
+    /// The files written so far (all pass).
+    fn made_outputs(&mut self) -> Checked {
+        let mut files: Vec<String> = std::fs::read_dir(&self.dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        files.sort();
+        Checked::files(files)
     }
 }
 
@@ -311,37 +330,48 @@ fn old_results_and_long_arguments_are_shortened() {
 
 #[test]
 fn budgets_stop_before_the_step_that_would_go_over() {
-    // Every scripted call step uses 1100 tokens.
+    // Every scripted call step uses 1000 tokens in (200 cached), 100 out.
     let limits = Limits {
-        max_tokens: Some(2_500),
+        max_tokens: Some(4_000),
         ..Limits::default()
     };
-    let many: Vec<Turn> = (0..10).map(|_| call("big", json!({}))).collect();
-    let (r, _, _dir) = run_script(many, limits);
-    assert!(matches!(
-        r.outcome.ending,
-        Ending::Stopped {
-            reason: StopReason::Budget,
-            ..
-        }
-    ));
+    let many: Vec<Turn> = (0..10)
+        .map(|_| call("write", json!({"path": "a.txt", "content": "x"})))
+        .collect();
+    let (r, model, _dir) = run_script(many, limits);
+    // Step 3 starts with 2200 used and about 1000 more in: 800 left for
+    // its output, too little for a step. The job hands over what it made.
     assert_eq!(r.outcome.steps, 2);
-    assert_eq!(r.outcome.usage.input, 2_000);
-    assert_eq!(r.outcome.usage.cached, 400);
-    assert_eq!(r.outcome.usage.output, 200);
+    assert_eq!(r.outcome.limit, Some(StopReason::Budget));
+    assert!(matches!(
+        &r.outcome.ending,
+        Ending::Finished { outputs, .. } if outputs == &["a.txt"]
+    ));
+    // Step 2 could afford 4000 - 1100 - ~1000 in: its output was capped.
+    let cap = model.opts_on(2).max_output.unwrap();
+    assert!((1_500..3_000).contains(&cap), "{cap}");
+    // Step 1: the whole budget less the first input (system prompt, tools
+    // and request, estimated).
+    let first = model.opts_on(1).max_output.unwrap();
+    assert!((2_000..3_800).contains(&first), "{first}");
+    // The budget note came before step 2 (half the budget is gone after
+    // step 1, but less than three typical steps are left).
+    let s2 = serde_json::to_string(&model.sent(2)).unwrap();
+    assert!(s2.contains("budget for this job is nearly spent"), "{s2}");
 
+    // Nothing made: stopped.
     let prices = Prices {
         input: 0.30,
         cached: 0.006,
         output: 1.20,
     };
     let limits = Limits {
-        max_cost: Some(0.001),
+        max_cost: Some(0.003),
         prices: Some(prices),
         ..Limits::default()
     };
     let many: Vec<Turn> = (0..10).map(|_| call("big", json!({}))).collect();
-    let (r, _, _dir) = run_script(many, limits);
+    let (r, model, _dir) = run_script(many, limits);
     assert!(matches!(
         r.outcome.ending,
         Ending::Stopped {
@@ -349,10 +379,118 @@ fn budgets_stop_before_the_step_that_would_go_over() {
             ..
         }
     ));
-    // 800 fresh, 200 cached, 100 out = $0.0003612 a step: 2 fit in $0.001.
-    assert_eq!(r.outcome.steps, 2);
+    // Every step's input grows by the 12,000-character result (about
+    // 3000 tokens): the budget allows two steps, never a third that would
+    // go over.
     let cost = r.outcome.cost.unwrap();
-    assert!((cost - 0.000_722_4).abs() < 1e-9, "{cost}");
+    assert!(cost <= 0.003, "{cost}");
+    assert!(r.outcome.steps >= 1 && model.steps() == r.outcome.steps as usize);
+}
+
+#[test]
+fn reasoning_effort_goes_with_every_step() {
+    let limits = Limits {
+        reasoning: Some("low".into()),
+        ..Limits::default()
+    };
+    let (_, model, _dir) = run_script(vec![call("big", json!({})), finish(&[])], limits);
+    assert_eq!(model.opts_on(1).reasoning.as_deref(), Some("low"));
+    assert_eq!(model.opts_on(2).reasoning.as_deref(), Some("low"));
+    assert_eq!(model.opts_on(2).max_output, None, "no budget: no cap");
+}
+
+#[test]
+fn the_step_limit_hands_over_what_was_made() {
+    let limits = Limits {
+        max_steps: 4,
+        ..Limits::default()
+    };
+    let mut turns = vec![call("write", json!({"path": "book.xlsx", "content": "v1"}))];
+    turns.extend((0..5).map(|_| call("big", json!({}))));
+    let (r, model, _dir) = run_script(turns, limits);
+    // The last step offered only `finish`; the model called `big`
+    // anyway, which didn't run.
+    assert_eq!(model.tools_on(4), vec!["finish"]);
+    assert!(model.tools_on(3).len() > 1);
+    assert_eq!(r.outcome.steps, 4);
+    assert_eq!(r.outcome.limit, Some(StopReason::Steps));
+    match &r.outcome.ending {
+        Ending::Finished { summary, outputs } => {
+            assert_eq!(outputs, &["book.xlsx"]);
+            assert!(summary.contains("step limit"), "{summary}");
+            assert!(summary.contains("book.xlsx"), "{summary}");
+        }
+        e => panic!("{e:?}"),
+    }
+    assert!(matches!(
+        r.events.last(),
+        Some(Event::Done {
+            limit: Some(StopReason::Steps),
+            ..
+        })
+    ));
+}
+
+#[test]
+fn finish_with_warnings_reports_them() {
+    let (r, _, _dir) = run_script(
+        vec![
+            call("write", json!({"path": "warn.xlsx", "content": "x"})),
+            finish(&["warn.xlsx"]),
+        ],
+        Limits::default(),
+    );
+    match &r.outcome.ending {
+        Ending::Finished { summary, .. } => {
+            assert!(summary.starts_with("Done: one deck."), "{summary}");
+            assert!(summary.contains("Check warnings left (1)"), "{summary}");
+            assert!(summary.contains("warn.xlsx: warning text_cut_off A1"));
+        }
+        e => panic!("{e:?}"),
+    }
+    assert_eq!(r.outcome.limit, None);
+}
+
+#[test]
+fn indonesian_requests_get_indonesian_narration() {
+    assert_eq!(
+        request_language("Buatkan rekap penjualan per bulan untuk tiap kota, dengan grafik garis"),
+        Some("Indonesian")
+    );
+    assert_eq!(
+        request_language("Tolong buat surat undangan rapat"),
+        Some("Indonesian")
+    );
+    assert_eq!(
+        request_language(
+            "Make a 6-slide board deck on Q3 sales performance by branch (target vs actual) from penjualan-q3.csv"
+        ),
+        Some("English")
+    );
+    assert_eq!(request_language("Q3 2026"), None);
+    assert_eq!(request_language(""), None);
+
+    let dir = tempfile::tempdir().unwrap();
+    let model = Scripted::new(vec![finish(&[])]);
+    let mut tools = Fake {
+        dir: dir.path().to_path_buf(),
+    };
+    run(
+        &model,
+        &mut tools,
+        None,
+        "Buatkan paparan 5 slide tentang hasil penjualan cabang",
+        &Limits::default(),
+        &Cancel::default(),
+        &mut |_| {},
+    );
+    let system = model.system.lock().unwrap().clone();
+    assert!(
+        system.ends_with(
+            "The documents follow the request (its language, unless it asks for another)."
+        )
+    );
+    assert!(system.contains("The user wrote in Indonesian."));
 }
 
 #[test]

@@ -982,7 +982,7 @@ impl Workbook {
     pub(crate) fn chart_xml(&self, sheet: u32, spec: &ChartSpec) -> String {
         let data_sheet = self.data_sheet_index(sheet, spec);
         let series = self.series_xml(data_sheet, spec);
-        chart_space(spec, &series)
+        with_chart_area(chart_space(spec, &series))
     }
 
     /// Charts made in Kantor that a save adds (or updates or removes where
@@ -1162,6 +1162,27 @@ pub(crate) fn chart_space(spec: &ChartSpec, series: &[NewSeries]) -> String {
     styled(xml, spec)
 }
 
+/// The chart area of a chart made in Kantor, as Excel's default: the
+/// theme's background (white) with a light grey border. Without a fill the
+/// chart is see-through, and on a dark grid its dark text can't be read.
+pub const CHART_AREA_FILL: &str = "<a:solidFill><a:schemeClr val=\"bg1\"/></a:solidFill><a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\"><a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill><a:round/></a:ln>";
+
+/// A Sheets chart part with [`CHART_AREA_FILL`] (Slides and Docs charts sit on
+/// their slide or page, see-through as PowerPoint and Word make them).
+fn with_chart_area(xml: String) -> String {
+    match xml.rfind("</c:chart>") {
+        Some(i) if !xml[i..].contains("<c:spPr>") => {
+            let at = i + "</c:chart>".len();
+            format!(
+                "{}<c:spPr>{CHART_AREA_FILL}</c:spPr>{}",
+                &xml[..at],
+                &xml[at..]
+            )
+        }
+        _ => xml,
+    }
+}
+
 /// `xml` with `spec`'s axis titles and series colours (a chart made in
 /// Kantor: the generated part has neither).
 fn styled(xml: String, spec: &ChartSpec) -> String {
@@ -1239,5 +1260,27 @@ mod tests {
             "Data!$B$2:$B$13"
         );
         assert_eq!(abs_ref("My Data", &single(0, 0)), "'My Data'!$A$1");
+    }
+
+    /// Sheets charts made in Kantor have Excel's white chart area: see-through ones put
+    /// black text on Kantor's dark grid.
+    #[test]
+    fn charts_have_a_chart_area_fill() {
+        let spec = ChartSpec {
+            kind: ChartType::Line,
+            title: "Sales".into(),
+            ..ChartSpec::placeholder()
+        };
+        let xml = with_chart_area(chart_space(&spec, &[]));
+        assert!(
+            xml.ends_with(&format!(
+                "</c:chart><c:spPr>{CHART_AREA_FILL}</c:spPr></c:chartSpace>"
+            )),
+            "{xml}"
+        );
+        // Slides and Docs charts (chart_space alone) stay see-through.
+        assert!(!chart_space(&spec, &[]).contains("bg1"));
+        assert_eq!(with_chart_area(xml.clone()), xml, "added once");
+        assert!(CHART_AREA_FILL.contains("<a:schemeClr val=\"bg1\"/>"));
     }
 }

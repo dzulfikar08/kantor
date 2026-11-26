@@ -499,6 +499,19 @@ mod tests {
         assert_eq!(d["conditional_formats"][0]["range"], "C2:C101");
         let chart = &d["charts"][0];
         assert_eq!(chart["at"], "G2:N16");
+        // Built charts have Excel's white chart area (readable on a dark grid).
+        let bytes = crate::agent::sheets_author::to_bytes(&b).unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut part = String::new();
+        std::io::Read::read_to_string(&mut zip.by_name("xl/charts/chart1.xml").unwrap(), &mut part)
+            .unwrap();
+        assert!(
+            part.contains(&format!(
+                "</c:chart><c:spPr>{}</c:spPr>",
+                sheets_engine::CHART_AREA_FILL
+            )),
+            "{part}"
+        );
         assert_eq!(chart["series"][0]["values"], "Data!$C$2:$C$11");
         assert_eq!(chart["series"][0]["categories"], "Data!$B$2:$B$11");
         assert_eq!(chart["series"][0]["name"], "Data!$C$1");
