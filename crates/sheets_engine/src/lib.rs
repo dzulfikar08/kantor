@@ -1400,9 +1400,13 @@ impl Workbook {
         }
     }
 
-    /// A value whose format shows a time, as Excel's formula bar shows it
-    /// (`9:30:00 AM`, `11/16/2026 2:05:00 PM`; `16/11/2026 14:05:00` in
-    /// Indonesian), so editing and pressing Enter gives the same value.
+    /// A value whose format shows a date or a time, as Excel's formula bar
+    /// shows it (`9:30:00 AM`, `12/15/2026`, `11/16/2026 2:05:00 PM`;
+    /// `15/12/2026`, `16/11/2026 14:05:00` in Indonesian), so editing and
+    /// pressing Enter gives the same value. A date shows as the short date
+    /// of the input locale whatever its format (`15 Desember 2026` or
+    /// `15 December 2026` in the grid): month names, in any language, would
+    /// not be read back as a date.
     fn time_input(&self, sheet: u32, row: i32, col: i32) -> Option<String> {
         let model = self.model.get_model();
         let cell = model.workbook.worksheet(sheet).ok()?.cell(row, col)?;
@@ -1415,7 +1419,10 @@ impl Workbook {
             return None;
         };
         let code = numfmt::compile(model, cell.get_style());
-        if !code.is_date() || n < 0.0 || matches!(code.date_shape(n), Some((_, false))) {
+        // A date format on a number under 1 (no calendar day) keeps the
+        // engine's text.
+        if !code.is_date() || n < 0.0 || (n < 1.0 && matches!(code.date_shape(n), Some((_, false))))
+        {
             return None;
         }
         let id = INPUT_ID.load(std::sync::atomic::Ordering::Relaxed);
