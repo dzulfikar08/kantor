@@ -419,6 +419,26 @@ impl Model<'_> {
     }
 }
 
+/// A format code without its locale-only tags (`[$-421]d mmmm yyyy` →
+/// `d mmmm yyyy`), which IronCalc's lexer can't read: a date typed into a
+/// cell with such a date format keeps the format.
+pub(crate) fn without_locale_tags(format: &str) -> String {
+    let mut out = String::with_capacity(format.len());
+    let mut rest = format;
+    while let Some(i) = rest.find("[$-") {
+        out.push_str(&rest[..i]);
+        match rest[i..].find(']') {
+            Some(end) => rest = &rest[i + end + 1..],
+            None => {
+                rest = &rest[i..];
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// Whether a number format shows the time of day (`h`, `s`, AM/PM), as
 /// opposed to a date only.
 pub(crate) fn format_shows_time(format: &str) -> bool {
@@ -515,6 +535,14 @@ mod tests {
         ] {
             assert_eq!(p(text, true), None, "{text}");
         }
+    }
+
+    #[test]
+    fn locale_tags() {
+        assert_eq!(without_locale_tags("[$-421]d mmmm yyyy"), "d mmmm yyyy");
+        assert_eq!(without_locale_tags("[$-F800]dddd"), "dddd");
+        assert_eq!(without_locale_tags("[$Rp-421]#,##0"), "[$Rp-421]#,##0");
+        assert_eq!(without_locale_tags("d mmm [$-409"), "d mmm [$-409");
     }
 
     #[test]

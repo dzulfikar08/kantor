@@ -26,10 +26,7 @@ use crate::{
         types::*,
         utils::{self, is_valid_column_number, is_valid_identifier, is_valid_row},
     },
-    formatter::{
-        format::format_number,
-        lexer::is_likely_date_number_format,
-    },
+    formatter::{format::format_number, lexer::is_likely_date_number_format},
     implicit_intersection::implicit_intersection,
     language::{get_default_language, get_language, Language},
     locale::{get_default_locale, get_locale, Locale},
@@ -2698,8 +2695,9 @@ impl<'a> Model<'a> {
                         //   (a time to a cell that shows times, a date to
                         //   one that shows dates)
                         let cell_fmt = &self.workbook.styles.get_style(new_style_index)?.num_fmt;
-                        let should_apply_format = !(is_likely_date_number_format(cell_fmt)
-                            && is_likely_date_number_format(&num_fmt)
+                        let should_apply_format = !(is_likely_date_number_format(
+                            &crate::kantor_input::without_locale_tags(cell_fmt),
+                        ) && is_likely_date_number_format(&num_fmt)
                             && crate::kantor_input::format_shows_time(cell_fmt)
                                 == crate::kantor_input::format_shows_time(&num_fmt));
                         if should_apply_format {
