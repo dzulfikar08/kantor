@@ -97,7 +97,7 @@ export const en = {
     ],
     [
       "AI only if you want it",
-      "Off until you turn it on. Use your own key from a provider such as Anthropic, OpenAI or Google, or run a model on your own computer with Ollama. Kantor has no AI service of its own.",
+      "Off until you turn it on. Use Paparan AI with an account and credits, your own key from a provider such as Anthropic, OpenAI or Google, or a model on your own computer with Ollama.",
     ],
     [
       "AI assistants can edit open files",
@@ -292,7 +292,7 @@ export const id = {
     ],
     [
       "AI hanya kalau Anda mau",
-      "Mati sampai Anda menyalakannya. Pakai kunci API Anda sendiri dari penyedia seperti Anthropic, OpenAI, atau Google, atau jalankan model di komputer sendiri dengan Ollama. Kantor tidak punya layanan AI sendiri.",
+      "Mati sampai Anda menyalakannya. Pakai Paparan AI dengan akun dan kredit, kunci API Anda sendiri dari penyedia seperti Anthropic, OpenAI, atau Google, atau model di komputer sendiri dengan Ollama.",
     ],
     [
       "Asisten AI bisa mengedit file yang terbuka",
