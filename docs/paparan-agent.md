@@ -224,6 +224,21 @@ From the cheaper-jobs round (Nov 2026; GLM-5.3 Flash on Z.ai for iteration, Deep
 - Budgets under about 100 credits stop a deck before it is written: the loop keeps room for
   three typical steps, and a deck's write step is the largest.
 
+Measured on Paparan (DeepSeek V4.1 Flash) after the round, one run per job with
+`--max-credits 200`, credits from the account balance before and after each job:
+
+| Job | 0.25.1 | After | Steps, input / cached / output tokens |
+|---|---|---|---|
+| English board deck, 6 slides | 163 credits, 8 steps | 123 credits | 7, 137.7k / 117.6k / 15.0k |
+| Indonesian invitation letter | 69, 14 | 102 | 19, 305.8k / 282.4k / 9.7k |
+| Budget recap, 54 rows | 179, 17 | 107 | 19, 296.1k / 271.4k / 10.3k |
+| Monthly sales per city with line chart | 162, 14 | 96 | 7, 119.2k / 101.9k / 11.3k |
+| Total | 573 | 428 (-25%) | |
+
+All four finished with 0 errors. The letter cost more because the model took the contact
+sheet's tile number under the page for a page number in the letter and spent 12 steps (about
+40 credits) changing the footer to remove it; 0.25.1's contact sheet has the same label.
+
 ## Tests
 
 `kantor_ai::agent::scripted::Scripted` plays back a script of replies (no network) and records
