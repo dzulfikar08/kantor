@@ -100,5 +100,25 @@ headless output and `xdotool` types into it, so your keyboard and focus are neve
 Column widths in the sample workbook are multiples of 4 characters (36 px) so that column edges
 fall on whole pixels at 125 %; otherwise merged cells show a 1 px seam.
 
+**Paparan AI section.** The page has a section on Paparan AI, the paid AI inside Kantor (`#paparan`,
+after the downloads, so Kantor stays the lead): what it does, three example requests, how to start,
+prices and a privacy line, with a link to paparanai.id. Prices come from the Paparan backend
+(`packages/shared/billing.ts` `CREDIT_PACKS`, 300 welcome credits in `worker/kantor/config.ts`);
+change them in `strings.mjs` when those change. Its picture is the chat panel next to the workbook
+it made, in English (`paparan-*`) and Indonesian (`paparan-id-*`) for the two pages:
+
+```sh
+KANTOR_BIN=$PWD/target/release/kantor site/tools/paparan/shots.sh
+```
+
+`tools/paparan/shots.sh` makes a CSV of made-up monthly sales (`make_csv.py`), the workbook JSON
+(`make_book.py`) and the chat's turns (`make_scripts.py`), then runs Kantor with
+`KANTOR_CHAT_SCRIPT`: the model's words are scripted, the tools are real, so the workbook is built,
+checked and rendered by Kantor itself, and no account or credits are used (the panel's footer says
+"Scripted model", and its token line is made up). Kantor runs on a private headless output (`KSPAI`)
+in an Xwayland server (`:33`) with throwaway config, state and data dirs, a private D-Bus session
+and a fake file-chooser portal (`portal.py`) that answers the attach button with the CSV. It
+clicks by window coordinates (`take.sh`), so a layout change in the panel may need new ones.
+
 The site shows the dark captures to visitors whose system is dark and the light ones otherwise
 (`<picture>` with `prefers-color-scheme`).
