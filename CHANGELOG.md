@@ -9,13 +9,88 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.25.2] - 2026-11-26
+
+### Changed
+
+- Paparan AI no longer mistakes the page numbers Kantor draws under each page of a contact sheet for text in the
+  document.
+- Paparan AI jobs cost less. The model's reasoning from one step goes back with it to the next, so it carries on
+  from its plan instead of working it out again (reasoning is paid as output). A whole JSON file the model wrote
+  stays in the conversation in a job of normal size: with a placeholder in its place, the model took the write for
+  a failed one and wrote the file again. The agent is asked to read what it needs in one step, write and build in
+  the next, and fix with small patches, and the prompt cache is kept on the last step.
+- When a build fails, Paparan AI gets every problem in the JSON at once (wrong keys, wrong types, missing keys,
+  with where they are), instead of one error per build.
+- `kantor sheets build` takes a sheet's rows from a CSV file next to the JSON (`"csv": "data.csv"`), numbers and
+  dates typed as `kantor convert` reads them, so Paparan AI copies your data into a workbook without retyping it.
+
+### Fixed
+
+- Paparan AI's reasoning was recorded twice when a server sent it under both of its usual names.
+
+## [0.25.1] - 2026-11-26
+
+Paparan AI jobs finish, cost less and answer in your language.
+
+### Changed
+
+- Paparan AI jobs finish. A job no longer stops empty-handed at its step or credit limit: it hands over the files it
+  made that pass their check, and says it reached the limit. Check warnings no longer hold a job up: `finish` needs 0
+  errors, and the warnings left are listed at the end of the summary. Near the limits the agent is told to wrap up
+  with what it has, and its last step can only finish.
+- Paparan AI jobs cost less: the model reasons more briefly (about half the hidden reasoning, which is paid as
+  output), jobs get 24 steps instead of 40, the skills ask for one round of fixes and one look, and old results are
+  trimmed less often so more of each step is read from the cache.
+- Spending limits stop inside a step: when little budget is left, the next reply is capped to what remains instead
+  of running a whole large step over the limit. In Paparan AI Chat a request may spend up to 500 credits (a
+  follow-up gets its own 500), and the usage line shows credits instead of dollars.
+- `kantor agent run --provider paparan` counts its budget in credits (`--max-credits N`), and takes `--reasoning
+  low|medium|high|none` (low by default with Paparan AI).
+- Paparan AI answers in your language: an Indonesian request gets Indonesian notes and summary, even though the
+  skills are written in English, and an English request gets English documents even when the data is Indonesian.
+- Charts made by `kantor sheets build`, the Sheets editing tools and Insert Chart have a white chart area with a
+  light border, as in Excel, so their text stays readable on Kantor's dark grid.
+- With your own key or Ollama and no local skill folder, Paparan AI Chat says that decks, documents and workbooks need
+  Paparan AI and offers Sign in, instead of an unknown-skill error. Local skill folders (`~/.claude/skills`,
+  `ai.skills_dir`) keep working.
+
+### Fixed
+
+- `kantor sheets check` reported a correct row total (`=SUM(B5:I5)`) as missing a number when the row's label was a
+  date (months in the first column): a date beside amounts now counts as the row's label.
+
+## [0.25.0] - 2026-11-26
+
+Paparan AI Chat: describe a deck, document or workbook, attach your files, and an agent builds it in Kantor, checks it and hands back the file.
+
 ### Added
 
+- Paparan AI Chat, a panel on the right (the sparkle button in the tab strip, or *Paparan AI Chat* in the command
+  palette). Type a request and attach source files (paper clip, or drop them on the panel); the job kind (deck,
+  document, workbook) is guessed from the words and files, or picked. An agent builds or fixes a native .pptx, .docx or
+  .xlsx with Kantor's own tools, runs the check commands, looks at rendered pages, and finishes with the output files
+  (Open in a tab, Reveal). Each step shows in the list: the model's text, tool calls (click for the result), the
+  pictures it looked at, credits or tokens used. Follow-ups continue the same job and folder; Stop ends it after the
+  current step. Every job gets its own work folder, and attached files are copies that are never overwritten.
+- With Paparan AI as the provider, jobs use Paparan AI's own deck, document and workbook skills and its
+  `paparan-agent` model, paid with credits; signed out, out of credits or offline, the panel says so and offers Sign in,
+  Top up or Try again. With your own OpenAI-compatible key or Ollama, jobs run on that model and read the skills
+  from local folders (`~/.claude/skills/paparan-deck|doc|sheet`, or `ai.skills_dir` in settings.toml).
+- `kantor agent run` runs the same agent from a terminal (`--provider paparan --skill deck|doc|sheet`, or any
+  OpenAI-compatible API with `--base-url`/`--model`, `--json` events, spending limits). See `docs/paparan-agent.md`.
 - `kantor sheets check` (and the `sheets_check` tool) finds text that doesn't fit where it prints, measured with the
   fonts the PDF and PNG use (`text_cut_off`: wider than its merged cells, blocked by a full neighbour, cut at the page's
   edge, taller than its row), numbers shown as `####` (`number_hashes`), content outside the print area
   (`outside_print_area`), charts and pictures split by page breaks (`split_by_page`), and bar or column charts of
   categories not sorted by value (`unsorted_bars`, info).
+
+### Fixed
+
+- Paparan AI deck jobs: the deck skill sent by Paparan AI was cut off at 64 KB and failed to load ("can't fetch the
+  paparan-deck skill").
+- Paparan AI sign-in: the account's device list and the Connect page show the computer's name instead of
+  "Kantor on Kantor on …".
 
 ## [0.24.0] - 2026-11-25
 
@@ -2426,7 +2501,10 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.24.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.25.2...HEAD
+[0.25.2]: https://github.com/dzulfikar08/kantor/compare/v0.25.1...v0.25.2
+[0.25.1]: https://github.com/dzulfikar08/kantor/compare/v0.25.0...v0.25.1
+[0.25.0]: https://github.com/dzulfikar08/kantor/compare/v0.24.0...v0.25.0
 [0.24.0]: https://github.com/dzulfikar08/kantor/compare/v0.23.0...v0.24.0
 [0.23.0]: https://github.com/dzulfikar08/kantor/compare/v0.22.0...v0.23.0
 [0.22.0]: https://github.com/dzulfikar08/kantor/compare/v0.21.1...v0.22.0

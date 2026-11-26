@@ -1590,6 +1590,7 @@ pub const SHEET_KEYS: &[&str] = &[
     "start",
     "rows",
     "columns",
+    "csv",
     "cells",
     "widths",
     "autofit",
@@ -1634,10 +1635,56 @@ fn on_sheet(args: &Value, name: &str) -> Value {
     Value::Object(a)
 }
 
-/// The steps that make sheet `s` (named `name`).
-fn sheet_steps(s: &Map<String, Value>, name: &str) -> Result<Vec<Step>> {
+/// The rows of CSV/TSV file `path` (relative to `base`), each field as
+/// typed (numbers and dates become values, as `kantor convert` reads a
+/// CSV); fields that would read as formulas stay text.
+fn csv_rows(path: &str, base: Option<&Path>) -> Result<Value> {
+    let p = Path::new(path);
+    let p = match base {
+        Some(b) if p.is_relative() => b.join(p),
+        _ => p.to_path_buf(),
+    };
+    let bytes = std::fs::read(&p).with_context(|| format!("can't read {path}"))?;
+    let text = sheets_engine::csv::decode(&bytes);
+    let delim = sheets_engine::csv::detect_delimiter(&text);
+    let rows: Vec<Value> = sheets_engine::csv::parse(&text, delim)
+        .into_iter()
+        .map(|rec| {
+            Value::Array(
+                rec.into_iter()
+                    .map(|f| {
+                        if f.is_empty() {
+                            Value::Null
+                        } else if f.starts_with(['=', '\'']) {
+                            Value::String(format!("'{f}"))
+                        } else {
+                            Value::String(f)
+                        }
+                    })
+                    .collect(),
+            )
+        })
+        .collect();
+    if rows.is_empty() {
+        bail!("{path} has no rows");
+    }
+    Ok(Value::Array(rows))
+}
+
+/// The steps that make sheet `s` (named `name`); `base` is the folder a
+/// `csv` file is read from.
+fn sheet_steps(s: &Map<String, Value>, name: &str, base: Option<&Path>) -> Result<Vec<Step>> {
     let mut steps: Vec<Step> = Vec::new();
     let start = opt_str(s, "start")?.unwrap_or("A1");
+    if let Some(file) = opt_str(s, "csv")? {
+        if get(s, "rows").is_some() || get(s, "columns").is_some() {
+            bail!("sheet {name}: give `csv` or `rows`/`columns`, not both");
+        }
+        steps.push((
+            "write_range".into(),
+            json!({"sheet": name, "top_left": start, "values": csv_rows(file, base)?}),
+        ));
+    }
     if let Some(rows) = get(s, "rows") {
         steps.push((
             "write_range".into(),
@@ -1816,7 +1863,7 @@ pub fn build(v: &Value, base: Option<&Path>) -> Result<Workbook> {
             let c = rgb(c, "tab_color")?;
             book.set_tab_color(i as u32, Some(sheets_engine::TabColor::Rgb(c)))?;
         }
-        for (k, (tool, args)) in sheet_steps(so, name)?.into_iter().enumerate() {
+        for (k, (tool, args)) in sheet_steps(so, name, base)?.into_iter().enumerate() {
             run_tool(&mut book, &tool, &args, base)
                 .with_context(|| format!("sheet {name}: step {} ({tool})", k + 1))?;
         }
@@ -2089,6 +2136,31 @@ mod tests {
         run_ok(&mut b, "delete_sheet", json!({"sheet": "Totals"}));
         assert!(!b.sheet_names().contains(&"Totals".to_owned()));
         assert!(run_tool(&mut b, "no_such_tool", &json!({}), None).is_err());
+    }
+
+    #[std::prelude::v1::test]
+    fn a_sheet_takes_its_rows_from_a_csv() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("sales.csv"),
+            "month,city,sales\r\n2026-01,Jakarta,136.1\r\n2026-02,Bandung,54.8\r\n2026-03,=cmd,\r\n",
+        )
+        .unwrap();
+        let desc = json!({"sheets": [
+            {"name": "Data", "csv": "sales.csv"},
+            {"name": "Sum", "cells": {"A1": "=SUM(Data!C2:C4)"}}
+        ]});
+        let b = build(&desc, Some(dir.path())).unwrap();
+        assert_eq!(cell_value(&b, 0, 0, 1), json!("city"));
+        assert_eq!(cell_value(&b, 0, 1, 2), json!(136.1));
+        // A field that reads as a formula stays text.
+        assert_eq!(cell_value(&b, 0, 3, 1), json!("=cmd"));
+        let sum = cell_value(&b, 1, 0, 0).as_f64().unwrap();
+        assert!((sum - 190.9).abs() < 1e-9, "{sum}");
+        let both = json!({"sheets": [{"csv": "sales.csv", "rows": [[1]]}]});
+        assert!(build(&both, Some(dir.path())).is_err());
+        let missing = json!({"sheets": [{"csv": "nope.csv"}]});
+        assert!(build(&missing, Some(dir.path())).is_err());
     }
 
     #[std::prelude::v1::test]

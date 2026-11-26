@@ -71,7 +71,8 @@ pub use cf_edit::{
     DATA_BAR_COLORS, ICON_SETS, default_icon_steps, icon_choices, outline_border, sqref_of,
 };
 pub use chart_edit::{
-    ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor, SeriesType,
+    CHART_AREA_FILL, ChartInfo, ChartSpec, ChartType, LegendPos, NEW_CHART_BASE, SeriesColor,
+    SeriesType,
 };
 pub use chart_options::{
     AxisOptions, AxisType, DataLabels, DisplayUnits, LabelFont, LabelPos, TimeUnit,

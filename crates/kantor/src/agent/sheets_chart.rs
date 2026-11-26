@@ -392,6 +392,11 @@ pub(super) fn run(book: &mut Workbook, o: &Map<String, Value>) -> Result<(String
         });
     }
     plan.data.workbook_rel = None;
+    // On a sheet a chart has Excel's white chart area: see-through, its dark
+    // text is lost on Kantor's dark grid.
+    plan.data
+        .area
+        .get_or_insert_with(|| sheets_engine::CHART_AREA_FILL.to_owned());
     let xml = sheets_engine::data_chart_part(&plan.data)?;
     let at = anchor(book, o, sheet, block.map(|b| b.1))?;
     let mut spec = plan.data.spec.clone();

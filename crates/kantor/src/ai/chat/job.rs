@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use gpui_kit::RenderImage;
 use kantor_ai::agent::{
-    self, Event, Limits, LocalSkill, Model, PromptSource, ToolOutput, ToolSpec, Tools,
+    self, Checked, Event, Limits, LocalSkill, Model, PromptSource, ToolOutput, ToolSpec, Tools,
 };
 use kantor_ai::paparan::{Paparan, SkillError};
 use kantor_ai::{AiError, Api, Cancel, Client, ProviderConfig, ProviderId, UreqTransport};
@@ -66,6 +66,37 @@ pub fn local_skills(dir: PathBuf) -> SkillLoader {
     })
 }
 
+/// [`local_skills`] for another provider than Paparan AI with no skills
+/// folder set: a skill that isn't there means the job needs Paparan AI
+/// (its skills are the paid part), not a missing folder.
+pub fn local_or_paparan(dir: PathBuf) -> SkillLoader {
+    let local = local_skills(dir.clone());
+    Arc::new(move |kind: JobKind| {
+        if !dir.join(kind.skill()).join("SKILL.md").is_file() {
+            return Err(SkillError::NeedsPaparan {
+                skill: kind.skill().to_owned(),
+            });
+        }
+        local(kind)
+    })
+}
+
+/// Credits one request in the panel may spend with Paparan AI (a
+/// follow-up gets as many again). The jobs that finish well cost 50 to 250.
+pub const MAX_CREDITS: f64 = 500.0;
+
+/// The limits of a job run with `ai`'s provider: with Paparan AI, counted
+/// in credits, with a ceiling and short reasoning.
+pub fn limits(ai: &AiSettings) -> Limits {
+    let mut limits = Limits::default();
+    if ProviderId::from_key(&ai.provider) == Some(ProviderId::Paparan) {
+        limits.prices = Some(kantor_ai::paparan::AGENT_PRICES);
+        limits.max_cost = Some(MAX_CREDITS);
+        limits.reasoning = Some(kantor_ai::paparan::AGENT_REASONING.to_owned());
+    }
+    limits
+}
+
 /// Paparan AI's skills, fetched for each job with the sign-in (`token`, or
 /// the one saved in the keychain) and kept in memory only.
 pub fn served_skills(api: Arc<Paparan>, token: Option<String>) -> SkillLoader {
@@ -93,8 +124,10 @@ pub fn skill_loader(ai: &AiSettings) -> SkillLoader {
             std::time::Duration::from_secs(60),
         );
         served_skills(Arc::new(Paparan::new(Arc::new(transport))), None)
-    } else {
+    } else if set {
         local_skills(skills_dir(ai))
+    } else {
+        local_or_paparan(skills_dir(ai))
     }
 }
 
@@ -148,6 +181,9 @@ pub struct Request {
 pub struct Done {
     pub error: Option<AiError>,
     pub session: Option<Session>,
+    /// The job needs Paparan AI's skills (another provider, no local
+    /// skill): the panel says so and offers Sign in.
+    pub needs_paparan: bool,
 }
 
 /// Run one request: make or reuse the folder, copy the attachments, load
@@ -160,6 +196,7 @@ pub fn work(req: Request, cancel: &Cancel, send: &dyn Fn(Msg)) -> Done {
         Done {
             error: Some(AiError::BadReply(message)),
             session,
+            needs_paparan: false,
         }
     };
     let (tools, history, kind) = match req.session {
@@ -222,6 +259,7 @@ pub fn work(req: Request, cancel: &Cancel, send: &dyn Fn(Msg)) -> Done {
                         .unwrap_or_else(|| AiError::BadReply(e.to_string())),
                 ),
                 session: session(tools, history),
+                needs_paparan: matches!(e, SkillError::NeedsPaparan { .. }),
             };
         }
     };
@@ -239,6 +277,7 @@ pub fn work(req: Request, cancel: &Cancel, send: &dyn Fn(Msg)) -> Done {
                 return Done {
                     error: Some(e),
                     session: session(tools, history),
+                    needs_paparan: false,
                 };
             }
         },
@@ -281,6 +320,7 @@ pub fn work(req: Request, cancel: &Cancel, send: &dyn Fn(Msg)) -> Done {
     Done {
         session: session(tools, outcome.messages),
         error,
+        needs_paparan: false,
     }
 }
 
@@ -367,8 +407,12 @@ impl Tools for Recorder<'_> {
         out
     }
 
-    fn check_outputs(&mut self, outputs: &[String]) -> Result<Vec<String>, String> {
+    fn check_outputs(&mut self, outputs: &[String]) -> Result<Checked, String> {
         self.inner.check_outputs(outputs)
+    }
+
+    fn made_outputs(&mut self) -> Checked {
+        self.inner.made_outputs()
     }
 }
 
@@ -840,6 +884,40 @@ mod tests {
             ..ai
         };
         assert!(skill_loader(&byok)(JobKind::Deck).is_ok());
+    }
+
+    #[std::prelude::v1::test]
+    fn other_providers_without_local_skills_need_paparan() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("paparan-deck")).unwrap();
+        std::fs::write(tmp.path().join("paparan-deck/SKILL.md"), "# Deck").unwrap();
+        let load = local_or_paparan(tmp.path().to_path_buf());
+        assert!(load(JobKind::Deck).is_ok(), "a local skill works");
+        let Err(e) = load(JobKind::Workbook) else {
+            panic!("no paparan-sheet folder");
+        };
+        assert_eq!(
+            e,
+            SkillError::NeedsPaparan {
+                skill: "paparan-sheet".into()
+            }
+        );
+        assert!(e.to_string().contains("need Paparan AI"), "{e}");
+        assert!(e.as_ai_error().is_none());
+
+        // Paparan AI's limits count credits and keep reasoning short.
+        let paparan = limits(&AiSettings {
+            provider: "paparan".into(),
+            ..AiSettings::default()
+        });
+        assert_eq!(paparan.max_cost, Some(MAX_CREDITS));
+        assert_eq!(paparan.reasoning.as_deref(), Some("low"));
+        let byok = limits(&AiSettings {
+            provider: "openai".into(),
+            ..AiSettings::default()
+        });
+        assert_eq!(byok.max_cost, None);
+        assert_eq!(byok.reasoning, None);
     }
 
     #[std::prelude::v1::test]

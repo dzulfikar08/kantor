@@ -707,6 +707,9 @@ impl<'a> Region<'a> {
             errors: 0,
         };
         let (mut first, mut last) = (None, None);
+        // Whether the data are dates (a column of dates can be added up);
+        // a date beside amounts is the row's (column's) label instead.
+        let mut dated = None;
         let mut i = if up { r } else { c };
         while i > 0 {
             i -= 1;
@@ -730,6 +733,10 @@ impl<'a> Region<'a> {
             }
             match cell.kind {
                 ValueKind::Number => {
+                    let date = self.book.is_date_format(self.s, x, y);
+                    if *dated.get_or_insert(date) != date {
+                        break;
+                    }
                     b.numbers += 1;
                     b.sum += self.book.number_at(self.s, x, y).map_or(0.0, |n| n.0);
                 }
@@ -2223,6 +2230,69 @@ mod tests {
         assert!(is_total_label("Grand Total"));
         assert!(is_total_label("Jumlah"));
         assert!(!is_total_label("Totally"));
+    }
+
+    /// Months as dates in the first column label the rows: a row total
+    /// that adds the amounts beside them is right, not a SUM that misses
+    /// the date (the false error that sent a job round in circles).
+    #[std::prelude::v1::test]
+    fn dates_labelling_rows_are_not_data() {
+        let mut b = build(
+            &json!({"sheets": [{"name": "Ringkasan", "rows": [
+                ["Bulan", "Jakarta", "Bandung", "Surabaya", "Total"],
+                [46023, 120, 95, 80, "=SUM(B2:D2)"],
+                [46054, 132, 99, 85, "=SUM(B3:D3)"],
+                [46082, 140, 101, 90, "=SUM(B4:D4)"],
+                ["Total", "=SUM(B2:B4)", "=SUM(C2:C4)", "=SUM(D2:D4)", "=SUM(E2:E4)"],
+            ]}]}),
+            None,
+        )
+        .unwrap();
+        run_tool(
+            &mut b,
+            "format",
+            &json!({"sheet": "Ringkasan", "range": "A2:A4", "number_format": "mmm yyyy"}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        let all = checks(&r);
+        assert!(
+            !r.findings.iter().any(|f| f.check == "sum_misses_rows"),
+            "{all:?}"
+        );
+        assert!(!r.has_errors(), "{all:?}");
+
+        // A plain number there is still data the total leaves out.
+        let b = build(
+            &json!({"sheets": [{"name": "S", "rows": [
+                ["Item", "Q1", "Q2", "Q3", "Total"],
+                [5, 120, 95, 80, "=SUM(B2:D2)"],
+                [6, 132, 99, 85, "=SUM(B3:D3)"],
+            ]}]}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        assert!(has(&r, "sum_misses_rows", "E2"), "{:?}", checks(&r));
+
+        // A column of dates added up is still checked as data.
+        let mut b = build(
+            &json!({"sheets": [{"name": "D", "rows": [
+                ["Due"], [46023], [46054], [46082], ["=SUM(A2:A3)"],
+            ]}]}),
+            None,
+        )
+        .unwrap();
+        run_tool(
+            &mut b,
+            "format",
+            &json!({"sheet": "D", "range": "A2:A5", "number_format": "yyyy-mm-dd"}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        assert!(has(&r, "sum_misses_rows", "A5"), "{:?}", checks(&r));
     }
 
     /// A long column with numbers stored as text here and there, as an

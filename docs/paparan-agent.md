@@ -30,12 +30,16 @@ kantor agent run --skill ~/.claude/skills/paparan-deck --dir job \
   same events are printed for people, ending with a `usage:` line.
 - `--provider paparan` uses the Paparan AI sign-in saved by Kantor (credits) instead of a key,
   with the `paparan-agent` model unless `--model` says otherwise. `--skill deck|doc|sheet` then
-  fetches Paparan AI's own skill (below); `--skill DIR` still reads a local folder.
+  fetches Paparan AI's own skill (below); `--skill DIR` still reads a local folder. Costs are
+  counted in credits with Paparan AI's price list (`paparan::AGENT_PRICES`, 1,500 / 30 / 6,000
+  credits per million input / cached / output tokens; the server's count is what's charged), the
+  budget is `--max-credits N`, and `reasoning_effort` is `low` (`--reasoning` changes it).
 
 ```sh
 kantor agent run --provider paparan --skill sheet --dir job "Check rekap.xlsx and fix the totals"
 ```
-- Exit status 0 only when the model called `finish` and it was accepted.
+- Exit status 0 when the job finished: the model's accepted `finish`, or the documents it made
+  when it reached a limit (`usage_total` then has `"limit": "steps"` or `"budget"`).
 - Ctrl+C stops after the current step; twice quits.
 
 ## The chat panel
@@ -57,6 +61,12 @@ Paparan AI Chat (command palette, or the sparkle button in the tab strip) docks 
   overwritten).
 - The provider is the one in AI Settings: Paparan AI (credits shown), any OpenAI-compatible API,
   or Ollama (through its `/v1` endpoint). Anthropic's own API can't run jobs yet.
+- With Paparan AI a request may spend `job::MAX_CREDITS` (500; a follow-up gets as many again),
+  with short reasoning (`job::limits`). The usage line shows about how many credits it took.
+- The full skills are Paparan AI's paid part and stay on its server. With another provider and no
+  local folder for the job's skill (`job::local_or_paparan`), the panel says that decks, documents
+  and workbooks need Paparan AI and offers Sign in (AI Settings), instead of an unknown-skill
+  error. A folder set in `ai.skills_dir` reads as before (development).
 - The harness runs on a worker thread; events come back in batches (one redraw per batch). The
   list shows the model's text (Markdown), a row per tool call (name, the files it works on;
   click for the result), `look` pictures as thumbnails (decoded on the worker; click to
@@ -77,9 +87,45 @@ These come from running the Paparan skills with a cheap model through a general 
   restructure…"). The summary the user reads is `finish`'s `summary`, so a job can't end on a plan.
 - **`finish` is checked.** Every declared output must exist in the work folder, and `.pptx`,
   `.docx` and `.xlsx` outputs must pass `check` without error-level findings; otherwise `finish`
-  is refused with the errors and the model goes on.
-- **Budgets.** `max_steps` (default 40), `max_tokens` and `max_cost` (with prices). The loop stops
-  before a step that would go over, counting the next step as at least as large as the last.
+  is refused with the errors and the model goes on. Warnings never block it: the ones left are
+  appended to the summary ("Check warnings left (n)", in Indonesian for Indonesian requests).
+  `build` and `check` results say so too ("No errors: the file can be handed over…"), because
+  cheap models otherwise loop on warnings until the step limit.
+- **Steps.** `max_steps` defaults to 24 (the jobs that finish well take 10 to 20). From a quarter
+  of the steps before the end the model is told how many are left and to wrap up with what
+  exists; the last step runs only `finish` (other calls aren't run; it is offered the same tools,
+  since a different tool list would end the prompt cache and re-read the conversation at full
+  price).
+- **Budgets.** `max_tokens` and `max_cost` (with prices). Before each step the loop estimates
+  its input (the last step's input plus what was added since, a picture as about 1,000 tokens,
+  the cached prefix priced as cached) and gives the reply what is left after it: the step is
+  sent with `max_tokens` set to that (when under 16k), so a step can't run far over the budget,
+  and a step that couldn't afford 1,500 output tokens isn't started. At 70% of the budget, or
+  when less than three typical steps are left, the model is told once to wrap up.
+- **Ending at a limit hands over what exists.** At the step limit, the budget or too many turns
+  without `finish`, the loop asks the tools for the documents the job made that pass their check
+  (`Tools::made_outputs`: new .pptx/.docx/.xlsx outside `shots/`, 0 errors) and, when there are
+  any, ends `Finished` with them: a summary saying the limit was reached, the model's last note
+  and the warnings left. `Event::Done` and `Outcome` carry the limit. Nothing made: `Stopped`.
+- **Language.** The rules ask for notes and the summary in the request's language, and the
+  system prompt ends with an explicit note when the request reads as Indonesian or English
+  (`request_language`, word lists): the skills are in English and cheap models narrate in them,
+  and with Indonesian data an English request got an Indonesian deck.
+- **Reasoning.** `Limits::reasoning` goes to every step as `reasoning_effort`. Thinking models'
+  reasoning is paid as output (4 times input's price, 200 times cached input's) and was two
+  thirds of a job's cost; `low` about halves it. Each step's reasoning goes back with its turn
+  as `reasoning_content` (`Limits::keep_reasoning`), so the model goes on from its plan instead
+  of working it out again on the next step; it is re-read from the cache at 2% of the price of
+  writing it. A follow-up request starts without the earlier reasoning.
+- **Batched steps.** The rules ask for a plan of about four steps: read the inputs and the skill
+  files the job needs in one step, write the JSON and `build` it in one reply, fix errors with
+  small `replace_in_file` patches plus `build` (never by rewriting the file), then `finish` with
+  a short summary. `build` already returns the check and the contact sheet.
+- **A failed build lists every problem.** The builders stop at their first error, so a model
+  paid a step and a rebuild per wrong key. When a build fails, the source is also checked
+  against the app's JSON Schema (`harness/validate.rs`: `$ref`, types, unknown and missing
+  keys, enums, `anyOf`) and every problem is listed with its JSON path. It only explains a
+  failed build, so a difference between schema and builder never refuses a good one.
 - **Cancellation** between steps and between streamed pieces.
 
 ## Keeping the conversation small
@@ -97,9 +143,16 @@ Every step resends the whole conversation, which dominates the cost.
   picture of a page drops older pictures of that page, a picture of a changed file drops every
   older picture of it, and at most `max_images` (default 4) stay; dropped ones become a one-line
   note.
-- Tool results over `max_result_chars` (12,000) are cut with a note on how to page. Results four
-  steps old are cut to about 1,500 characters, and strings over 1,500 characters in older tool-call
-  arguments (a whole `deck.json` sent to `write_file`) are replaced by a note ("read the file"). Old
+- Tool results over `max_result_chars` (12,000) are cut with a note on how to page. Once the
+  conversation is over `old_results_over` (160,000 characters, about 40k tokens), every fourth
+  step, results at least four steps old are cut to about 1,500 characters. Not earlier and not
+  every step: each cut ends the provider's prompt cache there, and cached input costs 2% of
+  fresh input, so in a job of normal size a cut cost more (the rest re-read fresh) than it
+  saved. Past the same size, strings over 1,500 characters in older tool-call arguments (a
+  whole `deck.json` sent to `write_file`) are replaced by a note saying the call ran and
+  `read_file` shows the file. Not earlier: with the note in a short job, DeepSeek took its own
+  call for a failed write and wrote the whole file again, two or three times (40 credits each
+  for a workbook). Old
   messages are changed only once, so the provider's prompt cache keeps the prefix up to them.
 
 ## Tools
@@ -111,7 +164,7 @@ can be read but not overwritten.
 | Tool | Does |
 |---|---|
 | `list_files`, `read_file`, `write_file`, `replace_in_file` | files; PNG/JPEG come back as pictures |
-| `build` | JSON → .pptx/.docx/.xlsx, then `check` and the contact sheet (the skills' `build.sh`) |
+| `build` | JSON → .pptx/.docx/.xlsx, then `check` and the contact sheet (the skills' `build.sh`); a sheet's `csv` key copies a CSV's rows, so the model doesn't retype the user's data |
 | `check`, `list`, `edit`, `schema` | as `kantor slides|docs|sheets …`; `edit` takes the ops inline |
 | `look` | contact sheet or pages as pictures (at most 4), saved under `shots/` |
 | `convert` | `kantor convert` (PDF copies, CSV ↔ xlsx, .doc → .docx, …) |
@@ -138,11 +191,61 @@ product, so it is never compiled into Kantor or kept on disk.
 - The backend keeps its copy in sync with the local skills with `scripts/sync-skills.sh` (in the
   Paparan repo), which rewrites the absolute paths to these forms.
 
+## Where a job's credits go
+
+From the 0.25.0 jobs (DeepSeek V4.1 Flash on Workers AI, Nov 2026):
+
+- Output, mostly hidden reasoning, was about two thirds of the cost: a 13-step workbook job read
+  126k input tokens (107k of them cached, 3 credits) and wrote 10.8k output tokens (65 credits);
+  a step that only read files could think for 4,000 to 6,000 tokens.
+- Write steps are 5 to 10 times the size of the steps before them (a 12 KB `deck.json` plus its
+  reasoning: 15k output tokens, 96 credits), which is why "the next step costs what the last did"
+  let a budget overshoot by a whole step.
+- Fresh input came from the last few steps' results, re-sent uncached because old results were
+  cut every step.
+- Wasted steps: a false `sum_misses_rows` error (a date label beside the amounts) sent a
+  workbook job round in circles for 40 steps; another finished all errors and then fixed
+  warnings until the step limit.
+
+From the cheaper-jobs round (Nov 2026; GLM-5.3 Flash on Z.ai for iteration, DeepSeek to confirm):
+
+- A model that saw its own `write_file` call with a placeholder in place of the content took
+  it for a failed write and wrote the whole file again, two or three times: 40 credits per
+  rewrite for a workbook, the largest single waste found. Long arguments now stay whole until
+  the conversation is long.
+- Without its earlier reasoning, DeepSeek planned the deck again on every step (5,000 to 8,000
+  reasoning tokens a step while reading references). Sent back, later steps think for a few
+  hundred tokens.
+- Builders stop at their first error; GLM took up to four builds (two steps each) to find
+  four wrong keys. The schema check lists them together.
+- The CSV's rows were retyped into `rows` (96 rows: about 5,000 output tokens, 30 credits);
+  the `csv` key copies them.
+- A finish-only tool list on the last step re-read the whole conversation uncached.
+- Budgets under about 100 credits stop a deck before it is written: the loop keeps room for
+  three typical steps, and a deck's write step is the largest.
+
+Measured on Paparan (DeepSeek V4.1 Flash) after the round, one run per job with
+`--max-credits 200`, credits from the account balance before and after each job:
+
+| Job | 0.25.1 | After | Steps, input / cached / output tokens |
+|---|---|---|---|
+| English board deck, 6 slides | 163 credits, 8 steps | 123 credits | 7, 137.7k / 117.6k / 15.0k |
+| Indonesian invitation letter | 69, 14 | 102 | 19, 305.8k / 282.4k / 9.7k |
+| Budget recap, 54 rows | 179, 17 | 107 | 19, 296.1k / 271.4k / 10.3k |
+| Monthly sales per city with line chart | 162, 14 | 96 | 7, 119.2k / 101.9k / 11.3k |
+| Total | 573 | 428 (-25%) | |
+
+All four finished with 0 errors. The letter cost more because the model took the contact
+sheet's tile number under the page for a page number in the letter and spent 12 steps (about
+40 credits) changing the footer to remove it; 0.25.1's contact sheet has the same label.
+
 ## Tests
 
-`kantor_ai::agent::scripted::Scripted` plays back a script of replies (no network). The tests
-cover the nudge and `finish` rules, refusals for missing outputs and check errors, picture
-pruning, truncation and shortening of old steps, budgets, step limits, cancellation and skill
+`kantor_ai::agent::scripted::Scripted` plays back a script of replies (no network) and records
+each step's messages, tools and options. The tests cover the nudge and `finish` rules, refusals
+for missing outputs and check errors, warnings in the summary, picture pruning, truncation and
+shortening of old steps, budgets (the capped output, the wrap-up note, handing over what was
+made), the finish-only last step, the language note, reasoning effort, cancellation and skill
 files (`crates/kantor_ai/src/agent/tests.rs`, `crates/kantor/src/harness/tests.rs`). Served
 skills are tested against a scripted Paparan server (`crates/kantor_ai/src/paparan.rs`): one
 fetch, reads from memory, path forms, and the signed-out, no-credit, unknown-skill and offline

@@ -36,6 +36,17 @@ pub const MODELS: &[&str] = &["paparan-auto", "paparan-fast", "paparan-smart", A
 pub const DEFAULT_MODEL: &str = "paparan-auto";
 /// The tier for agent jobs (`kantor agent run`): vision and tool calls.
 pub const AGENT_MODEL: &str = "paparan-agent";
+/// What [`AGENT_MODEL`] costs, in credits per million tokens (the server's
+/// price list, Nov 2026): the agent's budget is counted in credits with it.
+/// The server's own count is what's charged.
+pub const AGENT_PRICES: crate::agent::Prices = crate::agent::Prices {
+    input: 1_500.0,
+    cached: 30.0,
+    output: 6_000.0,
+};
+/// `reasoning_effort` for agent jobs: the model's hidden reasoning is paid
+/// as output, and `low` about halves it without hurting the tool work.
+pub const AGENT_REASONING: &str = "low";
 
 /// Sent as `client_version` and `X-Kantor-Version`.
 pub const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -74,6 +85,9 @@ pub fn load_token() -> Option<String> {
 pub fn save_token(token: &str) -> Result<KeyLocation, String> {
     keys::AI.save(TOKEN_NAME, token)
 }
+
+/// The largest successful reply read (a served skill with its references).
+const MAX_REPLY: u64 = 8 * 1024 * 1024;
 
 pub fn delete_token() {
     keys::AI.delete(TOKEN_NAME)
@@ -424,7 +438,9 @@ impl Paparan {
         if !(200..300).contains(&resp.status) {
             return Err(error_from_response(resp));
         }
-        let body = resp.read_text();
+        // Served skills (all their reference files in one JSON) are well
+        // over the 64 KiB error-reply limit.
+        let body = resp.read_text_up_to(MAX_REPLY);
         if body.trim().is_empty() {
             return Ok(Value::Null);
         }
@@ -564,6 +580,11 @@ pub enum SkillError {
         skill: String,
         available: Vec<String>,
     },
+    /// Another provider (bring your own key, Ollama) and no local skill
+    /// folder: the skills come with a Paparan AI account.
+    NeedsPaparan {
+        skill: String,
+    },
     Other(String),
 }
 
@@ -593,6 +614,11 @@ impl std::fmt::Display for SkillError {
                 "Paparan AI has no skill {skill} (it has: {})",
                 available.join(", ")
             ),
+            Self::NeedsPaparan { skill } => write!(
+                f,
+                "document jobs need Paparan AI: the {skill} skill comes with a Paparan AI \
+                 account; sign in to Paparan AI in AI Settings"
+            ),
             Self::Other(m) => f.write_str(m),
         }
     }
@@ -609,7 +635,7 @@ impl SkillError {
                 topup_url: topup_url.clone(),
             }),
             Self::Offline { message, .. } => Some(AiError::Network(message.clone())),
-            Self::Unknown { .. } | Self::Other(_) => None,
+            Self::Unknown { .. } | Self::NeedsPaparan { .. } | Self::Other(_) => None,
         }
     }
 }
@@ -1235,6 +1261,28 @@ mod tests {
         for r in &seen {
             assert_eq!(r.method, Method::Get);
             assert!(r.headers.contains(&("authorization", "Bearer tok".into())));
+        }
+    }
+
+    #[test]
+    fn served_skill_larger_than_an_error_reply_loads() {
+        use crate::agent::{PromptSource, SkillFile};
+        // The live paparan-deck skill is ~110 KB; replies used to stop at 64 KiB.
+        let big = "x".repeat(200 * 1024);
+        let skill = json!({
+            "name": "paparan-deck",
+            "version": "v1",
+            "files": {
+                "SKILL.md": "---\nname: paparan-deck\ndescription: x\n---\n\n# Deck\n",
+                "references/big.md": big,
+            }
+        });
+        let t = Script::new(vec![ok(ME_OK), ok(&skill.to_string())]);
+        let api = Paparan::with_base("https://p.example/api/kantor", t);
+        let s = fetch_skill(&api, "tok", "paparan-deck").unwrap();
+        match s.read("references/big.md") {
+            Ok(SkillFile::Text(t)) => assert_eq!(t.len(), 200 * 1024),
+            other => panic!("{other:?}"),
         }
     }
 

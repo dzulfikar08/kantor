@@ -187,9 +187,11 @@ fn a_deck_is_built_checked_and_seen() {
         build.2
     );
     assert_eq!(build.3, vec!["deck.pptx contact sheet".to_owned()]);
+    assert!(build.2.contains("not part of the document"), "{}", build.2);
     assert!(dir.path().join("shots/deck-sheet.png").is_file());
     let look = &results[2];
     assert_eq!(look.3, vec!["deck.pptx slide 2".to_owned()]);
+    assert!(!look.2.contains("not part of the document"), "{}", look.2);
     assert!(dir.path().join("shots/deck-02.png").is_file());
     assert!(
         results[3].2.contains("saved deck2.pptx"),
@@ -308,4 +310,104 @@ fn schema_keys_and_the_primer() {
     assert_eq!(App::for_skill("paparan-sheet"), vec![App::Sheets]);
     assert_eq!(App::for_skill("paparan-doc"), vec![App::Docs]);
     assert_eq!(App::for_skill("other"), App::ALL.to_vec());
+}
+
+#[std::prelude::v1::test]
+fn made_outputs_are_the_jobs_documents_without_errors() {
+    let dir = tempfile::tempdir().unwrap();
+    let book = |second: &str| {
+        json!({"sheets": [{"name": "S", "rows": [["Item", "Value"], ["A", 1], ["B", second]]}]})
+            .to_string()
+    };
+    std::fs::write(dir.path().join("user.json"), book("2")).unwrap();
+    let mut t = DocTools::new(dir.path(), vec![App::Sheets], true).unwrap();
+    let c = Cancel::default();
+    for (src, out, second) in [
+        ("good.json", "good.xlsx", "2"),
+        ("bad.json", "bad.xlsx", "=1/0"),
+    ] {
+        assert!(
+            !t.call(
+                "write_file",
+                &json!({"path": src, "content": book(second)}),
+                &c
+            )
+            .error
+        );
+        let built = t.call(
+            "build",
+            &json!({"source": src, "output": out, "look": "none"}),
+            &c,
+        );
+        assert!(!built.error, "{}", built.text);
+        if second == "2" {
+            assert!(
+                built
+                    .text
+                    .contains("No errors: the file can be handed over"),
+                "{}",
+                built.text
+            );
+        } else {
+            assert!(
+                built.text.contains("Fix the errors before finish"),
+                "{}",
+                built.text
+            );
+        }
+    }
+    // Only the job's document that passes its check.
+    let made = t.made_outputs();
+    assert_eq!(made.files, vec!["good.xlsx".to_owned()]);
+    let checked = t.check_outputs(&["good.xlsx".to_owned()]).unwrap();
+    assert_eq!(checked.files, vec!["good.xlsx".to_owned()]);
+    assert!(
+        checked
+            .warnings
+            .iter()
+            .all(|w| w.starts_with("good.xlsx: warning"))
+    );
+}
+
+#[std::prelude::v1::test]
+fn a_failed_build_lists_every_schema_problem() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut t = tools(dir.path());
+    let c = Cancel::default();
+    let mut bad = deck();
+    bad["size"] = json!([13.3, 7.5]);
+    bad["slides"][0]["elements"][0]["colour"] = json!("#112233");
+    bad["slides"][1]["elements"][0]["sise"] = json!(20);
+    let w = t.call(
+        "write_file",
+        &json!({"path": "deck.json", "content": bad.to_string()}),
+        &c,
+    );
+    ok(&w);
+    let built = t.call(
+        "build",
+        &json!({"source": "deck.json", "output": "deck.pptx", "look": "none"}),
+        &c,
+    );
+    assert!(built.error);
+    assert!(built.text.contains("Every problem found"), "{}", built.text);
+    for p in ["size:", "\"colour\"", "\"sise\""] {
+        assert!(built.text.contains(p), "{p}: {}", built.text);
+    }
+    // A sheet's rows from a CSV in the folder, never from outside it.
+    std::fs::write(dir.path().join("data.csv"), "Item,Value\nA,1\nB,2\n").unwrap();
+    for (csv, fine) in [("data.csv", true), ("../data.csv", false)] {
+        let book = json!({"sheets": [{"name": "Data", "csv": csv}]});
+        ok(&t.call(
+            "write_file",
+            &json!({"path": "book.json", "content": book.to_string()}),
+            &c,
+        ));
+        let built = t.call(
+            "build",
+            &json!({"source": "book.json", "output": "book.xlsx", "look": "none"}),
+            &c,
+        );
+        assert_eq!(built.error, !fine, "{csv}: {}", built.text);
+    }
 }

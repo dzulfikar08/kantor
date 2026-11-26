@@ -10,13 +10,14 @@
 mod keys;
 #[cfg(test)]
 mod tests;
+mod validate;
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use kantor_ai::Cancel;
-use kantor_ai::agent::{Image, ToolOutput, ToolSpec, Tools, page_lines};
+use kantor_ai::agent::{Checked, Image, ToolOutput, ToolSpec, Tools, page_lines};
 use serde_json::{Value, json};
 
 use crate::agent::{
@@ -220,13 +221,14 @@ impl DocTools {
         Ok(())
     }
 
-    /// Picture paths in build or edit JSON (`path`, `logo`, `picture`)
-    /// must stay in the work folder; relative ones start from `base`.
+    /// Picture and data paths in build or edit JSON (`path`, `logo`,
+    /// `picture`, `csv`) must stay in the work folder; relative ones start
+    /// from `base`.
     fn check_paths(&self, v: &Value, base: &Path) -> Result<()> {
         match v {
             Value::Object(m) => {
                 for (k, v) in m {
-                    if matches!(k.as_str(), "path" | "logo" | "picture")
+                    if matches!(k.as_str(), "path" | "logo" | "picture" | "csv")
                         && let Some(s) = v.as_str()
                     {
                         let p = Path::new(s.trim());
@@ -238,8 +240,8 @@ impl DocTools {
                         let rel = joined
                             .strip_prefix(&self.root)
                             .map(|r| r.to_string_lossy().into_owned())
-                            .map_err(|_| anyhow!("picture {s}: use a file in the work folder"))?;
-                        self.resolve(&rel).with_context(|| format!("picture {s}"))?;
+                            .map_err(|_| anyhow!("{s}: use a file in the work folder"))?;
+                        self.resolve(&rel).with_context(|| s.to_owned())?;
                     } else {
                         self.check_paths(v, base)?;
                     }
@@ -585,36 +587,52 @@ impl DocTools {
         let base = source.parent().unwrap_or(&self.root).to_path_buf();
         self.check_paths(&json, &base)?;
         let mut lines = Vec::new();
-        match app {
-            App::Slides => {
-                let p = slides_author::build(&json, Some(&base))?;
-                write_file(&out, &p.to_bytes()?)?;
-                lines.push(format!("built {} ({} slides)", self.show(&out), p.len()));
+        let built = (|| -> Result<()> {
+            match app {
+                App::Slides => {
+                    let p = slides_author::build(&json, Some(&base))?;
+                    write_file(&out, &p.to_bytes()?)?;
+                    lines.push(format!("built {} ({} slides)", self.show(&out), p.len()));
+                }
+                App::Docs => {
+                    let built = crate::agent::docs_author::build(&json, Some(&base))?;
+                    write_file(&out, &built.bytes)?;
+                    lines.push(format!(
+                        "built {} ({} page{})",
+                        self.show(&out),
+                        built.pages,
+                        if built.pages == 1 { "" } else { "s" }
+                    ));
+                    lines.extend(built.warnings.iter().map(|w| format!("note: {w}")));
+                }
+                App::Sheets => {
+                    let book = sheets_author::build(&json, Some(&base))?;
+                    write_file(&out, &sheets_author::to_bytes(&book)?)?;
+                    let n = book.sheet_names().len();
+                    lines.push(format!(
+                        "built {} ({n} sheet{})",
+                        self.show(&out),
+                        if n == 1 { "" } else { "s" }
+                    ));
+                }
             }
-            App::Docs => {
-                let built = crate::agent::docs_author::build(&json, Some(&base))?;
-                write_file(&out, &built.bytes)?;
-                lines.push(format!(
-                    "built {} ({} page{})",
-                    self.show(&out),
-                    built.pages,
-                    if built.pages == 1 { "" } else { "s" }
-                ));
-                lines.extend(built.warnings.iter().map(|w| format!("note: {w}")));
+            Ok(())
+        })();
+        if let Err(e) = built {
+            // The builder stops at its first error: list every problem the
+            // schema shows, so they're fixed in one round.
+            let found = validate::problems(&app.schema(), &json);
+            if found.len() > 1 {
+                bail!(
+                    "{e:#}\nEvery problem found against the schema (JSON paths, counting from 0); fix them together:\n- {}",
+                    found.join("\n- ")
+                );
             }
-            App::Sheets => {
-                let book = sheets_author::build(&json, Some(&base))?;
-                write_file(&out, &sheets_author::to_bytes(&book)?)?;
-                let n = book.sheet_names().len();
-                lines.push(format!(
-                    "built {} ({n} sheet{})",
-                    self.show(&out),
-                    if n == 1 { "" } else { "s" }
-                ));
-            }
+            return Err(e);
         }
-        let (check, _) = check_file(&out, &json!({}), false)?;
+        let (check, errors) = check_file(&out, &json!({}), false)?;
         lines.push(format!("check: {check}"));
+        lines.push(verdict(errors).to_owned());
         let mut result = ToolOutput::ok(lines.join("\n"));
         if str_arg(args, "look") != Some("none") {
             match self.render(&out, None, true, None) {
@@ -634,8 +652,9 @@ impl DocTools {
     fn check(&self, args: &Value) -> Result<ToolOutput> {
         let path = self.existing(args, "file")?;
         let info = args.get("info").and_then(Value::as_bool).unwrap_or(false);
-        let (text, _) = check_file(&path, args, info)?;
-        Ok(ToolOutput::ok(text).more("check one slide (slide) or sheet (sheet) at a time"))
+        let (text, errors) = check_file(&path, args, info)?;
+        Ok(ToolOutput::ok(format!("{}\n{text}", verdict(errors)))
+            .more("check one slide (slide) or sheet (sheet) at a time"))
     }
 
     fn list(&self, args: &Value) -> Result<ToolOutput> {
@@ -919,6 +938,13 @@ impl DocTools {
             )
             .replace('\\', "/");
         let mut text = format!("{summary}; saved {}", saved.join(", "));
+        if sheet {
+            // A model once spent 12 steps removing a "1" from a letter's
+            // footer: it was the tile's label.
+            text.push_str(&format!(
+                "; the number under each tile is the {what} number Kantor draws on the contact sheet, not part of the document"
+            ));
+        }
         if saved.len() > MAX_LOOK {
             text.push_str(&format!(
                 "; showing the first {MAX_LOOK}: ask for the others with pages"
@@ -1104,6 +1130,15 @@ impl Tools for DocTools {
         for app in &self.apps {
             out.push_str("\n\n");
             out.push_str(&keys::summary(*app, &app.schema()));
+            if *app == App::Sheets {
+                out.push_str(
+                    "\nA sheet's `csv` key copies a CSV file's rows (numbers and dates typed) \
+                     from `start`: use it for the user's data instead of retyping it in `rows`. \
+                     Messy values (numbers as text such as \"Rp 39.659.000\", extra spaces) are \
+                     cleaned by the sheet's `ops` (`trim`, `to_numbers`, `to_dates`) after it, \
+                     not by retyping the data.",
+                );
+            }
         }
         let files = walk(&self.root, 2);
         out.push_str("\n\n# The work folder now\n");
@@ -1141,9 +1176,10 @@ impl Tools for DocTools {
         r.unwrap_or_else(|e| ToolOutput::error(format!("{e:#}")))
     }
 
-    fn check_outputs(&mut self, outputs: &[String]) -> Result<Vec<String>, String> {
+    fn check_outputs(&mut self, outputs: &[String]) -> Result<Checked, String> {
         let mut problems = Vec::new();
         let mut shown = Vec::new();
+        let mut warnings = Vec::new();
         for o in outputs {
             let path = match self.resolve(o) {
                 Ok(p) => p,
@@ -1156,22 +1192,12 @@ impl Tools for DocTools {
                 problems.push(format!("{o} doesn't exist"));
                 continue;
             }
-            let ext = path
-                .extension()
-                .map(|e| e.to_string_lossy().to_ascii_lowercase())
-                .unwrap_or_default();
-            if matches!(ext.as_str(), "pptx" | "docx" | "xlsx" | "xlsm") {
+            if is_document(&path) {
                 match check_file(&path, &json!({}), false) {
-                    Ok((_, 0)) => {}
+                    Ok((text, 0)) => warnings.extend(findings(&text, "warning", o)),
                     Ok((text, _)) => {
-                        let errors: Vec<&str> = text
-                            .lines()
-                            .filter(|l| {
-                                l.starts_with(char::is_whitespace)
-                                    && l.trim_start().starts_with("error")
-                            })
-                            .take(20)
-                            .collect();
+                        let errors: Vec<String> =
+                            findings(&text, "error", o).into_iter().take(20).collect();
                         problems.push(format!(
                             "{o}: the check reports errors:\n{}",
                             errors.join("\n")
@@ -1183,10 +1209,64 @@ impl Tools for DocTools {
             shown.push(self.show(&path));
         }
         if problems.is_empty() {
-            Ok(shown)
+            Ok(Checked {
+                files: shown,
+                warnings,
+            })
         } else {
             Err(problems.join("\n"))
         }
+    }
+
+    fn made_outputs(&mut self) -> Checked {
+        let mut out = Checked::default();
+        for (rel, _) in walk(&self.root, 3) {
+            if self.originals.contains(&rel) || rel.starts_with("shots") {
+                continue;
+            }
+            let path = self.root.join(&rel);
+            if !is_document(&path) {
+                continue;
+            }
+            let shown = rel.to_string_lossy().replace('\\', "/");
+            if let Ok((text, 0)) = check_file(&path, &json!({}), false) {
+                out.warnings.extend(findings(&text, "warning", &shown));
+                out.files.push(shown);
+            }
+        }
+        out
+    }
+}
+
+/// A .pptx, .docx or .xlsx (what `check` reads).
+fn is_document(path: &Path) -> bool {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(ext.as_str(), "pptx" | "docx" | "xlsx" | "xlsm")
+}
+
+/// The findings of `severity` in a check report, as `file: finding`.
+fn findings(text: &str, severity: &str, file: &str) -> Vec<String> {
+    text.lines()
+        .filter(|l| l.starts_with(char::is_whitespace) && l.trim_start().starts_with(severity))
+        .map(|l| {
+            format!(
+                "{file}: {}",
+                l.split_whitespace().collect::<Vec<_>>().join(" ")
+            )
+        })
+        .collect()
+}
+
+/// After a check with no errors: warnings don't hold the job up.
+fn verdict(errors: usize) -> &'static str {
+    if errors == 0 {
+        "No errors: the file can be handed over. Fix only the warnings that change what the \
+         reader sees; name the rest in the finish summary."
+    } else {
+        "Fix the errors before finish (warnings may stay)."
     }
 }
 

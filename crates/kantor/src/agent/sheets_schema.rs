@@ -386,7 +386,7 @@ pub fn workbook() -> Value {
     for k in SHEET_KEYS {
         let v = match *k {
             "name" => s("The sheet's name (default Sheet1, Sheet2...)."),
-            "start" => s("Where `rows` or `columns` start (default A1)."),
+            "start" => s("Where `rows`, `columns` or `csv` start (default A1)."),
             "rows" => {
                 let mut g = grid.clone();
                 g["description"] = json!(
@@ -400,6 +400,9 @@ pub fn workbook() -> Value {
                     json!("The data column by column from `start` (each inner array is a column).");
                 g
             }
+            "csv" => s(
+                "A CSV/TSV file in the folder (path relative to this JSON) whose rows are written from `start`, numbers and dates as typed, instead of `rows`: copy the user's data without retyping it.",
+            ),
             "cells" => {
                 json!({"type": "object", "description": "Single cells: {\"B9\": \"=SUM(B2:B8)\", \"A9\": \"Total\"}.", "additionalProperties": {"type": ["string", "number", "boolean", "null"]}})
             }

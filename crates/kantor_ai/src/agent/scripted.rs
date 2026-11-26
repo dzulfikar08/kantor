@@ -6,7 +6,7 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 
-use super::Model;
+use super::{Model, StepOptions};
 use crate::AiError;
 use crate::client::{Cancel, Reply, ToolCall, Usage};
 
@@ -24,6 +24,9 @@ pub struct Scripted {
     pub seen: Mutex<Vec<Vec<Value>>>,
     /// The system prompt last sent.
     pub system: Mutex<String>,
+    /// The tools and options each step was sent.
+    pub tools: Mutex<Vec<Value>>,
+    pub opts: Mutex<Vec<StepOptions>>,
 }
 
 impl Scripted {
@@ -39,6 +42,29 @@ impl Scripted {
         self.seen
             .lock()
             .map(|s| s.get(n - 1).cloned().unwrap_or_default())
+            .unwrap_or_default()
+    }
+
+    /// The names of the tools offered on step `n` (from 1).
+    pub fn tools_on(&self, n: usize) -> Vec<String> {
+        self.tools
+            .lock()
+            .ok()
+            .and_then(|t| t.get(n - 1).cloned())
+            .and_then(|t| t.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|t| t.pointer("/function/name").and_then(Value::as_str))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The options of step `n` (from 1).
+    pub fn opts_on(&self, n: usize) -> StepOptions {
+        self.opts
+            .lock()
+            .ok()
+            .and_then(|o| o.get(n - 1).cloned())
             .unwrap_or_default()
     }
 
@@ -91,10 +117,35 @@ impl Model for Scripted {
         &self,
         system: &str,
         messages: &[Value],
-        _tools: &Value,
+        tools: &Value,
         cancel: &Cancel,
         on_text: &mut dyn FnMut(&str),
     ) -> Result<Reply, AiError> {
+        self.complete_with(
+            system,
+            messages,
+            tools,
+            &StepOptions::default(),
+            cancel,
+            on_text,
+        )
+    }
+
+    fn complete_with(
+        &self,
+        system: &str,
+        messages: &[Value],
+        tools: &Value,
+        opts: &StepOptions,
+        cancel: &Cancel,
+        on_text: &mut dyn FnMut(&str),
+    ) -> Result<Reply, AiError> {
+        if let Ok(mut t) = self.tools.lock() {
+            t.push(tools.clone());
+        }
+        if let Ok(mut o) = self.opts.lock() {
+            o.push(opts.clone());
+        }
         if cancel.is_cancelled() {
             return Err(AiError::Cancelled);
         }
