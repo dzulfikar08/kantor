@@ -149,24 +149,31 @@ impl Workbook {
         self.sheet_name_taken(name, None).is_ok()
     }
 
-    /// The name Insert gives a new sheet: `Sheet` and the number after the
-    /// highest `SheetN` there is.
+    /// The name Insert gives a new sheet: `Sheet` (`Lembar` in Indonesian,
+    /// as Excel names them in the interface language) and the number after
+    /// the highest such name there is.
     pub fn next_sheet_name(&self) -> String {
+        let template = crate::content_text::tr("Sheet{}");
+        let (pre, post) = template.split_once("{}").unwrap_or((template, ""));
+        let number = |s: &str| -> Option<u32> {
+            let len = s.len().checked_sub(post.len())?;
+            s.get(..pre.len()).filter(|p| p.eq_ignore_ascii_case(pre))?;
+            s.get(len..).filter(|p| p.eq_ignore_ascii_case(post))?;
+            s.get(pre.len()..len)?.parse().ok()
+        };
         let mut n = self
             .sheet_names()
             .into_iter()
             .chain(self.chart_sheets_now().into_iter().map(|c| c.name))
-            .filter_map(|s| {
-                s.get(..5).filter(|p| p.eq_ignore_ascii_case("sheet"))?;
-                s.get(5..)?.parse::<u32>().ok()
-            })
+            .filter_map(|s| number(&s))
             .max()
             .unwrap_or(0)
             + 1;
-        while !self.name_free(&format!("Sheet{n}")) {
+        let name = |n: u32| format!("{pre}{n}{post}");
+        while !self.name_free(&name(n)) {
             n += 1;
         }
-        format!("Sheet{n}")
+        name(n)
     }
 
     /// The name Move or Copy gives a copy of `name`: `name (2)`, `(3)`…,

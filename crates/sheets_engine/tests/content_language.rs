@@ -25,6 +25,7 @@ fn indonesian(en: &'static str) -> &'static str {
         "{} Total" => "Total {}",
         "(blank)" => "(kosong)",
         "(All)" => "(Semua)",
+        "Sheet{}" => "Lembar{}",
         other => other,
     }
 }
@@ -151,6 +152,36 @@ fn assert_same_package(a: &Path, b: &Path) {
         }
         assert_eq!(Some(text), b.get(name), "{name} changed");
     }
+}
+
+/// A PivotTable on a new sheet names it as Insert does, in the interface
+/// language (`Lembar1`, not IronCalc's English `Sheet2`), with a number no
+/// sheet has.
+#[test]
+fn new_sheets_are_named_in_the_interface_language() {
+    sheets_engine::set_content_translator(indonesian);
+    let mut wb = data_book();
+    assert_eq!(wb.next_sheet_name(), "Lembar1");
+    let (s, _, _) = wb
+        .insert_pivot("Sheet1!$A$1:$C$4", 0, PivotDestination::NewSheet)
+        .unwrap();
+    assert_eq!(wb.sheet_names()[s as usize], "Lembar1");
+    assert_eq!(
+        s as usize,
+        wb.sheet_names().len() - 1,
+        "after the last sheet"
+    );
+    // Insert counts on from the highest, whatever the case.
+    wb.rename_sheet(s, "lembar7").unwrap();
+    let t = wb.insert_sheet(wb.tabs().len()).unwrap();
+    assert_eq!(wb.sheet_names()[t as usize], "Lembar8");
+    let (p, _, _) = wb
+        .insert_pivot("Sheet1!$A$1:$C$4", 0, PivotDestination::NewSheet)
+        .unwrap();
+    assert_eq!(wb.sheet_names()[p as usize], "Lembar9");
+    // One undo takes the PivotTable and its sheet back.
+    wb.undo().unwrap();
+    assert_eq!(wb.sheet_names(), ["Sheet1", "lembar7", "Lembar8"]);
 }
 
 #[test]

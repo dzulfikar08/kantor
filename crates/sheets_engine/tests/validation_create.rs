@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use pivot_check::{el, els, parts};
 use roxmltree::Document;
 use sheets_engine::{
-    CellRange, ErrorStyle, Message, Validation, ValidationOperator, ValidationType, Workbook,
-    list_source, validation_operand,
+    CellRange, ErrorStyle, Message, NumberFormat, StyleChange, Validation, ValidationOperator,
+    ValidationType, Workbook, list_source, validation_operand,
 };
 
 fn scratch(name: &str) -> PathBuf {
@@ -261,6 +261,24 @@ fn typed_time_formula_bar_text() {
         assert_eq!(wb.input(0, row, 0), before);
         assert_eq!(wb.display(0, row, 0).text, shown);
     }
+}
+
+/// A date whose format writes it another way (`2026-12-15`) shows in the
+/// formula bar as Excel's short date, which reads back as the same date and
+/// keeps the cell's format.
+#[test]
+fn formatted_date_formula_bar_text() {
+    let mut wb = Workbook::new_empty().unwrap();
+    wb.set_input(0, 0, 0, "12/15/2026").unwrap();
+    let a1 = CellRange::from_corners((0, 0), (0, 0));
+    wb.set_range_style(0, a1, StyleChange::NumberFormat(NumberFormat::Date))
+        .unwrap();
+    assert_eq!(wb.display(0, 0, 0).text, "2026-12-15");
+    assert_eq!(wb.input(0, 0, 0), "12/15/2026");
+    let typed = wb.input(0, 0, 0);
+    wb.set_input(0, 0, 0, &typed).unwrap();
+    assert_eq!(wb.display(0, 0, 0).text, "2026-12-15");
+    assert_eq!(wb.input(0, 0, 0), "12/15/2026");
 }
 
 /// What "Apply these changes to all other cells with the same settings"
