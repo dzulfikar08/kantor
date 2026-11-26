@@ -1044,11 +1044,22 @@ fn place(
     let mut repeat = 1;
     let mut hashes = None;
     if t.number && line.width > avail + 0.5 && !t.shrink {
-        // A number that doesn't fit: ####, as Excel shows it.
-        hashes = Some(line.width);
-        let hash = shaper.line("#", &t.font);
-        let n = ((avail / hash.width.max(0.1)).floor() as usize).max(1);
-        line = shaper.line(&"#".repeat(n), &t.font);
+        // A number that doesn't fit: a General number with fewer decimals
+        // (or in scientific notation), else ####, as Excel shows it and the
+        // grid draws it.
+        let fit = sheets_engine::fit_number(&t.text, t.general, |s| {
+            shaper.line(s, &t.font).width <= avail + 0.5
+        });
+        match fit {
+            sheets_engine::NumberFit::Fits => {}
+            sheets_engine::NumberFit::Shorter(s) => line = shaper.line(&s, &t.font),
+            sheets_engine::NumberFit::Hashes => {
+                hashes = Some(line.width);
+                let hash = shaper.line("#", &t.font);
+                let n = ((avail / hash.width.max(0.1)).floor() as usize).max(1);
+                line = shaper.line(&"#".repeat(n), &t.font);
+            }
+        }
     } else if let Some((ch, at)) = t.repeat {
         // `*x` in the number format: x repeated to fill the cell.
         let one = shaper.line(&ch.to_string(), &t.font);

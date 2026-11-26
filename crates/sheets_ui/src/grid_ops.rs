@@ -178,30 +178,60 @@ pub enum GridCommand {
 const FIT_MAX_CELLS: usize = 10_000;
 
 /// The width that fits every filled cell of column `col` (cell padding and
-/// gridline included), or `None` for an empty column.
+/// gridline included), or `None` for an empty column. Each cell is measured
+/// in the font the grid draws it in: its family, size, bold and italic,
+/// with a table's or pivot table's style and conditional formats applied
+/// (a pivot table's bold grand total is measured bold). At 100 % zoom.
 pub(crate) fn fit_width(
-    book: &Workbook,
+    book: &mut Workbook,
     sheet: u32,
     col: u32,
+    fonts: &mut crate::look::FontCache,
     window: &mut Window,
+    cx: &App,
 ) -> Option<Pixels> {
-    let texts = book.column_texts(sheet, col);
-    if texts.is_empty() {
-        return None;
-    }
-    let style = window.text_style();
-    let mut widest = px(0.);
-    for (text, bold) in texts.into_iter().take(FIT_MAX_CELLS) {
-        let text = text.replace('\n', " ");
-        let mut run = style.to_run(text.len());
-        if bold {
+    let default_font_size = book.default_font_size();
+    let base = window.text_style();
+    fit_width_with(book, sheet, col, |text, style| {
+        // Uncapped by the row: a large font in a short row is drawn smaller,
+        // and the width then has room to spare.
+        let size = crate::look::text_size(style, default_font_size, FONT_BODY, px(10_000.));
+        let mut run = base.to_run(text.len());
+        if let Some(family) = fonts.for_style(style, cx) {
+            run.font.family = family;
+        }
+        if style.bold {
             run.font.weight = FontWeight::BOLD;
         }
-        let width = window
+        if style.italic {
+            run.font.style = FontStyle::Italic;
+        }
+        window
             .text_system()
-            .shape_line(text.into(), FONT_BODY, &[run], None)
-            .width;
-        widest = widest.max(width);
+            .shape_line(text.to_owned().into(), size, &[run], None)
+            .width
+    })
+}
+
+/// [`fit_width`] with the text measured by `measure` (text, the style it
+/// is drawn in): the widest cell plus its indent, the cell padding and the
+/// gridline.
+pub(crate) fn fit_width_with(
+    book: &mut Workbook,
+    sheet: u32,
+    col: u32,
+    mut measure: impl FnMut(&str, &sheets_engine::CellStyle) -> Pixels,
+) -> Option<Pixels> {
+    let cells = book.column_fit_cells(sheet, col);
+    if cells.is_empty() {
+        return None;
+    }
+    let mut widest = px(0.);
+    for cell in cells.into_iter().take(FIT_MAX_CELLS) {
+        let text = cell.text.replace('\n', " ");
+        // Excel's indent step, as the grid draws it (see `look::Content`).
+        let indent = FONT_BODY * 1.5 * cell.style.indent.min(250) as f32;
+        widest = widest.max(measure(&text, &cell.style) + indent);
     }
     Some((widest + SPACE_3 * 2. + GRID_LINE).ceil())
 }
@@ -838,7 +868,8 @@ impl SheetsView {
             let widths: Vec<(u32, f64)> = (cols.0..=last)
                 .filter_map(|col| {
                     let width = if fit {
-                        f64::from(f32::from(fit_width(&grid.book, sheet, col, window)?))
+                        let w = fit_width(&mut grid.book, sheet, col, &mut grid.fonts, window, cx)?;
+                        f64::from(f32::from(w))
                     } else {
                         default
                     };
@@ -1065,6 +1096,38 @@ pub(crate) fn corner_element(element: Stateful<Div>, view: &WeakEntity<SheetsVie
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Autofit measures each cell in the style the grid draws it in: a
+    /// pivot table's bold grand total row is measured bold.
+    #[std::prelude::v1::test]
+    fn autofit_measures_pivot_bold() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/corpus/xlsx/21_pivot_tables.xlsx");
+        let mut book = Workbook::open(&path).unwrap();
+        let s = book
+            .sheet_names()
+            .iter()
+            .position(|n| n == "Pivot")
+            .unwrap() as u32;
+        // Bold text is (much) wider in this fake font.
+        let measure =
+            |_: &str, style: &sheets_engine::CellStyle| px(if style.bold { 100. } else { 10. });
+        let pad = SPACE_3 * 2. + GRID_LINE;
+        // Column C holds the grand total row (bold by the pivot style).
+        assert_eq!(
+            fit_width_with(&mut book, s, 2, measure),
+            Some((px(100.) + pad).ceil())
+        );
+        // A column of plain cells.
+        let mut plain = Workbook::new_empty().unwrap();
+        plain.set_input(0, 0, 0, "12.5").unwrap();
+        plain.set_input(0, 3, 0, "text").unwrap();
+        assert_eq!(
+            fit_width_with(&mut plain, 0, 0, measure),
+            Some((px(10.) + pad).ceil())
+        );
+        assert_eq!(fit_width_with(&mut plain, 0, 1, measure), None);
+    }
 
     #[std::prelude::v1::test]
     fn refreezing_below_frozen_panes_starts_at_the_screen() {

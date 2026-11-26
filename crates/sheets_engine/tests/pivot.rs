@@ -187,6 +187,22 @@ fn pivots_are_found_and_styled() {
     assert!(!wb.table_cell_look(t, 1, 2).unwrap().bold);
 }
 
+/// Autofit measures cells in the style the grid draws them in: a pivot
+/// style's bold grand total row is bold, though the cells themselves aren't.
+#[test]
+fn fit_cells_carry_the_pivot_style() {
+    let mut wb = Workbook::open(fixture()).unwrap();
+    let s = sheet_index(&wb, "Pivot");
+    assert!(!wb.cell_style(s, 7, 2).bold);
+    let cells = wb.column_fit_cells(s, 2);
+    let grand = cells.iter().find(|c| c.row == 7).expect("grand total cell");
+    assert!(grand.style.bold, "{grand:?}");
+    assert_eq!(grand.text, wb.display_value(s, 7, 2));
+    let cells = wb.column_fit_cells(s, 1);
+    let body = cells.iter().find(|c| c.row == 4).expect("body cell");
+    assert!(!body.style.bold, "{body:?}");
+}
+
 #[test]
 fn refreshing_unchanged_data_gives_the_same_cells() {
     // The generator laid the pivots out the way Excel does; refreshing from

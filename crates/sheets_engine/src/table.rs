@@ -17,7 +17,7 @@ use std::io::Read;
 use ironcalc_base::types::{Color, Table, Theme};
 use roxmltree::Node;
 
-use crate::format::{BorderLine, LineStyle, Rgb, parse_rgb};
+use crate::format::{BorderLine, CellStyle, LineStyle, Rgb, parse_rgb};
 use crate::{CellRange, Workbook};
 
 /// A table, as the grid needs it. Rows and columns are 0-based.
@@ -108,6 +108,29 @@ pub struct TableCellLook {
     /// Indent steps a pivot table gives a compact row label (its level),
     /// unless the cell has its own.
     pub indent: u32,
+}
+
+impl TableCellLook {
+    /// `style` (a cell's own) with this look under it: the cell's own fill,
+    /// text colour and indent win, bold and italic add up. This is how the
+    /// grid and print draw a table or pivot table cell.
+    pub fn under(&self, style: &CellStyle) -> CellStyle {
+        let mut s = style.clone();
+        if s.fill.is_none() {
+            s.fill = self.fill;
+        }
+        if s.font_color.is_none() {
+            s.font_color = self.font_color;
+        }
+        s.bold |= self.bold;
+        s.italic |= self.italic;
+        s.underline |= self.underline;
+        s.strikethrough |= self.strike;
+        if s.indent == 0 {
+            s.indent = self.indent;
+        }
+        s
+    }
 }
 
 /// One element of a table style (`wholeTable`, `headerRow`...): a
