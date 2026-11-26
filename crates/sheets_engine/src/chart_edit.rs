@@ -1165,15 +1165,19 @@ pub(crate) fn chart_space(spec: &ChartSpec, series: &[NewSeries]) -> String {
 /// The chart area of a chart made in Kantor, as Excel's default: the
 /// theme's background (white) with a light grey border. Without a fill the
 /// chart is see-through, and on a dark grid its dark text can't be read.
-const CHART_AREA: &str = "<c:spPr><a:solidFill><a:schemeClr val=\"bg1\"/></a:solidFill><a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\"><a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill><a:round/></a:ln></c:spPr>";
+pub const CHART_AREA_FILL: &str = "<a:solidFill><a:schemeClr val=\"bg1\"/></a:solidFill><a:ln w=\"9525\" cap=\"flat\" cmpd=\"sng\" algn=\"ctr\"><a:solidFill><a:schemeClr val=\"tx1\"><a:lumMod val=\"15000\"/><a:lumOff val=\"85000\"/></a:schemeClr></a:solidFill><a:round/></a:ln>";
 
-/// A Sheets chart part with [`CHART_AREA`] (Slides and Docs charts sit on
+/// A Sheets chart part with [`CHART_AREA_FILL`] (Slides and Docs charts sit on
 /// their slide or page, see-through as PowerPoint and Word make them).
 fn with_chart_area(xml: String) -> String {
     match xml.rfind("</c:chart>") {
         Some(i) if !xml[i..].contains("<c:spPr>") => {
             let at = i + "</c:chart>".len();
-            format!("{}{CHART_AREA}{}", &xml[..at], &xml[at..])
+            format!(
+                "{}<c:spPr>{CHART_AREA_FILL}</c:spPr>{}",
+                &xml[..at],
+                &xml[at..]
+            )
         }
         _ => xml,
     }
@@ -1269,12 +1273,14 @@ mod tests {
         };
         let xml = with_chart_area(chart_space(&spec, &[]));
         assert!(
-            xml.ends_with(&format!("</c:chart>{CHART_AREA}</c:chartSpace>")),
+            xml.ends_with(&format!(
+                "</c:chart><c:spPr>{CHART_AREA_FILL}</c:spPr></c:chartSpace>"
+            )),
             "{xml}"
         );
         // Slides and Docs charts (chart_space alone) stay see-through.
         assert!(!chart_space(&spec, &[]).contains("bg1"));
         assert_eq!(with_chart_area(xml.clone()), xml, "added once");
-        assert!(CHART_AREA.contains("<a:schemeClr val=\"bg1\"/>"));
+        assert!(CHART_AREA_FILL.contains("<a:schemeClr val=\"bg1\"/>"));
     }
 }
