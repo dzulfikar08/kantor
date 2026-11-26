@@ -11,6 +11,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ### Changed
 
+- Paparan AI no longer mistakes the page numbers Kantor draws under each page of a contact sheet for text in the
+  document.
 - Paparan AI jobs cost less. The model's reasoning from one step goes back with it to the next, so it carries on
   from its plan instead of working it out again (reasoning is paid as output). A whole JSON file the model wrote
   stays in the conversation in a job of normal size: with a placeholder in its place, the model took the write for
