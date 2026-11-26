@@ -366,3 +366,46 @@ fn made_outputs_are_the_jobs_documents_without_errors() {
             .all(|w| w.starts_with("good.xlsx: warning"))
     );
 }
+
+#[std::prelude::v1::test]
+fn a_failed_build_lists_every_schema_problem() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut t = tools(dir.path());
+    let c = Cancel::default();
+    let mut bad = deck();
+    bad["size"] = json!([13.3, 7.5]);
+    bad["slides"][0]["elements"][0]["colour"] = json!("#112233");
+    bad["slides"][1]["elements"][0]["sise"] = json!(20);
+    let w = t.call(
+        "write_file",
+        &json!({"path": "deck.json", "content": bad.to_string()}),
+        &c,
+    );
+    ok(&w);
+    let built = t.call(
+        "build",
+        &json!({"source": "deck.json", "output": "deck.pptx", "look": "none"}),
+        &c,
+    );
+    assert!(built.error);
+    assert!(built.text.contains("Every problem found"), "{}", built.text);
+    for p in ["size:", "\"colour\"", "\"sise\""] {
+        assert!(built.text.contains(p), "{p}: {}", built.text);
+    }
+    // A sheet's rows from a CSV in the folder, never from outside it.
+    std::fs::write(dir.path().join("data.csv"), "Item,Value\nA,1\nB,2\n").unwrap();
+    for (csv, fine) in [("data.csv", true), ("../data.csv", false)] {
+        let book = json!({"sheets": [{"name": "Data", "csv": csv}]});
+        ok(&t.call(
+            "write_file",
+            &json!({"path": "book.json", "content": book.to_string()}),
+            &c,
+        ));
+        let built = t.call(
+            "build",
+            &json!({"source": "book.json", "output": "book.xlsx", "look": "none"}),
+            &c,
+        );
+        assert_eq!(built.error, !fine, "{csv}: {}", built.text);
+    }
+}

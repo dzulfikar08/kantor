@@ -93,7 +93,9 @@ These come from running the Paparan skills with a cheap model through a general 
   cheap models otherwise loop on warnings until the step limit.
 - **Steps.** `max_steps` defaults to 24 (the jobs that finish well take 10 to 20). From a quarter
   of the steps before the end the model is told how many are left and to wrap up with what
-  exists; the last step is offered only `finish` (other calls aren't run).
+  exists; the last step runs only `finish` (other calls aren't run; it is offered the same tools,
+  since a different tool list would end the prompt cache and re-read the conversation at full
+  price).
 - **Budgets.** `max_tokens` and `max_cost` (with prices). Before each step the loop estimates
   its input (the last step's input plus what was added since, a picture as about 1,000 tokens,
   the cached prefix priced as cached) and gives the reply what is left after it: the step is
@@ -111,7 +113,19 @@ These come from running the Paparan skills with a cheap model through a general 
   and with Indonesian data an English request got an Indonesian deck.
 - **Reasoning.** `Limits::reasoning` goes to every step as `reasoning_effort`. Thinking models'
   reasoning is paid as output (4 times input's price, 200 times cached input's) and was two
-  thirds of a job's cost; `low` about halves it.
+  thirds of a job's cost; `low` about halves it. Each step's reasoning goes back with its turn
+  as `reasoning_content` (`Limits::keep_reasoning`), so the model goes on from its plan instead
+  of working it out again on the next step; it is re-read from the cache at 2% of the price of
+  writing it. A follow-up request starts without the earlier reasoning.
+- **Batched steps.** The rules ask for a plan of about four steps: read the inputs and the skill
+  files the job needs in one step, write the JSON and `build` it in one reply, fix errors with
+  small `replace_in_file` patches plus `build` (never by rewriting the file), then `finish` with
+  a short summary. `build` already returns the check and the contact sheet.
+- **A failed build lists every problem.** The builders stop at their first error, so a model
+  paid a step and a rebuild per wrong key. When a build fails, the source is also checked
+  against the app's JSON Schema (`harness/validate.rs`: `$ref`, types, unknown and missing
+  keys, enums, `anyOf`) and every problem is listed with its JSON path. It only explains a
+  failed build, so a difference between schema and builder never refuses a good one.
 - **Cancellation** between steps and between streamed pieces.
 
 ## Keeping the conversation small
@@ -129,11 +143,16 @@ Every step resends the whole conversation, which dominates the cost.
   picture of a page drops older pictures of that page, a picture of a changed file drops every
   older picture of it, and at most `max_images` (default 4) stay; dropped ones become a one-line
   note.
-- Tool results over `max_result_chars` (12,000) are cut with a note on how to page. Every fourth
-  step, results at least four steps old are cut to about 1,500 characters (not every step: each
-  cut ends the provider's prompt cache there, and cached input costs 2% of fresh input), and
-  strings over 1,500 characters in older tool-call arguments (a whole `deck.json` sent to
-  `write_file`) are replaced by a note ("read the file") before they are first sent back. Old
+- Tool results over `max_result_chars` (12,000) are cut with a note on how to page. Once the
+  conversation is over `old_results_over` (160,000 characters, about 40k tokens), every fourth
+  step, results at least four steps old are cut to about 1,500 characters. Not earlier and not
+  every step: each cut ends the provider's prompt cache there, and cached input costs 2% of
+  fresh input, so in a job of normal size a cut cost more (the rest re-read fresh) than it
+  saved. Past the same size, strings over 1,500 characters in older tool-call arguments (a
+  whole `deck.json` sent to `write_file`) are replaced by a note saying the call ran and
+  `read_file` shows the file. Not earlier: with the note in a short job, DeepSeek took its own
+  call for a failed write and wrote the whole file again, two or three times (40 credits each
+  for a workbook). Old
   messages are changed only once, so the provider's prompt cache keeps the prefix up to them.
 
 ## Tools
@@ -145,7 +164,7 @@ can be read but not overwritten.
 | Tool | Does |
 |---|---|
 | `list_files`, `read_file`, `write_file`, `replace_in_file` | files; PNG/JPEG come back as pictures |
-| `build` | JSON → .pptx/.docx/.xlsx, then `check` and the contact sheet (the skills' `build.sh`) |
+| `build` | JSON → .pptx/.docx/.xlsx, then `check` and the contact sheet (the skills' `build.sh`); a sheet's `csv` key copies a CSV's rows, so the model doesn't retype the user's data |
 | `check`, `list`, `edit`, `schema` | as `kantor slides|docs|sheets …`; `edit` takes the ops inline |
 | `look` | contact sheet or pages as pictures (at most 4), saved under `shots/` |
 | `convert` | `kantor convert` (PDF copies, CSV ↔ xlsx, .doc → .docx, …) |
@@ -187,6 +206,23 @@ From the 0.25.0 jobs (DeepSeek V4.1 Flash on Workers AI, Nov 2026):
 - Wasted steps: a false `sum_misses_rows` error (a date label beside the amounts) sent a
   workbook job round in circles for 40 steps; another finished all errors and then fixed
   warnings until the step limit.
+
+From the cheaper-jobs round (Nov 2026; GLM-5.3 Flash on Z.ai for iteration, DeepSeek to confirm):
+
+- A model that saw its own `write_file` call with a placeholder in place of the content took
+  it for a failed write and wrote the whole file again, two or three times: 40 credits per
+  rewrite for a workbook, the largest single waste found. Long arguments now stay whole until
+  the conversation is long.
+- Without its earlier reasoning, DeepSeek planned the deck again on every step (5,000 to 8,000
+  reasoning tokens a step while reading references). Sent back, later steps think for a few
+  hundred tokens.
+- Builders stop at their first error; GLM took up to four builds (two steps each) to find
+  four wrong keys. The schema check lists them together.
+- The CSV's rows were retyped into `rows` (96 rows: about 5,000 output tokens, 30 credits);
+  the `csv` key copies them.
+- A finish-only tool list on the last step re-read the whole conversation uncached.
+- Budgets under about 100 credits stop a deck before it is written: the loop keeps room for
+  three typical steps, and a deck's write step is the largest.
 
 ## Tests
 

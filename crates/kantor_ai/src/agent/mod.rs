@@ -273,17 +273,26 @@ pub struct Limits {
     /// A tool result longer than this (characters) is cut.
     pub max_result_chars: usize,
     /// Strings longer than this in tool-call arguments are left out of
-    /// later steps.
+    /// later steps (once the conversation is over `old_results_over`).
     pub compact_args_over: usize,
     /// Tool results this many steps old are cut to about half of
     /// `old_result_chars`.
     pub old_result_steps: u32,
     pub old_result_chars: usize,
+    /// Old results are cut only once the conversation is longer than this
+    /// (characters): a cut ends the provider's prompt cache there, and
+    /// re-reading what follows uncached costs more than the cut saves
+    /// until the conversation is long.
+    pub old_results_over: usize,
     /// Tries again after a network error, time-out or server error.
     pub retries: u32,
     /// `reasoning_effort` sent with every step (`low` keeps a thinking
     /// model's hidden reasoning, paid as output, short).
     pub reasoning: Option<String>,
+    /// Send each step's reasoning back with its turn
+    /// (`reasoning_content`), so a thinking model goes on from its plan
+    /// instead of working it out again (paid as output) every step.
+    pub keep_reasoning: bool,
 }
 
 /// Steps a job gets by default. The jobs that finish well take 10 to 20;
@@ -311,8 +320,10 @@ impl Default for Limits {
             compact_args_over: 1_500,
             old_result_steps: 4,
             old_result_chars: 3_000,
+            old_results_over: 160_000,
             retries: 2,
             reasoning: None,
+            keep_reasoning: true,
         }
     }
 }
@@ -447,8 +458,16 @@ its check reports errors. Warnings never block `finish`.
 - Write everything the user reads (your short notes between tool calls and the summary) in \
 the language of the user's request, even though the skill below is in English.
 - Fewer, bigger steps cost less: each step resends the whole conversation, and long \
-deliberation is paid too. Batch work, write whole files at once, read only the skill files \
-the job needs, and keep notes between tool calls to a sentence.
+deliberation is paid too. Several tool calls in one reply run in order, so batch them:
+  1. First step: read the user's files and every skill file the job needs, all at once \
+(only the ones it needs; the keys below are enough for most components).
+  2. Next step: write the whole JSON (and any side file, such as a fact list) and `build` it, \
+in the same reply.
+  3. `build` already returns the check and the contact sheet: don't call `check` or `look` \
+after it unless you changed the file since. Fix errors with small `replace_in_file` patches \
+plus `build` in one reply, never by rewriting the whole file.
+  4. Then `finish`. Keep notes between tool calls to a sentence and the summary short \
+(what you made, assumptions, what to confirm: a few lines, no step-by-step diary).
 - Pictures and long results from earlier steps may be replaced by a note to save space; \
 look again if you need them.
 - Done means: the outputs are built, their check has 0 errors, and you have looked at the \
@@ -960,7 +979,6 @@ fn run_in(
     }
     specs.push(finish_spec());
     let tools_json = Value::Array(specs.iter().map(ToolSpec::json).collect());
-    let finish_only = Value::Array(vec![finish_spec().json()]);
 
     loop {
         if cancel.is_cancelled() {
@@ -1047,20 +1065,33 @@ fn run_in(
         // Old results are cut every few steps, not every step: each cut
         // ends the provider's prompt cache there, and cached input costs a
         // fraction of fresh input.
-        let results_before = if limits.old_result_steps > 0 && step % limits.old_result_steps == 0 {
-            (step + 1).saturating_sub(limits.old_result_steps)
-        } else {
-            0
-        };
+        // Long arguments (a whole deck.json) are left out only in a long
+        // conversation too: a model that saw its own write_file call with
+        // a note instead of the content took it for a failed write and
+        // wrote the whole file again (paid as output).
+        let long = conversation_chars(ctx.messages()) > limits.old_results_over;
+        let results_before =
+            if limits.old_result_steps > 0 && step % limits.old_result_steps == 0 && long {
+                (step + 1).saturating_sub(limits.old_result_steps)
+            } else {
+                0
+            };
         ctx.compact(
             step,
-            limits.compact_args_over,
+            if long {
+                limits.compact_args_over
+            } else {
+                usize::MAX
+            },
             results_before,
             limits.old_result_chars,
         );
-        // The last step can only call `finish`.
+        // The last step can only call `finish`: other calls aren't run.
+        // It is offered the same tools all the same, since a different list
+        // would end the prompt cache and the whole conversation would be
+        // read again at full price.
         let last = step >= limits.max_steps;
-        let step_tools = if last { &finish_only } else { &tools_json };
+        let step_tools = &tools_json;
         on_event(&Event::StepStart { step });
         sent_chars = conversation_chars(ctx.messages());
         let mut tries = 0;
@@ -1169,6 +1200,9 @@ fn run_in(
             }
         }
         let mut turn = json!({"role": "assistant", "content": reply.text});
+        if limits.keep_reasoning && !reply.reasoning.trim().is_empty() {
+            turn["reasoning_content"] = json!(reply.reasoning);
+        }
         if !calls.is_empty() {
             turn["tool_calls"] = Value::Array(
                 calls
@@ -1401,7 +1435,7 @@ fn run_in(
             }
         }
         // Near the step limit, say how many are left, firmly (models
-        // polish forever otherwise). The last step offers only `finish`.
+        // polish forever otherwise). The last step runs only `finish`.
         let left = limits.max_steps.saturating_sub(step);
         if left <= (limits.max_steps / 4).max(3) {
             let note = if left <= 1 {

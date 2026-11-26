@@ -9,6 +9,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Changed
+
+- Paparan AI jobs cost less. The model's reasoning from one step goes back with it to the next, so it carries on
+  from its plan instead of working it out again (reasoning is paid as output). A whole JSON file the model wrote
+  stays in the conversation in a job of normal size: with a placeholder in its place, the model took the write for
+  a failed one and wrote the file again. The agent is asked to read what it needs in one step, write and build in
+  the next, and fix with small patches, and the prompt cache is kept on the last step.
+- When a build fails, Paparan AI gets every problem in the JSON at once (wrong keys, wrong types, missing keys,
+  with where they are), instead of one error per build.
+- `kantor sheets build` takes a sheet's rows from a CSV file next to the JSON (`"csv": "data.csv"`), numbers and
+  dates typed as `kantor convert` reads them, so Paparan AI copies your data into a workbook without retyping it.
+
+### Fixed
+
+- Paparan AI's reasoning was recorded twice when a server sent it under both of its usual names.
+
 ## [0.25.1] - 2026-11-26
 
 Paparan AI jobs finish, cost less and answer in your language.

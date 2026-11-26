@@ -474,7 +474,9 @@ pub fn read_reply(
                     .pointer(&format!("/choices/0/delta/{key}"))
                     .and_then(Value::as_str)
                 {
+                    // Some servers send both keys with the same text.
                     reasoning.push_str(t);
+                    break;
                 }
             }
             if let Some(r) = value

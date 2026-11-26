@@ -10,6 +10,7 @@
 mod keys;
 #[cfg(test)]
 mod tests;
+mod validate;
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -220,13 +221,14 @@ impl DocTools {
         Ok(())
     }
 
-    /// Picture paths in build or edit JSON (`path`, `logo`, `picture`)
-    /// must stay in the work folder; relative ones start from `base`.
+    /// Picture and data paths in build or edit JSON (`path`, `logo`,
+    /// `picture`, `csv`) must stay in the work folder; relative ones start
+    /// from `base`.
     fn check_paths(&self, v: &Value, base: &Path) -> Result<()> {
         match v {
             Value::Object(m) => {
                 for (k, v) in m {
-                    if matches!(k.as_str(), "path" | "logo" | "picture")
+                    if matches!(k.as_str(), "path" | "logo" | "picture" | "csv")
                         && let Some(s) = v.as_str()
                     {
                         let p = Path::new(s.trim());
@@ -238,8 +240,8 @@ impl DocTools {
                         let rel = joined
                             .strip_prefix(&self.root)
                             .map(|r| r.to_string_lossy().into_owned())
-                            .map_err(|_| anyhow!("picture {s}: use a file in the work folder"))?;
-                        self.resolve(&rel).with_context(|| format!("picture {s}"))?;
+                            .map_err(|_| anyhow!("{s}: use a file in the work folder"))?;
+                        self.resolve(&rel).with_context(|| s.to_owned())?;
                     } else {
                         self.check_paths(v, base)?;
                     }
@@ -585,33 +587,48 @@ impl DocTools {
         let base = source.parent().unwrap_or(&self.root).to_path_buf();
         self.check_paths(&json, &base)?;
         let mut lines = Vec::new();
-        match app {
-            App::Slides => {
-                let p = slides_author::build(&json, Some(&base))?;
-                write_file(&out, &p.to_bytes()?)?;
-                lines.push(format!("built {} ({} slides)", self.show(&out), p.len()));
+        let built = (|| -> Result<()> {
+            match app {
+                App::Slides => {
+                    let p = slides_author::build(&json, Some(&base))?;
+                    write_file(&out, &p.to_bytes()?)?;
+                    lines.push(format!("built {} ({} slides)", self.show(&out), p.len()));
+                }
+                App::Docs => {
+                    let built = crate::agent::docs_author::build(&json, Some(&base))?;
+                    write_file(&out, &built.bytes)?;
+                    lines.push(format!(
+                        "built {} ({} page{})",
+                        self.show(&out),
+                        built.pages,
+                        if built.pages == 1 { "" } else { "s" }
+                    ));
+                    lines.extend(built.warnings.iter().map(|w| format!("note: {w}")));
+                }
+                App::Sheets => {
+                    let book = sheets_author::build(&json, Some(&base))?;
+                    write_file(&out, &sheets_author::to_bytes(&book)?)?;
+                    let n = book.sheet_names().len();
+                    lines.push(format!(
+                        "built {} ({n} sheet{})",
+                        self.show(&out),
+                        if n == 1 { "" } else { "s" }
+                    ));
+                }
             }
-            App::Docs => {
-                let built = crate::agent::docs_author::build(&json, Some(&base))?;
-                write_file(&out, &built.bytes)?;
-                lines.push(format!(
-                    "built {} ({} page{})",
-                    self.show(&out),
-                    built.pages,
-                    if built.pages == 1 { "" } else { "s" }
-                ));
-                lines.extend(built.warnings.iter().map(|w| format!("note: {w}")));
+            Ok(())
+        })();
+        if let Err(e) = built {
+            // The builder stops at its first error: list every problem the
+            // schema shows, so they're fixed in one round.
+            let found = validate::problems(&app.schema(), &json);
+            if found.len() > 1 {
+                bail!(
+                    "{e:#}\nEvery problem found against the schema (JSON paths, counting from 0); fix them together:\n- {}",
+                    found.join("\n- ")
+                );
             }
-            App::Sheets => {
-                let book = sheets_author::build(&json, Some(&base))?;
-                write_file(&out, &sheets_author::to_bytes(&book)?)?;
-                let n = book.sheet_names().len();
-                lines.push(format!(
-                    "built {} ({n} sheet{})",
-                    self.show(&out),
-                    if n == 1 { "" } else { "s" }
-                ));
-            }
+            return Err(e);
         }
         let (check, errors) = check_file(&out, &json!({}), false)?;
         lines.push(format!("check: {check}"));
@@ -1106,6 +1123,15 @@ impl Tools for DocTools {
         for app in &self.apps {
             out.push_str("\n\n");
             out.push_str(&keys::summary(*app, &app.schema()));
+            if *app == App::Sheets {
+                out.push_str(
+                    "\nA sheet's `csv` key copies a CSV file's rows (numbers and dates typed) \
+                     from `start`: use it for the user's data instead of retyping it in `rows`. \
+                     Messy values (numbers as text such as \"Rp 39.659.000\", extra spaces) are \
+                     cleaned by the sheet's `ops` (`trim`, `to_numbers`, `to_dates`) after it, \
+                     not by retyping the data.",
+                );
+            }
         }
         let files = walk(&self.root, 2);
         out.push_str("\n\n# The work folder now\n");
