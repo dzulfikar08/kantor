@@ -1343,7 +1343,7 @@ impl Workbook {
     /// cell's own, a conditional format's, and a table or pivot table
     /// style's bold and italic under it). Merged cells are left out, as in
     /// Excel.
-    pub fn column_fit_cells(&mut self, sheet: u32, col: u32) -> Vec<FitCell> {
+    pub fn column_fit_cells(&mut self, sheet: u32, col: u32) -> Vec<ColumnFitCell> {
         let rows: Vec<u32> = {
             let model = self.model.get_model();
             let Ok(ws) = model.workbook.worksheet(sheet) else {
@@ -1388,7 +1388,7 @@ impl Workbook {
                 Some(tl) => std::sync::Arc::new(tl.under(&own)),
                 None => own,
             };
-            out.push(FitCell { row, text, style });
+            out.push(ColumnFitCell { row, text, style });
         }
         out
     }
@@ -1405,7 +1405,7 @@ impl Workbook {
 
 /// A filled cell of a column, as [`Workbook::column_fit_cells`] reads it.
 #[derive(Debug, Clone, PartialEq)]
-pub struct FitCell {
+pub struct ColumnFitCell {
     pub row: u32,
     /// The text shown.
     pub text: String,
