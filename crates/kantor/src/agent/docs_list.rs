@@ -350,8 +350,8 @@ pub fn outline(doc: &Document) -> Value {
             json!({"id": c.id, "author": c.author, "text": c.text, "paragraph": at, "resolved": c.done, "reply_to": c.parent})
         })
         .collect();
-    let changes: Vec<Value> = doc
-        .changes()
+    let all_changes = doc.changes();
+    let changes: Vec<Value> = all_changes
         .iter()
         .take(500)
         .map(|c| {
@@ -396,6 +396,7 @@ pub fn outline(doc: &Document) -> Value {
         "fields": fields,
         "comments": comments,
         "tracked_changes": changes,
+        "tracked_change_count": all_changes.len(),
         "notes": notes,
         "bookmarks": bookmarks(doc),
         "track_changes_on": doc.track_changes(),

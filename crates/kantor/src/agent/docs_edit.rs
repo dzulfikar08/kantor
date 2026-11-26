@@ -499,7 +499,7 @@ impl Session {
         let before_len = self.doc()?.len();
         let r = {
             let d = self.doc()?;
-            d.insert_paragraphs(
+            d.insert_paragraphs_untracked(
                 after,
                 &[NewParagraph {
                     text: MARKER.into(),
@@ -586,7 +586,7 @@ impl Session {
         places.sort_by_key(|x| std::cmp::Reverse(x.0));
         for (at, tag) in &places {
             let d = self.doc()?;
-            d.insert_paragraphs(
+            d.insert_paragraphs_untracked(
                 at.checked_sub(1),
                 &[NewParagraph {
                     text: format!("{MARKER}{tag}"),
@@ -1518,6 +1518,76 @@ mod tests {
         assert_eq!(t[0], "The dog sat.");
         assert!(t.iter().any(|x| x == "Added."));
         assert!(s.run("frobnicate", &json!({})).is_err());
+    }
+
+    /// `replace_paragraph`, `insert_paragraphs` and `delete_paragraphs`
+    /// with `--track`: saved as `w:ins`/`w:del` by the author, listed, and
+    /// rejecting gives the original back.
+    #[std::prelude::v1::test]
+    fn tracked_paragraph_ops() {
+        let blocks = json!(["Intro", {"numbers": ["Satu", "Dua"]}, "Poin lama.", "Penutup"]);
+        let original = ["Intro", "Satu", "Dua", "Poin lama.", "Penutup"];
+        let open = |bytes: Vec<u8>, track: Option<&str>| {
+            let doc = Document::from_read(docs_engine::docx::read(bytes).unwrap(), None);
+            Session::from_doc(doc, None, track.map(str::to_owned)).unwrap()
+        };
+        let base = super::super::docs_author::build(&json!({"blocks": blocks}), None)
+            .unwrap()
+            .bytes;
+        let ops = [
+            ("replace_paragraph", json!({"index": 3, "text": "Diganti."})),
+            (
+                "insert_paragraphs",
+                json!({"after_index": 2, "paragraphs": [{"text": "Tiga", "list": "number"}]}),
+            ),
+            ("delete_paragraphs", json!({"index": 4})),
+            (
+                "insert_paragraphs",
+                json!({"after_index": 4, "paragraphs": [{"text": "Akhir"}]}),
+            ),
+        ];
+        let accepted: [&[&str]; 4] = [
+            &["Intro", "Satu", "Dua", "Diganti.", "Penutup"],
+            &["Intro", "Satu", "Dua", "Tiga", "Poin lama.", "Penutup"],
+            &["Intro", "Satu", "Dua", "Poin lama."],
+            &["Intro", "Satu", "Dua", "Poin lama.", "Penutup", "Akhir"],
+        ];
+        for ((op, args), want) in ops.iter().zip(accepted) {
+            let mut s = open(base.clone(), Some("AI"));
+            s.run(op, args).unwrap();
+            let bytes = s.save().unwrap();
+            let xml = Pkg::read(&bytes)
+                .unwrap()
+                .text("word/document.xml")
+                .unwrap();
+            let by_ai = xml.matches("w:author=\"AI\"").count();
+            assert!(by_ai >= 1, "{op}: no tracked change by AI");
+            assert!(
+                xml.contains("<w:ins ") || xml.contains("<w:del "),
+                "{op}: no w:ins or w:del"
+            );
+
+            // Read back: listed, and resolving gives the right text.
+            let mut back = open(bytes.clone(), None);
+            let d = back.doc().unwrap();
+            let n = d.changes().len();
+            assert!(n >= 1, "{op}");
+            let listed = super::super::docs_list::outline(d);
+            assert_eq!(listed["tracked_change_count"], n, "{op}");
+            assert_eq!(listed["tracked_changes"].as_array().unwrap().len(), n);
+            back.run("reject_changes", &json!({})).unwrap();
+            assert_eq!(texts(&mut back), original, "{op}: reject");
+            let mut fwd = open(bytes, None);
+            fwd.run("accept_changes", &json!({})).unwrap();
+            assert_eq!(texts(&mut fwd), want, "{op}: accept");
+            if *op == "insert_paragraphs" && want.contains(&"Tiga") {
+                // The new item continues the list: 1. Satu 2. Dua 3. Tiga.
+                let d = fwd.doc().unwrap();
+                let num = |i: usize| d.styles.effective_num(d.paragraph(i)).map(|n| n.id);
+                assert!(num(3).is_some());
+                assert_eq!(num(3), num(1), "{op}: list continues");
+            }
+        }
     }
 
     #[std::prelude::v1::test]

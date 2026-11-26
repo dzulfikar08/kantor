@@ -9,7 +9,16 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Fixed
+
+- `kantor docs edit --track AUTHOR` (and the MCP docs tools with Track Changes on) now tracks `replace_paragraph`,
+  `insert_paragraphs` and `delete_paragraphs`: before, only `find_replace`, blocks and style changes were tracked
+  and these three went in as plain edits. Rejecting gives the original paragraphs back; inserted list items still
+  continue the list before them.
+
 ### Added
+
+- `kantor docs list` gives `tracked_change_count` (the `tracked_changes` list stops at 500).
 
 - `kantor sheets check` notes General numbers shown rounded in a narrow column (`number_rounded`, info): the cell,
   its stored value, the text shown and the column width that shows it in full.
