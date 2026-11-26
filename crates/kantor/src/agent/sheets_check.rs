@@ -2514,12 +2514,12 @@ mod tests {
         let b = build(
             &json!({"sheets": [{"name": "S",
             "cells": {
-                "B2": 3.14159265,
+                "B2": 1.23456789,
                 "C2": 123_456_789_012_345_i64,
                 "D2": 3.5,
                 "E2": 1_000_000_000_000_i64
             },
-            "widths": {"B": 4, "C": 2, "D": 10, "E": 6}
+            "widths": {"B": 4, "C": 2, "D": 10, "E": 8}
             }]}),
             None,
         )
@@ -2531,12 +2531,12 @@ mod tests {
         let f = rounded[0];
         assert_eq!(f.severity, Severity::Info);
         assert_eq!(f.range.map(|r| r.name()).as_deref(), Some("B2"));
-        assert!(f.message.contains("B2 holds 3.14159265"), "{}", f.message);
+        assert!(f.message.contains("B2 holds 1.23456789"), "{}", f.message);
         assert!(f.message.contains("widen column B"), "{}", f.message);
-        assert_eq!(f.details["value"], json!(3.14159265));
-        assert_eq!(f.details["full"], json!("3.14159265"));
+        assert_eq!(f.details["value"], json!(1.23456789));
+        assert_eq!(f.details["full"], json!("1.23456789"));
         let shown = f.details["shown"].as_str().unwrap();
-        assert!(shown.starts_with("3.1") && shown.len() < 10, "{shown}");
+        assert!(shown.starts_with("1.2") && shown.len() < 10, "{shown}");
         assert!(f.details["width_chars"].as_f64().unwrap() > 6.0, "{f:?}");
         assert!(has(&r, "number_hashes", "C2"), "{all:?}");
         assert!(!has(&r, "number_rounded", "C2"), "{all:?}");
