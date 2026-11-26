@@ -296,7 +296,7 @@ impl SheetGrid {
         if style.italic {
             run.font.style = FontStyle::Italic;
         }
-        let mut shape = |s: &str| {
+        let shape = |s: &str| {
             let mut run = run.clone();
             run.len = s.len();
             f32::from(
