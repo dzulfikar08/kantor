@@ -232,7 +232,7 @@ impl SheetGrid {
             .unwrap_or(&look.style)
             .clone();
         if let Some(tl) = self.book.table_cell_look(sheet, row, col) {
-            style = crate::table_style(&style, &tl);
+            style = tl.under(&style);
         }
         if style.wrap {
             return None;
@@ -257,28 +257,33 @@ impl SheetGrid {
         })
     }
 
-    /// `###` filling a cell `width` wide when `text`, a number's display,
-    /// doesn't fit in it (Excel never cuts a number short); `None` when it
-    /// fits or the cell isn't a number.
+    /// What a number shows in a cell `width` wide when `text`, its
+    /// display, doesn't fit: a General number shortened (fewer decimals or
+    /// scientific notation), else `###` filling the cell, as Excel shows it
+    /// and print draws it ([`sheets_engine::fit_number`]); a number is never
+    /// cut short. `None` when it fits or the cell isn't a number. `general`
+    /// is the number when it shows in the General format.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn number_hashes(
+    pub(crate) fn narrow_number(
         &mut self,
         text: &str,
-        (sheet, row, col): (u32, u32, u32),
+        general: Option<f64>,
         style: &CellStyle,
         width: f32,
         height: Pixels,
         window: &mut Window,
         cx: &App,
     ) -> Option<String> {
-        if self.book.value_kind(sheet, row, col) != ValueKind::Number {
-            return None;
-        }
         let z = self.zoom();
         let size = look::text_size(style, self.book.default_font_size(), FONT_BODY * z, height);
-        let room = width - f32::from(SPACE_3 * z) * 2.0;
-        // Digits are about half an em wide: short numbers fit unmeasured.
-        if text.chars().count() as f32 * f32::from(size) * 0.45 <= room {
+        // The cell's padding and its indent, as `look::Content` lays it out.
+        let indent = f32::from(FONT_BODY * z) * 1.5 * style.indent.min(250) as f32;
+        // Half a pixel spare: a text that only just fits would still be
+        // drawn truncated.
+        let room = width - f32::from(SPACE_3 * z) * 2.0 - indent - 0.5;
+        // Short texts fit unmeasured: no glyph of a number's display is
+        // wider than an em.
+        if text.chars().count() as f32 * f32::from(size) <= room {
             return None;
         }
         let mut run = window.text_style().to_run(text.len());
@@ -291,16 +296,24 @@ impl SheetGrid {
         if style.italic {
             run.font.style = FontStyle::Italic;
         }
-        let shape = |w: &mut Window, s: String| {
-            w.text_system()
-                .shape_line(s.into(), size, std::slice::from_ref(&run), None)
-                .width
+        let mut shape = |s: &str| {
+            let mut run = run.clone();
+            run.len = s.len();
+            f32::from(
+                window
+                    .text_system()
+                    .shape_line(s.to_owned().into(), size, std::slice::from_ref(&run), None)
+                    .width,
+            )
         };
-        if f32::from(shape(window, text.to_owned())) <= room {
-            return None;
+        match sheets_engine::fit_number(text, general, |s| shape(s) <= room) {
+            sheets_engine::NumberFit::Fits => None,
+            sheets_engine::NumberFit::Shorter(s) => Some(s),
+            sheets_engine::NumberFit::Hashes => {
+                let hash = shape("#").max(1.0);
+                Some("#".repeat(((room / hash).floor() as usize).max(1)))
+            }
         }
-        let hash = f32::from(shape(window, "#".to_owned())).max(1.0);
-        Some("#".repeat(((room / hash).floor() as usize).max(1)))
     }
 
     /// The spans of `row` on the shown sheet (worked out once per state).

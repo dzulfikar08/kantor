@@ -433,6 +433,21 @@ impl NumberFormat {
         })
     }
 
+    /// A General number squeezed into `max_chars` characters as a cell shows it (fewer
+    /// decimals, then scientific notation, in the display locale): what Excel shows in a column
+    /// too narrow for [`Self::display_number`]'s text. `None`: nothing fits (the cell shows `#`s).
+    pub fn display_general_fit(n: f64, max_chars: usize) -> Option<String> {
+        locale::displaying(locale::display_locale(), || {
+            let mut s = format_general_fit(n, max_chars)?;
+            if let Some(l) = locale::active()
+                && l.decimal != '.'
+            {
+                s = s.replace('.', l.decimal.encode_utf8(&mut [0; 4]));
+            }
+            Some(s)
+        })
+    }
+
     /// Text as a cell shows it: through the text section (`"Name: "@`), as is without one.
     pub fn display_text(&self, t: &str) -> Formatted {
         locale::displaying(locale::display_locale(), || self.format_text(t))

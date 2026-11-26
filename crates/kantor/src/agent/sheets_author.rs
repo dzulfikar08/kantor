@@ -1078,7 +1078,9 @@ pub(super) fn fit_widths(
                 let st = book.cell_style(sheet, r, c);
                 let size = if st.font_size > 0 { st.font_size } else { 11 };
                 let mut k = f64::from(size) / 11.0;
-                if st.bold {
+                // A table's or pivot table's style may make it bold too
+                // (header and total rows).
+                if st.bold || book.table_cell_look(sheet, r, c).is_some_and(|t| t.bold) {
                     k *= 1.08;
                 }
                 let tw = if st.wrap {

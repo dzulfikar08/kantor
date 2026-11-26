@@ -1337,33 +1337,125 @@ impl Workbook {
         self.column_width(sheet, MAX_COLS - 1)
     }
 
-    /// The displayed text of every filled cell in column `col`, with whether
-    /// it is bold (for fitting the column's width to its content).
-    pub fn column_texts(&self, sheet: u32, col: u32) -> Vec<(String, bool)> {
-        let model = self.model.get_model();
-        let Ok(ws) = model.workbook.worksheet(sheet) else {
-            return Vec::new();
+    /// Every filled cell of column `col` as the grid draws it, for fitting
+    /// the column's width to its content: the text shown (a conditional
+    /// format's number format applies) and the style it is drawn in (the
+    /// cell's own, a conditional format's, and a table or pivot table
+    /// style's bold and italic under it). Merged cells are left out, as in
+    /// Excel.
+    pub fn column_fit_cells(&mut self, sheet: u32, col: u32) -> Vec<FitCell> {
+        let rows: Vec<u32> = {
+            let model = self.model.get_model();
+            let Ok(ws) = model.workbook.worksheet(sheet) else {
+                return Vec::new();
+            };
+            let col1 = col as i32 + 1;
+            let mut rows: Vec<u32> = ws
+                .sheet_data
+                .cells()
+                .filter(|(r, c, cell)| {
+                    *c == col1 && *r >= 1 && !matches!(**cell, Cell::EmptyCell { .. })
+                })
+                .map(|(r, _, _)| r as u32 - 1)
+                .collect();
+            rows.sort_unstable();
+            rows
         };
-        let col1 = col as i32 + 1;
-        let mut rows: Vec<i32> = ws
-            .sheet_data
-            .cells()
-            .filter(|(_, c, cell)| *c == col1 && !matches!(**cell, Cell::EmptyCell { .. }))
-            .map(|(r, _, _)| r)
-            .collect();
-        rows.sort_unstable();
-        rows.into_iter()
-            .filter(|r| *r >= 1)
-            .map(|r| {
-                let row = r as u32 - 1;
-                (
-                    self.display_value(sheet, row, col),
-                    self.cell_style(sheet, row, col).bold,
-                )
-            })
-            .filter(|(text, _)| !text.is_empty())
-            .collect()
+        let mut out = Vec::new();
+        for row in rows {
+            if self
+                .merge_at(sheet, row, col)
+                .is_some_and(|m| !m.is_single())
+            {
+                continue;
+            }
+            let cond = self.conditional(sheet, row, col);
+            if cond.as_ref().is_some_and(|c| !c.show_value) {
+                continue;
+            }
+            let text = match cond.as_ref().and_then(|c| c.display.as_ref()) {
+                Some(d) => d.text.clone(),
+                None => self.display_value(sheet, row, col),
+            };
+            if text.is_empty() {
+                continue;
+            }
+            let own = match cond.as_ref().and_then(|c| c.style.clone()) {
+                Some(s) => s,
+                None => self.cell_style(sheet, row, col),
+            };
+            let style = match self.table_cell_look(sheet, row, col) {
+                Some(tl) => std::sync::Arc::new(tl.under(&own)),
+                None => own,
+            };
+            out.push(FitCell { row, text, style });
+        }
+        out
     }
+
+    /// The number in (`row`, `col`) when it shows in the General format
+    /// (which Excel shortens to fit a narrow column, see [`fit_number`]).
+    pub fn general_number(&self, sheet: u32, row: u32, col: u32) -> Option<f64> {
+        let (n, _) = self.number_at(sheet, row, col)?;
+        self.number_format_by_index(self.style_index(sheet, row, col))
+            .is_general()
+            .then_some(n)
+    }
+}
+
+/// A filled cell of a column, as [`Workbook::column_fit_cells`] reads it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FitCell {
+    pub row: u32,
+    /// The text shown.
+    pub text: String,
+    /// The style it is drawn in.
+    pub style: std::sync::Arc<crate::CellStyle>,
+}
+
+/// How a number shows in a cell that may be too narrow for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NumberFit {
+    /// Its text fits as it is.
+    Fits,
+    /// A General number with fewer decimals or in scientific notation.
+    Shorter(String),
+    /// Nothing fits: the cell is filled with `#`.
+    Hashes,
+}
+
+/// Excel's rule for a number in a cell: `shown` when it fits; for a General
+/// number (`general`, see [`Workbook::general_number`]) the longest shorter
+/// form that fits (fewer decimals, then scientific notation, `1234.5678` →
+/// `1234.6` → `1235` → `1E+03`); otherwise `#`s. A number never shows cut
+/// off. `fits` says whether a text fits the cell (measured by the caller in
+/// the cell's font). The grid and print both decide with this.
+pub fn fit_number(
+    shown: &str,
+    general: Option<f64>,
+    mut fits: impl FnMut(&str) -> bool,
+) -> NumberFit {
+    if fits(shown) {
+        return NumberFit::Fits;
+    }
+    if let Some(n) = general {
+        let len = shown.chars().count();
+        let mut last: Option<String> = None;
+        for max in (1..len).rev() {
+            let Some(s) = kantor_numfmt::NumberFormat::display_general_fit(n, max) else {
+                break;
+            };
+            // Several widths give the same text: measure it once.
+            if last.as_deref() == Some(s.as_str()) {
+                continue;
+            }
+            if fits(&s) {
+                return NumberFit::Shorter(s);
+            }
+            last = Some(s);
+        }
+    }
+    NumberFit::Hashes
 }
 
 #[cfg(test)]
@@ -1962,10 +2054,59 @@ mod tests {
 
     #[test]
     fn texts_of_a_column() {
-        let wb = book(&[(3, 1, "wide text"), (0, 1, "1"), (0, 0, "other")]);
+        let mut wb = book(&[(3, 1, "wide text"), (0, 1, "1"), (0, 0, "other")]);
+        let cells = wb.column_fit_cells(0, 1);
+        let got: Vec<(u32, &str, bool)> = cells
+            .iter()
+            .map(|c| (c.row, c.text.as_str(), c.style.bold))
+            .collect();
+        assert_eq!(got, [(0, "1", false), (3, "wide text", false)]);
+    }
+
+    /// Characters as the width of a text: a fake measure for [`fit_number`].
+    fn chars_fit(room: usize) -> impl FnMut(&str) -> bool {
+        move |s| s.chars().count() <= room
+    }
+
+    #[test]
+    fn general_numbers_shorten_before_hashes() {
+        let n = 3.14159265358979;
+        let shown = "3.141592654";
+        assert_eq!(fit_number(shown, Some(n), chars_fit(11)), NumberFit::Fits);
         assert_eq!(
-            wb.column_texts(0, 1),
-            [("1".to_owned(), false), ("wide text".to_owned(), false)]
+            fit_number(shown, Some(n), chars_fit(4)),
+            NumberFit::Shorter("3.14".into())
         );
+        assert_eq!(
+            fit_number(shown, Some(n), chars_fit(1)),
+            NumberFit::Shorter("3".into())
+        );
+        assert_eq!(fit_number(shown, Some(n), chars_fit(0)), NumberFit::Hashes);
+        // Large General numbers go scientific, then `#`.
+        assert_eq!(
+            fit_number("123456789", Some(123456789.0), chars_fit(5)),
+            NumberFit::Shorter("1E+08".into())
+        );
+        assert_eq!(
+            fit_number("123456789", Some(123456789.0), chars_fit(4)),
+            NumberFit::Hashes
+        );
+        // A number in any other format never shortens.
+        assert_eq!(fit_number("3.14", None, chars_fit(3)), NumberFit::Hashes);
+        assert_eq!(fit_number("3.14", None, chars_fit(4)), NumberFit::Fits);
+    }
+
+    #[test]
+    fn general_number_only_for_general_cells() {
+        let mut wb = book(&[(0, 0, "3.14159265358979"), (1, 0, "text")]);
+        assert_eq!(wb.general_number(0, 0, 0), Some(3.14159265358979));
+        assert_eq!(wb.general_number(0, 1, 0), None);
+        wb.set_range_style(
+            0,
+            CellRange::from_corners((0, 0), (0, 0)),
+            crate::StyleChange::NumberFormat(crate::NumberFormat::Number),
+        )
+        .unwrap();
+        assert_eq!(wb.general_number(0, 0, 0), None);
     }
 }

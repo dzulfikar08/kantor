@@ -676,6 +676,9 @@ pub struct CellText {
     pub shrink: bool,
     /// A number: shown as `####` when it doesn't fit.
     pub number: bool,
+    /// The number, when it shows in the General format: shortened (fewer
+    /// decimals, scientific notation) before it shows as `####`.
+    pub general: Option<f64>,
     /// A repeat character from the number format and where it goes.
     pub repeat: Option<(char, usize)>,
     /// Room kept at the left for an icon, points.

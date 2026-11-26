@@ -710,7 +710,7 @@ impl TableDelegate for SheetGrid {
         &mut self,
         col_ix: usize,
         window: &mut Window,
-        _: &mut Context<TableState<Self>>,
+        cx: &mut Context<TableState<Self>>,
     ) -> Option<Pixels> {
         let col = (col_ix as u32).checked_sub(1)?;
         // Double-clicking a hidden column's edge shows it again, as wide as
@@ -722,7 +722,9 @@ impl TableDelegate for SheetGrid {
                 .ok()?;
             return Some(look::column_width(&self.book, self.sheet, col, self.scale));
         }
-        grid_ops::fit_width(&self.book, self.sheet, col, window).map(|w| w * self.zoom())
+        let zoom = self.zoom();
+        grid_ops::fit_width(&mut self.book, self.sheet, col, &mut self.fonts, window, cx)
+            .map(|w| w * zoom)
     }
 
     /// Column letters, centred; the columns of the selection are highlighted
@@ -948,7 +950,7 @@ impl TableDelegate for SheetGrid {
         let table_styled;
         let style = match &table_look {
             Some(tl) => {
-                table_styled = table_style(style, tl);
+                table_styled = tl.under(style);
                 &table_styled
             }
             None => style,
@@ -983,17 +985,30 @@ impl TableDelegate for SheetGrid {
             .map(|m| look::merge_geometry(&self.book, sheet, m, row, col, self.scale, &heights));
         let row_height = px(heights.height(row as usize) as f32);
         drop(heights);
-        // A number (or date) too wide for its cell shows `###`, as in Excel.
-        if !style.wrap && shown.fill.is_none() && !text.is_empty() {
+        // A number (or date) too wide for its cell shows `###` (a General
+        // number fewer decimals first), as in Excel: never cut off. A
+        // format's repeat character fills no room then.
+        let mut fill = shown.fill;
+        if !style.wrap
+            && !text.is_empty()
+            && !pending
+            && self.book.value_kind(sheet, vr, vc) == sheets_engine::ValueKind::Number
+        {
             let width = match geometry {
                 Some(g) => f32::from(g.2),
                 None => self.spill_width(col),
             };
             let height = geometry.map_or(row_height, |g| g.3);
-            if let Some(hashes) =
-                self.number_hashes(&text, (sheet, vr, vc), style, width, height, window, cx)
+            // A conditional format's number format isn't General's.
+            let general = match cond.as_ref().and_then(|c| c.display.as_ref()) {
+                Some(_) => None,
+                None => self.book.general_number(sheet, vr, vc),
+            };
+            if let Some(narrow) =
+                self.narrow_number(&text, general, style, width, height, window, cx)
             {
-                text = hashes;
+                text = narrow;
+                fill = None;
             }
         }
         let content = look::Content {
@@ -1013,7 +1028,7 @@ impl TableDelegate for SheetGrid {
             default_font_size: self.book.default_font_size(),
             family: self.fonts.for_style(style, cx),
             height: geometry.map_or(row_height, |g| g.3),
-            fill: shown.fill,
+            fill,
             spill: false,
         };
         // Text spilling over empty neighbours: this cell's own, or a
@@ -1344,26 +1359,6 @@ impl TableDelegate for SheetGrid {
                 .into()
         })
     }
-}
-
-/// A cell's style with a table style's look under it: the cell's own fill,
-/// text colour and borders win, bold adds up.
-fn table_style(style: &CellStyle, tl: &sheets_engine::TableCellLook) -> CellStyle {
-    let mut s = style.clone();
-    if s.fill.is_none() {
-        s.fill = tl.fill;
-    }
-    if s.font_color.is_none() {
-        s.font_color = tl.font_color;
-    }
-    s.bold |= tl.bold;
-    s.italic |= tl.italic;
-    s.underline |= tl.underline;
-    s.strikethrough |= tl.strike;
-    if s.indent == 0 {
-        s.indent = tl.indent;
-    }
-    s
 }
 
 /// The filter button in a filter's header cell: a chevron, a funnel when

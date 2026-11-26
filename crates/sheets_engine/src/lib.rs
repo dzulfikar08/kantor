@@ -83,7 +83,8 @@ pub use chart_style::from_data::{
 };
 pub use drawing::Tab;
 pub use grid::{
-    BREAK_PREVIEW_ZOOM, BUILTIN_LISTS, SHEET_ZOOM_MAX, SHEET_ZOOM_MIN, parse_custom_list,
+    BREAK_PREVIEW_ZOOM, BUILTIN_LISTS, FitCell, NumberFit, SHEET_ZOOM_MAX, SHEET_ZOOM_MIN,
+    fit_number, parse_custom_list,
 };
 pub use import::{ImportNote, SourceFormat};
 /// The borders a conditional formatting rule draws.

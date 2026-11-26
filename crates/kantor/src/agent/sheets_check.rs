@@ -2397,6 +2397,31 @@ mod tests {
         r.findings.iter().filter(|f| f.check == check).collect()
     }
 
+    /// A General number in a narrow column shows fewer decimals (or in
+    /// scientific notation) before it shows as ####, as in Excel and the
+    /// grid; other formats go straight to ####.
+    #[std::prelude::v1::test]
+    fn general_numbers_shorten_before_hashes() {
+        let b = build(
+            &json!({"sheets": [{"name": "S",
+            "cells": {
+                "B2": 3.14159265358979,
+                "C2": 123_456_789_012_345_i64,
+                "D2": 3.14159265358979
+            },
+            "widths": {"B": 4, "C": 2, "D": 4},
+            "formats": [{"range": "D2", "number_format": "0.00000000"}]
+            }]}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        let all = checks(&r);
+        assert!(!has(&r, "number_hashes", "B2"), "{all:?}");
+        assert!(has(&r, "number_hashes", "C2"), "{all:?}");
+        assert!(has(&r, "number_hashes", "D2"), "{all:?}");
+    }
+
     /// Text cut by merged cells and full neighbours, numbers as ####; text
     /// that spills or fits is left alone.
     #[std::prelude::v1::test]

@@ -9,8 +9,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use sheets_engine::{
-    AlignDetail, BorderLine, CellRange, CellStyle, HAlign, PrintColumns, TableCellLook, VAlign,
-    ValueKind, Workbook,
+    AlignDetail, BorderLine, CellRange, CellStyle, HAlign, PrintColumns, VAlign, ValueKind,
+    Workbook,
 };
 
 use crate::text::{FontKey, Shaper};
@@ -116,26 +116,6 @@ fn intersect(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
     [x0, y0, (x1 - x0).max(0.0), (y1 - y0).max(0.0)]
 }
 
-/// A cell's style with a table style's look under it: the cell's own fill,
-/// text colour and borders win, bold adds up (as the grid draws it).
-fn table_style(style: &CellStyle, tl: &TableCellLook) -> CellStyle {
-    let mut s = style.clone();
-    if s.fill.is_none() {
-        s.fill = tl.fill;
-    }
-    if s.font_color.is_none() {
-        s.font_color = tl.font_color;
-    }
-    s.bold |= tl.bold;
-    s.italic |= tl.italic;
-    s.underline |= tl.underline;
-    s.strikethrough |= tl.strike;
-    if s.indent == 0 {
-        s.indent = tl.indent;
-    }
-    s
-}
-
 /// One cell of a page row, read from the workbook.
 struct Cell {
     col: usize,
@@ -145,6 +125,9 @@ struct Cell {
     color: Option<u32>,
     repeat: Option<(char, usize)>,
     kind: ValueKind,
+    /// The number, when it shows in the General format (see
+    /// [`sheets_engine::fit_number`]).
+    general: Option<f64>,
     halign: HAlign,
     bar: Option<sheets_engine::DataBar>,
     icon: Option<sheets_engine::CfIcon>,
@@ -298,6 +281,7 @@ fn note_text(text: String, font: FontKey, rect: [f32; 4]) -> CellText {
         rotation: 0,
         shrink: false,
         number: false,
+        general: None,
         repeat: None,
         icon_room: 0.0,
         at: None,
@@ -617,6 +601,11 @@ fn extract_from(mut src: Source, plan: &Plan, index: usize) -> PageContent {
             let (vr, vc) = look.merge.map_or((r, c), |mg| (mg.top, mg.left));
             let shown = src.book().display(sheet, vr, vc);
             let cond = src.conditional(sheet, vr, vc);
+            // A conditional format's number format isn't General's.
+            let general = match cond.as_ref().and_then(|x| x.display.as_ref()) {
+                Some(_) => None,
+                None => src.book().general_number(sheet, vr, vc),
+            };
             let shown = cond
                 .as_ref()
                 .and_then(|x| x.display.clone())
@@ -631,7 +620,7 @@ fn extract_from(mut src: Source, plan: &Plan, index: usize) -> PageContent {
                 .and_then(|x| x.style.clone())
                 .unwrap_or_else(|| look.style.clone());
             if let Some(tl) = src.book().table_cell_look(sheet, vr, vc) {
-                style = Arc::new(table_style(&style, &tl));
+                style = Arc::new(tl.under(&style));
                 look.right = look.right.or(tl.right);
                 look.bottom = look.bottom.or(tl.bottom);
                 look.top = look.top.or(tl.top);
@@ -676,6 +665,7 @@ fn extract_from(mut src: Source, plan: &Plan, index: usize) -> PageContent {
                 repeat: shown.fill,
                 merge: look.merge,
                 kind,
+                general,
                 halign,
                 bar: cond.as_ref().and_then(|x| x.bar),
                 icon: cond.as_ref().and_then(|x| x.icon),
@@ -937,6 +927,7 @@ fn extract_from(mut src: Source, plan: &Plan, index: usize) -> PageContent {
                 rotation: s.rotation,
                 shrink: s.shrink,
                 number,
+                general: cell.general,
                 repeat: cell.repeat,
                 icon_room,
                 at: Some(cell.merge.map_or((rp.index, cp.index), |m| (m.top, m.left))),
@@ -962,6 +953,7 @@ fn extract_from(mut src: Source, plan: &Plan, index: usize) -> PageContent {
             rotation: 0,
             shrink: false,
             number: false,
+            general: None,
             repeat: None,
             icon_room: 0.0,
             at: None,
