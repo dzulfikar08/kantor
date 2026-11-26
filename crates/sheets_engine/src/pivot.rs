@@ -4652,7 +4652,11 @@ impl Workbook {
         let mut steps = 0u32;
         let mut result = Ok(());
         if let Some(id) = change.new_sheet {
-            match self.model.new_sheet() {
+            // Named as Insert names a sheet (`Sheet4`, `Lembar4` in
+            // Indonesian), after the last one.
+            let name = self.next_sheet_name();
+            let at = self.model.get_model().workbook.worksheets.len() as u32;
+            match self.model.kantor_insert_sheet(&name, at) {
                 Ok(()) => {
                     steps += 1;
                     let model = self.model.get_model();

@@ -36,6 +36,8 @@ pub const ENGINE_STRINGS: &[&str] = &[
     tk("Group{}"),
     // Blank headers of a new table.
     tk("Column{}"),
+    // New sheets (Insert, a PivotTable on a new sheet).
+    tk("Sheet{}"),
     // Slides placeholder prompts and chart fallbacks.
     tk("Click to add title"),
     tk("Click to add subtitle"),
