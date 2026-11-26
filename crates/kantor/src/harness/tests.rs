@@ -187,9 +187,11 @@ fn a_deck_is_built_checked_and_seen() {
         build.2
     );
     assert_eq!(build.3, vec!["deck.pptx contact sheet".to_owned()]);
+    assert!(build.2.contains("not part of the document"), "{}", build.2);
     assert!(dir.path().join("shots/deck-sheet.png").is_file());
     let look = &results[2];
     assert_eq!(look.3, vec!["deck.pptx slide 2".to_owned()]);
+    assert!(!look.2.contains("not part of the document"), "{}", look.2);
     assert!(dir.path().join("shots/deck-02.png").is_file());
     assert!(
         results[3].2.contains("saved deck2.pptx"),

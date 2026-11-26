@@ -938,6 +938,13 @@ impl DocTools {
             )
             .replace('\\', "/");
         let mut text = format!("{summary}; saved {}", saved.join(", "));
+        if sheet {
+            // A model once spent 12 steps removing a "1" from a letter's
+            // footer: it was the tile's label.
+            text.push_str(&format!(
+                "; the number under each tile is the {what} number Kantor draws on the contact sheet, not part of the document"
+            ));
+        }
         if saved.len() > MAX_LOOK {
             text.push_str(&format!(
                 "; showing the first {MAX_LOOK}: ask for the others with pages"
