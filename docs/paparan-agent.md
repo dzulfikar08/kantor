@@ -93,7 +93,9 @@ These come from running the Paparan skills with a cheap model through a general 
   cheap models otherwise loop on warnings until the step limit.
 - **Steps.** `max_steps` defaults to 24 (the jobs that finish well take 10 to 20). From a quarter
   of the steps before the end the model is told how many are left and to wrap up with what
-  exists; the last step is offered only `finish` (other calls aren't run).
+  exists; the last step runs only `finish` (other calls aren't run; it is offered the same tools,
+  since a different tool list would end the prompt cache and re-read the conversation at full
+  price).
 - **Budgets.** `max_tokens` and `max_cost` (with prices). Before each step the loop estimates
   its input (the last step's input plus what was added since, a picture as about 1,000 tokens,
   the cached prefix priced as cached) and gives the reply what is left after it: the step is

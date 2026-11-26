@@ -1126,7 +1126,10 @@ impl Tools for DocTools {
             if *app == App::Sheets {
                 out.push_str(
                     "\nA sheet's `csv` key copies a CSV file's rows (numbers and dates typed) \
-                     from `start`: use it for the user's data instead of retyping it in `rows`.",
+                     from `start`: use it for the user's data instead of retyping it in `rows`. \
+                     Messy values (numbers as text such as \"Rp 39.659.000\", extra spaces) are \
+                     cleaned by the sheet's `ops` (`trim`, `to_numbers`, `to_dates`) after it, \
+                     not by retyping the data.",
                 );
             }
         }

@@ -979,7 +979,6 @@ fn run_in(
     }
     specs.push(finish_spec());
     let tools_json = Value::Array(specs.iter().map(ToolSpec::json).collect());
-    let finish_only = Value::Array(vec![finish_spec().json()]);
 
     loop {
         if cancel.is_cancelled() {
@@ -1080,9 +1079,12 @@ fn run_in(
             results_before,
             limits.old_result_chars,
         );
-        // The last step can only call `finish`.
+        // The last step can only call `finish`: other calls aren't run.
+        // It is offered the same tools all the same, since a different list
+        // would end the prompt cache and the whole conversation would be
+        // read again at full price.
         let last = step >= limits.max_steps;
-        let step_tools = if last { &finish_only } else { &tools_json };
+        let step_tools = &tools_json;
         on_event(&Event::StepStart { step });
         sent_chars = conversation_chars(ctx.messages());
         let mut tries = 0;
@@ -1426,7 +1428,7 @@ fn run_in(
             }
         }
         // Near the step limit, say how many are left, firmly (models
-        // polish forever otherwise). The last step offers only `finish`.
+        // polish forever otherwise). The last step runs only `finish`.
         let left = limits.max_steps.saturating_sub(step);
         if left <= (limits.max_steps / 4).max(3) {
             let note = if left <= 1 {

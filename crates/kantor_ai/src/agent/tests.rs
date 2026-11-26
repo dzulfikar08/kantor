@@ -473,10 +473,13 @@ fn the_step_limit_hands_over_what_was_made() {
     let mut turns = vec![call("write", json!({"path": "book.xlsx", "content": "v1"}))];
     turns.extend((0..5).map(|_| call("big", json!({}))));
     let (r, model, _dir) = run_script(turns, limits);
-    // The last step offered only `finish`; the model called `big`
-    // anyway, which didn't run.
-    assert_eq!(model.tools_on(4), vec!["finish"]);
-    assert!(model.tools_on(3).len() > 1);
+    // The last step offers the same tools (a different list would end
+    // the prompt cache) but runs only `finish`: `big` didn't run.
+    assert_eq!(model.tools_on(4), model.tools_on(3));
+    assert!(r.events.iter().any(|e| matches!(
+        e,
+        Event::ToolResult { step: 4, text, .. } if text.contains("only `finish` could run")
+    )));
     assert_eq!(r.outcome.steps, 4);
     assert_eq!(r.outcome.limit, Some(StopReason::Steps));
     match &r.outcome.ending {
