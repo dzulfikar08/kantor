@@ -373,9 +373,11 @@ fn short_conversations_keep_old_results_whole() {
         old_result_steps: 2,
         ..Limits::default()
     };
+    let long = "y".repeat(5_000);
     let (_, model, _dir) = run_script(
         vec![
             call("big", json!({})),
+            call("write", json!({"path": "deck.json", "content": long})),
             call("look", json!({"file": "a", "page": "1", "version": "1"})),
             call("look", json!({"file": "a", "page": "2", "version": "1"})),
             finish(&[]),
@@ -390,7 +392,11 @@ fn short_conversations_keep_old_results_whole() {
             .map(|m| m["content"].as_str().unwrap().len())
             .unwrap()
     };
-    assert!(first(4) >= 20_000);
+    assert!(first(5) >= 20_000);
+    // Nor are long arguments left out: a model took the note for a
+    // failed write and wrote the whole file again.
+    let s5 = serde_json::to_string(&model.sent(5)).unwrap();
+    assert!(s5.contains(&long));
 }
 
 #[test]

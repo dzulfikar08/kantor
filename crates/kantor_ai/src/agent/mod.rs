@@ -273,7 +273,7 @@ pub struct Limits {
     /// A tool result longer than this (characters) is cut.
     pub max_result_chars: usize,
     /// Strings longer than this in tool-call arguments are left out of
-    /// later steps.
+    /// later steps (once the conversation is over `old_results_over`).
     pub compact_args_over: usize,
     /// Tool results this many steps old are cut to about half of
     /// `old_result_chars`.
@@ -1065,17 +1065,24 @@ fn run_in(
         // Old results are cut every few steps, not every step: each cut
         // ends the provider's prompt cache there, and cached input costs a
         // fraction of fresh input.
-        let results_before = if limits.old_result_steps > 0
-            && step % limits.old_result_steps == 0
-            && conversation_chars(ctx.messages()) > limits.old_results_over
-        {
-            (step + 1).saturating_sub(limits.old_result_steps)
-        } else {
-            0
-        };
+        // Long arguments (a whole deck.json) are left out only in a long
+        // conversation too: a model that saw its own write_file call with
+        // a note instead of the content took it for a failed write and
+        // wrote the whole file again (paid as output).
+        let long = conversation_chars(ctx.messages()) > limits.old_results_over;
+        let results_before =
+            if limits.old_result_steps > 0 && step % limits.old_result_steps == 0 && long {
+                (step + 1).saturating_sub(limits.old_result_steps)
+            } else {
+                0
+            };
         ctx.compact(
             step,
-            limits.compact_args_over,
+            if long {
+                limits.compact_args_over
+            } else {
+                usize::MAX
+            },
             results_before,
             limits.old_result_chars,
         );

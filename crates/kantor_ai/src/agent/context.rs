@@ -272,7 +272,7 @@ fn shorten_strings(v: &mut Value, over: usize) -> bool {
     match v {
         Value::String(s) if s.chars().count() > over && !s.starts_with("[left out:") => {
             *s = format!(
-                "[left out: {} characters sent in an earlier step; read the file to see what it holds now]",
+                "[left out: {} characters, sent in full in this call (it ran); not repeated here to save space. read_file shows the file as it is now]",
                 s.chars().count()
             );
             true

@@ -148,8 +148,11 @@ Every step resends the whole conversation, which dominates the cost.
   step, results at least four steps old are cut to about 1,500 characters. Not earlier and not
   every step: each cut ends the provider's prompt cache there, and cached input costs 2% of
   fresh input, so in a job of normal size a cut cost more (the rest re-read fresh) than it
-  saved. Strings over 1,500 characters in older tool-call arguments (a whole `deck.json` sent
-  to `write_file`) are replaced by a note ("read the file") before they are first sent back. Old
+  saved. Past the same size, strings over 1,500 characters in older tool-call arguments (a
+  whole `deck.json` sent to `write_file`) are replaced by a note saying the call ran and
+  `read_file` shows the file. Not earlier: with the note in a short job, DeepSeek took its own
+  call for a failed write and wrote the whole file again, two or three times (40 credits each
+  for a workbook). Old
   messages are changed only once, so the provider's prompt cache keeps the prefix up to them.
 
 ## Tools
