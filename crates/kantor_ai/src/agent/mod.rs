@@ -458,8 +458,16 @@ its check reports errors. Warnings never block `finish`.
 - Write everything the user reads (your short notes between tool calls and the summary) in \
 the language of the user's request, even though the skill below is in English.
 - Fewer, bigger steps cost less: each step resends the whole conversation, and long \
-deliberation is paid too. Batch work, write whole files at once, read only the skill files \
-the job needs, and keep notes between tool calls to a sentence.
+deliberation is paid too. Several tool calls in one reply run in order, so batch them:
+  1. First step: read the user's files and every skill file the job needs, all at once \
+(only the ones it needs; the keys below are enough for most components).
+  2. Next step: write the whole JSON (and any side file, such as a fact list) and `build` it, \
+in the same reply.
+  3. `build` already returns the check and the contact sheet: don't call `check` or `look` \
+after it unless you changed the file since. Fix errors with small `replace_in_file` patches \
+plus `build` in one reply, never by rewriting the whole file.
+  4. Then `finish`. Keep notes between tool calls to a sentence and the summary short \
+(what you made, assumptions, what to confirm: a few lines, no step-by-step diary).
 - Pictures and long results from earlier steps may be replaced by a note to save space; \
 look again if you need them.
 - Done means: the outputs are built, their check has 0 errors, and you have looked at the \

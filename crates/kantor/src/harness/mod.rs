@@ -10,6 +10,7 @@
 mod keys;
 #[cfg(test)]
 mod tests;
+mod validate;
 
 use std::collections::BTreeSet;
 use std::path::{Component, Path, PathBuf};
@@ -586,33 +587,48 @@ impl DocTools {
         let base = source.parent().unwrap_or(&self.root).to_path_buf();
         self.check_paths(&json, &base)?;
         let mut lines = Vec::new();
-        match app {
-            App::Slides => {
-                let p = slides_author::build(&json, Some(&base))?;
-                write_file(&out, &p.to_bytes()?)?;
-                lines.push(format!("built {} ({} slides)", self.show(&out), p.len()));
+        let built = (|| -> Result<()> {
+            match app {
+                App::Slides => {
+                    let p = slides_author::build(&json, Some(&base))?;
+                    write_file(&out, &p.to_bytes()?)?;
+                    lines.push(format!("built {} ({} slides)", self.show(&out), p.len()));
+                }
+                App::Docs => {
+                    let built = crate::agent::docs_author::build(&json, Some(&base))?;
+                    write_file(&out, &built.bytes)?;
+                    lines.push(format!(
+                        "built {} ({} page{})",
+                        self.show(&out),
+                        built.pages,
+                        if built.pages == 1 { "" } else { "s" }
+                    ));
+                    lines.extend(built.warnings.iter().map(|w| format!("note: {w}")));
+                }
+                App::Sheets => {
+                    let book = sheets_author::build(&json, Some(&base))?;
+                    write_file(&out, &sheets_author::to_bytes(&book)?)?;
+                    let n = book.sheet_names().len();
+                    lines.push(format!(
+                        "built {} ({n} sheet{})",
+                        self.show(&out),
+                        if n == 1 { "" } else { "s" }
+                    ));
+                }
             }
-            App::Docs => {
-                let built = crate::agent::docs_author::build(&json, Some(&base))?;
-                write_file(&out, &built.bytes)?;
-                lines.push(format!(
-                    "built {} ({} page{})",
-                    self.show(&out),
-                    built.pages,
-                    if built.pages == 1 { "" } else { "s" }
-                ));
-                lines.extend(built.warnings.iter().map(|w| format!("note: {w}")));
+            Ok(())
+        })();
+        if let Err(e) = built {
+            // The builder stops at its first error: list every problem the
+            // schema shows, so they're fixed in one round.
+            let found = validate::problems(&app.schema(), &json);
+            if found.len() > 1 {
+                bail!(
+                    "{e:#}\nEvery problem found against the schema (JSON paths, counting from 0); fix them together:\n- {}",
+                    found.join("\n- ")
+                );
             }
-            App::Sheets => {
-                let book = sheets_author::build(&json, Some(&base))?;
-                write_file(&out, &sheets_author::to_bytes(&book)?)?;
-                let n = book.sheet_names().len();
-                lines.push(format!(
-                    "built {} ({n} sheet{})",
-                    self.show(&out),
-                    if n == 1 { "" } else { "s" }
-                ));
-            }
+            return Err(e);
         }
         let (check, errors) = check_file(&out, &json!({}), false)?;
         lines.push(format!("check: {check}"));
