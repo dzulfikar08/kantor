@@ -1404,10 +1404,12 @@ impl Workbook {
     /// A value whose format shows a date or a time, as Excel's formula bar
     /// shows it (`9:30:00 AM`, `12/15/2026`, `11/16/2026 2:05:00 PM`;
     /// `15/12/2026`, `16/11/2026 14:05:00` in Indonesian), so editing and
-    /// pressing Enter gives the same value. A date shows as the short date
-    /// of the input locale whatever its format (`15 Desember 2026` or
-    /// `15 December 2026` in the grid): month names, in any language, would
-    /// not be read back as a date.
+    /// pressing Enter gives the same value. A date whose format writes the
+    /// month as a name (`d mmmm yyyy`, `d-mmm-yy`, `mmmm d, yyyy`) shows
+    /// the whole date with the month's name in the interface language
+    /// (`15 Desember 2026`; `15 December 2026` or `December 15, 2026` in
+    /// English, following the format's order); any other date shows as the
+    /// input locale's short date.
     fn time_input(&self, sheet: u32, row: i32, col: i32) -> Option<String> {
         let model = self.model.get_model();
         let cell = model.workbook.worksheet(sheet).ok()?.cell(row, col)?;
@@ -1427,14 +1429,23 @@ impl Workbook {
             return None;
         }
         let id = INPUT_ID.load(std::sync::atomic::Ordering::Relaxed);
-        let (date, time) = if id {
-            ("dd/mm/yyyy", "h:mm:ss")
+        // Month names in the interface language when the format writes
+        // them; the input parser reads both forms back.
+        let (date, time) = match (id, code.month_name_first(n)) {
+            (true, Some(_)) => ("d mmmm yyyy", "h:mm:ss"),
+            (true, None) => ("dd/mm/yyyy", "h:mm:ss"),
+            (false, Some(true)) => ("mmmm d, yyyy", "h:mm:ss AM/PM"),
+            (false, Some(false)) => ("d mmmm yyyy", "h:mm:ss AM/PM"),
+            (false, None) => ("m/d/yyyy", "h:mm:ss AM/PM"),
+        };
+        let names = if id {
+            kantor_numfmt::DisplayLocale::Indonesian
         } else {
-            ("m/d/yyyy", "h:mm:ss AM/PM")
+            kantor_numfmt::DisplayLocale::EnUs
         };
         let shown = |f: &str| {
             kantor_numfmt::NumberFormat::parse(f)
-                .display_number(n, kantor_numfmt::DateSystem::D1900)
+                .display_number_in(n, kantor_numfmt::DateSystem::D1900, names)
                 .text
         };
         let seconds = (n.fract() * 86_400.0).round();

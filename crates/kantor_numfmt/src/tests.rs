@@ -1375,3 +1375,18 @@ fn display_locale_separators() {
     let inv = invariant(|| NumberFormat::parse("#,##0.0").display_number_in(1234.5, DateSystem::D1900, DisplayLocale::Indonesian).text);
     assert_eq!(inv, "1,234.5");
 }
+
+#[test]
+fn month_name_first_follows_the_code() {
+    let m = |code: &str| NumberFormat::parse(code).month_name_first(46_371.0);
+    assert_eq!(m("d mmmm yyyy"), Some(false));
+    assert_eq!(m("d-mmm-yy"), Some(false));
+    assert_eq!(m("[$-421]dd mmm yyyy"), Some(false));
+    assert_eq!(m("mmmm d, yyyy"), Some(true));
+    assert_eq!(m("dddd, mmmm d, yyyy"), Some(true));
+    assert_eq!(m("mmm-yy"), Some(true));
+    assert_eq!(m("m/d/yyyy"), None);
+    assert_eq!(m("dd/mm/yyyy"), None);
+    assert_eq!(m("h:mm"), None);
+    assert_eq!(m("0.00"), None);
+}
