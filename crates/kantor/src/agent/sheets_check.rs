@@ -152,6 +152,11 @@ pub const CHECKS: &[(&str, &str, &str)] = &[
         "a number or date wider than its column, shown as ####",
     ),
     (
+        "number_rounded",
+        "info",
+        "a General number wider than its column, shown with fewer decimals or in scientific notation instead of its stored value",
+    ),
+    (
         "outside_print_area",
         "warning",
         "filled cells, charts or pictures outside the sheet's print area: they don't print, or print cut",
@@ -1616,6 +1621,7 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
     // (column, cut) → cells.
     let mut cut: BTreeMap<(u32, Cut), Vec<CutCell>> = BTreeMap::new();
     let mut hashes: BTreeMap<u32, Vec<CutCell>> = BTreeMap::new();
+    let mut rounded: BTreeMap<u32, Vec<RoundedCell>> = BTreeMap::new();
     for i in 0..plan.pages.len().min(FIT_PAGES) {
         let page = sheets_pdf::extract_plain(book, &plan, i);
         let pr = plan.pages[i];
@@ -1634,6 +1640,22 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
                     .entry(c)
                     .or_default()
                     .push((r, shown, o.need, o.room));
+                continue;
+            }
+            if let Some(short) = o.shortened {
+                // Shown shorter but still the stored value: nothing lost.
+                if let Some(n) = t.general
+                    && short.replace(',', ".").parse::<f64>().ok() != Some(n)
+                {
+                    rounded.entry(c).or_default().push(RoundedCell {
+                        row: r,
+                        value: n,
+                        full: shown,
+                        shown: short,
+                        need: o.need,
+                        room: o.room,
+                    });
+                }
                 continue;
             }
             let merge = book.merge_at(s, r, c);
@@ -1709,12 +1731,7 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
                 .push((r, shown, o.need, o.room));
         }
     }
-    let range_of = |c: u32, cells: &[CutCell]| {
-        let (r0, r1) = cells
-            .iter()
-            .fold((u32::MAX, 0), |(a, b), x| (a.min(x.0), b.max(x.0)));
-        CellRange::from_corners((r0, c), (r1, c))
-    };
+    let range_of = |c: u32, cells: &[CutCell]| range_of_rows(c, cells.iter().map(|x| x.0));
     for ((c, why), cells) in cut {
         let n = cells.len();
         let (r, shown, need, room) = &cells[0];
@@ -1788,7 +1805,72 @@ fn print_fit(book: &Workbook, s: u32, shaper: &mut Option<sheets_pdf::Shaper>) -
             details: json!({"cells": n, "example": shown, "need_pt": wide.round(), "room_pt": room.round(), "width_chars": want, "cell_list": list}),
         });
     }
+    for (c, cells) in rounded {
+        let n = cells.len();
+        let wide = cells.iter().map(|x| x.need).fold(0.0f32, f32::max);
+        let x = &cells[0];
+        let at = cell_name(x.row, c);
+        let col = column_name(c);
+        let want = chars(f64::from(wide) + 6.0);
+        let value = stored_number(x.value);
+        let message = if n == 1 {
+            format!(
+                "{at} holds {value} but shows it rounded as {}: the full {} needs {} and column {col} gives it {}; widen column {col} to about {want} characters to show it in full, or give it a number format with the decimals you want",
+                x.shown,
+                x.full,
+                pt(x.need),
+                pt(x.room)
+            )
+        } else {
+            format!(
+                "{n} numbers show rounded ({at} holds {value} but shows {}; the widest needs {}, column {col} gives {}); widen column {col} to about {want} characters to show them in full, or give them a number format with the decimals you want",
+                x.shown,
+                pt(wide),
+                pt(x.room)
+            )
+        };
+        let list: Vec<String> = cells.iter().take(20).map(|x| cell_name(x.row, c)).collect();
+        out.push(Finding {
+            severity: Severity::Info,
+            check: "number_rounded",
+            sheet: Some(s),
+            range: Some(range_of_rows(c, cells.iter().map(|x| x.row))),
+            message,
+            details: json!({"cells": n, "example": at, "value": x.value, "shown": x.shown, "full": x.full, "need_pt": wide.round(), "room_pt": x.room.round(), "width_chars": want, "cell_list": list}),
+        });
+    }
     out
+}
+
+/// Column `c` from the first to the last of `rows`.
+fn range_of_rows(c: u32, rows: impl Iterator<Item = u32>) -> CellRange {
+    let (r0, r1) = rows.fold((u32::MAX, 0), |(a, b), r| (a.min(r), b.max(r)));
+    CellRange::from_corners((r0, c), (r1, c))
+}
+
+/// A General number shown shorter than its full text (see
+/// [`sheets_pdf::Overrun::shortened`]).
+struct RoundedCell {
+    row: u32,
+    /// The stored number.
+    value: f64,
+    /// Its full General text, and the shorter text shown.
+    full: String,
+    shown: String,
+    /// The full text's width and the room it has, points.
+    need: f32,
+    room: f32,
+}
+
+/// A stored number at its full precision, for a message: plain, or with
+/// an exponent when very large or very small.
+fn stored_number(n: f64) -> String {
+    let a = n.abs();
+    if a != 0.0 && !(1e-5..1e15).contains(&a) {
+        format!("{n:e}")
+    } else {
+        format!("{n}")
+    }
 }
 
 /// Filled cells and objects outside the print area, objects split by page
@@ -2420,6 +2502,48 @@ mod tests {
         assert!(!has(&r, "number_hashes", "B2"), "{all:?}");
         assert!(has(&r, "number_hashes", "C2"), "{all:?}");
         assert!(has(&r, "number_hashes", "D2"), "{all:?}");
+        assert!(has(&r, "number_rounded", "B2"), "{all:?}");
+    }
+
+    /// A General number shown with fewer decimals in a narrow column is an
+    /// info note with what it holds, what shows and the width it needs; a
+    /// number too wide even shortened is still ####; one that fits, or
+    /// that shows shorter without losing anything (1E+12), is left alone.
+    #[std::prelude::v1::test]
+    fn general_numbers_shown_rounded() {
+        let b = build(
+            &json!({"sheets": [{"name": "S",
+            "cells": {
+                "B2": 3.14159265,
+                "C2": 123_456_789_012_345_i64,
+                "D2": 3.5,
+                "E2": 1_000_000_000_000_i64
+            },
+            "widths": {"B": 4, "C": 2, "D": 10, "E": 6}
+            }]}),
+            None,
+        )
+        .unwrap();
+        let r = check(&b, None);
+        let all = checks(&r);
+        let rounded = found(&r, "number_rounded");
+        assert_eq!(rounded.len(), 1, "{all:?}");
+        let f = rounded[0];
+        assert_eq!(f.severity, Severity::Info);
+        assert_eq!(f.range.map(|r| r.name()).as_deref(), Some("B2"));
+        assert!(f.message.contains("B2 holds 3.14159265"), "{}", f.message);
+        assert!(f.message.contains("widen column B"), "{}", f.message);
+        assert_eq!(f.details["value"], json!(3.14159265));
+        assert_eq!(f.details["full"], json!("3.14159265"));
+        let shown = f.details["shown"].as_str().unwrap();
+        assert!(shown.starts_with("3.1") && shown.len() < 10, "{shown}");
+        assert!(f.details["width_chars"].as_f64().unwrap() > 6.0, "{f:?}");
+        assert!(has(&r, "number_hashes", "C2"), "{all:?}");
+        assert!(!has(&r, "number_rounded", "C2"), "{all:?}");
+        for at in ["D2", "E2"] {
+            assert!(!has(&r, "number_rounded", at), "{at}: {all:?}");
+            assert!(!has(&r, "number_hashes", at), "{at}: {all:?}");
+        }
     }
 
     /// Text cut by merged cells and full neighbours, numbers as ####; text

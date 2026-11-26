@@ -9,6 +9,11 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- `kantor sheets check` notes General numbers shown rounded in a narrow column (`number_rounded`, info): the cell,
+  its stored value, the text shown and the column width that shows it in full.
+
 ## [0.25.2] - 2026-11-26
 
 ### Changed

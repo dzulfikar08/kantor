@@ -249,6 +249,7 @@ gives `{"sheets", "cells_checked", "errors", "warnings", "info",
 | `hidden_data` | info | a hidden sheet, hidden rows or hidden columns holding data |
 | `text_cut_off` | warning | text that doesn't fit where it's shown. Each cell's text is placed as the PDF and PNG (`kantor convert`) draw it and measured with the same fonts: wider than its cell when the cell beside it isn't empty (so it can't spill), wider than its merged cells (merged cells never spill), cut at the printed page's edge (`page_edge`), or taller than its row. `need_pt` and `room_pt` give the sizes. Fix: widen the columns, shorten or wrap the text, make the row taller, or fit the sheet to the page width |
 | `number_hashes` | warning | numbers or dates wider than their column, shown as `####`; `width_chars` is about the width the column needs |
+| `number_rounded` | info | General numbers wider than their column that show with fewer decimals or in scientific notation (as in Excel), so the cell shows less than it holds: `value` is the stored number, `shown` the text shown, `full` its full General text, `width_chars` about the width the column needs to show it in full. Numbers that show shorter without losing anything (`1E+12`) aren't reported. Fix: widen the column, or `format` it with a `number_format` giving the decimals you want |
 | `outside_print_area` | warning | filled cells, charts or pictures outside the print area (they don't print, or print cut) |
 | `split_by_page` | warning | a chart or picture split over two or more printed pages by a page break. Fix: `page_setup` `fit` (`width` or `page`), or move it |
 | `unsorted_bars` | info | a bar or column chart of one series over 4+ text categories whose values aren't sorted: sort the categories by value so the ranking reads at a glance. Months, days, quarters, years, numbers and other ordered labels (Low/Medium/High, S/M/L), several series and line charts are left alone; an "Other" category at the end doesn't count |
@@ -281,7 +282,7 @@ pixels. The page setup options
   be written.
 - The checks look at values and formulas as they are: they don't follow
   INDIRECT/OFFSET, and `refers_to_empty` ignores ranges.
-- `text_cut_off` and `number_hashes` leave conditional formatting out (a
+- `text_cut_off`, `number_hashes` and `number_rounded` leave conditional formatting out (a
   rule's bold or number format), look at the first 60 pages of a sheet,
   and skip sheets of more than 50,000 filled cells (as do
   `outside_print_area` and `split_by_page`).
