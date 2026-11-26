@@ -396,7 +396,7 @@ pub fn outline(doc: &Document) -> Value {
         "fields": fields,
         "comments": comments,
         "tracked_changes": changes,
-        "tracked_change_count": all_changes.len(),
+        "tracked_change_count": all_changes.len() + doc.part_changes(),
         "notes": notes,
         "bookmarks": bookmarks(doc),
         "track_changes_on": doc.track_changes(),

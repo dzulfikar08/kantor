@@ -673,39 +673,42 @@ impl Session {
             let (n, _) = super::docs::find_replace(d, SEL, args)?;
             return Ok(json!({"replaced": n}));
         }
-        let d = self.doc()?;
-        let ranges: Vec<(usize, std::ops::Range<usize>)> = d
-            .paragraphs()
-            .iter()
-            .enumerate()
-            .flat_map(|(i, p)| {
-                kantor_core::find::find_all(&p.text, &find, opts)
-                    .into_iter()
-                    .map(move |r| (i, r))
-            })
-            .collect();
-        let n = ranges.len();
-        for (i, r) in ranges.into_iter().rev() {
-            let (start, end) = match &with {
-                Some(w) => {
-                    d.replace_ranges(&[(i, r.clone())], w, SEL);
-                    // Tracked: the deletion stays before the new text.
-                    let p = &d.paragraph(i).text;
-                    let s = p[r.start..]
-                        .find(w.as_str())
-                        .map_or(r.start, |k| r.start + k);
-                    (s, s + w.len())
-                }
-                None => (r.start, r.end),
-            };
-            let sel = Selection {
-                anchor: Position::new(i, start),
-                head: Position::new(i, end),
-            };
-            let rf = rf.clone();
-            let cs = char_style.clone();
-            d.format(sel, move |p| apply_run(p, &rf, cs.as_deref()));
-        }
+        let with = with.as_deref().map(super::docs::replacement);
+        let n = super::docs::in_parts(self.doc()?, args, |d, _| {
+            let ranges: Vec<(usize, std::ops::Range<usize>)> = d
+                .paragraphs()
+                .iter()
+                .enumerate()
+                .flat_map(|(i, p)| {
+                    kantor_core::find::find_all(&p.text, &find, opts)
+                        .into_iter()
+                        .map(move |r| (i, r))
+                })
+                .collect();
+            let n = ranges.len();
+            for (i, r) in ranges.into_iter().rev() {
+                let (start, end) = match &with {
+                    Some(w) => {
+                        d.replace_ranges(&[(i, r.clone())], w, SEL);
+                        // Tracked: the deletion stays before the new text.
+                        let p = &d.paragraph(i).text;
+                        let s = p[r.start..]
+                            .find(w.as_str())
+                            .map_or(r.start, |k| r.start + k);
+                        (s, s + w.len())
+                    }
+                    None => (r.start, r.end),
+                };
+                let sel = Selection {
+                    anchor: Position::new(i, start),
+                    head: Position::new(i, end),
+                };
+                let rf = rf.clone();
+                let cs = char_style.clone();
+                d.format(sel, move |p| apply_run(p, &rf, cs.as_deref()));
+            }
+            Ok(n)
+        })?;
         let key = if with.is_some() {
             "replaced"
         } else {
@@ -1587,6 +1590,84 @@ mod tests {
                 assert!(num(3).is_some());
                 assert_eq!(num(3), num(1), "{op}: list continues");
             }
+        }
+    }
+
+    /// `find_replace` goes through the body, the first-page and default
+    /// headers and the footer, tracked or not; `\n` in the replacement is a
+    /// line break in the same paragraph.
+    #[std::prelude::v1::test]
+    fn find_replace_covers_headers_and_footers() {
+        use docs_engine::section::{HfKind, HfType};
+        let mut base =
+            Document::from_paragraphs(vec![docs_engine::Paragraph::new("Kepada $TUJUAN")]);
+        base.set_title_page(0, true, SEL);
+        let hf = [
+            (HfKind::Header, HfType::First, "$KOPSURAT"),
+            (HfKind::Header, HfType::Default, "Lanjutan $KOPSURAT"),
+            (HfKind::Footer, HfType::Default, "$ALAMAT"),
+        ];
+        for (kind, ty, text) in hf {
+            assert!(base.set_hf_text(0, kind, ty, text, None, SEL));
+        }
+        let bytes = base.to_docx_bytes().unwrap();
+        let read = |b: Vec<u8>| Document::from_read(docs_engine::docx::read(b).unwrap(), None);
+        for track in [None, Some("AI")] {
+            let mut s =
+                Session::from_doc(read(bytes.clone()), None, track.map(str::to_owned)).unwrap();
+            let mut n = 0;
+            for (find, with) in [
+                ("$TUJUAN", "Bapak Kepala"),
+                ("$KOPSURAT", "PT CONTOH\nJakarta"),
+                ("$ALAMAT", "Jl. Merdeka 1"),
+            ] {
+                let out = s
+                    .run("find_replace", &json!({"find": find, "replace": with}))
+                    .unwrap();
+                n += out["replaced"].as_u64().unwrap();
+            }
+            assert_eq!(n, 4, "{track:?}");
+            // Only where asked.
+            let none = s
+                .run(
+                    "find_replace",
+                    &json!({"find": "Lanjutan", "replace": "x", "in": "body"}),
+                )
+                .unwrap();
+            assert_eq!(none["replaced"], 0);
+            assert!(
+                s.run(
+                    "find_replace",
+                    &json!({"find": "a", "replace": "b", "in": "notes"})
+                )
+                .is_err()
+            );
+
+            let out = s.save().unwrap();
+            let pkg = Pkg::read(&out).unwrap();
+            let mut back = read(out);
+            let parts: Vec<String> = back.stories().iter().map(|st| st.part.clone()).collect();
+            assert_eq!(parts.len(), 3);
+            let xml: String = parts.iter().map(|p| pkg.text(p).unwrap()).collect();
+            assert!(xml.contains("<w:br/>"), "{track:?}: no line break");
+            if track.is_some() {
+                assert!(xml.contains("<w:ins ") && xml.contains("<w:del "));
+                assert!(xml.contains("w:author=\"AI\""));
+                assert!(back.part_changes() >= 3);
+                back.resolve_all(true, SEL);
+            }
+            assert_eq!(back.paragraph(0).text, "Kepada Bapak Kepala");
+            let shown = |kind, ty| {
+                back.hf_text(0, kind, ty)
+                    .0
+                    .replace(docs_engine::LINE_BREAK, "|")
+            };
+            assert_eq!(shown(HfKind::Header, HfType::First), "PT CONTOH|Jakarta");
+            assert_eq!(
+                shown(HfKind::Header, HfType::Default),
+                "Lanjutan PT CONTOH|Jakarta"
+            );
+            assert_eq!(shown(HfKind::Footer, HfType::Default), "Jl. Merdeka 1");
         }
     }
 

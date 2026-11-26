@@ -949,19 +949,29 @@ fn check_review(cx: &mut Cx) {
         );
     }
     let changes = doc.changes();
-    if let Some(first) = changes.first() {
+    let in_parts = doc.part_changes();
+    if !changes.is_empty() || in_parts > 0 {
         let authors: BTreeSet<&str> = changes.iter().map(|c| c.author.as_str()).collect();
+        let total = changes.len() + in_parts;
+        let by = if authors.is_empty() {
+            String::new()
+        } else {
+            format!(" by {}", authors.into_iter().collect::<Vec<_>>().join(", "))
+        };
+        let parts = if in_parts > 0 {
+            format!(" ({in_parts} in headers, footers or notes)")
+        } else {
+            String::new()
+        };
         cx.add(
             Severity::Warning,
             "tracked_changes",
-            Some(first.start.para),
+            changes.first().map(|c| c.start.para),
             format!(
-                "{} tracked change{} by {} not accepted or rejected",
-                changes.len(),
-                plural(changes.len()),
-                authors.into_iter().collect::<Vec<_>>().join(", ")
+                "{total} tracked change{}{by}{parts} not accepted or rejected",
+                plural(total),
             ),
-            json!({"changes": changes.len()}),
+            json!({"changes": total}),
         );
     }
 }
