@@ -208,7 +208,7 @@ export const en = {
     ],
     priceH3: "What it costs",
     priceText:
-      "You pay per job with credits, and 1 credit is Rp10. In our tests a short deck took about 70 credits, and a checked workbook with a chart from a CSV file about 100. Bigger jobs take more; the panel shows the credits you have left after each job.",
+      "You pay per job with credits, and 1 credit is Rp10. In our tests a 6-slide deck took about 120 credits (about Rp1,200), and a checked workbook with a chart from a CSV file about 100. Bigger jobs take more; the panel shows the credits you have left after each job.",
     packsLabel: "Credit packs",
     packs: [
       ["5,000 credits", "Rp50,000", "US$3"],
@@ -454,7 +454,7 @@ export const id = {
     ],
     priceH3: "Biayanya",
     priceText:
-      "Anda membayar per pekerjaan dengan kredit, dan 1 kredit sama dengan Rp10. Dalam uji coba kami, paparan singkat memakai sekitar 70 kredit, dan buku kerja dengan grafik dari berkas CSV yang sudah dicek sekitar 100. Pekerjaan yang lebih besar memakai lebih banyak; panel menampilkan sisa kredit Anda setelah setiap pekerjaan.",
+      "Anda membayar per pekerjaan dengan kredit, dan 1 kredit sama dengan Rp10. Dalam uji coba kami, paparan 6 slide memakai sekitar 120 kredit (sekitar Rp1.200), dan buku kerja dengan grafik dari berkas CSV yang sudah dicek sekitar 100. Pekerjaan yang lebih besar memakai lebih banyak; panel menampilkan sisa kredit Anda setelah setiap pekerjaan.",
     packsLabel: "Paket kredit",
     packs: [
       ["5.000 kredit", "Rp50.000", "US$3"],
