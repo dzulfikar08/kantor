@@ -45,9 +45,9 @@ for (const f of readdirSync(join(root, "static"))) cpSync(join(root, "static", f
 const esc = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 const APPS = ["sheets", "docs", "slides"];
 
-function picture(app, t, first) {
-  const set = (theme, ext) => `${img(`${app}-${theme}-800.${ext}`)} 800w, ${img(`${app}-${theme}-1550.${ext}`)} 1550w`;
-  const sizes = "(min-width: 1180px) 1100px, calc(100vw - 2.5rem)";
+// A window capture in both themes. `name` is the file stem in src/img (name-dark-800.avif...).
+function picture(name, alt, first, sizes = "(min-width: 1180px) 1100px, calc(100vw - 2.5rem)") {
+  const set = (theme, ext) => `${img(`${name}-${theme}-800.${ext}`)} 800w, ${img(`${name}-${theme}-1550.${ext}`)} 1550w`;
   const sources = ["dark", "light"]
     .flatMap((theme) =>
       ["avif", "webp", "png"].map(
@@ -59,8 +59,66 @@ function picture(app, t, first) {
   const load = first ? 'fetchpriority="high"' : 'loading="lazy"';
   return `<picture>
           ${sources}
-          <img src="${img(`${app}-light-1550.png`)}" srcset="${set("light", "png")}" sizes="${sizes}" width="${SHOT_W}" height="${SHOT_H}" alt="${esc(t.shots[app].alt)}" ${load} decoding="async">
+          <img src="${img(`${name}-light-1550.png`)}" srcset="${set("light", "png")}" sizes="${sizes}" width="${SHOT_W}" height="${SHOT_H}" alt="${esc(alt)}" ${load} decoding="async">
         </picture>`;
+}
+
+// The Paparan AI section: what it does, examples, how to start, price, privacy.
+function paparan(t) {
+  const p = t.pap;
+  return `<section class="paparan" id="paparan" aria-labelledby="pap-h" tabindex="-1">
+      <div class="wrap">
+        <div class="pap-head">
+          <h2 id="pap-h">${p.h2}</h2>
+          <p class="pap-lede">${p.lede}</p>
+        </div>
+        <figure class="pap-shot">
+          <div class="window">
+          ${picture(p.shot, p.shotAlt, false)}
+          </div>
+          <figcaption class="caption">${p.shotCaption}</figcaption>
+        </figure>
+        <div class="pap-grid">
+          <div class="pap-col">
+          <div class="pap-asks">
+            <h3>${p.asksH3}</h3>
+            <ul class="asks">
+              ${p.asks
+                .map(
+                  (a) => `<li class="ask app-${a.app}">
+                <p class="ask-q">${a.ask}</p>
+                <p class="ask-a">${a.get}</p>
+              </li>`,
+                )
+                .join("\n              ")}
+            </ul>
+          </div>
+          <div class="pap-trust">
+            <p>${p.privacy}</p>
+            <p>${p.free}</p>
+            <a class="btn btn-secondary" href="https://paparanai.id"><span class="btn-label">${p.more}</span><span class="btn-meta">paparanai.id</span></a>
+          </div>
+          </div>
+          <div class="pap-col">
+          <div class="pap-start">
+            <h3>${p.startH3}</h3>
+            <ol class="steps">${p.start.map((s) => `<li>${s}</li>`).join("")}</ol>
+          </div>
+          <div class="pap-price">
+            <h3>${p.priceH3}</h3>
+            <p>${p.priceText}</p>
+            <table class="packs">
+              <caption>${p.packsLabel}</caption>
+              <tbody>
+                ${p.packs.map(([c, idr, usd]) => `<tr><th scope="row">${c}</th><td>${idr}</td><td>${usd}</td></tr>`).join("\n                ")}
+              </tbody>
+            </table>
+            <p class="pap-note">${p.packsNote}</p>
+          </div>
+          </div>
+        </div>
+      </div>
+    </section>`;
 }
 
 // The page text with Windows downloads switched on.
@@ -175,6 +233,7 @@ function page(t, other) {
       <nav aria-label="${t.navLabel}">
         <ul class="nav">
           <li><a href="#download">${t.navDownload}</a></li>
+          <li class="nav-pap"><a href="#paparan">${t.navPaparan}</a></li>
           <li class="nav-limits"><a href="#limits">${t.navLimits}</a></li>
           <li class="nav-gh"><a href="${GH}">${t.navSource}</a></li>
           <li><a class="lang" href="${other.path}" hreflang="${other.lang}" lang="${other.lang}" aria-label="${t.switchLangLabel}"><span class="lang-long">${t.switchLang}</span><span class="lang-short" aria-hidden="true">${t.switchLangShort}</span></a></li>
@@ -209,7 +268,7 @@ function page(t, other) {
         ${APPS.map(
           (a, i) => `<div class="panel" role="tabpanel" tabindex="0" id="panel-${a}" aria-labelledby="tab-${a}"${i === 0 ? "" : " hidden"}>
         <div class="window">
-        ${picture(a, t, i === 0)}
+        ${picture(a, t.shots[a].alt, i === 0)}
         </div>
         <p class="caption">${t.shots[a].caption}</p>
       </div>`,
@@ -281,6 +340,8 @@ function page(t, other) {
       </div>
     </section>
 
+    ${paparan(t)}
+
     <section class="limits" id="limits" aria-labelledby="limits-h" tabindex="-1">
       <div class="wrap limits-grid">
         <div>
@@ -345,7 +406,20 @@ writeFileSync(
 );
 
 // Every key in `en` must have an Indonesian counterpart.
-const missing = Object.keys(en).filter((k) => !(k in id));
+// Nested objects too (pap, shots, win...), so a new English string can't ship without its
+// Indonesian one.
+function missingKeys(a, b, at = "") {
+  return Object.keys(a).flatMap((k) => {
+    if (!(k in b)) return [at + k];
+    const [x, y] = [a[k], b[k]];
+    return x && typeof x === "object" && !Array.isArray(x) && y && typeof y === "object"
+      ? missingKeys(x, y, `${at}${k}.`)
+      : Array.isArray(x) && Array.isArray(y) && x.length !== y.length
+        ? [`${at}${k} (${x.length} items vs ${y.length})`]
+        : [];
+  });
+}
+const missing = missingKeys(en, id);
 if (missing.length) throw new Error(`id is missing: ${missing.join(", ")}`);
 // Copy rule: no em dashes anywhere in the output.
 for (const f of ["index.html", "id/index.html"]) {

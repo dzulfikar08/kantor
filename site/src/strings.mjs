@@ -97,7 +97,7 @@ export const en = {
     ],
     [
       "AI only if you want it",
-      "Off until you turn it on. Use Paparan AI with an account and credits, your own key from a provider such as Anthropic, OpenAI or Google, or a model on your own computer with Ollama.",
+      'Off until you turn it on. Use <a href="#paparan">Paparan AI</a> with an account and credits, your own key from a provider such as Anthropic, OpenAI or Google, or a model on your own computer with Ollama.',
     ],
     [
       "AI assistants can edit open files",
@@ -169,6 +169,58 @@ export const en = {
     ],
     portable:
       'No installer? Get the portable zip for <a href="{dl}/Kantor-x64.zip">x64</a> or <a href="{dl}/Kantor-arm64.zip">Arm</a>, unzip it anywhere and open <strong>kantor.exe</strong>.',
+  },
+
+  navPaparan: "Paparan AI",
+  pap: {
+    h2: "Let Paparan AI make the deck, document or workbook",
+    lede:
+      "Paparan AI is the paid AI inside Kantor. Say what you need and attach your files, and it builds a real PowerPoint deck, Word document or Excel workbook. Before it hands the file back, it runs Kantor's checks on it and looks at the pages.",
+    shot: "paparan",
+    shotAlt:
+      "Kantor with the Paparan AI chat panel on the right. The request was to turn penjualan-2026.csv into a workbook with monthly totals per city and a line chart. The panel shows a picture of the printed page the agent checked, a summary of what it made, and the file kopi-senja-2026.xlsx with an Open button. On the left the workbook is open: each city's sales for every month of 2026, a Total column and row, and a line chart of the monthly total below.",
+    shotCaption:
+      "A CSV file in, a checked workbook out: formulas that stay live, totals and a chart, opened in Sheets next to the chat.",
+    asksH3: "What you can ask for",
+    asks: [
+      {
+        app: "slides",
+        ask: "A 6-slide deck on this quarter's sales for the board, from sales.xlsx",
+        get: "An editable .pptx with the key figures, a chart drawn from your numbers, and speaker notes.",
+      },
+      {
+        app: "docs",
+        ask: "Tighten proposal.docx and show the edits as tracked changes",
+        get: "Your document back with every edit tracked, to accept or reject in Kantor or Word.",
+      },
+      {
+        app: "sheets",
+        ask: "Is rekap.xlsx right? Fix the totals.",
+        get: "What was wrong (formula errors, typed totals, sums that skip rows, numbers stored as text) and a fixed copy. Your own file is never changed.",
+      },
+    ],
+    startH3: "How to start",
+    start: [
+      'Install Kantor 0.25.0 or later from the <a href="#download">downloads</a> above.',
+      "Open the chat with the sparkle button at the top right of the window, or find <strong>Paparan AI Chat</strong> in the command palette <span class=\"nowrap\">(<span class=\"kbd\">Ctrl K</span>)</span>.",
+      "Choose <strong>Sign in</strong> and connect a Paparan account (Google sign-in works). The first connection adds 300 free credits.",
+      "Describe the job, attach CSV, Excel, Word or PowerPoint files or pictures, and send. Ask for changes in the same chat and it works on the same files.",
+    ],
+    priceH3: "What it costs",
+    priceText:
+      "You pay per job with credits, and 1 credit is Rp10. In our tests a 6-slide deck took about 120 credits (about Rp1,200), and a checked workbook with a chart from a CSV file about 100. Bigger jobs take more; the panel shows the credits you have left after each job.",
+    packsLabel: "Credit packs",
+    packs: [
+      ["5,000 credits", "Rp50,000", "US$3"],
+      ["22,000 credits", "Rp200,000", "US$12"],
+      ["60,000 credits", "Rp500,000", "US$30"],
+    ],
+    packsNote: "Pay in rupiah by QRIS, virtual account or e-wallet, or by card in US dollars. No subscription needed.",
+    privacy:
+      "Paparan AI gets only what each step of a job needs, such as text from your files and pictures of the pages it checks, and doesn't keep your documents. The job's files stay in a folder on your computer.",
+    free:
+      "Kantor stays free without it. Its built-in AI tools also run with your own key for an OpenAI-compatible service, or with Ollama on your own computer.",
+    more: "Plans, your account and more about Paparan AI",
   },
 
   limitsH2: "What's missing in this preview",
@@ -292,7 +344,7 @@ export const id = {
     ],
     [
       "AI hanya kalau Anda mau",
-      "Mati sampai Anda menyalakannya. Pakai Paparan AI dengan akun dan kredit, kunci API Anda sendiri dari penyedia seperti Anthropic, OpenAI, atau Google, atau model di komputer sendiri dengan Ollama.",
+      'Mati sampai Anda menyalakannya. Pakai <a href="#paparan">Paparan AI</a> dengan akun dan kredit, kunci API Anda sendiri dari penyedia seperti Anthropic, OpenAI, atau Google, atau model di komputer sendiri dengan Ollama.',
     ],
     [
       "Asisten AI bisa mengedit file yang terbuka",
@@ -363,6 +415,58 @@ export const id = {
     ],
     portable:
       'Tidak mau pakai installer? Unduh zip portabel untuk <a href="{dl}/Kantor-x64.zip">x64</a> atau <a href="{dl}/Kantor-arm64.zip">Arm</a>, ekstrak di mana saja, lalu buka <strong>kantor.exe</strong>.',
+  },
+
+  navPaparan: "Paparan AI",
+  pap: {
+    h2: "Biar Paparan AI yang membuat paparan, dokumen, atau buku kerjanya",
+    lede:
+      "Paparan AI adalah AI berbayar di dalam Kantor. Tulis apa yang Anda perlukan dan lampirkan berkasnya, lalu Paparan AI membuat presentasi PowerPoint, dokumen Word, atau buku kerja Excel sungguhan. Sebelum berkasnya diserahkan, Paparan AI memeriksanya dengan pemeriksaan Kantor sendiri dan melihat halamannya.",
+    shot: "paparan-id",
+    shotAlt:
+      "Kantor dengan panel obrolan Paparan AI di kanan. Permintaannya mengubah penjualan-2026.csv menjadi buku kerja berisi total bulanan per kota dan grafik garis. Panel menampilkan gambar halaman cetak yang diperiksa, ringkasan hasilnya, dan berkas kopi-senja-2026.xlsx dengan tombol Buka. Di kiri buku kerjanya terbuka: penjualan tiap kota per bulan sepanjang 2026, kolom dan baris Total, dan grafik garis total bulanan di bawahnya.",
+    shotCaption:
+      "CSV masuk, buku kerja yang sudah dicek keluar: rumus yang tetap hidup, total, dan grafik, dibuka di Sheets di samping obrolan.",
+    asksH3: "Yang bisa Anda minta",
+    asks: [
+      {
+        app: "slides",
+        ask: "Paparan 6 slide tentang penjualan kuartal ini untuk direksi, dari sales.xlsx",
+        get: "Berkas .pptx yang bisa diedit, berisi angka utama, grafik dari angka Anda, dan catatan pembicara.",
+      },
+      {
+        app: "docs",
+        ask: "Rapikan proposal.docx dan tandai perubahannya dengan lacak perubahan",
+        get: "Dokumen Anda kembali dengan setiap suntingan terlacak, untuk diterima atau ditolak di Kantor atau Word.",
+      },
+      {
+        app: "sheets",
+        ask: "Rekap.xlsx ini sudah benar? Perbaiki totalnya.",
+        get: "Daftar yang salah (rumus galat, total yang diketik manual, SUM yang melewatkan baris, angka yang tersimpan sebagai teks) dan salinan yang sudah diperbaiki. Berkas asli Anda tidak pernah diubah.",
+      },
+    ],
+    startH3: "Cara mulai",
+    start: [
+      'Pasang Kantor 0.25.0 atau yang lebih baru dari <a href="#download">unduhan</a> di atas.',
+      "Buka obrolan dengan tombol ikon kilau di kanan atas jendela, atau cari <strong>Obrolan Paparan AI</strong> di palet perintah <span class=\"nowrap\">(<span class=\"kbd\">Ctrl K</span>)</span>.",
+      "Pilih <strong>Masuk</strong> dan hubungkan akun Paparan (bisa masuk dengan Google). Koneksi pertama mendapat 300 kredit gratis.",
+      "Jelaskan pekerjaannya, lampirkan berkas CSV, Excel, Word, PowerPoint, atau gambar, lalu kirim. Minta perubahan di obrolan yang sama dan Paparan AI mengerjakan berkas yang sama.",
+    ],
+    priceH3: "Biayanya",
+    priceText:
+      "Anda membayar per pekerjaan dengan kredit, dan 1 kredit sama dengan Rp10. Dalam uji coba kami, paparan 6 slide memakai sekitar 120 kredit (sekitar Rp1.200), dan buku kerja dengan grafik dari berkas CSV yang sudah dicek sekitar 100. Pekerjaan yang lebih besar memakai lebih banyak; panel menampilkan sisa kredit Anda setelah setiap pekerjaan.",
+    packsLabel: "Paket kredit",
+    packs: [
+      ["5.000 kredit", "Rp50.000", "US$3"],
+      ["22.000 kredit", "Rp200.000", "US$12"],
+      ["60.000 kredit", "Rp500.000", "US$30"],
+    ],
+    packsNote: "Bayar dalam rupiah lewat QRIS, virtual account, atau dompet digital, atau dengan kartu dalam dolar AS. Tanpa langganan.",
+    privacy:
+      "Paparan AI hanya menerima yang diperlukan tiap langkah pekerjaan, misalnya teks dari berkas Anda dan gambar halaman yang diperiksanya, dan tidak menyimpan dokumen Anda. Berkas pekerjaannya tetap di folder di komputer Anda.",
+    free:
+      "Kantor tetap gratis tanpa Paparan AI. Fitur AI bawaannya juga jalan dengan kunci Anda sendiri untuk layanan yang kompatibel dengan OpenAI, atau dengan Ollama di komputer Anda.",
+    more: "Paket, akun Anda, dan info lain tentang Paparan AI",
   },
 
   limitsH2: "Yang belum ada di versi awal ini",
