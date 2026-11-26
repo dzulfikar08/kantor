@@ -9,6 +9,33 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Changed
+
+- Paparan AI jobs finish. A job no longer stops empty-handed at its step or credit limit: it hands over the files it
+  made that pass their check, and says it reached the limit. Check warnings no longer hold a job up: `finish` needs 0
+  errors, and the warnings left are listed at the end of the summary. Near the limits the agent is told to wrap up
+  with what it has, and its last step can only finish.
+- Paparan AI jobs cost less: the model reasons more briefly (about half the hidden reasoning, which is paid as
+  output), jobs get 24 steps instead of 40, the skills ask for one round of fixes and one look, and old results are
+  trimmed less often so more of each step is read from the cache.
+- Spending limits stop inside a step: when little budget is left, the next reply is capped to what remains instead
+  of running a whole large step over the limit. In Paparan AI Chat a request may spend up to 500 credits (a
+  follow-up gets its own 500), and the usage line shows credits instead of dollars.
+- `kantor agent run --provider paparan` counts its budget in credits (`--max-credits N`), and takes `--reasoning
+  low|medium|high|none` (low by default with Paparan AI).
+- Paparan AI answers in your language: an Indonesian request gets Indonesian notes and summary, even though the
+  skills are written in English.
+- Charts made by `kantor sheets build`, the Sheets editing tools and Insert Chart have a white chart area with a
+  light border, as in Excel, so their text stays readable on Kantor's dark grid.
+- With your own key or Ollama and no local skill folder, Paparan AI Chat says that decks, documents and workbooks need
+  Paparan AI and offers Sign in, instead of an unknown-skill error. Local skill folders (`~/.claude/skills`,
+  `ai.skills_dir`) keep working.
+
+### Fixed
+
+- `kantor sheets check` reported a correct row total (`=SUM(B5:I5)`) as missing a number when the row's label was a
+  date (months in the first column): a date beside amounts now counts as the row's label.
+
 ## [0.25.0] - 2026-11-26
 
 Paparan AI Chat: describe a deck, document or workbook, attach your files, and an agent builds it in Kantor, checks it and hands back the file.
