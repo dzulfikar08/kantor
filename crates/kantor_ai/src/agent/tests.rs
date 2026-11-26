@@ -296,6 +296,7 @@ fn old_results_and_long_arguments_are_shortened() {
         max_result_chars: 50_000,
         old_result_steps: 2,
         old_result_chars: 1_000,
+        old_results_over: 0,
         ..Limits::default()
     };
     let (_, model, _dir) = run_script(
@@ -326,6 +327,70 @@ fn old_results_and_long_arguments_are_shortened() {
     let cut = tool(4);
     assert!(cut.len() < 1_000, "{}", cut.len());
     assert!(cut.contains("older result cut"));
+}
+
+#[test]
+fn reasoning_goes_back_with_its_turn_but_not_into_a_follow_up() {
+    let think = || {
+        let mut t = call("write", json!({"path": "a.txt", "content": "x"}));
+        if let Turn::Reply(r) = &mut t {
+            r.reasoning = "Plan: write a.txt, then finish.".into();
+        }
+        t
+    };
+    let assistant = |model: &Scripted| {
+        model
+            .sent(2)
+            .into_iter()
+            .find(|m| m["role"] == "assistant")
+            .unwrap()
+    };
+    let (r, model, _dir) = run_script(vec![think(), finish(&[])], Limits::default());
+    assert_eq!(
+        assistant(&model)["reasoning_content"],
+        "Plan: write a.txt, then finish."
+    );
+    let off = Limits {
+        keep_reasoning: false,
+        ..Limits::default()
+    };
+    let (_, model, _dir2) = run_script(vec![think(), finish(&[])], off);
+    assert!(assistant(&model).get("reasoning_content").is_none());
+    let resumed = super::context::Context::resume(r.outcome.messages, "now b.txt");
+    assert!(
+        resumed
+            .messages()
+            .iter()
+            .all(|m| m.get("reasoning_content").is_none())
+    );
+}
+
+#[test]
+fn short_conversations_keep_old_results_whole() {
+    // Cutting would end the prompt cache for less than it saves.
+    let limits = Limits {
+        max_result_chars: 50_000,
+        old_result_steps: 2,
+        ..Limits::default()
+    };
+    let (_, model, _dir) = run_script(
+        vec![
+            call("big", json!({})),
+            call("look", json!({"file": "a", "page": "1", "version": "1"})),
+            call("look", json!({"file": "a", "page": "2", "version": "1"})),
+            finish(&[]),
+        ],
+        limits,
+    );
+    let first = |n: usize| {
+        model
+            .sent(n)
+            .iter()
+            .find(|m| m["role"] == "tool")
+            .map(|m| m["content"].as_str().unwrap().len())
+            .unwrap()
+    };
+    assert!(first(4) >= 20_000);
 }
 
 #[test]

@@ -83,6 +83,7 @@ A sheet:
 |---|---|
 | `name` | its name (default `Sheet1`, ...) |
 | `rows` / `columns` | the data, row by row or column by column, from `start` (default `A1`) |
+| `csv` | a CSV/TSV file next to the JSON whose rows are written from `start` (numbers and dates typed, as `kantor convert` reads it), instead of `rows`: the user's data copied without retyping |
 | `cells` | single cells: `{"B9": "=SUM(B2:B8)"}` |
 | `formats` | `format` tool arguments, each with its `range` |
 | `widths` | column widths in characters: `{"A": 14, "B:D": 10, "E": "auto"}` |

@@ -279,11 +279,20 @@ pub struct Limits {
     /// `old_result_chars`.
     pub old_result_steps: u32,
     pub old_result_chars: usize,
+    /// Old results are cut only once the conversation is longer than this
+    /// (characters): a cut ends the provider's prompt cache there, and
+    /// re-reading what follows uncached costs more than the cut saves
+    /// until the conversation is long.
+    pub old_results_over: usize,
     /// Tries again after a network error, time-out or server error.
     pub retries: u32,
     /// `reasoning_effort` sent with every step (`low` keeps a thinking
     /// model's hidden reasoning, paid as output, short).
     pub reasoning: Option<String>,
+    /// Send each step's reasoning back with its turn
+    /// (`reasoning_content`), so a thinking model goes on from its plan
+    /// instead of working it out again (paid as output) every step.
+    pub keep_reasoning: bool,
 }
 
 /// Steps a job gets by default. The jobs that finish well take 10 to 20;
@@ -311,8 +320,10 @@ impl Default for Limits {
             compact_args_over: 1_500,
             old_result_steps: 4,
             old_result_chars: 3_000,
+            old_results_over: 160_000,
             retries: 2,
             reasoning: None,
+            keep_reasoning: true,
         }
     }
 }
@@ -1047,7 +1058,10 @@ fn run_in(
         // Old results are cut every few steps, not every step: each cut
         // ends the provider's prompt cache there, and cached input costs a
         // fraction of fresh input.
-        let results_before = if limits.old_result_steps > 0 && step % limits.old_result_steps == 0 {
+        let results_before = if limits.old_result_steps > 0
+            && step % limits.old_result_steps == 0
+            && conversation_chars(ctx.messages()) > limits.old_results_over
+        {
             (step + 1).saturating_sub(limits.old_result_steps)
         } else {
             0
@@ -1169,6 +1183,9 @@ fn run_in(
             }
         }
         let mut turn = json!({"role": "assistant", "content": reply.text});
+        if limits.keep_reasoning && !reply.reasoning.trim().is_empty() {
+            turn["reasoning_content"] = json!(reply.reasoning);
+        }
         if !calls.is_empty() {
             turn["tool_calls"] = Value::Array(
                 calls

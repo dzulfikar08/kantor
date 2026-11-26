@@ -220,13 +220,14 @@ impl DocTools {
         Ok(())
     }
 
-    /// Picture paths in build or edit JSON (`path`, `logo`, `picture`)
-    /// must stay in the work folder; relative ones start from `base`.
+    /// Picture and data paths in build or edit JSON (`path`, `logo`,
+    /// `picture`, `csv`) must stay in the work folder; relative ones start
+    /// from `base`.
     fn check_paths(&self, v: &Value, base: &Path) -> Result<()> {
         match v {
             Value::Object(m) => {
                 for (k, v) in m {
-                    if matches!(k.as_str(), "path" | "logo" | "picture")
+                    if matches!(k.as_str(), "path" | "logo" | "picture" | "csv")
                         && let Some(s) = v.as_str()
                     {
                         let p = Path::new(s.trim());
@@ -238,8 +239,8 @@ impl DocTools {
                         let rel = joined
                             .strip_prefix(&self.root)
                             .map(|r| r.to_string_lossy().into_owned())
-                            .map_err(|_| anyhow!("picture {s}: use a file in the work folder"))?;
-                        self.resolve(&rel).with_context(|| format!("picture {s}"))?;
+                            .map_err(|_| anyhow!("{s}: use a file in the work folder"))?;
+                        self.resolve(&rel).with_context(|| s.to_owned())?;
                     } else {
                         self.check_paths(v, base)?;
                     }

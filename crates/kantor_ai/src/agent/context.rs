@@ -49,7 +49,7 @@ impl Context {
     /// A conversation that goes on from an earlier job's (`history`, as
     /// [`super::Outcome::messages`] gave it) with the user's next request.
     /// Pictures in the history become notes (the model can look again),
-    /// and tool calls left without a result (a job stopped mid-step) get
+    /// earlier reasoning is left out, and tool calls left without a result (a job stopped mid-step) get
     /// one, so the API takes the conversation.
     pub fn resume(history: Vec<Value>, task: &str) -> Self {
         let mut c = Self::default();
@@ -71,6 +71,10 @@ impl Context {
                     .filter_map(|call| call.get("id").and_then(Value::as_str))
                     .map(str::to_owned)
                     .collect();
+            }
+            // Reasoning only helps the request it was made for.
+            if let Some(o) = m.as_object_mut() {
+                o.remove("reasoning_content");
             }
             if let Some(parts) = m.get_mut("content").and_then(Value::as_array_mut) {
                 for p in parts {

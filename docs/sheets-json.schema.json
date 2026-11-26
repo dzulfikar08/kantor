@@ -2960,7 +2960,7 @@
         },
         "start": {
           "type": "string",
-          "description": "Where `rows` or `columns` start (default A1)."
+          "description": "Where `rows`, `columns` or `csv` start (default A1)."
         },
         "rows": {
           "type": "array",
@@ -2991,6 +2991,10 @@
             }
           },
           "description": "The data column by column from `start` (each inner array is a column)."
+        },
+        "csv": {
+          "type": "string",
+          "description": "A CSV/TSV file in the folder (path relative to this JSON) whose rows are written from `start`, numbers and dates as typed, instead of `rows`: copy the user's data without retyping it."
         },
         "cells": {
           "type": "object",
