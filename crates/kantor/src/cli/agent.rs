@@ -161,17 +161,6 @@ fn parse(args: &[OsString]) -> Result<Opts, String> {
         None if o.paparan => Some(kantor_ai::paparan::AGENT_REASONING.to_owned()),
         None => None,
     };
-    // EXPERIMENT (removed before merge): A/B switches for cost runs.
-    if let Ok(x) = std::env::var("KANTOR_AGENT_EXP") {
-        for f in x.split(',') {
-            match f {
-                "drop-reasoning" => o.limits.keep_reasoning = false,
-                "prune-old" => o.limits.old_results_over = 0,
-                "effort-none" => o.limits.reasoning = Some("none".into()),
-                _ => {}
-            }
-        }
-    }
     if o.limits.max_cost.is_some() && o.limits.prices.is_none() {
         return Err("--max-cost needs the prices (--price-input, --price-output)".into());
     }

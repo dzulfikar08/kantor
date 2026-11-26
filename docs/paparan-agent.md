@@ -207,6 +207,23 @@ From the 0.25.0 jobs (DeepSeek V4.1 Flash on Workers AI, Nov 2026):
   workbook job round in circles for 40 steps; another finished all errors and then fixed
   warnings until the step limit.
 
+From the cheaper-jobs round (Nov 2026; GLM-5.3 Flash on Z.ai for iteration, DeepSeek to confirm):
+
+- A model that saw its own `write_file` call with a placeholder in place of the content took
+  it for a failed write and wrote the whole file again, two or three times: 40 credits per
+  rewrite for a workbook, the largest single waste found. Long arguments now stay whole until
+  the conversation is long.
+- Without its earlier reasoning, DeepSeek planned the deck again on every step (5,000 to 8,000
+  reasoning tokens a step while reading references). Sent back, later steps think for a few
+  hundred tokens.
+- Builders stop at their first error; GLM took up to four builds (two steps each) to find
+  four wrong keys. The schema check lists them together.
+- The CSV's rows were retyped into `rows` (96 rows: about 5,000 output tokens, 30 credits);
+  the `csv` key copies them.
+- A finish-only tool list on the last step re-read the whole conversation uncached.
+- Budgets under about 100 credits stop a deck before it is written: the loop keeps room for
+  three typical steps, and a deck's write step is the largest.
+
 ## Tests
 
 `kantor_ai::agent::scripted::Scripted` plays back a script of replies (no network) and records
