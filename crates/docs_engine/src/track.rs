@@ -365,7 +365,13 @@ impl Document {
 
 /// Mark `lo..hi` of `p` deleted as part of `del`, removing `me`'s own
 /// insertions in it. Returns the bytes removed.
-fn strike(p: &mut Paragraph, lo: usize, hi: usize, del: &Arc<Revision>, me: &str) -> usize {
+pub(crate) fn strike(
+    p: &mut Paragraph,
+    lo: usize,
+    hi: usize,
+    del: &Arc<Revision>,
+    me: &str,
+) -> usize {
     if lo >= hi {
         return 0;
     }
@@ -397,7 +403,7 @@ fn strike(p: &mut Paragraph, lo: usize, hi: usize, del: &Arc<Revision>, me: &str
 }
 
 /// Insert `text` at `offset` as part of the insertion `rev`.
-fn insert_tracked(
+pub(crate) fn insert_tracked(
     p: &mut Paragraph,
     offset: usize,
     text: &str,
@@ -422,7 +428,7 @@ fn insert_tracked(
 }
 
 /// The `w:ins` element a paragraph mark carries for `rev`.
-fn ins_tag(rev: &Revision) -> String {
+pub(crate) fn ins_tag(rev: &Revision) -> String {
     format!("{}/>", rev.tag.trim_end_matches('>').trim_end_matches('/'))
 }
 

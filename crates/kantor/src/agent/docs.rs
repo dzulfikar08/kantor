@@ -133,25 +133,76 @@ pub fn find_replace(
         bail!("`find` is empty");
     }
     check_len("`replace`", with)?;
+    let with = replacement(with);
     let opts = FindOptions {
         match_case: opt_bool(args, "match_case")?.unwrap_or(false),
         whole_word: opt_bool(args, "whole_word")?.unwrap_or(false),
     };
-    let ranges: Vec<_> = doc
-        .paragraphs()
-        .iter()
-        .enumerate()
-        .flat_map(|(i, p)| {
-            find_all(&p.text, find, opts)
-                .into_iter()
-                .map(move |r| (i, r))
-        })
-        .collect();
-    if ranges.is_empty() {
-        return Ok((0, sel));
+    let mut after = sel;
+    let n = in_parts(doc, args, |d, body| {
+        let ranges: Vec<_> = d
+            .paragraphs()
+            .iter()
+            .enumerate()
+            .flat_map(|(i, p)| {
+                find_all(&p.text, find, opts)
+                    .into_iter()
+                    .map(move |r| (i, r))
+            })
+            .collect();
+        if !ranges.is_empty() {
+            let a = d.replace_ranges(&ranges, &with, if body { sel } else { SEL_START });
+            if body {
+                after = a;
+            }
+        }
+        Ok(ranges.len())
+    })?;
+    Ok((n, after))
+}
+
+const SEL_START: Selection = Selection::caret(docs_engine::Position::new(0, 0));
+
+/// A replacement as paragraph text: a line break (`\n`) is a line break
+/// in the paragraph (`w:br`), not a new paragraph.
+pub fn replacement(with: &str) -> String {
+    with.replace("\r\n", "\n")
+        .replace('\r', "\n")
+        .replace('\n', &docs_engine::LINE_BREAK.to_string())
+}
+
+/// Run `f` where `args`' `in` says (find_replace, format): `all` (the
+/// default) is the body and every header and footer, as Word's Replace
+/// All; `body`; `headers` (headers and footers). `f` gets each part's
+/// document and whether it's the body; returns the sum of its counts.
+/// A header or footer Kantor won't edit is skipped.
+pub fn in_parts(
+    doc: &mut Document,
+    args: &Value,
+    mut f: impl FnMut(&mut Document, bool) -> Result<usize>,
+) -> Result<usize> {
+    let (body, parts) = match opt_str(args, "in")?.unwrap_or("all") {
+        "all" => (true, true),
+        "body" => (true, false),
+        "headers" => (false, true),
+        other => bail!("`in` must be all, body or headers, not \"{other}\""),
+    };
+    let mut n = 0;
+    if body {
+        n += f(doc, true)?;
     }
-    let after = doc.replace_ranges(&ranges, with, sel);
-    Ok((ranges.len(), after))
+    if parts {
+        for i in 0..doc.stories().len() {
+            // A part left as it was isn't rewritten on save.
+            let Some((e, mut part)) = doc.edit_story(i) else {
+                continue;
+            };
+            let r = f(&mut part, false);
+            doc.finish_part(e, part, SEL_START);
+            n += r?;
+        }
+    }
+    Ok(n)
 }
 
 #[cfg(test)]

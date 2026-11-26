@@ -275,7 +275,9 @@ columns), `headings` (a tree: `id`, `level`, `number`, `text`, `style`,
 formatting), `direct_formatting`, `tables` (`id`, rows, columns, header
 rows, caption, page), `pictures` and `charts` (alt text, page),
 `field_counts` and the `fields` that reference (TOC, REF, PAGEREF, SEQ,
-NOTEREF), `comments`, `tracked_changes`, `notes`, `bookmarks` (the names
+NOTEREF), `comments`, `tracked_changes` (the body's, the first 500;
+`tracked_change_count` counts them all, headers, footers and notes
+included), `notes`, `bookmarks` (the names
 headings and captions carry: blocks inserted later can point at them with
 `{ref:_Ref100000003}`), `track_changes_on`.
 
@@ -297,9 +299,20 @@ kantor docs edit report.docx -o revised.docx --track "Dzul" --ops ops.json
 ```
 
 `ops.json` is `[{"tool": "…", "args": {…}}, …]`, run in order. With
-`--track AUTHOR` (MCP: `track`) text changes, inserted blocks, deletions
-and paragraph style changes are tracked changes by that author; the file
-keeps Track Changes as it had it.
+`--track AUTHOR` (MCP: `track`) text changes, inserted blocks and
+paragraphs, deletions and paragraph style changes are tracked changes by
+that author; the file keeps Track Changes as it had it.
+`replace_paragraph` leaves the old text struck through before the new;
+`insert_paragraphs` marks the new paragraphs' marks inserted, so
+rejecting removes them whole; `delete_paragraphs` strikes the text and
+the paragraph marks, so accepting removes the paragraphs.
+
+`find_replace` and `format` look where `in` says: `all` (the default)
+is the body and every header and footer (first-page, even and default
+ones, in every section), as Word's Replace All; `body`; `headers` (the
+headers and footers only). They search paragraphs and table cells, not
+text boxes, footnotes or endnotes; a header Kantor can't edit is
+skipped.
 
 | tool | args | does |
 |---|---|---|
@@ -313,8 +326,8 @@ keeps Track Changes as it had it.
 | `move_section` | `heading`; `before_heading`, `after_section` or `to_end` | a heading and everything under it (not tracked) |
 | `set_style` | `from`, `to` (or `heading`), `style` | apply a paragraph style (a built-in one is added if missing) |
 | `restyle` | `style`, style settings (`size`, `color`, `space_before`, …); `type`, `based_on` for a new one | change a style's definition (every paragraph in it follows); makes the style if there is none |
-| `find_replace` | `find`, `replace`, `match_case`, `whole_word`, and optionally `bold`, `italic`, `underline`, `color`, `size`, `font`, `highlight`, `style` (character) | replace text; with formatting keys the new text is formatted |
-| `format` | `find`, formatting keys | format every match |
+| `find_replace` | `find`, `replace`, `match_case`, `whole_word`, `in`, and optionally `bold`, `italic`, `underline`, `color`, `size`, `font`, `highlight`, `style` (character) | replace text; with formatting keys the new text is formatted. A `\n` in `replace` is a line break in the same paragraph (`w:br`) |
+| `format` | `find`, formatting keys, `in` | format every match |
 | `add_comment` | `paragraph`, `text`, `find` (the words to comment on), `author` | a comment |
 | `resolve_comment` | `id`, `done` | mark resolved |
 | `accept_changes`, `reject_changes` | nothing (all), or `from`/`to`, `heading` | resolve tracked changes |

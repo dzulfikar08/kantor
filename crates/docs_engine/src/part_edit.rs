@@ -106,6 +106,27 @@ impl Document {
         }) {
             return None;
         }
+        self.take_story(index, before, para, created)
+    }
+
+    /// Start editing header or footer story `index` (see
+    /// [`Document::stories`]) as it is, for a program going through every
+    /// header and footer (Replace All). `None` for one Kantor won't edit.
+    pub fn edit_story(&mut self, index: usize) -> Option<(PartEdit, Document)> {
+        if self.stories.get(index)?.locked.is_some() {
+            return None;
+        }
+        let before = self.side_state();
+        self.take_story(index, before, None, false)
+    }
+
+    fn take_story(
+        &mut self,
+        index: usize,
+        before: HfState,
+        para: Option<(usize, Paragraph)>,
+        created: bool,
+    ) -> Option<(PartEdit, Document)> {
         let props = std::sync::Arc::new(crate::fields::Props::of(self));
         let mut doc = std::mem::take(&mut self.stories[index].doc);
         doc.media_stem = media_stem(&self.stories[index].part);

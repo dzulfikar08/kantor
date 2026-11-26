@@ -8,7 +8,9 @@ use crate::document::{Document, Kind};
 use crate::model::{NumRef, Paragraph, Position, Selection};
 use crate::numbering::ListKind;
 use crate::object::OBJECT;
+use crate::review::RevKind;
 use crate::style::StyleKind;
+use crate::track::{ins_tag, insert_tracked, set_mark_rev, strike, strip_mark};
 
 /// A paragraph to insert.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -87,11 +89,36 @@ impl Document {
     /// breaks becomes several paragraphs of the same kind. A blank new
     /// document's only paragraph is replaced. Returns the new paragraphs'
     /// indices and selects them for undo/redo; `sel` is restored on undo.
+    ///
+    /// With Track Changes on, the paragraphs go in as tracked insertions,
+    /// their marks too, so rejecting removes them whole (a blank
+    /// document's paragraph then stays, after them).
     pub fn insert_paragraphs(
         &mut self,
         after: Option<usize>,
         items: &[NewParagraph],
         sel: Selection,
+    ) -> Result<Range<usize>, String> {
+        self.insert_paragraphs_as(after, items, sel, self.track)
+    }
+
+    /// [`Document::insert_paragraphs`], never tracked (placeholders a
+    /// program replaces right after).
+    pub fn insert_paragraphs_untracked(
+        &mut self,
+        after: Option<usize>,
+        items: &[NewParagraph],
+        sel: Selection,
+    ) -> Result<Range<usize>, String> {
+        self.insert_paragraphs_as(after, items, sel, false)
+    }
+
+    fn insert_paragraphs_as(
+        &mut self,
+        after: Option<usize>,
+        items: &[NewParagraph],
+        sel: Selection,
+        track: bool,
     ) -> Result<Range<usize>, String> {
         let mut at = match after {
             None => 0,
@@ -113,7 +140,8 @@ impl Document {
             && self.paragraphs[0].text.is_empty()
             && self.paragraphs[0].cell.is_none()
             && self.paragraphs[0].props.num.is_none();
-        let replace = usize::from(blank);
+        // Tracked, the blank paragraph stays for rejected ones to join.
+        let replace = usize::from(blank && !track);
         if blank {
             at = 0;
         }
@@ -160,7 +188,37 @@ impl Document {
             anchor: Position::new(range.start, 0),
             head: Position::new(range.end - 1, last),
         };
-        self.replace(at, replace, new, (sel, after_sel), Kind::Other, true);
+        let (mut first, mut count) = (at, replace);
+        if track {
+            let ins = self.new_rev(RevKind::Insert, self.max_rev_id() + 1);
+            let mark = ins_tag(&ins);
+            for p in &mut new {
+                for run in &mut p.runs {
+                    if run.object.is_none() && run.len > 0 {
+                        run.rev = Some(ins.clone());
+                    }
+                }
+                p.normalize();
+                set_mark_rev(p, &mark);
+            }
+            // Rejected paragraphs join the one after them. At the end of the
+            // document there's none: the paragraph before gets the inserted
+            // mark instead and the last new one keeps a plain mark, as when
+            // pressing Enter at the end in Word.
+            if at == self.paragraphs.len()
+                && let Some(prev) = at.checked_sub(1).map(|i| &self.paragraphs[i])
+                && prev.cell.is_none()
+            {
+                let mut prev = prev.clone();
+                set_mark_rev(&mut prev, &mark);
+                if let Some(l) = new.last_mut() {
+                    strip_mark(l, &["ins"]);
+                }
+                new.insert(0, prev);
+                (first, count) = (at - 1, 1);
+            }
+        }
+        self.replace(first, count, new, (sel, after_sel), Kind::Other, true);
         Ok(range)
     }
 
@@ -168,6 +226,10 @@ impl Document {
     /// formatting of its first character. Line breaks in `text` add
     /// paragraphs of the same kind. Refuses paragraphs holding pictures or
     /// other objects. Returns the indices of the resulting paragraphs.
+    ///
+    /// With Track Changes on, the old text stays as a tracked deletion and
+    /// the new text follows it as a tracked insertion (added paragraphs'
+    /// marks inserted), so rejecting gives the paragraph back as it was.
     pub fn replace_paragraph_text(
         &mut self,
         i: usize,
@@ -188,14 +250,42 @@ impl Document {
         let props = p.props_at(0);
         let mut template = p.clone();
         template.delete(0..template.text.len());
-        let new: Vec<Paragraph> = lines(text)
-            .into_iter()
-            .map(|line| {
-                let mut q = template.clone();
-                q.insert(0, &line, props.clone());
-                q
-            })
-            .collect();
+        let new: Vec<Paragraph> = if self.track {
+            let me = self.author.clone();
+            let ids = self.max_rev_id();
+            let del = self.new_rev(RevKind::Delete, ids + 1);
+            let ins = self.new_rev(RevKind::Insert, ids + 2);
+            let lines = lines(text);
+            let mut out = Vec::with_capacity(lines.len());
+            for (k, line) in lines.iter().enumerate() {
+                let mut q = if k == 0 {
+                    let mut q = p.clone();
+                    let len = q.text.len();
+                    strike(&mut q, 0, len, &del, &me);
+                    q
+                } else {
+                    template.clone()
+                };
+                let end = q.text.len();
+                insert_tracked(&mut q, end, line, &props, &ins);
+                out.push(q);
+            }
+            // Every mark but the last (the paragraph's own) is new.
+            let n = out.len();
+            for q in &mut out[..n - 1] {
+                set_mark_rev(q, &ins_tag(&ins));
+            }
+            out
+        } else {
+            lines(text)
+                .into_iter()
+                .map(|line| {
+                    let mut q = template.clone();
+                    q.insert(0, &line, props.clone());
+                    q
+                })
+                .collect()
+        };
         let range = i..i + new.len();
         let last = new.last().map_or(0, |p| p.text.len());
         let after_sel = Selection {
@@ -208,6 +298,10 @@ impl Document {
 
     /// Delete paragraphs `i..i + count` from the body. Refuses ranges that
     /// touch a table. Deleting everything leaves one empty paragraph.
+    ///
+    /// With Track Changes on, their text and paragraph marks are marked
+    /// deleted instead (the user's own insertions in them go), so accepting
+    /// removes the paragraphs and rejecting keeps them.
     pub fn delete_paragraphs(
         &mut self,
         i: usize,
@@ -223,6 +317,31 @@ impl Document {
         }
         if self.paragraphs[i..end].iter().any(|p| p.cell.is_some()) {
             return Err("those paragraphs include a table, which can't be deleted this way".into());
+        }
+        if self.track {
+            // From the first paragraph's start to the next one's, or, at
+            // the end of the document, from the end of the paragraph before.
+            let n = self.paragraphs.len();
+            let len = |k: usize| self.paragraphs[k].text.len();
+            let (start, stop) = if end < n && self.paragraphs[end].cell.is_none() {
+                (Position::new(i, 0), Position::new(end, 0))
+            } else if i > 0 && self.paragraphs[i - 1].cell.is_none() {
+                (
+                    Position::new(i - 1, len(i - 1)),
+                    Position::new(end - 1, len(end - 1)),
+                )
+            } else {
+                (Position::new(i, 0), Position::new(end - 1, len(end - 1)))
+            };
+            if start == stop {
+                return Ok(());
+            }
+            let mut ids = self.max_rev_id();
+            let (new, _) = self.tracked_cut(start, stop, &mut ids);
+            let caret = Selection::caret(Position::new(i, 0));
+            let count = stop.para - start.para + 1;
+            self.replace(start.para, count, new, (sel, caret), Kind::Other, true);
+            return Ok(());
         }
         let new = if count == self.paragraphs.len() {
             vec![Paragraph::default()]
@@ -309,5 +428,128 @@ mod tests {
         doc.undo();
         doc.undo();
         assert_eq!(texts(&doc), ["a", "b"]);
+    }
+
+    fn tracked(paras: &[&str]) -> Document {
+        let mut d = Document::from_paragraphs(paras.iter().map(|t| Paragraph::new(*t)).collect());
+        d.set_author("AI");
+        d.set_track_changes(true, SEL);
+        d
+    }
+
+    /// The texts after accepting (or rejecting) every change.
+    fn resolved(doc: &Document, accept: bool) -> Vec<String> {
+        let mut d = doc.clone();
+        d.resolve_all(accept, SEL);
+        assert!(!d.has_changes());
+        d.paragraphs().iter().map(|p| p.text.clone()).collect()
+    }
+
+    fn by_ai(doc: &Document) -> usize {
+        let cs = doc.changes();
+        assert!(cs.iter().all(|c| c.author == "AI"));
+        cs.len()
+    }
+
+    #[test]
+    fn tracked_replace_keeps_the_old_text_struck() {
+        let mut doc = tracked(&["Judul", "Poin satu.", "Akhir"]);
+        doc.replace_paragraph_text(1, "Diganti.", SEL).unwrap();
+        assert_eq!(texts(&doc), ["Judul", "Poin satu.Diganti.", "Akhir"]);
+        assert_eq!(by_ai(&doc), 2);
+        assert_eq!(resolved(&doc, true), ["Judul", "Diganti.", "Akhir"]);
+        assert_eq!(resolved(&doc, false), ["Judul", "Poin satu.", "Akhir"]);
+
+        // Several lines: the added paragraphs' marks are inserted.
+        let mut doc = tracked(&["a", "b"]);
+        doc.paragraphs[0].props.style = Some("Heading1".into());
+        let r = doc.replace_paragraph_text(0, "x\ny\nz", SEL).unwrap();
+        assert_eq!(r, 0..3);
+        assert_eq!(texts(&doc), ["ax", "y", "z", "b"]);
+        assert_eq!(doc.paragraph(2).props.style.as_deref(), Some("Heading1"));
+        assert_eq!(resolved(&doc, true), ["x", "y", "z", "b"]);
+        assert_eq!(resolved(&doc, false), ["a", "b"]);
+        // One undo step.
+        doc.undo();
+        assert_eq!(texts(&doc), ["a", "b"]);
+    }
+
+    #[test]
+    fn tracked_inserts_go_whole_on_reject() {
+        let numbered = |t: &str| NewParagraph {
+            list: Some(ListKind::Numbered),
+            ..item(t)
+        };
+        // In the middle.
+        let mut doc = tracked(&["a", "b"]);
+        let r = doc
+            .insert_paragraphs(Some(0), &[numbered("x"), numbered("y")], SEL)
+            .unwrap();
+        assert_eq!(r, 1..3);
+        assert_eq!(texts(&doc), ["a", "x", "y", "b"]);
+        assert!(by_ai(&doc) >= 1);
+        let num = doc.paragraph(1).props.num.unwrap().id;
+        assert_eq!(doc.paragraph(2).props.num.unwrap().id, num);
+        assert_eq!(resolved(&doc, true), ["a", "x", "y", "b"]);
+        assert_eq!(resolved(&doc, false), ["a", "b"]);
+        let mut back = doc.clone();
+        back.resolve_all(false, SEL);
+        assert_eq!(back.paragraph(1).props.num, None);
+
+        // At the end of the document.
+        let mut doc = tracked(&["a", "b"]);
+        doc.insert_paragraphs(Some(1), &[numbered("x"), item("y")], SEL)
+            .unwrap();
+        assert_eq!(texts(&doc), ["a", "b", "x", "y"]);
+        assert_eq!(doc.list_kind(2), Some(ListKind::Numbered));
+        assert_eq!(resolved(&doc, true), ["a", "b", "x", "y"]);
+        assert_eq!(resolved(&doc, false), ["a", "b"]);
+        let mut back = doc.clone();
+        back.resolve_all(false, SEL);
+        assert_eq!(back.list_kind(1), None);
+
+        // A blank document keeps its paragraph after the new ones.
+        let mut doc = Document::new();
+        doc.set_author("AI");
+        doc.set_track_changes(true, SEL);
+        doc.insert_paragraphs(None, &[item("x")], SEL).unwrap();
+        assert_eq!(texts(&doc), ["x", ""]);
+        assert_eq!(resolved(&doc, false), [""]);
+
+        // Placeholders stay untracked.
+        let mut doc = tracked(&["a"]);
+        doc.insert_paragraphs_untracked(Some(0), &[item("m")], SEL)
+            .unwrap();
+        assert!(!doc.has_changes());
+    }
+
+    #[test]
+    fn tracked_deletes_mark_text_and_marks() {
+        // In the middle.
+        let mut doc = tracked(&["a", "b", "c", "d"]);
+        doc.delete_paragraphs(1, 2, SEL).unwrap();
+        assert_eq!(texts(&doc), ["a", "b", "c", "d"]);
+        assert!(by_ai(&doc) >= 1);
+        assert_eq!(resolved(&doc, true), ["a", "d"]);
+        assert_eq!(resolved(&doc, false), ["a", "b", "c", "d"]);
+
+        // At the end.
+        let mut doc = tracked(&["a", "b", "c"]);
+        doc.delete_paragraphs(1, 2, SEL).unwrap();
+        assert_eq!(resolved(&doc, true), ["a"]);
+        assert_eq!(resolved(&doc, false), ["a", "b", "c"]);
+
+        // Everything.
+        let mut doc = tracked(&["a", "b"]);
+        doc.delete_paragraphs(0, 2, SEL).unwrap();
+        assert_eq!(resolved(&doc, true), [""]);
+        assert_eq!(resolved(&doc, false), ["a", "b"]);
+
+        // The author's own insertion just goes.
+        let mut doc = tracked(&["a", "b"]);
+        doc.insert_paragraphs(Some(0), &[item("x")], SEL).unwrap();
+        doc.delete_paragraphs(1, 1, SEL).unwrap();
+        assert_eq!(texts(&doc), ["a", "b"]);
+        assert!(!doc.has_changes());
     }
 }
