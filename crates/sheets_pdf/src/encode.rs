@@ -1026,6 +1026,9 @@ struct Placed {
     desc: f32,
     /// `####` replaced a number wider than `avail`: the number's width.
     hashes: Option<f32>,
+    /// A General number wider than `avail` shown shorter (fewer decimals
+    /// or scientific notation): the full text's width and the text shown.
+    shortened: Option<(f32, String)>,
 }
 
 /// Place one line of `t` (`line`, already shaped) in its cell, as
@@ -1043,6 +1046,7 @@ fn place(
     let mut k = 1.0;
     let mut repeat = 1;
     let mut hashes = None;
+    let mut shortened = None;
     if t.number && line.width > avail + 0.5 && !t.shrink {
         // A number that doesn't fit: a General number with fewer decimals
         // (or in scientific notation), else ####, as Excel shows it and the
@@ -1052,7 +1056,11 @@ fn place(
         });
         match fit {
             sheets_engine::NumberFit::Fits => {}
-            sheets_engine::NumberFit::Shorter(s) => line = shaper.line(&s, &t.font),
+            sheets_engine::NumberFit::Shorter(s) => {
+                let full = line.width;
+                line = shaper.line(&s, &t.font);
+                shortened = Some((full, s));
+            }
             sheets_engine::NumberFit::Hashes => {
                 hashes = Some(line.width);
                 let hash = shaper.line("#", &t.font);
@@ -1102,12 +1110,13 @@ fn place(
         asc,
         desc,
         hashes,
+        shortened,
     }
 }
 
 /// What a cell's room cuts off of its text, as [`Encoder`] draws it (see
 /// [`overrun`]). Sizes in points.
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Overrun {
     /// The text's width (one line) or height (wrapped).
     pub need: f32,
@@ -1121,6 +1130,10 @@ pub struct Overrun {
     pub bottom: f32,
     /// A number shown as `####`: it is wider than its cell.
     pub hashes: bool,
+    /// A General number wider than its cell, shown with fewer decimals or
+    /// in scientific notation (as Excel does): the text shown. `need` is
+    /// the full text's width.
+    pub shortened: Option<String>,
 }
 
 /// Cuts smaller than these don't count, points: across (a glyph's side
@@ -1135,7 +1148,8 @@ const GLYPH_BOTTOM: f32 = 0.2;
 
 /// What of `t` its room cuts off, as [`Encoder`] draws it; `None` when
 /// all of it shows (or it is turned, stacked, shrunk to fit or repeated
-/// to fill). Glyph tops and bottoms are taken as 0.75 and 0.2 of the font
+/// to fill). A General number shown shorter is reported with
+/// [`Overrun::shortened`]. Glyph tops and bottoms are taken as 0.75 and 0.2 of the font
 /// size from the baseline, so the empty part of a font's ascent above its
 /// letters doesn't count as cut. A cut text's `need` down is its line
 /// height (wrapped: all its lines).
@@ -1172,6 +1186,14 @@ pub fn overrun(shaper: &mut Shaper, t: &CellText) -> Option<Overrun> {
             ..Overrun::default()
         });
     }
+    if let Some((need, shown)) = p.shortened {
+        return Some(Overrun {
+            need,
+            room: avail,
+            shortened: Some(shown),
+            ..Overrun::default()
+        });
+    }
     let c = t.clip;
     let (mut left, mut right) = (0.0, 0.0);
     if !(t.shrink || t.align == Align::Fill || t.repeat.is_some()) {
@@ -1192,6 +1214,7 @@ pub fn overrun(shaper: &mut Shaper, t: &CellText) -> Option<Overrun> {
         top: if vertical { top } else { 0.0 },
         bottom: if vertical { bottom } else { 0.0 },
         hashes: false,
+        shortened: None,
     })
 }
 
