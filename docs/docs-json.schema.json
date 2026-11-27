@@ -200,7 +200,7 @@
       "description": "A cover page (front matter: no header or footer; the body starts at page 1).",
       "properties": {
         "label": {
-          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
           "anyOf": [
             {
               "type": "string"
@@ -221,7 +221,7 @@
           ]
         },
         "title": {
-          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
           "anyOf": [
             {
               "type": "string"
@@ -242,7 +242,7 @@
           ]
         },
         "subtitle": {
-          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
           "anyOf": [
             {
               "type": "string"
@@ -274,7 +274,7 @@
           ]
         },
         "note": {
-          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
           "anyOf": [
             {
               "type": "string"
@@ -783,7 +783,7 @@
           "const": "heading"
         },
         "text": {
-          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
           "anyOf": [
             {
               "type": "string"
@@ -834,7 +834,7 @@
           "const": "paragraph"
         },
         "text": {
-          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
           "anyOf": [
             {
               "type": "string"
@@ -969,7 +969,7 @@
           "items": {
             "anyOf": [
               {
-                "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+                "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
                 "anyOf": [
                   {
                     "type": "string"
@@ -994,7 +994,7 @@
                 "additionalProperties": false,
                 "properties": {
                   "text": {
-                    "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+                    "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
                     "anyOf": [
                       {
                         "type": "string"
@@ -1088,7 +1088,7 @@
                   "additionalProperties": false,
                   "properties": {
                     "text": {
-                      "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+                      "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
                       "anyOf": [
                         {
                           "type": "string"
@@ -1818,7 +1818,7 @@
           "const": "callout"
         },
         "title": {
-          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
           "anyOf": [
             {
               "type": "string"
@@ -1864,7 +1864,7 @@
           "const": "quote"
         },
         "text": {
-          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+          "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
           "anyOf": [
             {
               "type": "string"
