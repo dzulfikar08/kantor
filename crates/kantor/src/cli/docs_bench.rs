@@ -13,6 +13,26 @@ use std::time::Instant;
 use anyhow::{Context as _, Result};
 use docs_engine::{Document, Position, Selection};
 
+/// With `verify`: count (and print) a difference between `laid` and a
+/// fresh full layout of `doc`.
+fn check(
+    doc: &Document,
+    laid: &docs_pdf::Layout,
+    engine: &mut docs_layout::Engine,
+    verify: bool,
+    mismatches: &mut usize,
+    what: &str,
+) {
+    if !verify {
+        return;
+    }
+    let full = docs_pdf::lay_out(doc, engine);
+    if let Some(d) = docs_pdf::cache::difference(laid, &full) {
+        *mismatches += 1;
+        println!("  MISMATCH after {what}: {d}");
+    }
+}
+
 fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1000.0
 }
@@ -81,13 +101,33 @@ pub fn run(file: &Path, keys: usize, verify: bool) -> Result<()> {
     let mut fresh_engine = docs_layout::Engine::new();
     let mut mismatches = 0;
 
-    for (name, page) in [
-        ("page 1", 0),
-        ("middle page", pages / 2),
-        ("last page", pages.saturating_sub(1)),
+    // A paragraph past the middle with a footnote reference or a floating
+    // object (their edits move more than their lines).
+    let special = doc
+        .paragraphs()
+        .iter()
+        .enumerate()
+        .skip(doc.len() / 2)
+        .find(|(_, p)| {
+            p.text.len() > 20
+                && p.objects().any(|(_, o)| {
+                    matches!(o, docs_engine::Object::Float(_))
+                        || docs_engine::notes::reference_of(o).is_some()
+                })
+        })
+        .map(|(i, _)| doc.clamp(Position::new(i, 5)));
+    for (name, page, given) in [
+        ("page 1", 0, None),
+        ("middle page", pages / 2, None),
+        ("last page", pages.saturating_sub(1), None),
+        ("a footnote/float paragraph", pages / 2, special),
     ] {
+        if name.starts_with('a') && given.is_none() {
+            continue;
+        }
         // That page, else the nearest before it with text.
-        let Some(mut at) = (0..=page).rev().find_map(|p| spot(&doc, &laid, p)) else {
+        let Some(mut at) = given.or_else(|| (0..=page).rev().find_map(|p| spot(&doc, &laid, p)))
+        else {
             println!("typing on {name}: no text there");
             continue;
         };
@@ -117,21 +157,70 @@ pub fn run(file: &Path, keys: usize, verify: bool) -> Result<()> {
             page + 1,
             pct(times)
         );
-        // Enter and Backspace there: a paragraph more, then one less.
+        // Enter and Backspace there: a paragraph more, then one less; then
+        // three paragraphs pasted, and undone.
         let mut times = Vec::new();
-        for _ in 0..3 {
+        for k in 0..5 {
             let t = Instant::now();
             let sel = doc.insert_text(Selection::caret(at), "\n", None);
             at = sel.head;
             laid = cache.relayout(&doc, &mut engine, Some(laid));
             times.push(ms(t));
+            check(
+                &doc,
+                &laid,
+                &mut fresh_engine,
+                verify,
+                &mut mismatches,
+                &format!("Enter {k} on {name}"),
+            );
             let t = Instant::now();
             let sel = doc.backspace(Selection::caret(at));
             at = sel.head;
             laid = cache.relayout(&doc, &mut engine, Some(laid));
             times.push(ms(t));
+            check(
+                &doc,
+                &laid,
+                &mut fresh_engine,
+                verify,
+                &mut mismatches,
+                &format!("join {k} on {name}"),
+            );
         }
         println!("Enter / Backspace on {name}: {}", pct(times));
+        let mut times = Vec::new();
+        for k in 0..3 {
+            let t = Instant::now();
+            doc.insert_text(
+                Selection::caret(at),
+                "Pasted one.\nPasted two, a little longer than the first.\nPasted three.",
+                None,
+            );
+            laid = cache.relayout(&doc, &mut engine, Some(laid));
+            times.push(ms(t));
+            check(
+                &doc,
+                &laid,
+                &mut fresh_engine,
+                verify,
+                &mut mismatches,
+                &format!("paste {k} on {name}"),
+            );
+            let t = Instant::now();
+            doc.undo();
+            laid = cache.relayout(&doc, &mut engine, Some(laid));
+            times.push(ms(t));
+            check(
+                &doc,
+                &laid,
+                &mut fresh_engine,
+                verify,
+                &mut mismatches,
+                &format!("undo paste {k} on {name}"),
+            );
+        }
+        println!("paste 3 paragraphs / undo on {name}: {}", pct(times));
     }
 
     let t = Instant::now();
