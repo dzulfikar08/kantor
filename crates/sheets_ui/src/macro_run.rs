@@ -133,6 +133,9 @@ pub(crate) struct MacroRun {
     after: After,
     /// The UserForm shown (also under a MsgBox its code shows).
     pub(crate) form: Option<crate::macro_form::FormUi>,
+    /// The workbook's name and file as the run started: the busy pane's
+    /// tab shows them (the grid holds a stand-in).
+    doc: (String, Option<std::path::PathBuf>),
 }
 
 impl Drop for MacroRun {
@@ -364,9 +367,16 @@ impl SheetsView {
         if self.editing.is_some() {
             self.commit_edit(None, window, cx);
         }
+        // An edit whose `Change` hasn't fired yet (its check is deferred)
+        // fires after this run: the run's end counts everything as seen.
+        let edit = self.unseen_edit_events(cx);
+        self.macros
+            .pending
+            .splice(0..0, edit.into_iter().map(|(e, _)| (e, None)));
         let Ok(stand_in) = Workbook::new_empty() else {
             return false;
         };
+        let doc = (self.doc_name(cx), self.path(cx));
         let view = self.macro_view(cx);
         let book = self.table.update(cx, |table, _| {
             std::mem::replace(&mut table.delegate_mut().book, stand_in)
@@ -401,6 +411,7 @@ impl SheetsView {
             dialog: None,
             after,
             form: None,
+            doc,
         });
         // A quick run ends before the busy pane would show.
         let first = self
@@ -451,6 +462,7 @@ impl SheetsView {
             return;
         };
         let name = run.name.clone();
+        let (doc_name, doc_path) = run.doc.clone();
         let task = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -473,8 +485,8 @@ impl SheetsView {
         self.busy = Some(Busy {
             what: Job::Macro(name),
             started: Instant::now(),
-            name: self.doc_name(cx),
-            path: self.path(cx),
+            name: doc_name,
+            path: doc_path,
             dirty: true,
             _task: task,
         });
@@ -681,14 +693,22 @@ impl SheetsView {
             Event::BeforeRightClick { sheet, .. } => *sheet,
             _ => 0,
         };
+        // A right click outside the selection selects the clicked cell
+        // (the grid does so after the menu is built): the run starts there.
+        let active = if range.contains(self.selected.0, self.selected.1) {
+            self.selected
+        } else {
+            (range.top, range.left)
+        };
         let view = View {
             sheet,
-            selection: Selection {
-                range,
-                active: self.selected,
-            },
+            selection: Selection { range, active },
         };
         let stand_in = Workbook::new_empty().ok()?;
+        let doc = (
+            self.name(book),
+            book.source_path().map(std::path::Path::to_path_buf),
+        );
         let (tx, rx) = mpsc::channel();
         let cancel = CancelToken::new();
         let work = Work {
@@ -720,6 +740,7 @@ impl SheetsView {
             dialog: None,
             after: After::Nothing,
             form: None,
+            doc,
         });
         match first {
             Some(ToUi::Done {
@@ -1051,6 +1072,7 @@ impl SheetsView {
             }
             _ => tf("Run-time error '{}':", &[&e.number]),
         };
+        let repeat = e.description == heading;
         let place = match (e.module.is_empty(), e.line) {
             (true, _) => String::new(),
             (false, 0) => tf("in {}", &[&error_proc(e)]),
@@ -1101,12 +1123,15 @@ impl SheetsView {
                                     .text_color(t_.fg)
                                     .child(SharedString::from(heading)),
                             )
-                            .child(
-                                div()
-                                    .text_color(t_.fg)
-                                    .whitespace_normal()
-                                    .child(SharedString::from(e.description.clone())),
-                            )
+                            // An interrupt's heading is its description.
+                            .when(!repeat, |d| {
+                                d.child(
+                                    div()
+                                        .text_color(t_.fg)
+                                        .whitespace_normal()
+                                        .child(SharedString::from(e.description.clone())),
+                                )
+                            })
                             .when(!place.is_empty(), |d| {
                                 d.child(
                                     div()

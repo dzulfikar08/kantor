@@ -222,7 +222,12 @@ impl MacroError {
 
 impl std::fmt::Display for MacroError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}", self.title(), self.description)?;
+        let title = self.title();
+        if title == self.description {
+            write!(f, "{title}")?;
+        } else {
+            write!(f, "{title} {}", self.description)?;
+        }
         let place = self.place();
         if !place.is_empty() {
             write!(f, " (in {place})")?;
