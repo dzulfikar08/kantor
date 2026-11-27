@@ -826,6 +826,13 @@ pub(crate) fn lay_out_body(
             removed,
             inserted,
             dirty,
+            old: doc
+                .last_splice()
+                .filter(|sp| {
+                    (sp.start, sp.removed, sp.inserted) == (start, removed, inserted)
+                        && sp.old.len() == removed
+                })
+                .map(|sp| sp.old.clone()),
         };
         Some((
             prior,

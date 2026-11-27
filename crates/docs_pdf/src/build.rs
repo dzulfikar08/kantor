@@ -836,6 +836,8 @@ pub struct Prior {
     /// Other paragraphs (new numbering) to build again (their footnote
     /// numbers changed, say).
     pub dirty: Vec<usize>,
+    /// The paragraphs the edit replaced, when known.
+    pub old: Option<Vec<docs_engine::Paragraph>>,
 }
 
 /// The body's layout paragraphs, widths and blocks, each paragraph's list
@@ -902,13 +904,49 @@ fn build_with_prior(
     marks: &Marks,
     prior: Option<Prior>,
 ) -> Built {
-    let markers = doc.list_markers();
+    // List numbers: as before when the edit neither removed nor made a
+    // numbered paragraph (no list counts on), else counted again.
+    let unnumbered =
+        |ps: &[docs_engine::Paragraph]| ps.iter().all(|p| doc.styles.effective_num(p).is_none());
+    let markers = match &prior {
+        Some(p)
+            if p.markers.len() + p.inserted == paras.len() + p.removed
+                && p.start + p.inserted <= paras.len()
+                && p.old
+                    .as_deref()
+                    .is_some_and(|old| old.len() == p.removed && unnumbered(old))
+                && unnumbered(&paras[p.start..p.start + p.inserted]) =>
+        {
+            let mut m = p.markers.clone();
+            m.splice(p.start..p.start + p.removed, (0..p.inserted).map(|_| None));
+            m
+        }
+        _ => doc.list_markers(),
+    };
     let mut widths: Vec<f32> = (0..paras.len()).map(|i| tw(content_tw(i))).collect();
     let mut blocks = Vec::new();
     let mut i = 0;
+    // Tables met so far: a table's range starts at its first paragraph
+    // (found going on from here, not by searching from the start).
+    let mut seen = std::collections::HashSet::new();
     while i < paras.len() {
         let table = paras[i].cell.map(|c| c.table);
-        match table.map(|id| (id, table_range(paras, id))) {
+        let range_of = |id: u32| {
+            if seen.contains(&id) {
+                table_range(paras, id)
+            } else {
+                let len = paras[i..]
+                    .iter()
+                    .take_while(|p| p.cell.is_some_and(|c| c.table == id))
+                    .count();
+                i..i + len
+            }
+        };
+        let found = table.map(|id| (id, range_of(id)));
+        if let Some(id) = table {
+            seen.insert(id);
+        }
+        match found {
             Some((id, range)) if range.start == i && !range.is_empty() => {
                 match table_block(doc, paras, id, range.clone(), content_tw(i)) {
                     Some(tb) => {
