@@ -235,3 +235,24 @@ fn scripts_are_saved_with_the_workbook() {
     ok(&ran.outcome);
     assert_eq!(cell(&ran.book, 0, "F1"), "1,400.00");
 }
+
+#[test]
+fn python_scripts_are_kept_and_listed_but_not_run() {
+    let mut book = with_js(sales(), REPORT);
+    let mut scripts = book.scripts().unwrap();
+    scripts.push(Script::new(
+        "Tools",
+        ScriptLanguage::Python,
+        "def tidy():\n    Range('A1').Value = 1\n",
+    ));
+    book.set_scripts(scripts);
+    let macros = MacroProject::of_book(&book).unwrap().unwrap();
+    assert_eq!(macros.scripts.len(), 2);
+    assert!(!macros.macros().iter().any(|m| m.module == "Tools"));
+    let ran = run_js(book, "Tools.tidy");
+    let e = err(&ran.outcome);
+    assert_eq!(e.number, 445, "{e}");
+    assert!(e.description.contains("Python"), "{e}");
+    let (book, _dir) = reopen(ran.book, "py.xlsx");
+    assert_eq!(book.scripts().unwrap().len(), 2);
+}

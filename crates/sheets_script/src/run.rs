@@ -523,6 +523,12 @@ impl Host for SheetsHost {
         crate::scripts::constant(name)
     }
 
+    fn constants(&mut self) -> Vec<(String, Value)> {
+        all_constants()
+            .map(|(n, v)| (n.to_owned(), Value::Long(v as i32)))
+            .collect()
+    }
+
     fn is_method(&mut self, type_name: &str, member: &str) -> bool {
         crate::scripts::is_method(type_name, member)
     }

@@ -10,11 +10,6 @@ authors.workspace = true
 [lints]
 workspace = true
 
-[features]
-# Python macros (kantor_script_py, RustPython). Without it Python scripts are
-# listed and kept, and running one says it isn't available.
-python = []
-
 [dependencies]
 kantor_script.workspace = true
 kantor_script_js.workspace = true

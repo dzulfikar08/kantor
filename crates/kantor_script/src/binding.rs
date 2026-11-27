@@ -37,30 +37,48 @@ pub fn needs_arguments(e: &ScriptError) -> bool {
 }
 
 /// VBA's constants for `MsgBox` and text (`vbYesNo`, `vbYes`, `vbCrLf`), which scripts in
-/// other languages use with `MsgBox` too. Any case.
+/// other languages use with `MsgBox` too.
+pub fn vb_constants() -> Vec<(&'static str, Value)> {
+    const NUMBERS: &[(&str, i32)] = &[
+        ("vbOKOnly", 0),
+        ("vbOKCancel", 1),
+        ("vbAbortRetryIgnore", 2),
+        ("vbYesNoCancel", 3),
+        ("vbYesNo", 4),
+        ("vbRetryCancel", 5),
+        ("vbCritical", 16),
+        ("vbQuestion", 32),
+        ("vbExclamation", 48),
+        ("vbInformation", 64),
+        ("vbDefaultButton1", 0),
+        ("vbDefaultButton2", 256),
+        ("vbDefaultButton3", 512),
+        ("vbOK", 1),
+        ("vbCancel", 2),
+        ("vbAbort", 3),
+        ("vbRetry", 4),
+        ("vbIgnore", 5),
+        ("vbYes", 6),
+        ("vbNo", 7),
+    ];
+    let mut out: Vec<(&'static str, Value)> =
+        NUMBERS.iter().map(|(n, v)| (*n, Value::Long(*v))).collect();
+    out.extend([
+        ("vbCrLf", Value::from("\r\n")),
+        ("vbNewLine", Value::from("\r\n")),
+        ("vbLf", Value::from("\n")),
+        ("vbCr", Value::from("\r")),
+        ("vbTab", Value::from("\t")),
+    ]);
+    out
+}
+
+/// One of [`vb_constants`], any case.
 pub fn vb_constant(name: &str) -> Option<Value> {
-    let n = match name.to_ascii_lowercase().as_str() {
-        "vbokonly" | "vbdefaultbutton1" => 0,
-        "vbokcancel" | "vbok" => 1,
-        "vbabortretryignore" | "vbcancel" => 2,
-        "vbyesnocancel" | "vbabort" => 3,
-        "vbyesno" | "vbretry" => 4,
-        "vbretrycancel" | "vbignore" => 5,
-        "vbyes" => 6,
-        "vbno" => 7,
-        "vbcritical" => 16,
-        "vbquestion" => 32,
-        "vbexclamation" => 48,
-        "vbinformation" => 64,
-        "vbdefaultbutton2" => 256,
-        "vbdefaultbutton3" => 512,
-        "vbcrlf" | "vbnewline" => return Some(Value::from("\r\n")),
-        "vblf" => return Some(Value::from("\n")),
-        "vbcr" => return Some(Value::from("\r")),
-        "vbtab" => return Some(Value::from("\t")),
-        _ => return None,
-    };
-    Some(Value::Long(n))
+    vb_constants()
+        .into_iter()
+        .find(|(n, _)| n.eq_ignore_ascii_case(name))
+        .map(|(_, v)| v)
 }
 
 /// A top-level function of a script module, as the Macros dialog lists it.

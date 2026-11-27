@@ -5,8 +5,9 @@
 //! macros, listed with the VBA ones and run the same way (a run is one undo
 //! step, on the same macro thread, with the same dialogs and Stop). The
 //! languages bind to the objects of this crate through
-//! [`kantor_script::Dispatch`]: `kantor_script_js` (QuickJS) and
-//! `kantor_script_py` (RustPython, with the `python` feature). The host
+//! [`kantor_script::Dispatch`]: `kantor_script_js` (QuickJS). Python
+//! scripts are stored and listed but don't run in this build ([`can_run`]).
+//! The host
 //! ([`crate::run::SheetsHost`]) supplies the globals (`Range`, `Cells`,
 //! `ActiveSheet`…), the constants (`xlUp`) and which members are methods
 //! ([`is_method`]), since JavaScript and Python read a property when it is
@@ -30,18 +31,15 @@ use crate::run::{MacroInfo, MacroProject};
 pub fn functions(script: &Script) -> Vec<FunctionInfo> {
     match script.language {
         ScriptLanguage::JavaScript => kantor_script_js::functions(&script.source),
-        ScriptLanguage::Python => python_functions(&script.source),
+        ScriptLanguage::Python => kantor_script::binding::python_functions(&script.source),
     }
 }
 
-#[cfg(feature = "python")]
-fn python_functions(source: &str) -> Vec<FunctionInfo> {
-    kantor_script_py::functions(source)
-}
-
-#[cfg(not(feature = "python"))]
-fn python_functions(source: &str) -> Vec<FunctionInfo> {
-    kantor_script::binding::python_functions(source)
+/// Whether this build runs scripts in `language`. Python scripts are kept,
+/// listed and shown, and don't run: RustPython would add ~16 MB to the app
+/// (see `docs/scripting.md`).
+pub fn can_run(language: ScriptLanguage) -> bool {
+    language == ScriptLanguage::JavaScript
 }
 
 /// The scripts' macros: top-level functions without parameters whose name
@@ -52,7 +50,7 @@ pub fn macros(scripts: &[Script]) -> Vec<MacroInfo> {
         .flat_map(|s| {
             functions(s)
                 .into_iter()
-                .filter(FunctionInfo::is_macro)
+                .filter(|f| f.is_macro() && can_run(s.language))
                 .map(|f| MacroInfo {
                     module: s.name.clone(),
                     name: f.name,
@@ -129,41 +127,8 @@ pub(crate) fn run(
             };
             kantor_script_js::run(&modules, target, &[], host, &options)
         }
-        ScriptLanguage::Python => run_python(&modules, target, host, cancel),
+        ScriptLanguage::Python => Err(ScriptError::unsupported("Running Python macros")),
     }
-}
-
-#[cfg(feature = "python")]
-fn run_python(
-    modules: &[&Script],
-    target: &str,
-    host: Rc<RefCell<dyn Host>>,
-    cancel: &kantor_script::CancelToken,
-) -> Result<Value, ScriptError> {
-    let modules: Vec<kantor_script_py::Module> = modules
-        .iter()
-        .map(|s| kantor_script_py::Module {
-            name: s.name.clone(),
-            source: s.source.clone(),
-        })
-        .collect();
-    let options = kantor_script_py::Options {
-        cancel: cancel.clone(),
-        ..Default::default()
-    };
-    kantor_script_py::run(&modules, target, &[], host, &options)
-}
-
-#[cfg(not(feature = "python"))]
-fn run_python(
-    _modules: &[&Script],
-    _target: &str,
-    _host: Rc<RefCell<dyn Host>>,
-    _cancel: &kantor_script::CancelToken,
-) -> Result<Value, ScriptError> {
-    Err(ScriptError::unsupported(
-        "Running Python macros in this build",
-    ))
 }
 
 /// A constant of the object model (`xlUp`), any case.

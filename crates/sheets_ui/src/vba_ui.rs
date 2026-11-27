@@ -164,7 +164,7 @@ impl DialogModule {
             procedures: sheets_script::scripts::functions(s)
                 .into_iter()
                 .map(|f| DialogProcedure {
-                    is_macro: f.is_macro(),
+                    is_macro: f.is_macro() && sheets_script::scripts::can_run(s.language),
                     what: keyword.to_owned(),
                     name: f.name,
                     line: f.line,

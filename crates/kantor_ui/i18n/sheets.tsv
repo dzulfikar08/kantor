@@ -1193,6 +1193,8 @@ Kantor can't read this workbook's macros: {}	Kantor tidak dapat membaca makro bu
 This module has no code.	Modul ini tidak berisi kode.
 Module	Modul
 Class Module	Modul Kelas
+JavaScript	JavaScript
+Python	Python
 UserForm	UserForm
 Save as .xlsm	Simpan sebagai .xlsm
 Top N items	N item teratas

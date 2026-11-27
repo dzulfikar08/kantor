@@ -585,6 +585,12 @@ pub trait Host {
         None
     }
 
+    /// Every constant of the host's object model, for languages that define them all up front
+    /// (Python). The default has none.
+    fn constants(&mut self) -> Vec<(String, Value)> {
+        Vec::new()
+    }
+
     /// `CreateObject(class)` / `New class` for classes the language runtime doesn't provide.
     fn create_object(&mut self, _class: &str) -> Option<Result<ObjectRef, ScriptError>> {
         None
