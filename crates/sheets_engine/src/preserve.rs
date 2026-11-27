@@ -276,6 +276,9 @@ pub(crate) struct Context<'a> {
     /// Write a macro-enabled workbook (`.xlsm`), macros or not: Excel
     /// refuses an `.xlsm` whose workbook part is an `.xlsx` one.
     pub macro_enabled: bool,
+    /// The JavaScript and Python scripts to write in place of the
+    /// original's (`None`: the original's, as they are).
+    pub scripts: Option<&'a [crate::scripts::Script]>,
 }
 
 /// A chart sheet to save (see `crate::chart_sheet`).
@@ -614,6 +617,16 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
                 bytes
             }
             Ok(None) => bytes,
+        };
+        let bytes = match ctx.scripts {
+            Some(scripts) => match with_scripts(&bytes, scripts) {
+                Ok(with) => with,
+                Err(e) => {
+                    notes.push(format!("the scripts are not saved: {e}"));
+                    bytes
+                }
+            },
+            None => bytes,
         };
         let tables = Package::read(&bytes)
             .map(|p| {
@@ -1388,6 +1401,181 @@ fn rel_source_workbook(orig: &Original) -> Result<String, String> {
         .find(|r| r.short_kind() == "officeDocument" && !r.external)
         .and_then(|r| resolve("", &r.target))
         .ok_or_else(|| "no workbook part".to_owned())
+}
+
+// ------------------------------------------------------------------ scripts
+
+const CUSTOM_XML_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+const CUSTOM_XML_PROPS_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps";
+const CUSTOM_XML_PROPS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.customXmlProperties+xml";
+/// The `itemID` of the scripts part's properties (fixed: a save writes the
+/// same bytes for the same scripts).
+const SCRIPTS_ITEM_ID: &str = "{6B1C5E2A-4F0D-4C3B-9A7E-2D8F1B0C5A31}";
+
+/// The workbook part of `pkg`.
+fn workbook_part(pkg: &Package) -> Result<String, String> {
+    parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?
+        .iter()
+        .find(|r| r.short_kind() == "officeDocument" && !r.external)
+        .and_then(|r| resolve("", &r.target))
+        .ok_or_else(|| "no workbook part".to_owned())
+}
+
+/// The JavaScript and Python scripts stored in `bytes` (an `.xlsx`/`.xlsm`
+/// package), see [`crate::scripts`]. Empty when it has none.
+pub(crate) fn read_scripts(bytes: &[u8]) -> Result<Vec<crate::scripts::Script>, String> {
+    let orig = Original::new(bytes)?;
+    let wb = rel_source_workbook(&orig)?;
+    let Some(xml) = orig.text(&rels_part(&wb))? else {
+        return Ok(Vec::new());
+    };
+    for r in parse_rels(&xml)? {
+        if r.external || r.short_kind() != "customXml" {
+            continue;
+        }
+        let Some(part) = resolve(&wb, &r.target) else {
+            continue;
+        };
+        let Some(text) = orig.text(&part)? else {
+            continue;
+        };
+        if let Some(found) = crate::scripts::from_xml(&text) {
+            return found;
+        }
+    }
+    Ok(Vec::new())
+}
+
+/// `bytes` with its scripts part replaced by one holding `scripts` (none
+/// when `scripts` is empty).
+fn with_scripts(bytes: &[u8], scripts: &[crate::scripts::Script]) -> Result<Vec<u8>, String> {
+    let mut pkg = Package::read(bytes)?;
+    let wb = workbook_part(&pkg)?;
+    let wb_rels_part = rels_part(&wb);
+    let mut wb_rels = match pkg.text(&wb_rels_part)? {
+        Some(x) => parse_rels(x)?,
+        None => Vec::new(),
+    };
+    let mut types = pkg
+        .text(CONTENT_TYPES)?
+        .ok_or("no content types")?
+        .to_owned();
+    // The old scripts part, with its properties.
+    let mut gone = Vec::new();
+    wb_rels.retain(|r| {
+        if r.external || r.short_kind() != "customXml" {
+            return true;
+        }
+        let Some(part) = resolve(&wb, &r.target) else {
+            return true;
+        };
+        let ours = pkg
+            .text(&part)
+            .ok()
+            .flatten()
+            .is_some_and(crate::scripts::is_scripts_part);
+        if ours {
+            gone.push(part);
+        }
+        !ours
+    });
+    for part in gone {
+        let item_rels = rels_part(&part);
+        if let Some(x) = pkg.text(&item_rels)? {
+            for r in parse_rels(x)? {
+                if let Some(props) = resolve(&part, &r.target).filter(|_| !r.external) {
+                    pkg.remove(&props);
+                    types = remove_override(&types, &props)?;
+                }
+            }
+        }
+        pkg.remove(&item_rels);
+        pkg.remove(&part);
+        types = remove_override(&types, &part)?;
+    }
+    if !scripts.is_empty() {
+        let n = (1..)
+            .find(|n| {
+                !pkg.has(&format!("customXml/item{n}.xml"))
+                    && !pkg.has(&format!("customXml/itemProps{n}.xml"))
+            })
+            .unwrap_or(1);
+        let item = format!("customXml/item{n}.xml");
+        let props = format!("customXml/itemProps{n}.xml");
+        pkg.set(&item, crate::scripts::to_xml(scripts).into_bytes());
+        pkg.set(
+            &props,
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n<ds:datastoreItem ds:itemID=\"{SCRIPTS_ITEM_ID}\" xmlns:ds=\"http://schemas.openxmlformats.org/officeDocument/2006/customXml\"><ds:schemaRefs><ds:schemaRef ds:uri=\"{}\"/></ds:schemaRefs></ds:datastoreItem>",
+                crate::scripts::NAMESPACE
+            )
+            .into_bytes(),
+        );
+        pkg.set(
+            &rels_part(&item),
+            write_rels(&[Rel {
+                id: "rId1".into(),
+                kind: CUSTOM_XML_PROPS_REL.into(),
+                target: relative(&item, &props),
+                external: false,
+            }])
+            .into_bytes(),
+        );
+        let id = IdAlloc::new(&wb_rels).next();
+        wb_rels.push(Rel {
+            id,
+            kind: CUSTOM_XML_REL.into(),
+            target: relative(&wb, &item),
+            external: false,
+        });
+        let ct = ContentTypes::parse(&types)?;
+        let mut add = String::new();
+        if ct.of(&item).is_none() {
+            add.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"application/xml\"/>",
+                esc_attr(&item)
+            ));
+        }
+        if ct.of(&props) != Some(CUSTOM_XML_PROPS_CT) {
+            add.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{CUSTOM_XML_PROPS_CT}\"/>",
+                esc_attr(&props)
+            ));
+        }
+        if ct.of(&rels_part(&item)).is_none() {
+            add.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{RELS_CT}\"/>",
+                esc_attr(&rels_part(&item))
+            ));
+        }
+        let at = types.rfind("</Types>").ok_or("content types not closed")?;
+        types.insert_str(at, &add);
+    }
+    pkg.set(&wb_rels_part, write_rels(&wb_rels).into_bytes());
+    pkg.set(CONTENT_TYPES, types.into_bytes());
+    pkg.write()
+}
+
+/// `types` without the `<Override>` of `part`.
+fn remove_override(types: &str, part: &str) -> Result<String, String> {
+    let doc = Document::parse(types).map_err(|e| e.to_string())?;
+    let found = doc
+        .root_element()
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "Override")
+        .find(|n| {
+            n.attribute("PartName")
+                .map(|p| p.strip_prefix('/').unwrap_or(p))
+                .is_some_and(|p| p.eq_ignore_ascii_case(part))
+        })
+        .map(|n| n.range());
+    Ok(match found {
+        Some(r) => apply_edits(types, vec![(r, String::new())]),
+        None => types.to_owned(),
+    })
 }
 
 // ------------------------------------------------------------------ packages
@@ -7686,6 +7874,7 @@ mod tests {
             slicers: &SlicerPlan::default(),
             keep_macros: false,
             macro_enabled: false,
+            scripts: None,
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());

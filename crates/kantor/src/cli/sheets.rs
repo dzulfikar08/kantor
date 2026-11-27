@@ -8,6 +8,8 @@
 //! kantor sheets check book.xlsx [--json] [--sheet Data]
 //! kantor sheets macros book.xlsm [--module Module1] [--json]
 //! kantor sheets macros run book.xlsm --macro Macro1 [--out out.xlsm] [--input VALUE]... [--form-answers FILE.json]
+//! kantor sheets macros add book.xlsx report.js [--module Report] [--out out.xlsx]
+//! kantor sheets macros remove book.xlsx --module Report [--out out.xlsx]
 //! kantor sheets schema > sheets-json.schema.json
 //! ```
 //!
@@ -31,6 +33,8 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20      kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]...\n\
     \x20                [--events] [--allow-path PATH]...\n\
     \x20                [--form-answers ANSWERS.json]\n\
+    \x20      kantor sheets macros add FILE SCRIPT.js|SCRIPT.py [--module NAME] [--out OUT]\n\
+    \x20      kantor sheets macros remove FILE --module NAME [--out OUT]\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] TOOL ARGS\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] --ops OPS.json\n\
     \x20      kantor sheets schema\n\
@@ -62,10 +66,17 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20          content outside the print area or split by page breaks,\n\
     \x20          unsorted bar charts. Each finding has a sheet and range.\n\
     \x20          Exit status 1 on errors.\n\
-    \x20 macros   list the workbook's macros (its VBA project): modules and\n\
-    \x20          their Subs and Functions with line numbers; --module NAME\n\
+    \x20 macros   list the workbook's macros (its VBA project, and its\n\
+    \x20          JavaScript and Python scripts): modules and their Subs,\n\
+    \x20          Functions and functions with line numbers; --module NAME\n\
     \x20          prints a module's code.\n\
-    \x20 macros run  run macro NAME (Macro1 or Module1.Macro1) of FILE and\n\
+    \x20 macros add  store SCRIPT (.js or .py) in the workbook as module\n\
+    \x20          NAME (the file name unless --module), replacing one of that\n\
+    \x20          name, and save (in place unless --out). Scripts are kept in\n\
+    \x20          .xlsx and .xlsm alike; Excel keeps them and doesn't run them.\n\
+    \x20 macros remove  take script --module NAME out and save.\n\
+    \x20 macros run  run macro NAME (Macro1, Module1.Macro1, or a script's\n\
+    \x20          function without parameters, Report.go) of FILE and\n\
     \x20          save the result (in place unless --out). Only run macros\n\
     \x20          you trust: they change the workbook like a person would.\n\
     \x20          MsgBox prints to standard error and answers OK (or Yes);\n\
@@ -394,8 +405,11 @@ fn list(o: &Opts) -> Outcome {
 }
 
 fn macros(o: &Opts) -> Outcome {
-    if o.rest.first().map(String::as_str) == Some("run") {
-        return run_macro(o);
+    match o.rest.first().map(String::as_str) {
+        Some("run") => return run_macro(o),
+        Some("add") => return add_script(o),
+        Some("remove") => return remove_script(o),
+        _ => {}
     }
     let [file] = o.rest.as_slice() else {
         return Ok(Err("macros takes one FILE".into()));
@@ -418,6 +432,105 @@ fn macros(o: &Opts) -> Outcome {
     } else {
         print!("{}", sheets_macros::text(&book)?);
     }
+    Ok(Ok(()))
+}
+
+/// Where `macros add` / `remove` write: `--out`, else the file itself.
+fn script_output(o: &Opts, file: &str) -> Result<std::result::Result<PathBuf, Usage>> {
+    let out = o.output.clone().unwrap_or_else(|| PathBuf::from(file));
+    if !is_xlsx(&out) {
+        return Ok(Err("the output must be a .xlsx or .xlsm file".into()));
+    }
+    if o.output.is_some() && out.exists() && !o.force {
+        bail!("{} exists (use -f to overwrite)", out.display());
+    }
+    Ok(Ok(out))
+}
+
+/// `kantor sheets macros add FILE SCRIPT.js|.py [--module NAME]`: store a
+/// JavaScript or Python module in the workbook (replacing one of that
+/// name) and save it.
+fn add_script(o: &Opts) -> Outcome {
+    use sheets_engine::scripts::{Script, ScriptLanguage, valid_name};
+    let [_, file, script] = o.rest.as_slice() else {
+        return Ok(Err(
+            "macros add takes FILE and SCRIPT (a .js or .py file)".into()
+        ));
+    };
+    let path = Path::new(script);
+    let Some(language) = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .and_then(ScriptLanguage::from_extension)
+    else {
+        return Ok(Err("the script must be a .js or .py file".into()));
+    };
+    let name = match &o.module {
+        Some(n) => n.clone(),
+        None => path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    };
+    if !valid_name(&name) {
+        return Ok(Err(Usage(format!(
+            "{name:?} can't name a module: use a letter, then letters, digits or _ (--module NAME)"
+        ))));
+    }
+    let out = match script_output(o, file)? {
+        Ok(p) => p,
+        Err(u) => return Ok(Err(u)),
+    };
+    let source = std::fs::read_to_string(path).with_context(|| format!("can't read {script}"))?;
+    let mut book = open(file)?;
+    if let Some(Ok(p)) = book.vba_project()
+        && p.module(&name).is_some()
+    {
+        bail!("the VBA project already has a module {name} (pick another with --module)");
+    }
+    let mut scripts = book
+        .scripts()
+        .map_err(|e| anyhow::anyhow!("the workbook's scripts can't be read: {e}"))?;
+    let new = Script::new(&name, language, &source);
+    match scripts
+        .iter_mut()
+        .find(|s| s.name.eq_ignore_ascii_case(&name))
+    {
+        Some(s) => *s = new,
+        None => scripts.push(new),
+    }
+    book.set_scripts(scripts);
+    book.save_as(&out)
+        .with_context(|| format!("can't save {}", out.display()))?;
+    println!("{file}: {name} ({}) -> {}", language.label(), out.display());
+    Ok(Ok(()))
+}
+
+/// `kantor sheets macros remove FILE --module NAME`: take a script out.
+fn remove_script(o: &Opts) -> Outcome {
+    let [_, file] = o.rest.as_slice() else {
+        return Ok(Err("macros remove takes one FILE".into()));
+    };
+    let Some(name) = &o.module else {
+        return Ok(Err("macros remove needs --module NAME".into()));
+    };
+    let out = match script_output(o, file)? {
+        Ok(p) => p,
+        Err(u) => return Ok(Err(u)),
+    };
+    let mut book = open(file)?;
+    let mut scripts = book
+        .scripts()
+        .map_err(|e| anyhow::anyhow!("the workbook's scripts can't be read: {e}"))?;
+    let before = scripts.len();
+    scripts.retain(|s| !s.name.eq_ignore_ascii_case(name));
+    if scripts.len() == before {
+        bail!("{file} has no script {name}");
+    }
+    book.set_scripts(scripts);
+    book.save_as(&out)
+        .with_context(|| format!("can't save {}", out.display()))?;
+    println!("{file}: removed {name} -> {}", out.display());
     Ok(Ok(()))
 }
 

@@ -32,6 +32,8 @@ pub struct MacroProject {
     /// The UserForms' designers (forms whose designer can't be read show
     /// empty).
     pub forms: Vec<FormDesign>,
+    /// JavaScript and Python modules (see `crate::scripts`).
+    pub scripts: Vec<sheets_engine::scripts::Script>,
 }
 
 impl MacroProject {
@@ -47,12 +49,25 @@ impl MacroProject {
         MacroProject {
             modules,
             forms: p.forms(),
+            scripts: Vec::new(),
         }
     }
 
-    /// The workbook's macros, `None` when it has none.
+    /// The workbook's macros (its VBA project and its JavaScript and Python
+    /// scripts), `None` when it has none.
     pub fn of_book(book: &Workbook) -> Option<Result<MacroProject, String>> {
-        Some(book.vba_project()?.map(|p| MacroProject::from_vba(&p)))
+        let scripts = match book.scripts() {
+            Ok(s) => s,
+            Err(e) => return Some(Err(format!("the workbook's scripts can't be read: {e}"))),
+        };
+        let mut project = match book.vba_project() {
+            Some(Ok(p)) => MacroProject::from_vba(&p),
+            Some(Err(e)) => return Some(Err(e)),
+            None if scripts.is_empty() => return None,
+            None => MacroProject::default(),
+        };
+        project.scripts = scripts;
+        Some(Ok(project))
     }
 
     /// Compiles every module. A module whose structure doesn't parse is
@@ -72,18 +87,7 @@ impl MacroProject {
                 broken.push(self.error(e));
             }
         }
-        for (name, value) in crate::consts::ALL
-            .iter()
-            .chain(crate::charts::CHART_CONSTANTS)
-            .chain(crate::cond_formats::CONSTANTS)
-            .chain(crate::hyperlinks::CONSTANTS)
-            .chain(crate::page_setup::CONSTANTS)
-            .chain(crate::pivots::CONSTANTS)
-            .chain(crate::tables::CONSTANTS)
-            .chain(crate::validation::CONSTANTS.iter())
-            .copied()
-            .chain(crate::shapes::constants())
-        {
+        for (name, value) in all_constants() {
             project.register_constant(name, Value::Long(value as i32));
         }
         for f in &self.forms {
@@ -99,9 +103,16 @@ impl MacroProject {
     }
 
     /// What Excel lists under Macros (Alt+F8): public Subs without
-    /// parameters, in standard and document modules.
+    /// parameters, in standard and document modules; then the scripts'
+    /// top-level functions without parameters.
     pub fn macros(&self) -> Vec<MacroInfo> {
-        macro_list(&self.compile().0)
+        let mut list = if self.modules.is_empty() {
+            Vec::new()
+        } else {
+            macro_list(&self.compile().0)
+        };
+        list.extend(crate::scripts::macros(&self.scripts));
+        list
     }
 
     /// The error with its line as the editor shows it.
@@ -131,6 +142,21 @@ impl MacroProject {
             line,
         }
     }
+}
+
+/// The object model's constants (`xlUp`, `xlValues`, `msoShapeRectangle`…).
+pub(crate) fn all_constants() -> impl Iterator<Item = (&'static str, i64)> {
+    crate::consts::ALL
+        .iter()
+        .chain(crate::charts::CHART_CONSTANTS)
+        .chain(crate::cond_formats::CONSTANTS)
+        .chain(crate::hyperlinks::CONSTANTS)
+        .chain(crate::page_setup::CONSTANTS)
+        .chain(crate::pivots::CONSTANTS)
+        .chain(crate::tables::CONSTANTS)
+        .chain(crate::validation::CONSTANTS.iter())
+        .copied()
+        .chain(crate::shapes::constants())
 }
 
 impl ModuleSource {
@@ -204,6 +230,8 @@ impl MacroError {
             ErrorKind::Interrupted if self.number == 18 => {
                 "Code execution has been interrupted".to_owned()
             }
+            // A JavaScript or Python exception that isn't the object model's.
+            _ if self.number == 0 => "Run-time error:".to_owned(),
             _ => format!("Run-time error '{}':", self.number),
         }
     }
@@ -445,6 +473,7 @@ impl Session {
 }
 
 /// The interpreter's host for a run.
+#[derive(Clone)]
 pub(crate) struct SheetsHost {
     pub(crate) s: Rc<Session>,
     pub(crate) globals: ObjectRef,
@@ -488,6 +517,14 @@ impl Host for SheetsHost {
 
     fn debug_print(&mut self, line: &str) {
         self.s.ui.borrow_mut().debug_print(line);
+    }
+
+    fn constant(&mut self, name: &str) -> Option<Value> {
+        crate::scripts::constant(name)
+    }
+
+    fn is_method(&mut self, type_name: &str, member: &str) -> bool {
+        crate::scripts::is_method(type_name, member)
     }
 
     fn form_event(&mut self, view: &FormView) -> Result<FormInput, ScriptError> {

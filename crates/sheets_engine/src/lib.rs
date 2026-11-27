@@ -129,6 +129,7 @@ pub mod grid;
 pub mod script;
 pub mod script_charts;
 pub mod script_shapes;
+pub mod scripts;
 pub mod tsv;
 pub mod web;
 
@@ -378,6 +379,9 @@ pub struct Workbook {
     /// The password the file was opened with: `.xlsx` saves are encrypted
     /// with it (see `kantor_crypt`).
     password: Option<String>,
+    /// JavaScript and Python scripts set in Kantor (`None`: the file's, see
+    /// [`scripts`]).
+    scripts: Option<Vec<scripts::Script>>,
 }
 
 /// See [`Workbook::cached`].
@@ -710,6 +714,7 @@ impl Workbook {
             cf_x14: Default::default(),
             custom_lists: Vec::new(),
             password: None,
+            scripts: None,
         })
     }
 
@@ -1000,6 +1005,7 @@ impl Workbook {
             cf_x14,
             custom_lists: Vec::new(),
             password: None,
+            scripts: None,
         };
         book.apply_read_panes(&panes);
         book.set_saved_pictures(pictures);
@@ -1100,6 +1106,37 @@ impl Workbook {
         let bytes = self.origin_bytes()?;
         let project = preserve::vba_project_bytes(&bytes)?;
         Some(kantor_vba::VbaProject::read(&project).map_err(|e| e.to_string()))
+    }
+
+    /// The workbook's JavaScript and Python scripts (see [`scripts`]): the
+    /// ones set with [`Workbook::set_scripts`], else the ones of the file it
+    /// was opened from or last saved to. Unlike VBA they are kept in `.xlsx`
+    /// and `.xlsm` alike.
+    pub fn scripts(&self) -> Result<Vec<scripts::Script>, String> {
+        if let Some(s) = &self.scripts {
+            return Ok(s.clone());
+        }
+        match self.origin_bytes() {
+            Some(bytes) => preserve::read_scripts(&bytes),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Whether the workbook has scripts (a file whose scripts can't be read
+    /// counts: it has some).
+    pub fn has_scripts(&self) -> bool {
+        match self.scripts() {
+            Ok(s) => !s.is_empty(),
+            Err(_) => true,
+        }
+    }
+
+    /// Replaces the workbook's scripts (written by the next `.xlsx`/`.xlsm`
+    /// save). Not an undo step; the workbook becomes unsaved.
+    pub fn set_scripts(&mut self, scripts: Vec<scripts::Script>) {
+        self.scripts = Some(scripts);
+        self.history.view_changed = true;
+        self.history.view_changes += 1;
     }
 
     /// What the last save could not carry over from the original `.xlsx`
@@ -1892,6 +1929,7 @@ impl Workbook {
             // A save as `.xlsx` drops them (see `prepare_save`).
             keep_macros: true,
             macro_enabled: false,
+            scripts: self.scripts.clone(),
         }
     }
 }
@@ -1930,6 +1968,8 @@ struct XlsxParts {
     keep_macros: bool,
     /// A macro-enabled workbook (a save as `.xlsm`).
     macro_enabled: bool,
+    /// The scripts set in Kantor (`None`: the original's are carried).
+    scripts: Option<Vec<scripts::Script>>,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1985,6 +2025,7 @@ fn build_xlsx(
         slicers: &parts.slicers,
         keep_macros: parts.keep_macros,
         macro_enabled: parts.macro_enabled,
+        scripts: parts.scripts.as_deref(),
     };
     Ok(preserve::finish(written, original, &ctx))
 }

@@ -133,6 +133,26 @@ impl MacroEngine {
         ui: Box<dyn MacroUi>,
         options: &RunOptions,
     ) -> (Workbook, RunOutcome) {
+        if let Some((language, target)) = crate::scripts::find(&self.macros, name) {
+            let macros = self.macros.clone();
+            let cancel = options.cancel.clone();
+            return run_with(
+                &mut self.project,
+                &self.macros,
+                &mut self.state,
+                Some(self.index.clone()),
+                book,
+                view,
+                ui,
+                options,
+                None,
+                move |_, host, _| {
+                    let host: Rc<std::cell::RefCell<dyn kantor_script::Host>> =
+                        Rc::new(std::cell::RefCell::new(host.clone()));
+                    crate::scripts::run(&macros, language, &target, host, &cancel).map(|_| false)
+                },
+            );
+        }
         if let Some(e) = broken_for(&self.broken, &self.macros, name) {
             return (book, RunOutcome::failed(e, view));
         }

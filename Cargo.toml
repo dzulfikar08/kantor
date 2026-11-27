@@ -31,6 +31,8 @@ futures = { version = "0.3", default-features = false, features = ["std", "execu
 tempfile = "3"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 roxmltree = "0.21"
+# JavaScript macros (kantor_script_js): QuickJS-NG through rquickjs (MIT); no default features.
+rquickjs = { version = "0.14", default-features = false, features = ["std"] }
 # Already in GPUI's tree; Slides builds rotated picture rasters with it.
 image = { version = "0.25", default-features = false }
 imagesize = "0.14"
@@ -65,6 +67,7 @@ kantor_ui = { path = "crates/kantor_ui" }
 kantor_update = { path = "crates/kantor_update" }
 kantor_vba = { path = "crates/kantor_vba" }
 kantor_script = { path = "crates/kantor_script" }
+kantor_script_js = { path = "crates/kantor_script_js" }
 notes_engine = { path = "crates/notes_engine" }
 notes_ui = { path = "crates/notes_ui" }
 pdf_engine = { path = "crates/pdf_engine" }

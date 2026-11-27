@@ -632,6 +632,15 @@ pub trait Host {
         crate::date::now_utc()
     }
 
+    /// For languages that tell properties from methods (JavaScript, Python): whether member
+    /// `member` of an object of type `type_name` (`Range`, `Worksheet`) is a method, called with
+    /// parentheses (`r.Clear()`, `r.Offset(1, 0)`), rather than a property read when it is named.
+    /// A binding also treats as a method any member that fails without arguments with error 449
+    /// or 450 (`ws.Range("A1")`); see [`crate::binding::member`].
+    fn is_method(&mut self, _type_name: &str, _member: &str) -> bool {
+        false
+    }
+
     /// Polled while a script runs; returning true stops it with error 18 (user interrupt).
     fn cancelled(&mut self) -> bool {
         false

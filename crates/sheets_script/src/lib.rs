@@ -22,6 +22,8 @@
 //!   shows (so the grid can show the cells as the macro left them); so do
 //!   UserForms ([`MacroUi::form_event`]).
 //! - [`udf::VbaFunctions`]: the workbook's VBA functions in cell formulas.
+//! - [`scripts`]: JavaScript and Python macros stored in the workbook, run
+//!   on the same objects.
 //! - [`MacroEngine`]: a workbook's live project (module variables last
 //!   between runs), its events ([`Event`]) and other workbooks (`books`).
 
@@ -44,6 +46,7 @@ pub mod pivots;
 pub mod protection;
 pub mod range;
 pub mod run;
+pub mod scripts;
 pub mod session;
 pub mod shapes;
 pub mod sheet;

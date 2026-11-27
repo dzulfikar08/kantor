@@ -9,10 +9,13 @@
 //!   `Collection` and `Scripting.Dictionary`). Input is module source text.
 //! - [`forms`]: UserForms as a host shows them: the state of a shown form ([`forms::FormView`])
 //!   and what the user did ([`forms::FormInput`]), exchanged through [`Host::form_event`].
+//! - [`binding`]: what the JavaScript and Python bindings share: how a member name
+//!   resolves to a property or a method, and the functions a module defines.
 //! - [`date`]: OLE Automation dates (days since 1899-12-30), shared by every language binding.
 //!
 //! See `docs/scripting.md` for the design and how the Sheets object model plugs in.
 
+pub mod binding;
 pub mod date;
 pub mod forms;
 pub mod object;
