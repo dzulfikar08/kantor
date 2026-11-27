@@ -14,6 +14,7 @@ impl AppKind {
             Self::Sheets => "xlsx",
             Self::Slides => "pptx",
             Self::Pdf => "pdf",
+            Self::Notes => "md",
         }
     }
 }

@@ -4,7 +4,7 @@ All commands	Semua perintah
 Coming soon	Segera hadir
 Commands	Perintah
 Create	Buat
-Docs, Sheets and Slides — native, fast, yours.	Docs, Sheets dan Slides — native, cepat, milik Anda.
+Docs, Sheets, Slides, PDF and Notes — native, fast, yours.	Docs, Sheets, Slides, PDF dan Catatan — native, cepat, milik Anda.
 Edit .xlsx spreadsheets	Edit spreadsheet .xlsx
 New  →	Baru  →
 New document	Dokumen baru
@@ -774,3 +774,5 @@ Autosave off for cloud documents: choose Save to send your changes to the cloud.
 Autosave on for cloud documents: changes go to the cloud a few seconds after you stop typing.	Simpan otomatis aktif untuk dokumen cloud: perubahan dikirim ke cloud beberapa detik setelah Anda berhenti mengetik.
 Edited · autosaves shortly	Diubah · segera disimpan otomatis
 Edited · not saved	Diubah · belum disimpan
+Open  →	Buka  →
+Read and sign .pdf files	Baca dan tanda tangani berkas .pdf

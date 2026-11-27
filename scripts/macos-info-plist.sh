@@ -64,6 +64,7 @@ $(doc_type "Document (import)" Viewer public.rtf com.microsoft.word.doc com.micr
 $(doc_type "Presentation" Editor org.openxmlformats.presentationml.presentation)
 $(doc_type "Presentation (import)" Viewer com.microsoft.powerpoint.ppt com.microsoft.powerpoint.pps com.microsoft.powerpoint.pot org.oasis-open.opendocument.presentation org.oasis-open.opendocument.presentation-template)
 $(doc_type "PDF document" Viewer com.adobe.pdf)
+$(doc_type "Markdown note" Editor net.daringfireball.markdown)
   </array>
   <key>UTImportedTypeDeclarations</key>
   <array>
@@ -79,6 +80,7 @@ $(imported org.oasis-open.opendocument.text "OpenDocument Text" public.zip-archi
 $(imported org.oasis-open.opendocument.text-template "OpenDocument Text Template" public.zip-archive application/vnd.oasis.opendocument.text-template ott)
 $(imported org.oasis-open.opendocument.presentation "OpenDocument Presentation" public.zip-archive application/vnd.oasis.opendocument.presentation odp)
 $(imported org.oasis-open.opendocument.presentation-template "OpenDocument Presentation Template" public.zip-archive application/vnd.oasis.opendocument.presentation-template otp)
+$(imported net.daringfireball.markdown "Markdown Document" public.plain-text text/markdown md markdown)
   </array>
 </dict>
 </plist>

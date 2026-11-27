@@ -490,6 +490,32 @@ impl Workspace {
                         )),
                 )
             }
+            Some(DocView::Notes(view)) => {
+                let d = view.read(cx).info(cx);
+                let folder = d
+                    .path
+                    .as_deref()
+                    .and_then(|p| p.parent())
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+                v_flex().gap(SPACE_7).child(
+                    v_flex()
+                        .gap(SPACE_5)
+                        .child(section_label(i18n::t("Note"), cx))
+                        .child(field(i18n::t("File"), d.name, false))
+                        .child(field(i18n::t("Folder"), folder, false))
+                        .child(field(i18n::t("Words"), d.words.to_string(), false))
+                        .child(field(i18n::t("Characters"), d.chars.to_string(), false))
+                        .child(field(i18n::t("Lines"), d.lines.to_string(), false))
+                        .child(field(i18n::t("Headings"), d.headings.to_string(), false))
+                        .child(field(i18n::t("Links"), d.links.to_string(), false))
+                        .child(field(
+                            i18n::t("Line endings"),
+                            d.line_ending.to_owned(),
+                            false,
+                        )),
+                )
+            }
             None => v_flex().child(
                 div()
                     .text_size(FONT_SMALL)
