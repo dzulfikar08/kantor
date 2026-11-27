@@ -307,12 +307,12 @@ that author; the file keeps Track Changes as it had it.
 rejecting removes them whole; `delete_paragraphs` strikes the text and
 the paragraph marks, so accepting removes the paragraphs.
 
-`find_replace` and `format` look where `in` says: `all` (the default)
-is the body and every header and footer (first-page, even and default
-ones, in every section), as Word's Replace All; `body`; `headers` (the
-headers and footers only). They search paragraphs and table cells, not
-text boxes, footnotes or endnotes; a header Kantor can't edit is
-skipped.
+`find_replace` and `format` look where `in` says, as Word's Replace
+All: `all` (the default) is everywhere below; `body` is the main text
+and its text boxes; `headers` the headers and footers (first-page, even
+and default ones, in every section) and their text boxes; `notes` the
+footnotes and endnotes. Paragraphs and table cells are searched in all of
+them; a part Kantor can't edit is skipped.
 
 | tool | args | does |
 |---|---|---|

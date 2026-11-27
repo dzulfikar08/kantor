@@ -148,6 +148,40 @@ impl Document {
         ))
     }
 
+    /// Every text box Kantor can edit in place: the body's (`story: None`)
+    /// and those of the headers and footers it edits, a group's shapes'
+    /// included, in document order.
+    pub fn text_boxes(&self) -> Vec<BoxRef> {
+        let mut out = Vec::new();
+        let owners = std::iter::once((None, self)).chain(
+            self.stories
+                .iter()
+                .enumerate()
+                .filter(|(_, st)| st.locked.is_none())
+                .map(|(i, st)| (Some(i), &st.doc)),
+        );
+        for (story, doc) in owners {
+            for (para, p) in doc.paragraphs.iter().enumerate() {
+                for (r, run) in p.run_ranges() {
+                    let Some(crate::Object::Float(f)) = &run.object else {
+                        continue;
+                    };
+                    let at = |which| BoxRef {
+                        story,
+                        para,
+                        index: r.start,
+                        which,
+                    };
+                    if f.text.is_some() {
+                        out.push(at(None));
+                    }
+                    out.extend((0..f.boxes.len()).map(|k| at(Some(k))));
+                }
+            }
+        }
+        out
+    }
+
     /// Start editing a footnote or endnote.
     pub fn edit_note(&mut self, kind: NoteKind, id: &str) -> Option<(PartEdit, Document)> {
         let index = self.note_index(kind, id)?;
