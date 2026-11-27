@@ -497,7 +497,7 @@ fn new_documents_get_preferences_and_a_source_list() {
     assert_eq!(
         again
             .keys()
-            .filter(|k| k.starts_with("customXml/item"))
+            .filter(|k| k.starts_with("customXml/item") && !k.contains("Props"))
             .count(),
         1
     );

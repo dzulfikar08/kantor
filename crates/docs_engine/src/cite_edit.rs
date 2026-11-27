@@ -1163,127 +1163,6 @@ fn set_paragraph_entries(
     paras.splice(first..=last, out);
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn custom_xml_edits() {
-        let src = "<?xml version=\"1.0\"?><Properties xmlns=\"x\" xmlns:vt=\"y\"><property fmtid=\"{F}\" pid=\"2\" name=\"ZOTERO_PREF_1\"><vt:lpwstr>a</vt:lpwstr></property><property fmtid=\"{F}\" pid=\"3\" name=\"Other\"><vt:bool>true</vt:bool></property></Properties>";
-        let out = edit_custom(
-            Some(src),
-            &|n| n.starts_with(ZOTERO_PREF),
-            &[("ZOTERO_PREF_1".into(), "b<c".into())],
-        );
-        assert!(!out.contains("<vt:lpwstr>a</vt:lpwstr>"), "{out}");
-        assert!(out.contains("<vt:bool>true</vt:bool>"));
-        assert!(
-            out.contains("pid=\"4\" name=\"ZOTERO_PREF_1\"><vt:lpwstr>b&lt;c</vt:lpwstr>"),
-            "{out}"
-        );
-        let props = crate::fields::custom_props(&out);
-        assert_eq!(zotero_pref_xml(&props).as_deref(), Some("b<c"));
-        let fresh = edit_custom(None, &|_| false, &[("K".into(), "V".into())]);
-        assert!(fresh.contains("<Properties xmlns="));
-        assert_eq!(
-            crate::fields::custom_props(&fresh),
-            [("K".into(), "V".into())]
-        );
-    }
-
-    #[test]
-    fn zotero_prefs_round_trip() {
-        let pref = r#"<data data-version="3"><session id="X"/><style id="http://www.zotero.org/styles/apa" locale="id-ID" hasBibliography="1"/><prefs/></data>"#;
-        assert_eq!(
-            zotero_style(pref),
-            Some((
-                "http://www.zotero.org/styles/apa".into(),
-                Some("id-ID".into())
-            ))
-        );
-        let new = zotero_pref_with(Some(pref), "http://www.zotero.org/styles/ieee", None, None);
-        assert_eq!(
-            zotero_style(&new),
-            Some(("http://www.zotero.org/styles/ieee".into(), None))
-        );
-        assert!(new.contains("hasBibliography=\"1\""));
-        assert!(new.contains("<session id=\"X\"/>"));
-        let fresh = zotero_pref_with(None, "apa", Some("en-US"), Some(1));
-        assert_eq!(
-            zotero_style(&fresh),
-            Some(("apa".into(), Some("en-US".into())))
-        );
-        let long = "x".repeat(600);
-        assert_eq!(chunks(&long).len(), 3);
-    }
-
-    #[test]
-    fn markup_for_managers() {
-        let pieces = vec![
-            Piece {
-                text: "Jurnal ".into(),
-                fmt: Fmt {
-                    italic: true,
-                    ..Fmt::default()
-                },
-            },
-            Piece {
-                text: "– {x}".into(),
-                fmt: Fmt::default(),
-            },
-        ];
-        assert_eq!(rtf(&pieces), "{\\i{}Jurnal }\\uc0\\u8211{} \\{x\\}");
-        assert_eq!(html(&pieces), "<i>Jurnal </i>– {x}");
-    }
-
-    #[test]
-    fn instructions_and_codes() {
-        let instr = r#" ADDIN ZOTERO_ITEM CSL_CITATION {"a":1} "#;
-        assert_eq!(
-            instr_with_json(instr, &json!({"b": 2})),
-            r#" ADDIN ZOTERO_ITEM CSL_CITATION {"b":2} "#
-        );
-        let mark = FieldMark::Begin {
-            instr: instr.into(),
-            code: r#"<w:r><w:rPr><w:noProof/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_ITEM CSL_CITATION {"a"</w:instrText></w:r><w:r><w:instrText>:1} </w:instrText></w:r>"#.into(),
-            sep: Some(crate::object::FIELD_SEPARATE.into()),
-            simple: false,
-        };
-        let FieldMark::Begin { code, instr, .. } = mark_with_instr(&mark, " NEW & ") else {
-            panic!()
-        };
-        assert_eq!(instr, " NEW & ");
-        assert!(code.contains("<w:noProof/>"));
-        assert!(code.contains(r#"<w:instrText xml:space="preserve"> NEW &amp; </w:instrText></w:r><w:r><w:instrText xml:space="preserve"></w:instrText>"#), "{code}");
-    }
-
-    #[test]
-    fn controls_get_new_text() {
-        let xml = r#"<w:sdt><w:sdtPr><w:tag w:val="MENDELEY_CITATION_v3_old"/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:color w:val="000000"/></w:rPr><w:t>(Old)</w:t></w:r></w:sdtContent></w:sdt>"#;
-        let pieces = vec![
-            Piece {
-                text: "(".into(),
-                fmt: Fmt::default(),
-            },
-            Piece {
-                text: "Ibid".into(),
-                fmt: Fmt {
-                    italic: true,
-                    ..Fmt::default()
-                },
-            },
-        ];
-        let out = control_with(xml, Some("MENDELEY_CITATION_v3_new"), &pieces).unwrap();
-        assert!(out.contains(r#"<w:tag w:val="MENDELEY_CITATION_v3_new"/>"#));
-        assert!(out.contains(r#"<w:r><w:rPr><w:i/><w:color w:val="000000"/></w:rPr><w:t xml:space="preserve">Ibid</w:t></w:r>"#), "{out}");
-        assert!(out.ends_with("</w:sdtContent></w:sdt>"));
-        assert_eq!(
-            children("<w:a/><w:b x=\"1\"><w:c/></w:b>"),
-            ["<w:a/>", "<w:b x=\"1\"><w:c/></w:b>"]
-        );
-    }
-}
-
 // ── the document's own source list ─────────────────────────────────────────
 
 /// The namespace of Kantor's source list part.
@@ -1484,5 +1363,126 @@ impl Document {
         parts.sources = Some(items);
         self.cite_parts = Some(Arc::new(parts));
         self.mark_modified();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn custom_xml_edits() {
+        let src = "<?xml version=\"1.0\"?><Properties xmlns=\"x\" xmlns:vt=\"y\"><property fmtid=\"{F}\" pid=\"2\" name=\"ZOTERO_PREF_1\"><vt:lpwstr>a</vt:lpwstr></property><property fmtid=\"{F}\" pid=\"3\" name=\"Other\"><vt:bool>true</vt:bool></property></Properties>";
+        let out = edit_custom(
+            Some(src),
+            &|n| n.starts_with(ZOTERO_PREF),
+            &[("ZOTERO_PREF_1".into(), "b<c".into())],
+        );
+        assert!(!out.contains("<vt:lpwstr>a</vt:lpwstr>"), "{out}");
+        assert!(out.contains("<vt:bool>true</vt:bool>"));
+        assert!(
+            out.contains("pid=\"4\" name=\"ZOTERO_PREF_1\"><vt:lpwstr>b&lt;c</vt:lpwstr>"),
+            "{out}"
+        );
+        let props = crate::fields::custom_props(&out);
+        assert_eq!(zotero_pref_xml(&props).as_deref(), Some("b<c"));
+        let fresh = edit_custom(None, &|_| false, &[("K".into(), "V".into())]);
+        assert!(fresh.contains("<Properties xmlns="));
+        assert_eq!(
+            crate::fields::custom_props(&fresh),
+            [("K".into(), "V".into())]
+        );
+    }
+
+    #[test]
+    fn zotero_prefs_round_trip() {
+        let pref = r#"<data data-version="3"><session id="X"/><style id="http://www.zotero.org/styles/apa" locale="id-ID" hasBibliography="1"/><prefs/></data>"#;
+        assert_eq!(
+            zotero_style(pref),
+            Some((
+                "http://www.zotero.org/styles/apa".into(),
+                Some("id-ID".into())
+            ))
+        );
+        let new = zotero_pref_with(Some(pref), "http://www.zotero.org/styles/ieee", None, None);
+        assert_eq!(
+            zotero_style(&new),
+            Some(("http://www.zotero.org/styles/ieee".into(), None))
+        );
+        assert!(new.contains("hasBibliography=\"1\""));
+        assert!(new.contains("<session id=\"X\"/>"));
+        let fresh = zotero_pref_with(None, "apa", Some("en-US"), Some(1));
+        assert_eq!(
+            zotero_style(&fresh),
+            Some(("apa".into(), Some("en-US".into())))
+        );
+        let long = "x".repeat(600);
+        assert_eq!(chunks(&long).len(), 3);
+    }
+
+    #[test]
+    fn markup_for_managers() {
+        let pieces = vec![
+            Piece {
+                text: "Jurnal ".into(),
+                fmt: Fmt {
+                    italic: true,
+                    ..Fmt::default()
+                },
+            },
+            Piece {
+                text: "– {x}".into(),
+                fmt: Fmt::default(),
+            },
+        ];
+        assert_eq!(rtf(&pieces), "{\\i{}Jurnal }\\uc0\\u8211{} \\{x\\}");
+        assert_eq!(html(&pieces), "<i>Jurnal </i>– {x}");
+    }
+
+    #[test]
+    fn instructions_and_codes() {
+        let instr = r#" ADDIN ZOTERO_ITEM CSL_CITATION {"a":1} "#;
+        assert_eq!(
+            instr_with_json(instr, &json!({"b": 2})),
+            r#" ADDIN ZOTERO_ITEM CSL_CITATION {"b":2} "#
+        );
+        let mark = FieldMark::Begin {
+            instr: instr.into(),
+            code: r#"<w:r><w:rPr><w:noProof/></w:rPr><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> ADDIN ZOTERO_ITEM CSL_CITATION {"a"</w:instrText></w:r><w:r><w:instrText>:1} </w:instrText></w:r>"#.into(),
+            sep: Some(crate::object::FIELD_SEPARATE.into()),
+            simple: false,
+        };
+        let FieldMark::Begin { code, instr, .. } = mark_with_instr(&mark, " NEW & ") else {
+            panic!()
+        };
+        assert_eq!(instr, " NEW & ");
+        assert!(code.contains("<w:noProof/>"));
+        assert!(code.contains(r#"<w:instrText xml:space="preserve"> NEW &amp; </w:instrText></w:r><w:r><w:instrText xml:space="preserve"></w:instrText>"#), "{code}");
+    }
+
+    #[test]
+    fn controls_get_new_text() {
+        let xml = r#"<w:sdt><w:sdtPr><w:tag w:val="MENDELEY_CITATION_v3_old"/></w:sdtPr><w:sdtContent><w:r><w:rPr><w:color w:val="000000"/></w:rPr><w:t>(Old)</w:t></w:r></w:sdtContent></w:sdt>"#;
+        let pieces = vec![
+            Piece {
+                text: "(".into(),
+                fmt: Fmt::default(),
+            },
+            Piece {
+                text: "Ibid".into(),
+                fmt: Fmt {
+                    italic: true,
+                    ..Fmt::default()
+                },
+            },
+        ];
+        let out = control_with(xml, Some("MENDELEY_CITATION_v3_new"), &pieces).unwrap();
+        assert!(out.contains(r#"<w:tag w:val="MENDELEY_CITATION_v3_new"/>"#));
+        assert!(out.contains(r#"<w:r><w:rPr><w:i/><w:color w:val="000000"/></w:rPr><w:t xml:space="preserve">Ibid</w:t></w:r>"#), "{out}");
+        assert!(out.ends_with("</w:sdtContent></w:sdt>"));
+        assert_eq!(
+            children("<w:a/><w:b x=\"1\"><w:c/></w:b>"),
+            ["<w:a/>", "<w:b x=\"1\"><w:c/></w:b>"]
+        );
     }
 }
