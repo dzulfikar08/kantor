@@ -1331,7 +1331,7 @@ fn png_rgb(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
     let mut raw = Vec::with_capacity((width as usize * 3 + 1) * height as usize);
     for line in rgba.chunks_exact(row.max(1)).take(height as usize) {
         raw.push(0);
-        for px in line.chunks_exact(4) {
+        for px in line.as_chunks::<4>().0 {
             raw.extend_from_slice(&px[..3]);
         }
     }
