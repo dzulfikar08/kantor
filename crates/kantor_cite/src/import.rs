@@ -180,7 +180,10 @@ pub fn from_bib(text: &str) -> anyhow::Result<Vec<Value>> {
         set("container-title", container);
         set("volume", field("volume"));
         set("issue", field("number").or_else(|| field("issue")));
-        set("page", field("pages").map(|p| p.replace("--", "-")));
+        set(
+            "page",
+            field("pages").map(|p| p.replace("--", "-").replace('\u{2013}', "-")),
+        );
         set(
             "publisher",
             field("publisher")

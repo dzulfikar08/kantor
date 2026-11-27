@@ -573,7 +573,10 @@ mod tests {
             let out = render(&style, Some("en-US"), &[vec![CiteIn::new(&n)]]);
             assert!(!plain(&out.citations[0]).is_empty(), "{id}");
             assert!(
-                plain(&out.bibliography[0]).contains("Pengaruh media sosial"),
+                // Title case in some styles (Chicago).
+                plain(&out.bibliography[0])
+                    .to_lowercase()
+                    .contains("pengaruh media sosial"),
                 "{id}"
             );
         }
