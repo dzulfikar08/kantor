@@ -305,7 +305,9 @@ impl Session {
                     None
                 };
                 let d = self.doc()?;
-                let before = d.changes().len();
+                // Headers, footers, notes and text boxes count too.
+                let count = |d: &Document| d.changes().len() + d.part_changes();
+                let before = count(d);
                 match range {
                     None => {
                         d.resolve_all(accept, SEL);
@@ -319,7 +321,7 @@ impl Session {
                         }
                     }
                 }
-                let after = self.doc()?.changes().len();
+                let after = count(self.doc()?);
                 json!({"resolved": before.saturating_sub(after), "left": after})
             }
             "update_fields" => {
@@ -1760,6 +1762,35 @@ mod tests {
                 assert!(doc_xml.contains("w:author=\"AI\""));
                 assert!(hdr_xml.contains("w:author=\"AI\""));
                 assert!(notes.contains("w:author=\"AI\"") && notes.contains("<w:del "));
+                // The boxes' changes are counted, and accepted or rejected
+                // with the rest.
+                let (_, out) = replace(track, all("$BOX", "Kotak"));
+                let d = read(out.clone());
+                assert!(
+                    d.box_changes() >= 2 && d.part_changes() >= 4,
+                    "body and header box"
+                );
+                assert_eq!(
+                    super::super::docs_list::outline(&d)["tracked_change_count"],
+                    d.changes().len() + d.part_changes()
+                );
+                for (tool, keep, gone) in [
+                    ("accept_changes", "Kotak", "$BOX"),
+                    ("reject_changes", "$BOX", "Kotak"),
+                ] {
+                    let mut s = Session::from_doc(read(out.clone()), None, None).unwrap();
+                    s.run(tool, &json!({})).unwrap();
+                    let saved = s.save().unwrap();
+                    assert_eq!(read(saved.clone()).part_changes(), 0, "{tool}");
+                    let p = Pkg::read(&saved).unwrap();
+                    for xml in [
+                        p.text("word/document.xml").unwrap(),
+                        p.text(&header).unwrap(),
+                    ] {
+                        assert_eq!(xml.matches(keep).count(), 2, "{tool}");
+                        assert!(!xml.contains(gone) && !xml.contains("<w:ins "), "{tool}");
+                    }
+                }
             } else {
                 assert!(!doc_xml.contains("$BOX") && !hdr_xml.contains("$BOX"));
                 assert!(!notes.contains("$NOTE"));

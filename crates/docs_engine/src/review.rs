@@ -589,7 +589,7 @@ impl Document {
 
     /// Whether the document has tracked changes of any kind.
     pub fn has_changes(&self) -> bool {
-        !self.changes().is_empty() || self.other_changes() > 0
+        !self.changes().is_empty() || self.other_changes() > 0 || self.box_changes() > 0
     }
 
     /// The change at (or touching) the caret / overlapping the selection.
@@ -909,6 +909,7 @@ impl Document {
                 drop_change(&mut p, r);
             }
             fmt_track::resolve_para(&mut p.props, accept);
+            crate::part_edit::resolve_boxes(&mut p, accept);
             let (ins, del) = mark_revs(&p);
             let joins = (del && accept) || (ins && !accept);
             clear_mark_revs(&mut p);

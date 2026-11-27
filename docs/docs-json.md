@@ -276,8 +276,8 @@ formatting), `direct_formatting`, `tables` (`id`, rows, columns, header
 rows, caption, page), `pictures` and `charts` (alt text, page),
 `field_counts` and the `fields` that reference (TOC, REF, PAGEREF, SEQ,
 NOTEREF), `comments`, `tracked_changes` (the body's, the first 500;
-`tracked_change_count` counts them all, headers, footers and notes
-included), `notes`, `bookmarks` (the names
+`tracked_change_count` counts them all, headers, footers, notes and
+text boxes included), `notes`, `bookmarks` (the names
 headings and captions carry: blocks inserted later can point at them with
 `{ref:_Ref100000003}`), `track_changes_on`.
 

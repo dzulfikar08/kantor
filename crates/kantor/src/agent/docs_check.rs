@@ -959,7 +959,7 @@ fn check_review(cx: &mut Cx) {
             format!(" by {}", authors.into_iter().collect::<Vec<_>>().join(", "))
         };
         let parts = if in_parts > 0 {
-            format!(" ({in_parts} in headers, footers or notes)")
+            format!(" ({in_parts} in headers, footers, notes or text boxes)")
         } else {
             String::new()
         };

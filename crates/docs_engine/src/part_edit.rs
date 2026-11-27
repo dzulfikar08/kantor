@@ -431,8 +431,25 @@ impl Document {
     /// Tracked changes in headers, footers, footnotes and endnotes (each
     /// insertion, deletion or formatting change counted once).
     pub fn part_changes(&self) -> usize {
-        self.part_docs()
-            .map(|d| d.changes().len() + d.other_changes())
+        self.box_changes()
+            + self
+                .part_docs()
+                .map(|d| d.changes().len() + d.other_changes() + d.box_changes())
+                .sum::<usize>()
+    }
+
+    /// Tracked changes in the text boxes of this document's own text
+    /// (not its headers' or footers').
+    pub fn box_changes(&self) -> usize {
+        self.paragraphs
+            .iter()
+            .flat_map(|p| p.runs.iter())
+            .filter_map(|r| match &r.object {
+                Some(crate::Object::Float(f)) => Some(f),
+                _ => None,
+            })
+            .flat_map(|f| f.text.iter().chain(f.boxes.iter().map(|g| &g.text)))
+            .map(|tb| tb.doc.changes().len() + tb.doc.other_changes() + tb.doc.part_changes())
             .sum()
     }
 
@@ -513,6 +530,41 @@ fn box_in_para(p: &mut Paragraph, index: usize, which: Option<usize>) -> Option<
         start += run.len;
     }
     None
+}
+
+/// Accept or reject every tracked change in the text boxes of `p`'s
+/// floating objects (marked edited, so Save writes them). Returns whether
+/// anything changed.
+pub(crate) fn resolve_boxes(p: &mut Paragraph, accept: bool) -> bool {
+    let mut changed = false;
+    for run in &mut p.runs {
+        let Some(crate::Object::Float(f)) = &run.object else {
+            continue;
+        };
+        let has = |tb: &crate::float::TextBox| tb.doc.has_changes();
+        if !f.text.as_deref().is_some_and(has) && !f.boxes.iter().any(|g| has(&g.text)) {
+            continue;
+        }
+        let Some(crate::Object::Float(f)) = &mut run.object else {
+            continue;
+        };
+        let f = Arc::make_mut(f);
+        let resolve = |tb: &mut Arc<crate::float::TextBox>| {
+            let d = &mut Arc::make_mut(tb).doc;
+            d.resolve_all(accept, Selection::default());
+            d.clear_history();
+        };
+        if let Some(tb) = f.text.as_mut().filter(|t| has(t)) {
+            resolve(tb);
+            f.text_edited = true;
+        }
+        for g in f.boxes.iter_mut().filter(|g| has(&g.text)) {
+            resolve(&mut g.text);
+            g.edited = true;
+        }
+        changed = true;
+    }
+    changed
 }
 
 /// Mark the text box `which` of the object at `index` of `p` as changed
