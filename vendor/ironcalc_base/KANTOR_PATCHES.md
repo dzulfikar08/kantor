@@ -989,6 +989,14 @@ context without storing it (stored values only, like conditional formatting's
 `UserModel::kantor_copy_selection_to` copies the selected area and pastes it at
 a cell (VBA's `Range.Copy Destination:=…`; the clipboard's data is private).
 
+`KantorUserFunctions::call_with` (default: `call`) is what the engine calls:
+each argument comes as a `KantorArg` with, for a reference, the range it names
+(`KantorRangeRef`: sheet, 1-based top-left, size), and the calling cell, so VBA
+functions get `Range` objects and `Application.Caller`.
+`UserModel::kantor_history_changes` sums up the top diff lists of the undo (or
+redo) stack as a `KantorChanges` (§16): the cells an edit, undo or redo changed,
+for `Worksheet_Change`.
+
 Tests: `test/test_kantor_udf.rs`; Kantor's `crates/sheets_script/tests`.
 
 ## Updating or dropping

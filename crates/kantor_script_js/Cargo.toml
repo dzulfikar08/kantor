@@ -1,0 +1,20 @@
+[package]
+name = "kantor_script_js"
+description = "JavaScript macros for Kantor: QuickJS (rquickjs) bound to kantor_script's object layer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# The workspace forbids unsafe code; this crate needs one `unsafe impl` (rquickjs's
+# `JsLifetime` for the object handle class), allowed where it is.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+dbg_macro = "warn"
+
+[dependencies]
+kantor_script.workspace = true
+rquickjs.workspace = true

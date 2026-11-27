@@ -11,3 +11,5 @@ authors.workspace = true
 workspace = true
 
 [dependencies]
+# UserForm designs (`kantor_vba::forms`): what a form module's controls are.
+kantor_vba.workspace = true

@@ -2,7 +2,7 @@
 //! expressions).
 //!
 //! A simple statement that doesn't parse becomes [`StmtKind::Invalid`], and statements Kantor
-//! doesn't run (file I/O, `Load`, `RaiseEvent`…) become [`StmtKind::Unsupported`], so one bad
+//! doesn't run (file I/O…) become [`StmtKind::Unsupported`], so one bad
 //! line doesn't block a module; both raise an error only when executed. Broken block structure
 //! (`If` without `End If`) fails the module.
 
@@ -20,6 +20,51 @@ pub fn parse_module(src: &str) -> R<ModuleDef> {
     let src = preprocess(src)?;
     let mut p = Parser::new(tokenize(&src)?);
     p.module()
+}
+
+/// A problem [`check_module`] found: its line (1-based), what's wrong, and
+/// whether the module can't compile (`fatal`; otherwise the line fails only
+/// when it runs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub line: u32,
+    pub message: String,
+    pub fatal: bool,
+    /// A statement Kantor parses but doesn't run (file I/O…).
+    pub unsupported: bool,
+}
+
+/// Every problem of a module's source an editor should show: the error
+/// that stops the module compiling, lines that don't parse, and statements
+/// Kantor doesn't run.
+pub fn check_module(src: &str) -> (Option<ModuleDef>, Vec<Diagnostic>) {
+    let fatal = |e: ScriptError| Diagnostic {
+        line: e.location.as_ref().map_or(0, |l| l.line),
+        message: e.description,
+        fatal: true,
+        unsupported: false,
+    };
+    let src = match preprocess(src) {
+        Ok(s) => s,
+        Err(e) => return (None, vec![fatal(e)]),
+    };
+    let toks = match tokenize(&src) {
+        Ok(t) => t,
+        Err(e) => return (None, vec![fatal(e)]),
+    };
+    let mut p = Parser::new(toks);
+    let def = p.module();
+    let mut out = std::mem::take(&mut p.diagnostics);
+    let def = match def {
+        Ok(d) => Some(d),
+        Err(e) => {
+            out.push(fatal(e));
+            None
+        }
+    };
+    out.sort_by_key(|d| d.line);
+    out.dedup();
+    (def, out)
 }
 
 /// Parses one expression (used by `#If` and tests).
@@ -47,6 +92,9 @@ pub(crate) struct Parser {
     default_member: bool,
     enumerator: bool,
     deftypes: Vec<(char, char, Ty)>,
+    /// Lines that didn't parse and statements Kantor doesn't run, for
+    /// [`check_module`].
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Parser {
@@ -59,6 +107,7 @@ impl Parser {
             default_member: false,
             enumerator: false,
             deftypes: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -262,8 +311,15 @@ impl Parser {
                 self.end_of_statement()?;
                 continue;
             }
-            if self.is_word("attribute") || self.is_word("implements") {
+            if self.is_word("attribute") {
                 self.skip_to_eos();
+                continue;
+            }
+            if self.eat_word("implements") {
+                let name = self.dotted_name()?;
+                let short: Rc<str> = Rc::from(name.rsplit('.').next().unwrap_or(&name));
+                m.items.push(ModuleItem::Implements(short));
+                self.end_of_statement()?;
                 continue;
             }
             if let Some(ty) = self.word_at(0).and_then(deftype_word) {
@@ -329,7 +385,12 @@ impl Parser {
                     self.skip_to_eos();
                     m.items.push(ModuleItem::Declare { name, lib });
                 }
-                "event" => self.skip_to_eos(),
+                "event" => {
+                    self.bump();
+                    let (name, _) = self.ident()?;
+                    m.items.push(ModuleItem::Event(name));
+                    self.skip_to_eos();
+                }
                 _ => {
                     let is_dim = self.eat_word("dim");
                     if public.is_none() && !is_dim {
@@ -435,7 +496,7 @@ impl Parser {
     }
 
     fn var_decl(&mut self) -> R<VarDecl> {
-        self.eat_word("withevents");
+        let with_events = self.eat_word("withevents");
         let line = self.line();
         let (name, suffix) = self.ident()?;
         let mut ty = suffix.and_then(Ty::from_suffix);
@@ -459,6 +520,7 @@ impl Parser {
             ty,
             array,
             auto_new,
+            with_events,
             line,
         })
     }
@@ -774,6 +836,12 @@ impl Parser {
         match result {
             Ok(s) => Ok(s),
             Err(e) if !self.is_structural(start) => {
+                self.diagnostics.push(Diagnostic {
+                    line,
+                    message: e.description.clone(),
+                    fatal: false,
+                    unsupported: false,
+                });
                 self.pos = start;
                 self.skip_to_eos();
                 Ok(Stmt {
@@ -794,6 +862,12 @@ impl Parser {
     }
 
     fn unsupported(&mut self, feature: &str) -> R<StmtKind> {
+        self.diagnostics.push(Diagnostic {
+            line: self.line(),
+            message: feature.to_string(),
+            fatal: false,
+            unsupported: true,
+        });
         self.skip_to_eos();
         Ok(StmtKind::Unsupported(feature.to_string()))
     }
@@ -995,9 +1069,24 @@ impl Parser {
                 return self.unsupported("Renaming files (Name ... As)");
             }
             "load" | "unload" if !matches!(next, Tok::Op("=") | Tok::Dot | Tok::LParen) => {
-                return self.unsupported("UserForms (Load/Unload)");
+                self.bump();
+                let target = self.expr()?;
+                return Ok(if word == "load" {
+                    StmtKind::Load(target)
+                } else {
+                    StmtKind::Unload(target)
+                });
             }
-            "raiseevent" => return self.unsupported("Events (RaiseEvent)"),
+            "raiseevent" => {
+                self.bump();
+                let (name, _) = self.ident()?;
+                let args = if self.eat(&Tok::LParen) {
+                    self.paren_args()?
+                } else {
+                    Vec::new()
+                };
+                return Ok(StmtKind::RaiseEvent { name, args });
+            }
             "attribute" => {
                 // `Attribute Item.VB_UserMemId = 0` marks the class's default member.
                 let mut saw = false;
@@ -1167,7 +1256,23 @@ impl Parser {
         self.bump();
         self.eat_word("local");
         if !self.eat_word("error") {
-            return self.unsupported("Computed branches (On ... GoTo/GoSub)");
+            // `On expr GoTo l1, l2...` / `On expr GoSub ...` (MS-VBAL §5.4.2.10).
+            let index = self.expr()?;
+            let gosub = if self.eat_word("gosub") {
+                true
+            } else {
+                self.expect_word("goto")?;
+                false
+            };
+            let mut labels = vec![self.label_name()?];
+            while self.eat(&Tok::Comma) {
+                labels.push(self.label_name()?);
+            }
+            return Ok(StmtKind::OnJump {
+                index,
+                labels,
+                gosub,
+            });
         }
         if self.eat_word("resume") {
             self.expect_word("next")?;

@@ -280,7 +280,7 @@ impl Workspace {
                 None,
             ),
         };
-        let status = self.notice.clone().unwrap_or(status);
+        let status = self.notices.text().unwrap_or(status);
         let cloud_chip = self.render_cloud_chip(cx);
         let panes = self
             .active

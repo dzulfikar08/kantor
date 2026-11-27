@@ -1,7 +1,9 @@
-//! Workbooks with macros (a VBA project): a bar when one opens, and the
-//! Macros dialog (Excel's View ▸ Macros, Alt+F8) listing the project's
-//! modules and procedures, with a module's code shown read-only, Run, and
-//! the macros' `Debug.Print` output.
+//! Workbooks with macros (a VBA project, or JavaScript and Python scripts
+//! stored in the workbook): a bar when one opens, and the Macros dialog
+//! (Excel's View ▸ Macros, Alt+F8) listing the project's modules and
+//! procedures and the scripts' functions, with a module's code shown
+//! read-only (and a UserForm's layout), Run, and the macros' `Debug.Print`
+//! / `console.log` / `print` output.
 //!
 //! Macros start disabled ([`MacroTrust`], per pane), as Excel opens a file
 //! from the internet: the bar's Enable Content enables them for this pane
@@ -64,19 +66,113 @@ pub(crate) struct MacroState {
     pub(crate) error_focus: Option<FocusHandle>,
     /// `Debug.Print` lines, oldest first.
     pub(crate) output: Vec<SharedString>,
+    /// The macro thread with the live project (content enabled).
+    pub(crate) thread: Option<crate::macro_thread::MacroThread>,
+    /// The workbook is lent to a macro of another pane.
+    pub(crate) lent: bool,
+    /// What events last saw: the undo/redo history's lengths, the sheet
+    /// and selection (see `macro_events`).
+    pub(crate) seen_hist: Option<(usize, usize)>,
+    pub(crate) seen_sel: Option<(u32, sheets_engine::CellRange)>,
+    /// `Workbook_BeforeClose` / `Workbook_BeforeSave` ran and let it go on.
+    pub(crate) close_approved: bool,
+    pub(crate) save_approved: bool,
+    /// Waits for the next `Application.OnTime` schedule.
+    pub(crate) timer: Option<Task<()>>,
+    /// Events that wait for the workbook (it was busy when they happened).
+    pub(crate) pending: Vec<(sheets_script::Event, Option<usize>)>,
 }
 
 /// The Macros dialog.
 pub(crate) struct MacrosDialog {
-    /// The project, or why it couldn't be read.
-    project: Result<Rc<VbaProject>, String>,
-    /// Each module's procedures.
-    procedures: Vec<Vec<Procedure>>,
+    /// Why the VBA project couldn't be read.
+    error: Option<String>,
+    /// The VBA project (for a UserForm's layout).
+    project: Option<Rc<VbaProject>>,
+    /// The VBA modules, then the JavaScript and Python scripts.
+    modules: Vec<DialogModule>,
     module: usize,
     procedure: Option<usize>,
     /// The picked module's lines (tabs as spaces).
     lines: Rc<Vec<SharedString>>,
     scroll: UniformListScrollHandle,
+    /// The picked module's form layout, when it is a UserForm.
+    form: Option<Result<sheets_engine::vba::forms::FormDesign, String>>,
+}
+
+/// A module as the dialog lists it: a VBA module or a script.
+struct DialogModule {
+    name: String,
+    /// `Module`, `UserForm`, `JavaScript`…
+    kind: &'static str,
+    code: String,
+    /// A VBA UserForm (its layout is shown).
+    is_form: bool,
+    procedures: Vec<DialogProcedure>,
+}
+
+struct DialogProcedure {
+    name: String,
+    /// `Sub`, `Private Function`, `function`…
+    what: String,
+    /// Run can start it.
+    is_macro: bool,
+    line: usize,
+    end_line: usize,
+}
+
+impl DialogModule {
+    fn vba(m: &Module) -> DialogModule {
+        DialogModule {
+            name: m.name.clone(),
+            kind: kind_label(m.kind),
+            code: m.code.clone(),
+            is_form: m.kind == ModuleKind::Form,
+            procedures: m
+                .procedures()
+                .iter()
+                .map(|p: &Procedure| {
+                    let mut what = p.kind.keyword().to_owned();
+                    if p.private {
+                        what = format!("Private {what}");
+                    }
+                    DialogProcedure {
+                        name: p.name.clone(),
+                        what,
+                        is_macro: p.is_macro() && m.kind != ModuleKind::Class,
+                        line: p.line,
+                        end_line: p.end_line,
+                    }
+                })
+                .collect(),
+        }
+    }
+
+    fn script(s: &sheets_engine::scripts::Script) -> DialogModule {
+        let keyword = match s.language {
+            sheets_engine::scripts::ScriptLanguage::JavaScript => "function",
+            sheets_engine::scripts::ScriptLanguage::Python => "def",
+        };
+        DialogModule {
+            name: s.name.clone(),
+            kind: match s.language {
+                sheets_engine::scripts::ScriptLanguage::JavaScript => t("JavaScript"),
+                sheets_engine::scripts::ScriptLanguage::Python => t("Python"),
+            },
+            code: s.source.clone(),
+            is_form: false,
+            procedures: sheets_script::scripts::functions(s)
+                .into_iter()
+                .map(|f| DialogProcedure {
+                    is_macro: f.is_macro() && sheets_script::scripts::can_run(s.language),
+                    what: keyword.to_owned(),
+                    name: f.name,
+                    line: f.line,
+                    end_line: f.end_line,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Rows of code shown at once.
@@ -93,11 +189,9 @@ fn kind_label(kind: ModuleKind) -> &'static str {
     }
 }
 
-fn code_lines(module: &Module) -> Rc<Vec<SharedString>> {
+fn code_lines(code: &str) -> Rc<Vec<SharedString>> {
     Rc::new(
-        module
-            .code
-            .lines()
+        code.lines()
             .map(|l| SharedString::from(l.replace('\t', "    ")))
             .collect(),
     )
@@ -105,18 +199,25 @@ fn code_lines(module: &Module) -> Rc<Vec<SharedString>> {
 
 impl SheetsView {
     /// After a workbook was opened: the bar when it has macros.
-    pub(crate) fn macros_after_open(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn macros_after_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (has, path) = {
             let book = &self.table.read(cx).delegate().book;
-            (book.has_macros(), book.path().map(|p| p.to_path_buf()))
+            (
+                book.has_macros() || book.has_scripts(),
+                book.path().map(|p| p.to_path_buf()),
+            )
         };
         self.macros = MacroState {
             trust: initial_trust(path.as_deref(), has),
             ..Default::default()
         };
+        // The editor showed the workbook this pane had before.
+        self.macro_editor = None;
         if self.macros.trust == MacroTrust::Enabled {
             self.macros.trust = MacroTrust::Disabled;
-            self.enable_content_now(cx);
+            if self.enable_content_now(cx) {
+                self.fire_macro_event(sheets_script::Event::Open, None, window, cx);
+            }
         }
     }
 
@@ -126,13 +227,23 @@ impl SheetsView {
         if self.busy.is_some() || !self.enable_content_now(cx) {
             return;
         }
-        // Formulas using the VBA functions get their values.
-        self.calculate_doc(window, cx);
         self.status = t("Macros enabled for this session").into();
         cx.notify();
+        // Workbook_Open, as when Excel opens a trusted file; then formulas
+        // using the VBA functions get their values.
+        let opened = self.fire_event_then(
+            sheets_script::Event::Open,
+            crate::macro_run::After::Recalculate,
+            None,
+            window,
+            cx,
+        );
+        if !opened {
+            self.calculate_doc(window, cx);
+        }
     }
 
-    fn enable_content_now(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn enable_content_now(&mut self, cx: &mut Context<Self>) -> bool {
         let read = sheets_script::MacroProject::of_book(&self.table.read(cx).delegate().book);
         let project = match read {
             Some(Ok(p)) => p,
@@ -146,8 +257,10 @@ impl SheetsView {
         self.table.update(cx, |table, _| {
             sheets_script::enable_functions(&mut table.delegate_mut().book, Some(&project));
         });
+        self.macros.thread = crate::macro_thread::MacroThread::start(project.clone());
         self.macros.project = Some(project);
         self.macros.trust = MacroTrust::Enabled;
+        self.macro_events_seen(cx);
         cx.notify();
         true
     }
@@ -219,36 +332,61 @@ impl SheetsView {
         if self.editing.is_some() {
             return;
         }
-        let project = self.table.read(cx).delegate().book.vba_project();
-        let Some(project) = project else {
-            self.status = t("This workbook has no macros").into();
+        let (project, scripts) = {
+            let book = &self.table.read(cx).delegate().book;
+            (book.vba_project(), book.scripts())
+        };
+        let (scripts, scripts_error) = match scripts {
+            Ok(s) => (s, None),
+            Err(e) => (Vec::new(), Some(e)),
+        };
+        if project.is_none() && scripts.is_empty() && scripts_error.is_none() {
+            self.status =
+                t("This workbook has no macros. Alt+F11 opens the Macro Editor to write one.")
+                    .into();
             cx.notify();
             return;
-        };
-        let project = project.map(Rc::new);
-        let procedures: Vec<Vec<Procedure>> = match &project {
-            Ok(p) => p.modules().iter().map(Module::procedures).collect(),
-            Err(e) => {
+        }
+        let (project, mut error) = match project {
+            Some(Ok(p)) => (Some(Rc::new(p)), None),
+            Some(Err(e)) => {
                 log::warn!("reading the VBA project: {e}");
-                Vec::new()
+                (None, Some(e))
             }
+            None => (None, None),
         };
+        if let Some(e) = scripts_error {
+            log::warn!("reading the workbook's scripts: {e}");
+            if error.is_none() {
+                error = Some(e);
+            }
+        }
+        let mut modules: Vec<DialogModule> = project
+            .as_ref()
+            .map(|p| p.modules().iter().map(DialogModule::vba).collect())
+            .unwrap_or_default();
+        modules.extend(scripts.iter().map(DialogModule::script));
         // The first module with a procedure, as Alt+F8 lists macros first.
-        let module = procedures.iter().position(|p| !p.is_empty()).unwrap_or(0);
-        let lines = match &project {
-            Ok(p) => p.modules().get(module).map(code_lines).unwrap_or_default(),
-            Err(_) => Rc::default(),
-        };
-        let first = procedures
+        let module = modules
+            .iter()
+            .position(|m| !m.procedures.is_empty())
+            .unwrap_or(0);
+        let lines = modules
             .get(module)
-            .and_then(|p| (!p.is_empty()).then_some(0));
+            .map(|m| code_lines(&m.code))
+            .unwrap_or_default();
+        let first = modules
+            .get(module)
+            .and_then(|m| (!m.procedures.is_empty()).then_some(0));
         self.macros_dialog = Some(MacrosDialog {
+            error,
             project,
-            procedures,
+            modules,
             module,
             procedure: first,
             lines,
             scroll: UniformListScrollHandle::new(),
+            form: None,
         });
         self.pick_macro(module, first, window, cx);
     }
@@ -271,16 +409,18 @@ impl SheetsView {
         let Some(d) = self.macros_dialog.as_mut() else {
             return;
         };
-        if let Ok(p) = &d.project
-            && let Some(m) = p.modules().get(module)
-        {
+        if let Some(m) = d.modules.get(module) {
             if d.module != module || d.lines.is_empty() {
-                d.lines = code_lines(m);
+                d.lines = code_lines(&m.code);
+                d.form = match (&d.project, m.is_form) {
+                    (Some(p), true) => p.form(&m.name).map(|r| r.map_err(|e| e.to_string())),
+                    _ => None,
+                };
             }
             d.module = module;
             d.procedure = procedure;
             let line = procedure
-                .and_then(|i| d.procedures.get(module)?.get(i))
+                .and_then(|i| d.modules.get(module)?.procedures.get(i))
                 .map_or(0, |p| p.line);
             d.scroll.scroll_to_item(line, ScrollStrategy::Top);
         }
@@ -294,15 +434,15 @@ impl SheetsView {
         let mut card = dialog::card("macros", t("Macros"), px(860.), cx)
             .key_context("KantorMacros")
             .on_action(cx.listener(|this, _: &input::Escape, w, cx| this.close_macros(w, cx)));
-        match &d.project {
-            Err(e) => {
-                card = card.child(dialog::note(
-                    tf("Kantor can't read this workbook's macros: {}", &[e]),
-                    true,
-                    cx,
-                ));
-            }
-            Ok(project) => {
+        if let Some(e) = &d.error {
+            card = card.child(dialog::note(
+                tf("Kantor can't read this workbook's macros: {}", &[e]),
+                true,
+                cx,
+            ));
+        }
+        {
+            if !d.modules.is_empty() {
                 let mono = cx.theme().mono_font_family.clone();
                 // Modules, each with its procedures.
                 let mut list = v_flex()
@@ -316,7 +456,7 @@ impl SheetsView {
                     .rounded(RADIUS_SM)
                     .p(SPACE_1)
                     .text_size(FONT_SMALL);
-                for (mi, m) in project.modules().iter().enumerate() {
+                for (mi, m) in d.modules.iter().enumerate() {
                     let v = view.clone();
                     let on = d.module == mi && d.procedure.is_none();
                     list = list.child(
@@ -336,25 +476,17 @@ impl SheetsView {
                                     .font_weight(FontWeight::MEDIUM)
                                     .child(m.name.clone()),
                             )
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .text_color(t_.fg_muted)
-                                    .child(kind_label(m.kind)),
-                            )
+                            .child(div().flex_none().text_color(t_.fg_muted).child(m.kind))
                             .on_click(move |_, window, cx| {
                                 let _ =
                                     v.update(cx, |this, cx| this.pick_macro(mi, None, window, cx));
                             }),
                     );
-                    let procs = d.procedures.get(mi).map(Vec::as_slice).unwrap_or_default();
+                    let procs = &m.procedures;
                     for (pi, p) in procs.iter().enumerate() {
                         let v = view.clone();
                         let on = d.module == mi && d.procedure == Some(pi);
-                        let mut what = p.kind.keyword().to_owned();
-                        if p.private {
-                            what = format!("Private {what}");
-                        }
+                        let what = p.what.clone();
                         list = list.child(
                             h_flex()
                                 .id(("macro-procedure", mi * 10_000 + pi))
@@ -370,7 +502,7 @@ impl SheetsView {
                                         .flex_1()
                                         .min_w_0()
                                         .truncate()
-                                        .when(!p.is_macro(), |d| d.text_color(t_.fg_muted))
+                                        .when(!p.is_macro, |d| d.text_color(t_.fg_muted))
                                         .child(p.name.clone()),
                                 )
                                 .child(div().flex_none().text_color(t_.fg_dim).child(what))
@@ -386,7 +518,7 @@ impl SheetsView {
                 let lines = d.lines.clone();
                 let span = d
                     .procedure
-                    .and_then(|i| d.procedures.get(d.module)?.get(i))
+                    .and_then(|i| d.modules.get(d.module)?.procedures.get(i))
                     .map(|p| (p.line, p.end_line));
                 let digits = lines.len().max(1).to_string().len();
                 let gutter = px(9. * digits as f32 + 12.);
@@ -446,15 +578,31 @@ impl SheetsView {
                     .into_any_element()
                 };
                 card = card.child(h_flex().gap(SPACE_4).items_start().child(list).child(code));
+                // A UserForm: its layout, read-only.
+                match &d.form {
+                    Some(Ok(design)) => {
+                        card = card.child(
+                            div()
+                                .id("macros-form-preview")
+                                .max_h(px(320.))
+                                .overflow_y_scroll()
+                                .child(crate::macro_form::form_preview(design, 820., cx)),
+                        );
+                    }
+                    Some(Err(e)) => {
+                        card = card.child(crate::macro_form::preview_unavailable(e, cx));
+                    }
+                    None => {}
+                }
             }
         }
         // The selected procedure, when it is a macro Run can start.
         let picked = d
             .procedure
-            .and_then(|i| d.procedures.get(d.module)?.get(i))
-            .filter(|p| p.is_macro())
+            .and_then(|i| d.modules.get(d.module)?.procedures.get(i))
+            .filter(|p| p.is_macro)
             .and_then(|p| {
-                let m = d.project.as_ref().ok()?.modules().get(d.module)?;
+                let m = d.modules.get(d.module)?;
                 Some(format!("{}.{}", m.name, p.name))
             });
         let enabled = self.macros.trust == MacroTrust::Enabled;
@@ -505,6 +653,8 @@ impl SheetsView {
         });
         let close = view.clone();
         let run_view = view.clone();
+        let edit_view = view.clone();
+        let edit_module = d.modules.get(d.module).map(|m| m.name.clone());
         let card = card
             .children(output)
             .child(dialog::note(note, false, cx))
@@ -519,6 +669,18 @@ impl SheetsView {
                             .small()
                             .on_click(move |_, window, cx| {
                                 let _ = close.update(cx, |this, cx| this.close_macros(window, cx));
+                            }),
+                    )
+                    .child(
+                        Button::new("macros-edit")
+                            .label(t("Edit"))
+                            .small()
+                            .on_click(move |_, window, cx| {
+                                let module = edit_module.clone();
+                                let _ = edit_view.update(cx, |this, cx| {
+                                    this.close_macros(window, cx);
+                                    this.open_macro_editor(module.as_deref(), window, cx);
+                                });
                             }),
                     )
                     .child(

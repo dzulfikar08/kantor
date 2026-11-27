@@ -266,6 +266,21 @@ impl RangeObj {
                     }
                 }
                 v => {
+                    // One A1 formula over several cells is written as Excel
+                    // does: relative references move with each cell.
+                    let shifted = match (v, what) {
+                        (Value::String(f), Write::Value | Write::Formula)
+                            if f.starts_with('=')
+                                && (area.top != area.bottom || area.left != area.right) =>
+                        {
+                            Some(Value::String(addr::a1_to_r1c1(f, area.top, area.left)))
+                        }
+                        _ => None,
+                    };
+                    let (v, what) = match &shifted {
+                        Some(r1c1) => (r1c1, Write::FormulaR1C1),
+                        None => (v, what),
+                    };
                     for r in area.top..=area.bottom {
                         for c in area.left..=area.right {
                             write_cell(&mut book, idx, r, c, v, what)?;
@@ -662,6 +677,9 @@ impl RangeObj {
 
     /// `AutoFilter [Field, Criteria1, Operator, Criteria2]`.
     fn autofilter(&self, args: &[Arg]) -> Result<Value, ScriptError> {
+        if let Some(r) = crate::tables::range_autofilter(self, args) {
+            return r;
+        }
         let idx = self.idx()?;
         let mut range = self.first();
         let field = arg_i64(args, 0, "Field")?;
@@ -705,7 +723,6 @@ impl RangeObj {
     }
 
     fn remove_duplicates(&self, args: &[Arg]) -> Result<(), ScriptError> {
-        let idx = self.idx()?;
         let a = self.first();
         let columns: Vec<u32> = match arg(args, 0, "Columns") {
             None => (0..a.cols_count()).collect(),
@@ -719,58 +736,7 @@ impl RangeObj {
             },
         };
         let header = arg_i64(args, 1, "Header")?.unwrap_or(XL_NO) == XL_YES;
-        let mut book = self.s.write()?;
-        let (rows, cols) = book.used_size(idx);
-        let Some(a) = a.clip(rows.max(1), cols.max(1)) else {
-            return Ok(());
-        };
-        let first = if header { a.top + 1 } else { a.top };
-        if first > a.bottom {
-            return Ok(());
-        }
-        book.script_sync();
-        let mut seen = std::collections::HashSet::new();
-        let mut keep: Vec<u32> = Vec::new();
-        for r in first..=a.bottom {
-            let key: Vec<String> = columns
-                .iter()
-                .map(|c| book.display_value(idx, r, a.left + c).to_lowercase())
-                .collect();
-            if seen.insert(key) {
-                keep.push(r);
-            }
-        }
-        if keep.len() as u32 == a.bottom - first + 1 {
-            return Ok(());
-        }
-        // Kept rows move up inside the range; the rest is cleared.
-        let inputs: Vec<Vec<String>> = keep
-            .iter()
-            .map(|&r| (a.left..=a.right).map(|c| book.input(idx, r, c)).collect())
-            .collect();
-        for (i, row) in inputs.iter().enumerate() {
-            let r = first + i as u32;
-            for (j, text) in row.iter().enumerate() {
-                let c = a.left + j as u32;
-                if book.input(idx, r, c) != *text {
-                    if text.is_empty() {
-                        book.clear_range(idx, CellRange::from_corners((r, c), (r, c)))
-                            .map_err(engine)?;
-                    } else {
-                        book.set_input(idx, r, c, text).map_err(engine)?;
-                    }
-                }
-            }
-        }
-        let rest = first + inputs.len() as u32;
-        if rest <= a.bottom {
-            book.clear_range(
-                idx,
-                CellRange::from_corners((rest, a.left), (a.bottom, a.right)),
-            )
-            .map_err(engine)?;
-        }
-        Ok(())
+        crate::fit::remove_duplicates(self, &columns, header)
     }
 
     fn clear(&self, what: Clear) -> Result<(), ScriptError> {
@@ -927,49 +893,6 @@ impl RangeObj {
 
     fn style_value(&self, path: &str, value: &str) -> Result<(), ScriptError> {
         set_style(&self.s, self.sheet, &self.areas, path, value)
-    }
-
-    fn autofit(&self) -> Result<(), ScriptError> {
-        let idx = self.idx()?;
-        let a = self.first();
-        let mut book = self.s.read()?;
-        let whole_rows = a.is_whole_rows() || self.mode == Mode::Rows;
-        if whole_rows && !(a.is_whole_columns() || self.mode == Mode::Columns) {
-            // Rows: back to automatic height.
-            let h = book.default_row_points(idx);
-            book.set_row_heights(idx, a.top, a.bottom, sheets_engine::RowHeight::Auto(h))
-                .map_err(engine)?;
-            return Ok(());
-        }
-        let (rows, _) = book.used_size(idx);
-        let scale = book.column_scale(idx);
-        for c in a.left..=a.right.min(MAX_COLS - 1) {
-            let (top, bottom) = if a.is_whole_columns() || self.mode == Mode::Columns {
-                (0, rows.max(1) - 1)
-            } else {
-                (a.top, a.bottom)
-            };
-            // The longest shown text, in digit widths (no font metrics here).
-            let mut longest = 0usize;
-            for r in top..=bottom.min(rows.max(1) - 1) {
-                if book.merge_at(idx, r, c).is_some() {
-                    continue;
-                }
-                let t = book.display_value(idx, r, c);
-                let n = t.lines().map(|l| l.chars().count()).max().unwrap_or(0);
-                let size = book.cell_style(idx, r, c).font_size.max(1);
-                let base = book.default_font_size().max(1);
-                let n = (n as f64 * f64::from(size) / f64::from(base)).ceil() as usize;
-                longest = longest.max(n);
-            }
-            if longest == 0 {
-                continue;
-            }
-            let chars = (longest as f64 * 1.1 + 0.5).min(255.0);
-            let px = (chars * scale.digit_px + 5.0).round();
-            book.set_column_width(idx, c, c, px).map_err(engine)?;
-        }
-        Ok(())
     }
 }
 
@@ -1153,7 +1076,7 @@ pub fn sort_range(
     Ok(())
 }
 
-fn filter_kind(
+pub(crate) fn filter_kind(
     c1: Option<Value>,
     op: i64,
     c2: Option<Value>,
@@ -1669,8 +1592,13 @@ impl Dispatch for RangeObj {
                     },
                 ))
             }
-            "locked" => Ok(Value::Boolean(true)),
-            "formulahidden" => Ok(Value::Boolean(false)),
+            "locked" => crate::protection::locked(self),
+            "formulahidden" => crate::protection::formula_hidden(self),
+            "pagebreak" => crate::page_setup::range_page_break(self),
+            "exportasfixedformat" => crate::page_setup::export_pdf_range(self, args),
+            "formatconditions" => crate::cond_formats::format_conditions(self, args),
+            "characters" => crate::characters::characters(self, args),
+            "validation" => Ok(crate::validation::validation(self)),
             "name" => Err(err1004("This range has no name")),
             "find" => self.find(args, None),
             "findnext" => self.find(args, Some(false)),
@@ -1688,16 +1616,24 @@ impl Dispatch for RangeObj {
             "dependents" | "precedents" | "directdependents" | "directprecedents" => {
                 Err(ScriptError::unsupported("Range.Dependents and Precedents"))
             }
-            "listobject" | "pivottable" | "comment" | "hyperlinks" => Ok(Value::NOTHING),
+            "pivottable" => Ok(Value::NOTHING),
+            "listobject" => crate::tables::range_list_object(self),
+            "hyperlinks" => {
+                crate::hyperlinks::with_args(crate::hyperlinks::range_hyperlinks(self), args)
+            }
+            "comment" => crate::comments::comment(self),
+            "addcomment" => crate::comments::add_comment(self, args),
+            "notetext" => crate::comments::note_text(self, args),
+            "addcommentthreaded" | "commentthreaded" => crate::comments::threaded(),
             // Methods (also as statements, see `call`).
             "select" => self.select().map(|()| Value::Boolean(true)),
             "activate" => self.activate().map(|()| Value::Boolean(true)),
             "clear" => self.clear(Clear::All).map(|()| Value::Boolean(true)),
             "clearcontents" => self.clear(Clear::Contents).map(|()| Value::Boolean(true)),
             "clearformats" => self.clear(Clear::Formats).map(|()| Value::Boolean(true)),
-            "clearcomments" | "clearnotes" | "clearhyperlinks" | "clearoutline" => {
-                Ok(Value::Boolean(true))
-            }
+            "clearcomments" | "clearnotes" => crate::comments::clear_comments(self),
+            "clearhyperlinks" => crate::hyperlinks::clear_hyperlinks(self),
+            "clearoutline" => Ok(Value::Boolean(true)),
             "delete" => self
                 .delete(arg_i64(args, 0, "Shift")?)
                 .map(|()| Value::Boolean(true)),
@@ -1711,7 +1647,7 @@ impl Dispatch for RangeObj {
             "sort" => self.sort(args).map(|()| Value::Long(0)),
             "autofilter" => self.autofilter(args),
             "removeduplicates" => self.remove_duplicates(args).map(|()| Value::Empty),
-            "autofit" => self.autofit().map(|()| Value::Boolean(true)),
+            "autofit" => crate::fit::autofit(self),
             "merge" => self
                 .merge(arg_bool(args, 0, "Across")?.unwrap_or(false))
                 .map(|()| Value::Empty),
@@ -1757,10 +1693,7 @@ impl Dispatch for RangeObj {
                 Ok(Value::Boolean(true))
             }
             "show" | "showdetail" => Ok(Value::Boolean(true)),
-            "addcomment" | "addcommentthreaded" => {
-                Err(ScriptError::unsupported("Adding comments from a macro"))
-            }
-            "printout" | "printpreview" => Err(ScriptError::unsupported("Printing from a macro")),
+            "printout" | "printpreview" => crate::page_setup::print_out(),
             "group" | "ungroup" => Err(ScriptError::unsupported("Outline grouping from a macro")),
             _ => Err(ScriptError::no_member("Range", name)),
         }
@@ -1907,9 +1840,10 @@ impl Dispatch for RangeObj {
                 );
                 book.set_defined_name(&n, None, &refers).map_err(engine)
             }
-            "locked" | "formulahidden" | "style" | "shrinktofit" | "addindent" | "readingorder" => {
-                Ok(())
-            }
+            "locked" => crate::protection::set_locked(self, &value),
+            "formulahidden" => crate::protection::set_formula_hidden(self, &value),
+            "pagebreak" => crate::page_setup::set_range_page_break(self, &value),
+            "style" | "shrinktofit" | "addindent" | "readingorder" => Ok(()),
             // `Cells(1, 2) = x`, `Range("A1").Offset(1) = x`: the member's
             // range gets the value.
             _ => {

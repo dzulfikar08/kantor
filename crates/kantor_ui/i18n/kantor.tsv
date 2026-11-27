@@ -621,6 +621,8 @@ Sheets · show where the pages break; drag the breaks and the print area	Sheets 
 Normal View	Tampilan Normal
 Sheets · leave Page Break Preview	Sheets · keluar dari Pratinjau Hentian Halaman
 Sheets · the workbook's VBA modules and procedures, shown but not run	Sheets · modul dan prosedur VBA buku kerja, ditampilkan tetapi tidak dijalankan
+Macro Editor	Editor Makro
+Sheets · Visual Basic editor: write, paste and run VBA and JavaScript macros	Sheets · editor Visual Basic: tulis, tempel, dan jalankan makro VBA dan JavaScript
 Sheets · a table style of this workbook: format of each table element, stripe sizes, default style	Sheets · gaya tabel buku kerja ini: format tiap elemen tabel, ukuran pita, gaya default
 Let Formulas Download from the Internet	Izinkan Rumus Mengunduh dari Internet
 Sheets · IMAGE and WEBSERVICE (turn on or off)	Sheets · IMAGE dan WEBSERVICE (aktifkan atau nonaktifkan)
@@ -776,3 +778,4 @@ Edited · autosaves shortly	Diubah · segera disimpan otomatis
 Edited · not saved	Diubah · belum disimpan
 Open  →	Buka  →
 Read and sign .pdf files	Baca dan tanda tangani berkas .pdf
+Sign-in cancelled. Nothing was changed.	Masuk dibatalkan. Tidak ada yang diubah.

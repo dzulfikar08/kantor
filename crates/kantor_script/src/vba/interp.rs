@@ -10,6 +10,7 @@ use super::ast::*;
 use super::builtins;
 use super::compile::*;
 use super::convert::{self, Arith, Scalar};
+use super::forms::{form_of_instance, form_of_object};
 use super::objects::*;
 use crate::object::*;
 
@@ -31,6 +32,14 @@ pub(crate) struct State {
     pub max_steps: Option<u64>,
     pub max_depth: usize,
     pub constants: HashMap<String, Value>,
+    /// Modules and instances with `WithEvents` variables (see `events`).
+    pub sinks: Vec<super::events::Sink>,
+    /// UserForm designs by form module (lowercase name).
+    pub forms: HashMap<String, Rc<crate::forms::FormDesign>>,
+    /// Each form module's default instance (`UserForm1.Show`), by module index.
+    pub default_forms: HashMap<usize, ObjectRef>,
+    /// Forms shown modeless, run once the macro ends.
+    pub modeless: Vec<ObjectRef>,
 }
 
 impl State {
@@ -46,6 +55,10 @@ impl State {
             max_steps: None,
             max_depth: 100,
             constants: HashMap::new(),
+            sinks: Vec::new(),
+            forms: HashMap::new(),
+            default_forms: HashMap::new(),
+            modeless: Vec::new(),
         }
     }
 
@@ -56,6 +69,10 @@ impl State {
         self.statics.clear();
         self.err.clear();
         self.print_line.clear();
+        self.sinks.clear();
+        // `End` (and a reset) unloads every form.
+        self.default_forms.clear();
+        self.modeless.clear();
     }
 }
 
@@ -90,7 +107,7 @@ pub(crate) struct Place {
 }
 
 impl Place {
-    fn slot(s: Slot) -> Place {
+    pub(crate) fn slot(s: Slot) -> Place {
         Place {
             root: Root::Slot(s),
             path: Vec::new(),
@@ -158,7 +175,7 @@ pub(crate) struct Frame {
     locals: HashMap<Rc<str>, Slot>,
     result: Option<Slot>,
     /// `Me` and the instance's variables, in a class module.
-    me: Option<(ObjectRef, Rc<Scope>)>,
+    pub me: Option<(ObjectRef, Rc<Scope>)>,
     temps: Vec<Temp>,
     withs: Vec<WithTarget>,
     handler: Handler,
@@ -211,6 +228,9 @@ pub(crate) enum Binding {
     Enum,
     Declare(String),
     Host(ObjectRef),
+    /// A control or property of the form whose module the code is in (`TextBox1`, `Caption`,
+    /// `Hide`): a member of `Me`.
+    FormMember(ObjectRef),
     Unknown,
 }
 
@@ -338,7 +358,7 @@ impl Interp<'_> {
         self.modules.iter().find(|m| &*m.key == key).cloned()
     }
 
-    fn module_frame(&self, m: &Rc<Module>) -> Frame {
+    pub(crate) fn module_frame(&self, m: &Rc<Module>) -> Frame {
         Frame::new(m.clone(), m.init.clone(), None)
     }
 
@@ -357,6 +377,7 @@ impl Interp<'_> {
             let slot = self.make_var(d, &mut frame)?;
             scope.borrow_mut().insert(d.name.key.clone(), slot);
         }
+        self.register_module_sink(m);
         Ok(scope)
     }
 
@@ -495,7 +516,7 @@ impl Interp<'_> {
         Ok(Value::array(Array::new(bounds, fill)?))
     }
 
-    fn make_var(&mut self, d: &VarDecl, f: &mut Frame) -> R<Slot> {
+    pub(crate) fn make_var(&mut self, d: &VarDecl, f: &mut Frame) -> R<Slot> {
         let (ty, value, fixed) = match &d.array {
             None => (d.ty.clone(), self.default_value(&d.ty)?, false),
             Some(b) if b.is_empty() => (
@@ -601,6 +622,16 @@ impl Interp<'_> {
         };
         if fixed {
             return Err(ScriptError::syntax("Can't assign to array"));
+        }
+        // `Cancel = True` on a `Cancel As MSForms.ReturnBoolean`: Let to a typed object
+        // variable assigns its default member (MS-VBAL §5.4.3.8).
+        if !set && !value.is_object() && matches!(ty, Ty::Object | Ty::Named(_)) {
+            let current = s.borrow().value.clone();
+            if let Value::Object(Some(o)) = current
+                && !matches!(&ty, Ty::Named(n) if matches!(self.resolve_named(n), Named::Udt(..) | Named::Enum))
+            {
+                return self.obj_put(&o, "", Vec::new(), value, false);
+            }
         }
         let value = self.coerce(value, &ty, set)?;
         let old = std::mem::replace(&mut s.borrow_mut().value, value);
@@ -713,6 +744,14 @@ impl Interp<'_> {
         if let Some(b) = self.module_member(&current, key, f, true)? {
             return Ok(b);
         }
+        if current.kind == ModuleKind::Form
+            && let Some((o, _)) = &f.me
+            && let Some(rt) = form_of_instance(o)
+            && (rt.control_index(key).is_some()
+                || (rt.has_member(key) && !builtins::is_builtin(key)))
+        {
+            return Ok(Binding::FormMember(o.clone()));
+        }
         let modules = self.modules;
         for m in modules {
             if m.idx != current.idx
@@ -794,7 +833,9 @@ impl Interp<'_> {
                 match v {
                     Value::Object(None) => Ok(Value::Boolean(false)),
                     Value::Object(Some(o)) => Ok(Value::Boolean(
-                        short == "object" || o.type_name().eq_ignore_ascii_case(short),
+                        short == "object"
+                            || o.type_name().eq_ignore_ascii_case(short)
+                            || Self::implements(&o, short),
                     )),
                     _ => Err(ScriptError::runtime(424)),
                 }
@@ -857,6 +898,14 @@ impl Interp<'_> {
                 self.call_group(&m, &g, Vec::new(), me, Access::Get)
             }
             Binding::Builtin(k) => self.builtin(&k, Vec::new(), f),
+            // `Set ws = Sheet1`, `ThisWorkbook`: the host's object for the document.
+            Binding::Module(m) if m.kind == ModuleKind::Document => {
+                Ok(Value::Object(Some(self.document_object(&m)?)))
+            }
+            Binding::Module(m) if m.kind == ModuleKind::Form => {
+                Ok(Value::object(self.default_form(&m)?))
+            }
+            Binding::FormMember(o) => self.instance_member(&o, &id.key, Vec::new(), Access::Get),
             Binding::Module(_) | Binding::Enum => Err(ScriptError::syntax(format!(
                 "Expected variable or procedure, not '{}'",
                 id.text
@@ -905,7 +954,7 @@ impl Interp<'_> {
     }
 
     /// Evaluates arguments for a VBA procedure, keeping where variables live for `ByRef`.
-    fn eval_args_in(&mut self, args: &[ArgExpr], f: &mut Frame) -> R<Vec<ArgIn>> {
+    pub(crate) fn eval_args_in(&mut self, args: &[ArgExpr], f: &mut Frame) -> R<Vec<ArgIn>> {
         let mut out = Vec::with_capacity(args.len());
         for a in args {
             let name = a.name.as_ref().map(|n| n.key.clone());
@@ -988,12 +1037,16 @@ impl Interp<'_> {
                     "Calling the DLL function {} (\"{}\")",
                     id.text, lib
                 ))),
+                Binding::FormMember(o) => self.form_member_call(&o, id, args, f, access),
                 Binding::Module(_) | Binding::Enum => Err(ScriptError::syntax(format!(
                     "Expected procedure, not '{}'",
                     id.text
                 ))),
                 Binding::Host(g) => {
                     let a = self.eval_args(args, f)?;
+                    if g.script_member(&id.text) == Some(ScriptMember::Run) {
+                        return self.app_run(a);
+                    }
                     let r = if access == Access::Call {
                         g.call(&id.text, &a)
                     } else {
@@ -1064,14 +1117,21 @@ impl Interp<'_> {
         match obj {
             Value::Object(Some(o)) => {
                 if as_instance(&o).is_some() {
-                    let a = self.eval_args_in(args, f)?;
-                    return self.instance_member(&o, &name.key, a, access);
+                    return self.instance_call(&o, base, name, args, f, access);
                 }
                 let a = self.eval_args(args, f)?;
-                if access == Access::Call {
+                if o.script_member(&name.text) == Some(ScriptMember::Run) {
+                    return self.app_run(a);
+                }
+                let r = if access == Access::Call {
                     o.call(&name.text, &a)
                 } else {
                     o.get(&name.text, &a)
+                };
+                self.form_after(&o)?;
+                match r {
+                    Err(e) if e.number == 438 => self.document_member(&o, name, args, f, access, e),
+                    r => r,
                 }
             }
             Value::Object(None) => Err(ScriptError::runtime(91)),
@@ -1094,7 +1154,13 @@ impl Interp<'_> {
         f: &mut Frame,
         access: Access,
     ) -> R<Value> {
-        if matches!(m.kind, ModuleKind::Class | ModuleKind::Form) {
+        if m.kind == ModuleKind::Form {
+            // `UserForm1.Show`: the form's default instance.
+            let o = self.default_form(m)?;
+            let a = self.eval_args_in(args, f)?;
+            return self.instance_member(&o, &name.key, a, access);
+        }
+        if m.kind == ModuleKind::Class {
             return Err(ScriptError::runtime(424));
         }
         let inside = m.idx == f.module.idx;
@@ -1113,10 +1179,114 @@ impl Interp<'_> {
                 "Calling the DLL function {} (\"{}\")",
                 name.text, lib
             ))),
+            // `Sheet1.Range("A1")`: a member of the host's object for the document.
+            _ if m.kind == ModuleKind::Document => {
+                let o = self.document_object(m)?;
+                let a = self.eval_args(args, f)?;
+                if access == Access::Call {
+                    o.call(&name.text, &a)
+                } else {
+                    o.get(&name.text, &a)
+                }
+            }
             _ => Err(ScriptError::syntax(format!(
                 "Method or data member not found: {}.{}",
                 m.name, name.text
             ))),
+        }
+    }
+
+    /// The host's object for a document module (`Sheet1`, `ThisWorkbook`).
+    #[inline(never)]
+    fn document_object(&mut self, m: &Module) -> R<ObjectRef> {
+        let g = self
+            .host
+            .globals()
+            .ok_or_else(|| ScriptError::runtime(424))?;
+        match g.get(&m.name, &[])? {
+            Value::Object(Some(o)) => Ok(o),
+            _ => Err(ScriptError::runtime(424)),
+        }
+    }
+
+    /// A member a host object doesn't have (438), when the object is a document whose module
+    /// defines it: `ThisWorkbook.MyMacro`, `Sheet1.Total` (a public variable).
+    #[inline(never)]
+    fn document_member(
+        &mut self,
+        o: &ObjectRef,
+        name: &Ident,
+        args: &[ArgExpr],
+        f: &mut Frame,
+        access: Access,
+        e: ScriptError,
+    ) -> R<Value> {
+        let module = o
+            .document_module()
+            .and_then(|n| self.module_named(&n.to_lowercase()))
+            .filter(|m| m.kind == ModuleKind::Document);
+        match module {
+            Some(m)
+                if m.public_vars.contains(&name.key)
+                    || m.procs.get(&name.key).is_some_and(|g| g.is_public()) =>
+            {
+                let inside = m.idx == f.module.idx;
+                match self.module_member(&m, &name.key, f, inside)? {
+                    Some(Binding::Slot(s)) => {
+                        let v = self.read_slot(&s)?;
+                        let a = self.eval_args(args, f)?;
+                        self.index_value(v, a, access)
+                    }
+                    Some(Binding::Proc(pm, g)) => {
+                        let a = self.eval_args_in(args, f)?;
+                        self.call_group(&pm, &g, a, None, access)
+                    }
+                    _ => Err(e),
+                }
+            }
+            _ => Err(e),
+        }
+    }
+
+    /// `base.name(args)` on a class instance (through its interface when `base` is a variable
+    /// declared as one).
+    #[inline(never)]
+    fn instance_call(
+        &mut self,
+        o: &ObjectRef,
+        base: &Expr,
+        name: &Ident,
+        args: &[ArgExpr],
+        f: &mut Frame,
+        access: Access,
+    ) -> R<Value> {
+        let has_ifaces = as_instance(o).is_some_and(|i| !i.module.implements.is_empty());
+        let via = if has_ifaces {
+            self.interface_of(base, f)
+        } else {
+            None
+        };
+        let a = self.eval_args_in(args, f)?;
+        self.instance_member_via(o, &name.key, a, access, via.as_deref())
+    }
+
+    /// The interface an expression is declared as (`Dim s As IShape`), when it names a
+    /// variable of a class type: members called through it go to `IShape_Member`.
+    fn interface_of(&mut self, base: &Expr, f: &Frame) -> Option<Rc<str>> {
+        let Expr::Name(id) = base else {
+            return None;
+        };
+        let slot = f.locals.get(&id.key).cloned().or_else(|| {
+            let m = f.module.clone();
+            match self.module_member(&m, &id.key, f, true) {
+                Ok(Some(Binding::Slot(s))) => Some(s),
+                _ => None,
+            }
+        })?;
+        let ty = slot.borrow().ty.clone();
+        match ty {
+            Ty::Named(n) => Some(Rc::from(n.rsplit('.').next().unwrap_or(&n))),
+            _ => None,
         }
     }
 
@@ -1128,15 +1298,50 @@ impl Interp<'_> {
         args: Vec<ArgIn>,
         access: Access,
     ) -> R<Value> {
+        self.instance_member_via(o, key, args, access, None)
+    }
+
+    /// [`Self::instance_member`] through a variable declared as interface `via`: the
+    /// instance's `via_key` implementation comes first. Without one, an implemented
+    /// interface's procedure is used when the class has no public member of that name.
+    fn instance_member_via(
+        &mut self,
+        o: &ObjectRef,
+        key: &str,
+        args: Vec<ArgIn>,
+        access: Access,
+        via: Option<&str>,
+    ) -> R<Value> {
         let Some(inst) = as_instance(o) else {
             return Err(ScriptError::runtime(438));
         };
         let module = inst.module.clone();
         let fields = inst.fields.clone();
+        if !key.is_empty() && !module.implements.is_empty() {
+            let ifaces: Vec<Rc<str>> = match via {
+                Some(v) if module.implements.iter().any(|i| &**i == v) => vec![Rc::from(v)],
+                Some(_) => Vec::new(),
+                None if module.procs.get(key).is_some_and(|g| g.is_public())
+                    || module.public_vars.contains(key) =>
+                {
+                    Vec::new()
+                }
+                None => module.implements.clone(),
+            };
+            for iface in ifaces {
+                let k = format!("{iface}_{key}");
+                if let Some(g) = module.procs.get(k.as_str()) {
+                    let g = g.clone();
+                    return self.call_group(&module, &g, args, Some((o.clone(), fields)), access);
+                }
+            }
+        }
+        let form = inst.form.clone();
         let key: Rc<str> = if key.is_empty() {
-            match &module.default_member {
-                Some(d) => d.clone(),
-                None => return Err(ScriptError::no_member(&module.name, "")),
+            match (&module.default_member, &form) {
+                (Some(d), _) => d.clone(),
+                (None, Some(rt)) => return self.form_member(o, rt, "", args, access),
+                (None, None) => return Err(ScriptError::no_member(&module.name, "")),
             }
         } else {
             Rc::from(key)
@@ -1161,6 +1366,9 @@ impl Interp<'_> {
                 return self.index_value(v, a, access);
             }
         }
+        if let Some(rt) = form {
+            return self.form_member(o, &rt, &key, args, access);
+        }
         Err(ScriptError::no_member(&module.name, &key))
     }
 
@@ -1183,11 +1391,13 @@ impl Interp<'_> {
                 .collect();
             return self.instance_member(o, &name.to_lowercase(), a, access);
         }
-        if access == Access::Call {
+        let r = if access == Access::Call {
             o.call(name, &args)
         } else {
             o.get(name, &args)
-        }
+        };
+        self.form_after(o)?;
+        r
     }
 
     /// Writes a property of any object (VBA instances included).
@@ -1200,18 +1410,25 @@ impl Interp<'_> {
         set: bool,
     ) -> R<()> {
         let Some(inst) = as_instance(o) else {
-            return if set {
+            let r = if set {
                 o.put_ref(name, &args, value)
             } else {
                 o.put(name, &args, value)
             };
+            if form_of_object(o).is_some() {
+                r?;
+                return self.form_after(o);
+            }
+            return r;
         };
         let module = inst.module.clone();
         let fields = inst.fields.clone();
+        let form = inst.form.clone();
         let key: Rc<str> = if name.is_empty() {
-            match &module.default_member {
-                Some(d) => d.clone(),
-                None => return Err(ScriptError::no_member(&module.name, "")),
+            match (&module.default_member, &form) {
+                (Some(d), _) => d.clone(),
+                (None, Some(rt)) => return self.form_put(rt, "", args, value),
+                (None, None) => return Err(ScriptError::no_member(&module.name, "")),
             }
         } else {
             Rc::from(name.to_lowercase())
@@ -1219,6 +1436,23 @@ impl Interp<'_> {
         if let Some(g) = module.procs.get(&key).filter(|g| g.is_public()).cloned() {
             let a = args.into_iter().map(|a| ArgIn::value(a.value)).collect();
             return self.call_property_put(&module, &g, a, value, set, Some((o.clone(), fields)));
+        }
+        if !module.public_vars.contains(&key) {
+            // A property of an implemented interface (`IShape_Name`).
+            for iface in module.implements.clone() {
+                let k = format!("{iface}_{key}");
+                if let Some(g) = module.procs.get(k.as_str()).cloned() {
+                    let a = args.into_iter().map(|a| ArgIn::value(a.value)).collect();
+                    return self.call_property_put(
+                        &module,
+                        &g,
+                        a,
+                        value,
+                        set,
+                        Some((o.clone(), fields)),
+                    );
+                }
+            }
         }
         if module.public_vars.contains(&key) {
             let slot = fields.borrow().get(&key).cloned();
@@ -1229,6 +1463,9 @@ impl Interp<'_> {
                 let ix = self.indices(&args)?;
                 return self.write_place(&Place::slot(s).with(Step::Index(ix)), value, set);
             }
+        }
+        if let Some(rt) = form {
+            return self.form_put(&rt, &key, args, value);
         }
         Err(ScriptError::no_member(&module.name, &key))
     }
@@ -1290,7 +1527,9 @@ impl Interp<'_> {
 
     fn instantiate(&mut self, m: &Rc<Module>) -> R<Value> {
         if m.kind == ModuleKind::Form {
-            return Err(ScriptError::unsupported(&format!("UserForms ({})", m.name)));
+            let (o, rt) = self.new_form(m);
+            self.form_initialize(&o, &rt)?;
+            return Ok(Value::Object(Some(o)));
         }
         let fields = Rc::new(Scope::default());
         let mut frame = self.module_frame(m);
@@ -1301,7 +1540,9 @@ impl Interp<'_> {
         let obj: ObjectRef = Rc::new(Instance {
             module: m.clone(),
             fields: fields.clone(),
+            form: None,
         });
+        self.register_instance_sink(m, &obj, &fields);
         if let Some(p) = m.procs.get("class_initialize").and_then(|g| g.sub.clone()) {
             self.call_proc(m, &p, Vec::new(), Some((obj.clone(), fields)), None)?;
         }
@@ -1566,6 +1807,7 @@ impl Interp<'_> {
                     path: Vec::new(),
                 })
             }
+            Binding::FormMember(o) => Ok(Place::prop(o, &id.key, args)),
             Binding::Builtin(k) if &*k == "err" => Ok(Place::prop(self.st.err.clone(), "", args)),
             Binding::Builtin(k) if matches!(&*k, "date" | "time" | "now") => {
                 Err(ScriptError::unsupported("Setting the system date or time"))
@@ -1611,6 +1853,10 @@ impl Interp<'_> {
         if let Expr::Name(id) = base
             && let Binding::Module(m) = self.lookup(id, f)?
         {
+            if m.kind == ModuleKind::Form {
+                let o = self.default_form(&m)?;
+                return Ok(Place::prop(o, &name.text, args));
+            }
             let inside = m.idx == f.module.idx;
             return match self.module_member(&m, &name.key, f, inside)? {
                 Some(Binding::Slot(s)) => self.indexed_place(Place::slot(s), args),
@@ -1622,6 +1868,10 @@ impl Interp<'_> {
                     },
                     path: Vec::new(),
                 }),
+                // `Sheet1.Name = "Data"`: the host's object for the document.
+                _ if m.kind == ModuleKind::Document => {
+                    Ok(Place::prop(self.document_object(&m)?, &name.text, args))
+                }
                 _ => Err(ScriptError::syntax(format!(
                     "Method or data member not found: {}",
                     name.text
@@ -1669,9 +1919,6 @@ impl Interp<'_> {
     ) -> R<Value> {
         if self.depth >= self.st.max_depth {
             return Err(ScriptError::runtime(28));
-        }
-        if m.kind == ModuleKind::Form {
-            return Err(ScriptError::unsupported(&format!("UserForms ({})", m.name)));
         }
         let mut frame = Frame::new(m.clone(), p.clone(), me);
         self.depth += 1;
@@ -1871,8 +2118,12 @@ impl Interp<'_> {
         let proc = f.proc.clone();
         let mut pc = 0usize;
         while pc < proc.ops.len() {
-            self.tick()?;
-            match self.exec_op(&proc.ops[pc], pc, f) {
+            // The step check fails at a line too (Stop shows where).
+            let step = self
+                .tick()
+                .and_then(|()| self.host_calls())
+                .and_then(|()| self.exec_op(&proc.ops[pc], pc, f));
+            match step {
                 Ok(Flow::Next) => pc += 1,
                 Ok(Flow::Jump(t)) => pc = t,
                 Ok(Flow::Exit) => break,
@@ -1990,6 +2241,12 @@ impl Interp<'_> {
                 f.gosubs.push(pc + 1);
                 Ok(Flow::Jump(*t))
             }
+            Op::OnJump {
+                index,
+                targets,
+                gosub,
+                ..
+            } => self.on_jump(index, targets, *gosub, pc, f),
             Op::Return => f
                 .gosubs
                 .pop()
@@ -1997,6 +2254,40 @@ impl Interp<'_> {
                 .ok_or_else(|| ScriptError::runtime(3)),
             Op::Exit => Ok(Flow::Exit),
         }
+    }
+
+    /// `On n GoTo/GoSub` (MS-VBAL §5.4.2.10): 0 or past the list falls through; below 0 or
+    /// above 255 is error 5. Out of line: the statement loop recurses on the native stack.
+    #[inline(never)]
+    fn on_jump(
+        &mut self,
+        index: &Expr,
+        targets: &[usize],
+        gosub: bool,
+        pc: usize,
+        f: &mut Frame,
+    ) -> R<Flow> {
+        let v = self.eval_value(index, f)?;
+        let n = convert::to_i64(&convert::convert(&v, Scalar::Long)?)?;
+        if !(0..=255).contains(&n) {
+            return Err(ScriptError::runtime(5));
+        }
+        match targets.get((n as usize).wrapping_sub(1)) {
+            Some(&t) if n > 0 => {
+                if gosub {
+                    f.gosubs.push(pc + 1);
+                }
+                Ok(Flow::Jump(t))
+            }
+            _ => Ok(Flow::Next),
+        }
+    }
+
+    #[inline(never)]
+    fn raise_stmt(&mut self, name: &Ident, args: &[ArgExpr], f: &mut Frame) -> R<()> {
+        let module = f.module.clone();
+        let me = f.me.as_ref().map(|(o, _)| o.clone());
+        self.raise_event_stmt(name, args, &module, me, f)
     }
 
     /// A condition's truth; Null counts as False.
@@ -2270,10 +2561,49 @@ impl Interp<'_> {
                 kind: ErrorKind::Halt,
                 ..ScriptError::new(0, "End")
             }),
+            StmtKind::RaiseEvent { name, args } => self.raise_stmt(name, args, f),
+            StmtKind::Load(e) => self.load_stmt(e, f, true),
+            StmtKind::Unload(e) => self.load_stmt(e, f, false),
             StmtKind::Unsupported(feature) => Err(ScriptError::unsupported(feature)),
             StmtKind::Invalid(msg) => Err(ScriptError::syntax(msg.clone())),
             _ => Ok(()),
         }
+    }
+
+    // Kept out of the statement loop and `eval_call`: they are on the stack of every nested
+    // call, and a bigger frame there means less recursion before the stack runs out.
+
+    #[inline(never)]
+    fn load_stmt(&mut self, e: &Expr, f: &mut Frame, load: bool) -> R<()> {
+        if load {
+            let v = self.eval(e, f)?;
+            return self.exec_load(v);
+        }
+        // `Unload UserForm1` when its default instance isn't loaded does nothing.
+        if let Expr::Name(id) = e
+            && let Binding::Module(m) = self.lookup(id, f)?
+            && m.kind == ModuleKind::Form
+        {
+            let Some(o) = self.st.default_forms.get(&m.idx).cloned() else {
+                return Ok(());
+            };
+            return self.exec_unload(Value::object(o));
+        }
+        let v = self.eval(e, f)?;
+        self.exec_unload(v)
+    }
+
+    #[inline(never)]
+    fn form_member_call(
+        &mut self,
+        o: &ObjectRef,
+        id: &Ident,
+        args: &[ArgExpr],
+        f: &mut Frame,
+        access: Access,
+    ) -> R<Value> {
+        let a = self.eval_args_in(args, f)?;
+        self.instance_member(o, &id.key, a, access)
     }
 
     fn redim(&mut self, item: &ReDimItem, preserve: bool, f: &mut Frame) -> R<()> {

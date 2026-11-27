@@ -18,8 +18,10 @@ mod closing;
 mod cloud;
 mod doc;
 mod home;
+mod macro_books;
 mod naming;
 mod notes;
+mod notices;
 mod opening;
 mod palette;
 mod panels;
@@ -149,10 +151,9 @@ pub struct Workspace {
     /// Paparan AI's chat panel, once opened (kept while hidden).
     chat: Option<chat::ChatDock>,
     message: SharedString,
-    /// A short-lived status-bar message shown over any document's (agent
-    /// edits, "copied"); see `Workspace::notice`.
-    notice: Option<SharedString>,
-    notice_id: u64,
+    /// The status bar's own message, shown over any document's (agent
+    /// edits, "copied", cloud saves); see `Workspace::notice`.
+    notices: notices::Notices,
     /// Counts "Saving…" waits before a close; Cancel moves it on so the
     /// running wait doesn't close (see `closing`).
     save_wait: u64,
@@ -174,6 +175,9 @@ pub struct Workspace {
     /// The focus when the window last rendered: a change (a gpui-kit menu
     /// opening or closing) redraws once more for `overlay::menu_shield`.
     last_focus: Option<FocusHandle>,
+    /// A close waiting for a workbook's `Workbook_BeforeClose` (see
+    /// `macro_books`).
+    pending_close: Option<closing::Closing>,
 }
 
 impl Workspace {
@@ -194,8 +198,7 @@ impl Workspace {
             ai: None,
             chat: None,
             message: SharedString::default(),
-            notice: None,
-            notice_id: 0,
+            notices: notices::Notices::default(),
             save_wait: 0,
             logo: Arc::new(Image::from_bytes(ImageFormat::Svg, LOGO_SVG.to_vec())),
             focus: cx.focus_handle(),
@@ -208,6 +211,7 @@ impl Workspace {
             recovery: recovery::Recovery::default(),
             cloud: cloud::Cloud::default(),
             last_focus: None,
+            pending_close: None,
         };
         let ws = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -319,6 +323,7 @@ impl Workspace {
                 cx.subscribe_in(e, window, move |ws, _, event, window, cx| match event {
                     sheets_ui::SheetsEvent::Close => ws.remove_doc(id, window, cx),
                     sheets_ui::SheetsEvent::Notice(text) => ws.notice(text.clone(), cx),
+                    other => ws.sheets_macro_event(id, other, window, cx),
                 }),
             ],
             DocView::Docs(e) => vec![
@@ -1010,6 +1015,17 @@ impl Render for Workspace {
             .id("workspace")
             .key_context(WORKSPACE)
             .track_focus(&self.focus)
+            // An error in the status bar stays until the user does something.
+            .capture_key_down(cx.listener(|ws, _: &KeyDownEvent, _, cx| {
+                if ws.notices.user_action() {
+                    cx.notify();
+                }
+            }))
+            .capture_any_mouse_down(cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                if ws.notices.user_action() {
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::palette_up))

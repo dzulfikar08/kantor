@@ -4,12 +4,12 @@
 
 use std::rc::Rc;
 
+use kantor_script::forms::{Answer, FormDesign, FormInput, FormView};
 use kantor_script::vba::{ModuleKind as ScriptKind, ProcInfo, ProcKind, Project};
 use kantor_script::{CancelToken, ErrorKind, Host, ObjectRef, ScriptError, Value};
 use sheets_engine::Workbook;
 use sheets_engine::vba::{ModuleKind, VbaProject};
 
-use crate::app::Globals;
 use crate::session::{Session, View};
 
 /// One module of a workbook's VBA project, as the interpreter takes it.
@@ -29,6 +29,11 @@ pub struct ModuleSource {
 #[derive(Clone, Debug, Default)]
 pub struct MacroProject {
     pub modules: Vec<ModuleSource>,
+    /// The UserForms' designers (forms whose designer can't be read show
+    /// empty).
+    pub forms: Vec<FormDesign>,
+    /// JavaScript and Python modules (see `crate::scripts`).
+    pub scripts: Vec<sheets_engine::scripts::Script>,
 }
 
 impl MacroProject {
@@ -41,12 +46,28 @@ impl MacroProject {
             .filter(|m| m.error.is_none())
             .map(|m| ModuleSource::new(&m.name, m.kind, &m.source))
             .collect();
-        MacroProject { modules }
+        MacroProject {
+            modules,
+            forms: p.forms(),
+            scripts: Vec::new(),
+        }
     }
 
-    /// The workbook's macros, `None` when it has none.
+    /// The workbook's macros (its VBA project and its JavaScript and Python
+    /// scripts), `None` when it has none.
     pub fn of_book(book: &Workbook) -> Option<Result<MacroProject, String>> {
-        Some(book.vba_project()?.map(|p| MacroProject::from_vba(&p)))
+        let scripts = match book.scripts() {
+            Ok(s) => s,
+            Err(e) => return Some(Err(format!("the workbook's scripts can't be read: {e}"))),
+        };
+        let mut project = match book.vba_project() {
+            Some(Ok(p)) => MacroProject::from_vba(&p),
+            Some(Err(e)) => return Some(Err(e)),
+            None if scripts.is_empty() => return None,
+            None => MacroProject::default(),
+        };
+        project.scripts = scripts;
+        Some(Ok(project))
     }
 
     /// Compiles every module. A module whose structure doesn't parse is
@@ -66,16 +87,32 @@ impl MacroProject {
                 broken.push(self.error(e));
             }
         }
-        for (name, value) in crate::consts::ALL {
-            project.register_constant(name, Value::Long(*value as i32));
+        for (name, value) in all_constants() {
+            project.register_constant(name, Value::Long(value as i32));
+        }
+        for f in &self.forms {
+            project.add_form(f.clone());
         }
         (project, broken)
     }
 
+    /// Which events the macros handle (compiles the project).
+    pub fn event_index(&self) -> crate::events::EventIndex {
+        let (project, _) = self.compile();
+        crate::events::EventIndex::new(self, &project)
+    }
+
     /// What Excel lists under Macros (Alt+F8): public Subs without
-    /// parameters, in standard and document modules.
+    /// parameters, in standard and document modules; then the scripts'
+    /// top-level functions without parameters.
     pub fn macros(&self) -> Vec<MacroInfo> {
-        macro_list(&self.compile().0)
+        let mut list = if self.modules.is_empty() {
+            Vec::new()
+        } else {
+            macro_list(&self.compile().0)
+        };
+        list.extend(crate::scripts::macros(&self.scripts));
+        list
     }
 
     /// The error with its line as the editor shows it.
@@ -105,6 +142,21 @@ impl MacroProject {
             line,
         }
     }
+}
+
+/// The object model's constants (`xlUp`, `xlValues`, `msoShapeRectangle`…).
+pub(crate) fn all_constants() -> impl Iterator<Item = (&'static str, i64)> {
+    crate::consts::ALL
+        .iter()
+        .chain(crate::charts::CHART_CONSTANTS)
+        .chain(crate::cond_formats::CONSTANTS)
+        .chain(crate::hyperlinks::CONSTANTS)
+        .chain(crate::page_setup::CONSTANTS)
+        .chain(crate::pivots::CONSTANTS)
+        .chain(crate::tables::CONSTANTS)
+        .chain(crate::validation::CONSTANTS.iter())
+        .copied()
+        .chain(crate::shapes::constants())
 }
 
 impl ModuleSource {
@@ -178,6 +230,8 @@ impl MacroError {
             ErrorKind::Interrupted if self.number == 18 => {
                 "Code execution has been interrupted".to_owned()
             }
+            // A JavaScript or Python exception that isn't the object model's.
+            _ if self.number == 0 => "Run-time error:".to_owned(),
             _ => format!("Run-time error '{}':", self.number),
         }
     }
@@ -196,7 +250,12 @@ impl MacroError {
 
 impl std::fmt::Display for MacroError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}", self.title(), self.description)?;
+        let title = self.title();
+        if title == self.description {
+            write!(f, "{title}")?;
+        } else {
+            write!(f, "{title} {}", self.description)?;
+        }
         let place = self.place();
         if !place.is_empty() {
             write!(f, " (in {place})")?;
@@ -324,6 +383,64 @@ pub trait MacroUi {
 
     /// One line of `Debug.Print` output.
     fn debug_print(&mut self, _line: &str) {}
+
+    /// The other workbooks open in the window (for `Workbooks`).
+    fn other_books(&mut self) -> Vec<OtherBook> {
+        Vec::new()
+    }
+
+    /// Lends the workbook of tab `id` to the run (it comes back in
+    /// [`RunOutcome::books`]); `None` when it can't be (busy, closed).
+    fn lend_book(&mut self, _id: u64) -> Option<Workbook> {
+        None
+    }
+
+    /// Whether the macro may open (`write`: save to) `path`, outside the
+    /// workbook's folder. `None`: ask with a Yes/No message box. The
+    /// workbook is lent while a dialog shows.
+    fn allow_path(
+        &mut self,
+        book: Workbook,
+        _view: View,
+        _path: &std::path::Path,
+        _write: bool,
+    ) -> (Workbook, Option<bool>) {
+        (book, None)
+    }
+
+    /// Shows (or updates) UserForm `form` and waits for the user's next
+    /// step (see [`kantor_script::forms`]); lent the workbook meanwhile, as
+    /// for a message box. The default has no window to show it in.
+    fn form_event(
+        &mut self,
+        book: Workbook,
+        _view: View,
+        form: &FormView,
+    ) -> (Workbook, Result<FormInput, ScriptError>) {
+        let name = &form.design.name;
+        (
+            book,
+            Err(ScriptError::new(
+                445,
+                format!(
+                    "The macro shows the UserForm {name}, and there is no window to show it in"
+                ),
+            )),
+        )
+    }
+
+    /// The form [`MacroUi::form_event`] was showing is closed.
+    fn form_closed(&mut self, _name: &str) {}
+}
+
+/// Another workbook open in the window.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OtherBook {
+    /// The UI's id for its tab.
+    pub id: u64,
+    /// `Data.xlsx`.
+    pub name: String,
+    pub path: Option<std::path::PathBuf>,
 }
 
 impl Session {
@@ -334,6 +451,17 @@ impl Session {
             .take_book()
             .ok_or_else(|| crate::values::err1004("The workbook is not available"))?;
         let (book, answer) = self.ui.borrow_mut().msg_box(book, view, req);
+        self.put_book(book);
+        answer
+    }
+
+    /// Shows a UserForm through the UI, lending it the workbook.
+    pub fn form_event(&self, form: &FormView) -> Result<FormInput, ScriptError> {
+        let view = self.view();
+        let book = self
+            .take_book()
+            .ok_or_else(|| crate::values::err1004("The workbook is not available"))?;
+        let (book, answer) = self.ui.borrow_mut().form_event(book, view, form);
         self.put_book(book);
         answer
     }
@@ -350,10 +478,11 @@ impl Session {
 }
 
 /// The interpreter's host for a run.
-struct SheetsHost {
-    s: Rc<Session>,
-    globals: ObjectRef,
-    cancel: CancelToken,
+#[derive(Clone)]
+pub(crate) struct SheetsHost {
+    pub(crate) s: Rc<Session>,
+    pub(crate) globals: ObjectRef,
+    pub(crate) cancel: CancelToken,
 }
 
 impl Host for SheetsHost {
@@ -395,6 +524,28 @@ impl Host for SheetsHost {
         self.s.ui.borrow_mut().debug_print(line);
     }
 
+    fn constant(&mut self, name: &str) -> Option<Value> {
+        crate::scripts::constant(name)
+    }
+
+    fn constants(&mut self) -> Vec<(String, Value)> {
+        all_constants()
+            .map(|(n, v)| (n.to_owned(), Value::Long(v as i32)))
+            .collect()
+    }
+
+    fn is_method(&mut self, type_name: &str, member: &str) -> bool {
+        crate::scripts::is_method(type_name, member)
+    }
+
+    fn form_event(&mut self, view: &FormView) -> Result<FormInput, ScriptError> {
+        self.s.form_event(view)
+    }
+
+    fn form_closed(&mut self, name: &str) {
+        self.s.ui.borrow_mut().form_closed(name);
+    }
+
     fn now(&mut self) -> f64 {
         local_now()
     }
@@ -402,12 +553,16 @@ impl Host for SheetsHost {
     fn cancelled(&mut self) -> bool {
         self.cancel.is_cancelled()
     }
+
+    fn take_calls(&mut self) -> Vec<kantor_script::HostCall> {
+        crate::events::poll(&self.s)
+    }
 }
 
 /// The local time as an OLE date (the UTC offset from the `TZ`-aware clock
 /// isn't available without a time zone library: UTC plus the offset the
 /// host set with [`set_utc_offset_minutes`]).
-fn local_now() -> f64 {
+pub fn local_now() -> f64 {
     let offset = UTC_OFFSET.load(std::sync::atomic::Ordering::Relaxed);
     kantor_script::date::now_utc() + f64::from(offset) / 1440.0
 }
@@ -447,6 +602,46 @@ pub struct RunOutcome {
     pub save_requested: bool,
     /// The macro changed the workbook (an undo step was made).
     pub changed: bool,
+    /// An event handler set `Cancel` (the double-click, save or close
+    /// doesn't happen).
+    pub cancel: bool,
+    /// Other workbooks: lent ones going back, new ones to show.
+    pub books: Vec<crate::books::BookOut>,
+    /// `ThisWorkbook.Close` was called: `Some(SaveChanges)`.
+    pub close_requested: Option<Option<bool>>,
+}
+
+impl RunOutcome {
+    /// A run that failed before it started.
+    pub fn failed(e: MacroError, view: View) -> RunOutcome {
+        RunOutcome {
+            result: Err(e),
+            ..RunOutcome::nothing(view)
+        }
+    }
+
+    /// Nothing ran.
+    pub fn nothing(view: View) -> RunOutcome {
+        RunOutcome {
+            result: Ok(()),
+            view,
+            save_requested: false,
+            changed: false,
+            cancel: false,
+            books: Vec::new(),
+            close_requested: None,
+        }
+    }
+}
+
+impl std::fmt::Debug for crate::books::BookOut {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            crate::books::BookOut::Returned { id, .. } => write!(f, "Returned({id})"),
+            crate::books::BookOut::Closed { id, .. } => write!(f, "Closed({id})"),
+            crate::books::BookOut::New { book } => write!(f, "New({})", book.title()),
+        }
+    }
 }
 
 /// Runs macro `name` (`Macro1` or `Module1.Macro1`) of `macros` on `book`,
@@ -462,50 +657,24 @@ pub fn run_macro(
     ui: Box<dyn MacroUi>,
     options: &RunOptions,
 ) -> (Workbook, RunOutcome) {
-    let mut book = book;
-    let mark = book.undo_mark();
-    book.script_begin();
-    let s = Rc::new(Session::new(book, view, ui));
-    // Document modules named like the sheets' code names, else in order.
-    if s.code_names.borrow().is_empty() {
-        fallback_code_names(&s, macros);
-    }
-    let globals: ObjectRef = Rc::new(Globals { s: s.clone() });
-    let mut host = SheetsHost {
-        s: s.clone(),
-        globals,
-        cancel: options.cancel.clone(),
-    };
-    project.set_step_limit(options.step_limit);
-    let result = project
-        .run(name, &[], &mut host)
-        .map(|_| ())
-        .map_err(|e| macros.error(e));
-    drop(host);
-    let view = s.view();
-    let save_requested = s.save_requested.get();
-    let mut book = match s.take_book() {
-        Some(b) => b,
-        // The UI kept the workbook (it can't: `MacroUi` hands it back).
-        None => unreachable!("the workbook is always handed back"),
-    };
-    book.script_end();
-    book.fold_undo(mark);
-    let changed = book.undo_mark() > mark;
-    (
+    let mut state = crate::engine::State::default();
+    crate::engine::run_with(
+        project,
+        macros,
+        &mut state,
+        None,
         book,
-        RunOutcome {
-            result,
-            view,
-            save_requested,
-            changed,
-        },
+        view,
+        ui,
+        options,
+        None,
+        |project, host, _| project.run(name, &[], host).map(|_| false),
     )
 }
 
 /// When the file has no code names (a new workbook): `Sheet1`… document
 /// modules map to the sheets in order.
-fn fallback_code_names(s: &Rc<Session>, macros: &MacroProject) {
+pub(crate) fn fallback_code_names(s: &Rc<Session>, macros: &MacroProject) {
     let Ok(book) = s.read() else {
         return;
     };
@@ -523,27 +692,61 @@ fn fallback_code_names(s: &Rc<Session>, macros: &MacroProject) {
     }
 }
 
+/// One step on a UserForm when nobody can fill it in: values to put in
+/// controls (by name), then a control to click (`"close"`: the close box).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormAnswer {
+    pub set: Vec<(String, Answer)>,
+    pub click: Option<String>,
+}
+
+/// [`HeadlessUi`]'s steps for each form (by name, lowercase), in order.
+pub type FormSteps = std::collections::HashMap<String, std::collections::VecDeque<FormAnswer>>;
+
 /// A UI with nobody to ask (the command line, tests): message boxes print
 /// to stderr and answer OK or Yes; input boxes take the given answers in
-/// order and fail when there are none left.
+/// order and fail when there are none left; UserForms take the steps in
+/// [`HeadlessUi::forms`] and fail when there are none left.
+#[derive(Clone)]
 pub struct HeadlessUi {
-    pub inputs: std::collections::VecDeque<String>,
+    /// Answers for input boxes, shared by clones (one per run).
+    pub inputs: Rc<std::cell::RefCell<std::collections::VecDeque<String>>>,
+    /// Steps for each form (by name, lowercase), in order; shared by clones.
+    pub forms: Rc<std::cell::RefCell<FormSteps>>,
+    /// The forms shown (each step's view), in order.
+    pub form_views: Rc<std::cell::RefCell<Vec<FormView>>>,
     /// Message boxes shown, in order.
     pub shown: Rc<std::cell::RefCell<Vec<String>>>,
     /// `Debug.Print` lines.
     pub printed: Rc<std::cell::RefCell<Vec<String>>>,
     /// Print message boxes and `Debug.Print` to stderr.
     pub echo: bool,
+    /// Files and folders macros may open and save (`--allow-path`); any
+    /// other path is refused.
+    pub allowed_paths: Vec<std::path::PathBuf>,
 }
 
 impl HeadlessUi {
     pub fn new(inputs: Vec<String>, echo: bool) -> HeadlessUi {
         HeadlessUi {
-            inputs: inputs.into(),
+            inputs: Rc::new(std::cell::RefCell::new(inputs.into())),
+            forms: Rc::default(),
+            form_views: Rc::default(),
             shown: Rc::default(),
             printed: Rc::default(),
             echo,
+            allowed_paths: Vec::new(),
         }
+    }
+
+    /// Adds steps for form `name`.
+    pub fn with_form_answers(self, name: &str, steps: Vec<FormAnswer>) -> HeadlessUi {
+        self.forms
+            .borrow_mut()
+            .entry(name.to_lowercase())
+            .or_default()
+            .extend(steps);
+        self
     }
 }
 
@@ -567,7 +770,8 @@ impl MacroUi for HeadlessUi {
         _view: View,
         req: &InputBoxRequest,
     ) -> (Workbook, Result<Option<String>, ScriptError>) {
-        let answer = match self.inputs.pop_front() {
+        let next = self.inputs.borrow_mut().pop_front();
+        let answer = match next {
             Some(a) => {
                 if self.echo {
                     eprintln!("[InputBox] {}: {a}", req.prompt);
@@ -591,6 +795,49 @@ impl MacroUi for HeadlessUi {
         }
         self.printed.borrow_mut().push(line.to_owned());
     }
+
+    fn allow_path(
+        &mut self,
+        book: Workbook,
+        _view: View,
+        path: &std::path::Path,
+        _write: bool,
+    ) -> (Workbook, Option<bool>) {
+        let ok = self.allowed_paths.iter().any(|a| path.starts_with(a));
+        (book, Some(ok))
+    }
+
+    fn form_event(
+        &mut self,
+        book: Workbook,
+        _view: View,
+        form: &FormView,
+    ) -> (Workbook, Result<FormInput, ScriptError>) {
+        self.form_views.borrow_mut().push(form.clone());
+        let name = &form.design.name;
+        let step = self
+            .forms
+            .borrow_mut()
+            .get_mut(&name.to_lowercase())
+            .and_then(|q| q.pop_front());
+        let answer = match step {
+            Some(step) => {
+                if self.echo {
+                    eprintln!("[UserForm] {name}: {step:?}");
+                }
+                kantor_script::forms::scripted_input(form, &step.set, step.click.as_deref())
+                    .map_err(|e| ScriptError::new(5, e))
+            }
+            None => Err(ScriptError::new(
+                445,
+                format!(
+                    "The macro shows the UserForm {name} and there is no window to show it in \
+                     (give its answers with --form-answers)"
+                ),
+            )),
+        };
+        (book, answer)
+    }
 }
 
 /// Runs `name` headless: compiles `macros`, runs, returns the workbook.
@@ -602,27 +849,9 @@ pub fn run_headless(
     ui: HeadlessUi,
     options: &RunOptions,
 ) -> (Workbook, RunOutcome) {
-    let (mut project, broken) = macros.compile();
-    if let Some(e) = broken_for(&broken, macros, name) {
-        return (
-            book,
-            RunOutcome {
-                result: Err(e),
-                view,
-                save_requested: false,
-                changed: false,
-            },
-        );
-    }
-    run_macro(
-        book,
-        macros,
-        &mut project,
-        name,
-        view,
-        Box::new(ui),
-        options,
-    )
+    let mut engine = crate::engine::MacroEngine::new(macros.clone());
+    engine.set_paths(ui.allowed_paths.clone(), false);
+    engine.run(book, name, view, Box::new(ui), options)
 }
 
 /// The compile error of the module macro `name` is in, if it didn't
