@@ -205,6 +205,7 @@ impl DocsView {
                 "Merged document: {} records, each in its own section",
                 &[&n],
             ),
+            None,
             window,
             cx,
         )
