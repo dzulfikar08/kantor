@@ -85,7 +85,11 @@ fn f(v: &Value) -> Option<f64> {
 
 const TOL: f64 = 1e-6;
 
-fn compare_seminr(c: &mut Check, r: &Results, s: &Value) {
+/// `plsc`: seminr takes PLSc's Fornell-Larcker correlations and inner VIFs
+/// from the construct scores (attenuated); Kantor from the consistent
+/// construct correlations its paths come from, so those two
+/// aren't compared for PLSc cases.
+fn compare_seminr(c: &mut Check, r: &Results, s: &Value, plsc: bool) {
     for p in s["paths"].as_array().unwrap() {
         let (from, to) = (p["from"].as_str().unwrap(), p["to"].as_str().unwrap());
         let mine = r.path(from, to).and_then(|x| x.coefficient);
@@ -147,7 +151,7 @@ fn compare_seminr(c: &mut Check, r: &Results, s: &Value) {
     }
     for e in s["fornell_larcker"].as_array().unwrap() {
         let (a, b) = (e["from"].as_str().unwrap(), e["to"].as_str().unwrap());
-        if a == b && !reflective(a) {
+        if (a == b && !reflective(a)) || (plsc && a != b) {
             continue;
         }
         c.near(
@@ -180,7 +184,7 @@ fn compare_seminr(c: &mut Check, r: &Results, s: &Value) {
             TOL,
         );
     }
-    if let Some(list) = s["vif_antecedents"].as_array() {
+    if let Some(list) = s["vif_antecedents"].as_array().filter(|_| !plsc) {
         for e in list {
             let (a, b) = (e["from"].as_str().unwrap(), e["to"].as_str().unwrap());
             c.near(
@@ -275,7 +279,9 @@ fn compare_csem(c: &mut Check, r: &Results, s: &Value) {
 }
 
 /// seminr's bootstrap (another random stream): standard errors within
-/// 15% and percentile bounds within a quarter standard error.
+/// 15% and 2.5%/97.5% percentiles within 0.4 standard errors (the tails
+/// of 2000 subsamples vary by about 0.1 SE from one stream to another,
+/// more for skewed estimates).
 fn compare_bootstrap(c: &mut Check, r: &Results, b: &Value, paths_only: bool) {
     let boot = r.bootstrap.as_ref().expect("bootstrap results");
     // PLSc can fail on a rare subsample (rho_A not positive); those are left
@@ -291,18 +297,24 @@ fn compare_bootstrap(c: &mut Check, r: &Results, b: &Value, paths_only: bool) {
             return;
         };
         let sd = f(&want["sd"]).unwrap();
-        c.near(&format!("bootstrap SE {label}"), m.se, Some(sd), 0.15 * sd);
+        // A single indicator's loading is 1 in every subsample (SE 0 up to rounding).
+        c.near(
+            &format!("bootstrap SE {label}"),
+            m.se,
+            Some(sd),
+            0.15 * sd + 1e-9,
+        );
         c.near(
             &format!("bootstrap 2.5% {label}"),
             m.ci[0],
             f(&want["lower"]),
-            0.25 * sd + 0.005,
+            0.4 * sd + 0.005,
         );
         c.near(
             &format!("bootstrap 97.5% {label}"),
             m.ci[1],
             f(&want["upper"]),
-            0.25 * sd + 0.005,
+            0.4 * sd + 0.005,
         );
     };
     for p in b["paths"].as_array().unwrap() {
@@ -368,7 +380,8 @@ fn seminr_and_csem_goldens() {
             "{name}: rows estimated"
         );
         if golden["seminr"].is_object() {
-            compare_seminr(&mut c, &r, &golden["seminr"]);
+            let plsc = case["options"]["algorithm"] == "plsc";
+            compare_seminr(&mut c, &r, &golden["seminr"], plsc);
             if let Some(b) = golden["seminr"].get("bootstrap") {
                 // The mediation case is an inadmissible PLSc solution (a
                 // loading above 1): only its paths are stable enough.

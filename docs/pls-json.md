@@ -184,6 +184,10 @@ Checked against seminr 2.6.0, cSEM 0.7.1 and SmartPLS 4 (the goldens of
 - **f²** takes R² without the predictor from the same construct scores, as
   SmartPLS does; seminr re-estimates the model without the path, so its f²
   differs slightly.
+- **PLSc's Fornell–Larcker correlations and inner VIFs** come from the
+  consistent construct correlations, the matrix the paths are estimated
+  from; seminr takes them from the (attenuated) construct scores, so its
+  values are lower. Paths, R² and the diagonal (√AVE) agree.
 - **rho_A, reliability and HTMT of composites** aren't reported (SmartPLS
   leaves them blank; seminr shows rho_A = 1 and alpha, rho_C, AVE).
 - **Iterations** are counted from the first update; SmartPLS sometimes

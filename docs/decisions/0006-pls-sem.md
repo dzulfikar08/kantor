@@ -28,7 +28,7 @@ Most Indonesian management, accounting and education theses analyse questionnair
 
 ## Consequences
 
-- Deterministic estimates agree with seminr and cSEM to 10⁻⁶ (inner VIFs 10⁻⁵) and with SmartPLS's printed values to 0.0005 (it prints three decimals). Bootstrap results agree with seminr's within resampling error (SE within 15 %, interval bounds within a quarter SE).
-- Known differences from SmartPLS, kept on purpose and listed in docs/pls-json.md: iteration counts may be one lower; f² against seminr (which re-estimates); bootstrap random numbers; composite reliability and HTMT are left blank for composites as SmartPLS does.
+- Deterministic estimates agree with seminr and cSEM to 10⁻⁶ (inner VIFs 10⁻⁵) and with SmartPLS's printed values to 0.0005 (it prints three decimals). Bootstrap results agree with seminr's within resampling error (SE within 15 %, 2.5 %/97.5 % percentiles within 0.4 SE at 2000 subsamples).
+- Known differences, kept on purpose and listed in docs/pls-json.md: iteration counts may be one lower than SmartPLS's; f² differs from seminr's (which re-estimates the model); for PLSc, Fornell–Larcker correlations and inner VIFs use the consistent construct correlations (seminr uses construct scores; no SmartPLS PLSc reference was available); bootstrap random numbers differ; reliability and HTMT are left blank for composites as SmartPLS does.
 - Not done yet: PLSpredict, IPMA, multigroup analysis (MICOM), moderation with interaction terms, higher-order constructs (`dimensions` is parsed and rejected as unsupported), FIMIX/POS segmentation, CB-SEM.
 - The Sheets UI (Data → PLS-SEM…, a path diagram editor, a results tab) only needs the same `agent::pls` calls.
