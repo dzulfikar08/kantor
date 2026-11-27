@@ -589,6 +589,63 @@ measures characters, not glyphs; `RemoveDuplicates` moves values, not formats.
   function, as in Excel. With content disabled they are `#NAME?`, as in Excel with macros off.
   The formula text is saved as written.
 
+### The Macro Editor (`sheets_ui::vba_editor`)
+
+Excel's Visual Basic Editor, simpler: Alt+F11, the palette's "Macro Editor", the menu item
+under Macros…, or Edit in the Macros dialog open it as a panel beside the grid (Alt+F11 again
+moves between it and the grid).
+
+- **Left**, the project: `ThisWorkbook` and the sheet modules, standard modules, class modules,
+  UserForms (their code; the designer is kept as it is, there is no form designer), then the
+  JavaScript and Python scripts. A workbook without a VBA project shows an empty
+  `ThisWorkbook` and a module per sheet. Insert Module / Class Module / JavaScript, Rename and
+  Remove (not for document modules or forms).
+- **Right**, gpui-base's code editor (`EditorState`): line numbers, monospace, Tab indents
+  (4 spaces), undo/redo, Ctrl+F search. Colours come from `code_highlight.rs`, a small lexer
+  for VBA and JavaScript (keywords, strings, comments, numbers) behind the editor's
+  `InputHighlighter` hook, styled by the theme's syntax styles.
+- **Problems** (`sheets_script::code::diagnostics`, `kantor_script::vba::Project::check`):
+  the error that keeps a module from compiling, lines that don't parse and statements Kantor
+  doesn't run, shown at their lines and listed under the code (click to go there). A fatal
+  one stops F5 with its line. A run-time error of a module shown in the editor marks its
+  line too.
+- **F5 / Run** runs the macro the cursor is in (a public `Sub` without arguments, or a
+  script's function without parameters); outside every procedure, the module's only macro.
+- **Into the workbook** (`sheets_script::code::apply`) 0.4 s after typing stops, and before a
+  run, a save, a module switch or closing: `kantor_vba::VbaProject::with_modules` rewrites the
+  project (kept modules keep their `dir` records and attributes, new ones get Excel's default
+  attributes, removed ones lose their stream, form storage and `PROJECT` lines; renaming is a
+  remove plus an add, so a renamed class gets default attributes), or
+  `kantor_vba::new_project` makes one (with `ThisWorkbook` and a module per sheet, and the
+  `CMG`/`DPB`/`GC` lines the `PROJECT` grammar requires, written with MS-OVBA's data
+  encryption: not protected, no password, visible). Every compiled cache is dropped
+  (`_VBA_PROJECT` reduced to its 7-byte header, `__SRP_*` streams gone, text offsets 0), so
+  Excel compiles from source. The bytes go to `Workbook::set_vba_project`, which makes the
+  workbook unsaved (not an undo step: Undo in the grid never touches the code; the editor
+  has its own undo). Scripts go to `Workbook::set_scripts`.
+- **Saving.** A save as `.xlsm` writes the edited project (`preserve::VbaSave`) with the
+  workbook's `codeName` and, for worksheets without one, the names of the document modules in
+  sheet order (what macros map them by). Ctrl+S or Save As to `.xlsx` with VBA asks as Excel
+  does (save without macros, or as `.xlsm`); JavaScript scripts stay in an `.xlsx`. An
+  autosave of a plain `.xlsx` leaves an edited project out (it would make the file a
+  macro-enabled one under an `.xlsx` name).
+- **The live project** is rebuilt after each change that reaches the workbook (a new macro
+  thread with the new code; module variables start over, as after an edit in Excel), so the
+  next run or event handler uses it.
+- **Trust.** Editing never needs Enable Content; running does. One exception: code typed in
+  a workbook that opened *without* macros is the user's own, so the first code that reaches
+  the workbook enables the pane's macros (and its VBA functions in formulas). A workbook that
+  opened with macros keeps them disabled until Enable Content (the editor shows the button).
+  Only the user starts a run (F5, Run, the Macros dialog, buttons): no MCP tool or Paparan AI
+  action reaches the editor or runs code.
+- **Command line:** `kantor sheets macros add BOOK.xlsm Module.bas|Class.cls` puts an exported
+  VBA module into the project the same way.
+
+Not done: a form designer (forms' code only), breakpoints, stepping and the Immediate and
+Locals windows, IntelliSense, Tools ▸ References, project passwords, `Option Explicit`
+checks before a run (undeclared variables fail when they run), JavaScript syntax checks before
+a run.
+
 ### Headless: `kantor sheets macros run`
 
 `kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]... [--events]

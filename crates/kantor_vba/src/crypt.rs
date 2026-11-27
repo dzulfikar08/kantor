@@ -40,7 +40,7 @@ pub fn encrypt(project_id: &str, seed: u8, data: &[u8]) -> String {
 /// `None` when the hex digits don't make one.
 pub fn decrypt(hex: &str) -> Option<(u8, u8, Vec<u8>)> {
     let hex = hex.trim().trim_matches('"');
-    if hex.len() % 2 != 0 || hex.len() < 6 {
+    if !hex.len().is_multiple_of(2) || hex.len() < 6 {
         return None;
     }
     let bytes: Vec<u8> = (0..hex.len())
