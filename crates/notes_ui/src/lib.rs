@@ -1169,7 +1169,8 @@ impl NotesView {
             muted: t.fg_muted,
             dim: t.fg_dim,
             accent: t.accent,
-            code_bg: t.surface,
+            // Visible on dark and light themes alike.
+            code_bg: t.fg.opacity(0.07),
             border: t.border,
         }
     }
@@ -1432,7 +1433,15 @@ impl Render for NotesView {
             ToggleItalic => |this, _w, cx| this.type_or_command(|e| e.toggle_wrap("*"), cx),
             ToggleStrike => |this, _w, cx| this.type_or_command(|e| e.toggle_wrap("~~"), cx),
             ToggleCode => |this, _w, cx| this.type_or_command(|e| e.toggle_wrap("`"), cx),
-            InsertLink => |this, _w, cx| this.type_or_command(Editor::insert_link, cx),
+            // Ctrl+K is also the command palette: it makes a link only
+            // from selected text, else the palette opens.
+            InsertLink => |this, _w, cx| {
+                if this.editor.selection().is_empty() || !this.editable() {
+                    cx.propagate();
+                    return;
+                }
+                this.type_or_command(Editor::insert_link, cx)
+            },
             Heading0 => |this, _w, cx| this.type_or_command(|e| e.set_heading(0), cx),
             Heading1 => |this, _w, cx| this.type_or_command(|e| e.set_heading(1), cx),
             Heading2 => |this, _w, cx| this.type_or_command(|e| e.set_heading(2), cx),

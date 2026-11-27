@@ -384,8 +384,13 @@ impl Editor {
         let eol = eol_str(&self.buf);
         if !in_code && r.start >= start + p.len {
             let empty_item = p.list.is_some() && text[p.len..].trim().is_empty();
+            if empty_item && r.is_empty() && !p.indent.is_empty() {
+                // An empty nested item: up a level first.
+                self.outdent();
+                return;
+            }
             if empty_item && r.is_empty() {
-                // `- ` alone: end the list (keep quote and outer indentation).
+                // `- ` alone: end the list (keep the quote).
                 let keep = p.quote.len() + p.indent.len();
                 let end = self.buf.line_range(line).end;
                 self.edit(vec![(start + keep..end, String::new())], None, Merge::No);
@@ -843,6 +848,11 @@ mod tests {
         let mut e = ed("plain", 5);
         e.newline();
         assert_eq!(e.text(), "plain\n");
+        let mut e = ed("- a\n  - ", 8);
+        e.newline();
+        assert_eq!(e.text(), "- a\n- ", "an empty nested item goes up a level");
+        e.newline();
+        assert_eq!(e.text(), "- a\n");
     }
 
     #[test]

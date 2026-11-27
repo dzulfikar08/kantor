@@ -135,9 +135,15 @@ fn picture(buf: &Buffer, parsed: &Parsed, l: usize, dir: &Path) -> Option<(Strin
         SpanKind::Image(i) => Some((i, s.range.clone())),
         _ => None,
     })?;
-    let before = buf.slice(info.content_start.min(lr.end)..s.1.start).trim();
-    let after = buf.slice(s.1.end..lr.end).trim();
-    if !before.is_empty() || !after.is_empty() {
+    // Only the picture on the line (its own `![` is markup before its alt).
+    let before: String = info
+        .visible
+        .iter()
+        .filter(|v| v.end <= s.1.start)
+        .map(|v| buf.slice(v.clone()))
+        .collect();
+    let after = buf.slice(s.1.end.min(lr.end)..lr.end).trim();
+    if !before.trim().is_empty() || !after.is_empty() {
         return None;
     }
     let dest = &parsed.images.get(s.0)?.dest;
@@ -585,6 +591,23 @@ mod tests {
         assert_eq!(b[0]["text"], "one");
         assert_eq!(b[1]["level"], 1);
         assert_eq!(b[2]["text"], "☑ two");
+    }
+
+    #[test]
+    fn pictures_on_their_own_line() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut png = Vec::new();
+        image::RgbaImage::new(4, 4)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        std::fs::write(dir.path().join("a b.png"), png).unwrap();
+        let note = "Intro\n\n![alt text](a%20b.png)\n\nText ![inline](a%20b.png) here\n";
+        let j = docs_json(note, "x", dir.path());
+        let blocks = j["blocks"].as_array().unwrap();
+        assert_eq!(blocks[1]["type"], "picture");
+        assert_eq!(blocks[1]["alt"], "alt text");
+        assert_eq!(blocks[2]["type"], "paragraph");
+        assert!(to_docx(note, "x", dir.path()).is_ok());
     }
 
     #[test]

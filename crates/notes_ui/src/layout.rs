@@ -595,7 +595,11 @@ fn base_for(look: &Look, mode: Mode, info: &LineInfo) -> Base {
         ..body
     };
     if mode == Mode::Source {
-        return body;
+        // One size, code still in the mono font.
+        return match info.kind {
+            LineKind::Code { .. } | LineKind::CodeFence { .. } => Base { mono: true, ..body },
+            _ => body,
+        };
     }
     match &info.kind {
         LineKind::Heading(n) | LineKind::SetextUnderline(n) => {
