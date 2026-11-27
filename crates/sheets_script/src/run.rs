@@ -420,7 +420,7 @@ pub fn set_utc_offset_minutes(minutes: i32) {
 }
 
 /// How a run goes.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct RunOptions {
     /// Stop after this many statements (error 18). `None`: no limit (the
     /// cancel token stops it).
