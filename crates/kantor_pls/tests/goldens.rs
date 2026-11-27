@@ -504,7 +504,8 @@ fn smartpls_reference_values() {
                 );
             }
         }
-        if let Some(m) = rf["modelFit"].as_object() {
+        // Not every case printed every fit measure: index the Value (Null when missing).
+        if let Some(m) = Some(&rf["modelFit"]).filter(|v| v.is_object()) {
             let fit = &r.fit.saturated;
             c.near("SRMR", fit.srmr, f(&m["srmr"]), T);
             c.near("d_ULS", fit.d_uls, f(&m["dULS"]), T);
