@@ -3321,9 +3321,10 @@ mod tests {
                 "Sheets",
                 "Docs",
                 "Slides",
+                "Notes",
                 "Omarchy, Ghostty",
                 "SF Pro, Inter, …",
-                ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .odt, .odp, .xls, .ppt",
+                ".xlsx, .docx, .pptx, .pdf, .md, .csv, .ods, .odt, .odp, .xls, .ppt",
             ];
             if !same.contains(&c.detail) {
                 assert!(indonesian(c.detail).is_some(), "detail {:?}", c.detail);
