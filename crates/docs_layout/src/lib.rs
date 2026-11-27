@@ -1598,6 +1598,9 @@ const CONTINUED_TEXT: f32 = 60.0;
 /// Lines a paragraph keeps together at a page break (Word's widow/orphan control).
 const MIN_LINES: usize = 2;
 
+/// Old page starts by (block, paragraph, line): the page's index.
+type StartsByPlace = HashMap<(usize, usize, usize), usize>;
+
 /// Lays blocks out onto pages.
 struct Flow<'a> {
     /// The current page's geometry.
@@ -1650,7 +1653,7 @@ struct Flow<'a> {
     starts: Vec<Option<PageStart>>,
     /// An earlier pagination to take pages from, its page starts by
     /// (block, paragraph, line).
-    reuse: Option<(&'a Reuse<'a>, HashMap<(usize, usize, usize), usize>)>,
+    reuse: Option<(&'a Reuse<'a>, StartsByPlace)>,
     /// The page start where the old pages take over: old page, new
     /// paragraph and line.
     done: Option<(usize, usize, usize)>,
