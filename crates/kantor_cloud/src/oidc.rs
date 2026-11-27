@@ -107,7 +107,7 @@ impl std::fmt::Debug for TokenSource {
     }
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .max_redirects(5)
@@ -139,7 +139,10 @@ fn get_json(url: &str) -> Result<(u16, serde_json::Value), Error> {
 }
 
 /// POST a form: `(status, JSON body)`.
-fn post_form(url: &str, form: &[(&str, &str)]) -> Result<(u16, serde_json::Value), Error> {
+pub(crate) fn post_form(
+    url: &str,
+    form: &[(&str, &str)],
+) -> Result<(u16, serde_json::Value), Error> {
     let body = form_body(form);
     let mut resp = agent()
         .post(url)
@@ -305,6 +308,13 @@ pub struct Loopback {
     pub redirect_uri: String,
 }
 
+impl Loopback {
+    /// The listener's port.
+    pub fn port(&self) -> u16 {
+        self.listener.local_addr().map_or(0, |a| a.port())
+    }
+}
+
 /// What the page in the browser says once the sign-in is done.
 #[derive(Debug, Clone)]
 pub struct DonePage {
@@ -460,7 +470,7 @@ fn token_error(status: u16, json: &serde_json::Value) -> Error {
     }
 }
 
-fn tokens_from(status: u16, json: serde_json::Value) -> Result<Tokens, Error> {
+pub(crate) fn tokens_from(status: u16, json: serde_json::Value) -> Result<Tokens, Error> {
     if status != 200 {
         return Err(token_error(status, &json));
     }
@@ -497,14 +507,26 @@ pub fn exchange_code(
 
 /// A new access token from a refresh token.
 pub fn refresh(ep: &Endpoints, client_id: &str, refresh_token: &str) -> Result<Tokens, Error> {
-    let (status, json) = post_form(
-        &ep.token_endpoint,
-        &[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("client_id", client_id),
-        ],
-    )?;
+    refresh_with_secret(ep, client_id, None, refresh_token)
+}
+
+/// [`refresh`] for a client that has a (non-secret) client secret, like
+/// Google's desktop clients.
+pub fn refresh_with_secret(
+    ep: &Endpoints,
+    client_id: &str,
+    client_secret: Option<&str>,
+    refresh_token: &str,
+) -> Result<Tokens, Error> {
+    let mut form = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("client_id", client_id),
+    ];
+    if let Some(s) = client_secret {
+        form.push(("client_secret", s));
+    }
+    let (status, json) = post_form(&ep.token_endpoint, &form)?;
     refresh_reply(status, json)
 }
 
@@ -841,6 +863,8 @@ pub struct TokenSource {
     issuer: String,
     endpoints: Mutex<Option<Endpoints>>,
     client_id: String,
+    /// Google desktop clients send one (it isn't secret in a desktop app).
+    client_secret: Option<String>,
     held: Mutex<Held>,
     persist: Box<dyn Fn(&str) + Send + Sync>,
     /// The provider refused the refresh token: sign in again.
@@ -858,6 +882,7 @@ impl TokenSource {
             issuer: endpoints.issuer.clone(),
             endpoints: Mutex::new(Some(endpoints)),
             client_id,
+            client_secret: None,
             held: Mutex::new(Held {
                 refresh: refresh_token,
                 access: None,
@@ -879,6 +904,7 @@ impl TokenSource {
             issuer,
             endpoints: Mutex::new(None),
             client_id,
+            client_secret: None,
             held: Mutex::new(Held {
                 refresh: refresh_token,
                 access: None,
@@ -906,6 +932,12 @@ impl TokenSource {
             .unwrap_or_else(|e| e.into_inner())
             .refresh
             .clone()
+    }
+
+    /// Send `secret` as the client secret when refreshing.
+    pub fn with_client_secret(mut self, secret: Option<String>) -> Self {
+        self.client_secret = secret.filter(|s| !s.is_empty());
+        self
     }
 
     /// Start with the access token of a fresh sign-in.
@@ -946,7 +978,12 @@ impl BearerSource for TokenSource {
         }
         let endpoints = self.endpoints()?;
         let start = Instant::now();
-        let refreshed = refresh(&endpoints, &self.client_id, &h.refresh);
+        let refreshed = refresh_with_secret(
+            &endpoints,
+            &self.client_id,
+            self.client_secret.as_deref(),
+            &h.refresh,
+        );
         log::debug!(
             "oidc token refresh: {} after {:.2} s",
             if refreshed.is_ok() { "ok" } else { "failed" },

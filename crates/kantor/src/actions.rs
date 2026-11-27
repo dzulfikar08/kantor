@@ -23,6 +23,7 @@ actions!(
         NewPresentation,
         OpenFile,
         OpenFromCloud,
+        SaveToCloud,
         CloudAccounts,
         SyncNow,
         Print,

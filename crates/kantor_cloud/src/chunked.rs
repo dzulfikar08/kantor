@@ -35,12 +35,18 @@ pub enum Resumable {
         user: String,
     },
     Tus,
+    /// An upload session of OneDrive (Graph) or Google Drive: parts go to
+    /// a session address, which also resumes it.
+    Session,
     None,
 }
 
 impl Client {
     /// Which resumable protocol the server offers for files in `folder`.
     pub fn resumable(&self, folder: &str) -> Resumable {
+        if !matches!(self.backend, crate::Backend::Dav) {
+            return Resumable::Session;
+        }
         if let Some(user) = self.nextcloud_user() {
             let url = format!(
                 "{}/remote.php/dav/uploads/{}/",
@@ -73,7 +79,7 @@ impl Client {
         (!user.is_empty() && !user.contains('/')).then(|| crate::percent_decode(user))
     }
 
-    fn request_url(&self, method: &str, url: &str) -> http::request::Builder {
+    pub(crate) fn request_url(&self, method: &str, url: &str) -> http::request::Builder {
         http::Request::builder()
             .method(Method::from_bytes(method.as_bytes()).expect("valid method"))
             .uri(url)

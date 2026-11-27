@@ -50,7 +50,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Open from Cloud…"),
-        detail: tk("Nextcloud, OpenCloud or any WebDAV drive"),
+        detail: tk("OneDrive, Google Drive, Nextcloud, OpenCloud or any WebDAV drive"),
         keys: "",
         run: |ws, window, cx| ws.open_from_cloud(&OpenFromCloud, window, cx),
     },
@@ -62,7 +62,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Cloud Accounts…"),
-        detail: tk("Add, test or remove a WebDAV account"),
+        detail: tk("Add, test or remove a cloud account"),
         keys: "",
         run: |ws, window, cx| ws.open_cloud_accounts(&CloudAccounts, window, cx),
     },
@@ -99,6 +99,12 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("Current document"),
         keys: "Ctrl Shift S",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save_as(w, cx)),
+    },
+    Command {
+        title: tk("Save to Cloud…"),
+        detail: tk("Upload this document to OneDrive, Google Drive or a WebDAV drive"),
+        keys: "",
+        run: |ws, window, cx| ws.save_to_cloud(&SaveToCloud, window, cx),
     },
     Command {
         title: tk("Export as PDF…"),
