@@ -726,7 +726,7 @@ mod tests {
         Laid {
             boxes: Rc::new(crate::PageBoxes::of(&laid.paged)),
             paged: laid.paged,
-            texts: Vec::new(),
+            texts: Default::default(),
             furniture: laid.furniture,
             floats: laid.floats,
             strikes: laid.strikes,
