@@ -17,6 +17,7 @@
 pub mod address;
 pub mod agent;
 pub mod citations;
+pub mod cite_edit;
 mod code_track;
 pub mod columns;
 mod comment_thread;

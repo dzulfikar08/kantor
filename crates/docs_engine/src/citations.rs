@@ -31,9 +31,9 @@ use crate::object::{Level, Opaque};
 use crate::xml;
 
 /// The tag prefix of a Mendeley Cite citation content control.
-const MENDELEY_CITE_TAG: &str = "MENDELEY_CITATION_v3_";
+pub(crate) const MENDELEY_CITE_TAG: &str = "MENDELEY_CITATION_v3_";
 /// The tag of a Mendeley Cite bibliography content control.
-const MENDELEY_BIB_TAG: &str = "MENDELEY_BIBLIOGRAPHY";
+pub(crate) const MENDELEY_BIB_TAG: &str = "MENDELEY_BIBLIOGRAPHY";
 /// The CSL citation schema Zotero and Mendeley name in their JSON.
 pub const CSL_CITATION_SCHEMA: &str =
     "https://github.com/citation-style-language/schema/raw/master/csl-citation.json";
@@ -177,13 +177,16 @@ pub fn summary(data: &Value) -> String {
 /// The year an item was issued.
 pub fn year_of(data: &Value) -> Option<i64> {
     let issued = data.get("issued")?;
-    let first = issued.get("date-parts")?.get(0)?.get(0)?;
-    match first {
-        Value::Number(n) => n.as_i64(),
-        Value::String(s) => s.trim().parse().ok(),
-        _ => None,
-    }
-    .or_else(|| {
+    let parts = issued
+        .get("date-parts")
+        .and_then(|d| d.get(0))
+        .and_then(|d| d.get(0))
+        .and_then(|first| match first {
+            Value::Number(n) => n.as_i64(),
+            Value::String(s) => s.trim().parse().ok(),
+            _ => None,
+        });
+    parts.or_else(|| {
         let raw = issued
             .get("raw")
             .or_else(|| issued.get("literal"))?
@@ -645,7 +648,8 @@ fn endnote_items(instr: &str) -> Vec<CiteItem> {
             .find(|c| c.tag_name().name() == name)
             .map(|c| {
                 c.descendants()
-                    .filter_map(|t| t.is_text().then(|| t.text().unwrap_or_default()))
+                    .filter(|t| t.is_text())
+                    .map(|t| t.text().unwrap_or_default())
                     .collect::<String>()
             })
             .map(|t| t.trim().to_owned())
@@ -680,7 +684,8 @@ fn endnote_items(instr: &str) -> Vec<CiteItem> {
                 .filter_map(|a| {
                     let t: String = a
                         .descendants()
-                        .filter_map(|x| x.is_text().then(|| x.text().unwrap_or_default()))
+                        .filter(|x| x.is_text())
+                        .map(|x| x.text().unwrap_or_default())
                         .collect();
                     let t = t.trim();
                     (!t.is_empty()).then(|| match t.split_once(',') {

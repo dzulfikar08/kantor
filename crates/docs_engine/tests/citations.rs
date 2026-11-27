@@ -275,3 +275,231 @@ fn saving_unedited_keeps_every_part() {
         assert_eq!(a.keys().collect::<Vec<_>>(), b.keys().collect::<Vec<_>>());
     }
 }
+
+// ── refreshing and styles ──────────────────────────────────────────────────
+
+fn texts(doc: &Document) -> Vec<String> {
+    doc.citations().into_iter().map(|c| c.text).collect()
+}
+
+fn instr_json(doc: &Document, i: usize) -> serde_json::Value {
+    doc.citations()[i].json.clone().unwrap()
+}
+
+#[test]
+fn zotero_refresh_and_restyle() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("z.docx");
+    std::fs::copy(corpus("cite_zotero.docx"), &path).unwrap();
+    let mut doc = Document::open(&path).unwrap();
+    let prefs = doc.citation_prefs(None);
+    assert_eq!(prefs.style, "http://www.zotero.org/styles/apa");
+    assert_eq!(prefs.locale.as_deref(), Some("id-ID"));
+    assert_eq!(prefs.from, docs_engine::PrefsFrom::Zotero);
+
+    // The fixture's texts are what APA in Indonesian gives.
+    let (_, report) = doc.refresh_citations(Selection::default(), None).unwrap();
+    assert_eq!(report.citations, 3);
+    assert_eq!(report.bibliographies, 1);
+    let t = texts(&doc);
+    assert_eq!(t[0], "(Nugroho, 2021)");
+    assert!(t[1].starts_with("(Nugroho, 2021, "), "{}", t[1]);
+    assert!(t[1].ends_with("; Santoso & Wijaya, 2019)"), "{}", t[1]);
+    assert_eq!(t[2], "(Rahmawati dkk., 2022)");
+    // The code records the text Zotero would compare.
+    for i in 0..3 {
+        assert_eq!(instr_json(&doc, i)["properties"]["plainCitation"], t[i]);
+    }
+    // The bibliography: three entries, one paragraph each, sorted.
+    let h = find(&doc, "Daftar Pustaka");
+    assert!(shown(&doc, h + 1).starts_with("Nugroho, A. (2021). Pengaruh media sosial"));
+    assert!(shown(&doc, h + 2).starts_with("Rahmawati, D., Pratama, E., & Hidayat, F. (2022)."));
+    assert!(shown(&doc, h + 3).starts_with("Santoso, B., & Wijaya, C. (2019)."));
+    assert_eq!(
+        doc.paragraph(h + 3).props.style.as_deref(),
+        Some("Bibliography")
+    );
+    // Titles in italics as runs.
+    let p = doc.paragraph(h + 3);
+    let italic: String = p
+        .run_ranges()
+        .filter(|(_, r)| r.props.italic == Some(true))
+        .map(|(r, _)| p.text[r].to_owned())
+        .collect();
+    assert!(
+        italic.contains("Metodologi penelitian kuantitatif"),
+        "{italic:?}"
+    );
+    assert_eq!(doc.bibliographies().len(), 1);
+
+    // IEEE: numbers, and the preference written the way Zotero keeps it.
+    doc.set_citation_prefs("http://www.zotero.org/styles/ieee", Some("en-US"));
+    doc.refresh_citations(Selection::default(), None).unwrap();
+    let t = texts(&doc);
+    assert_eq!(t[0], "[1]");
+    assert!(t[1].starts_with("[1"), "{}", t[1]);
+    assert!(t[1].contains('2'), "{}", t[1]);
+    assert_eq!(t[2], "[3]");
+    let h = find(&doc, "Daftar Pustaka");
+    assert!(
+        shown(&doc, h + 1).starts_with("[1]\t"),
+        "{}",
+        shown(&doc, h + 1)
+    );
+    assert_eq!(doc.bibliographies().len(), 1);
+    doc.save().unwrap();
+    let saved = parts(&std::fs::read(&path).unwrap());
+    let custom = String::from_utf8(saved["docProps/custom.xml"].clone()).unwrap();
+    assert!(custom.contains("ZOTERO_PREF_1"));
+    assert!(
+        custom.contains("http://www.zotero.org/styles/ieee"),
+        "{custom}"
+    );
+    assert!(custom.contains("session id=&quot;Kq3vXz9P&quot;") || custom.contains("Kq3vXz9P"));
+    let back = Document::open(&path).unwrap();
+    assert_eq!(
+        back.citation_prefs(None).style,
+        "http://www.zotero.org/styles/ieee"
+    );
+    assert_eq!(texts(&back), t);
+    assert!(back.unsupported_content().is_empty());
+
+    // Undo brings the old texts back.
+    let mut doc = back;
+    doc.set_citation_prefs("http://www.zotero.org/styles/apa", Some("id-ID"));
+    doc.refresh_citations(Selection::default(), None).unwrap();
+    assert_eq!(texts(&doc)[0], "(Nugroho, 2021)");
+    doc.undo();
+    assert_eq!(texts(&doc)[0], "[1]");
+}
+
+#[test]
+fn mendeley_desktop_refresh_uses_its_style() {
+    let mut doc = Document::open(&corpus("cite_mendeley.docx")).unwrap();
+    let prefs = doc.citation_prefs(None);
+    assert_eq!(prefs.style, "http://www.zotero.org/styles/ieee");
+    assert_eq!(prefs.from, docs_engine::PrefsFrom::Mendeley);
+    doc.refresh_citations(Selection::default(), Some("en-US"))
+        .unwrap();
+    let t = texts(&doc);
+    assert_eq!(t[0], "[1]");
+    assert!(t[1].starts_with("[2"), "{}", t[1]);
+    assert!(t[1].contains("50"), "{}", t[1]);
+    assert_eq!(
+        instr_json(&doc, 0)["mendeley"]["plainTextFormattedCitation"],
+        "[1]"
+    );
+    let h = find(&doc, "Referensi");
+    assert!(
+        shown(&doc, h + 1).starts_with("[1]\tB. Santoso and C. Wijaya"),
+        "{}",
+        shown(&doc, h + 1)
+    );
+    // Restyling a Mendeley document keeps Mendeley's property.
+    doc.set_citation_prefs("http://www.zotero.org/styles/apa", None);
+    assert_eq!(
+        doc.citation_prefs(None).from,
+        docs_engine::PrefsFrom::Mendeley
+    );
+    let bytes = doc.to_docx_bytes().unwrap();
+    let custom = String::from_utf8(parts(&bytes)["docProps/custom.xml"].clone()).unwrap();
+    assert!(
+        custom.contains("<vt:lpwstr>http://www.zotero.org/styles/apa</vt:lpwstr>"),
+        "{custom}"
+    );
+    assert!(!custom.contains("ZOTERO_PREF"));
+}
+
+#[test]
+fn mendeley_cite_refresh_rewrites_controls() {
+    let mut doc = Document::open(&corpus("cite_mendeley_cite.docx")).unwrap();
+    assert_eq!(
+        doc.citation_prefs(None).from,
+        docs_engine::PrefsFrom::Default
+    );
+    doc.set_citation_prefs("http://www.zotero.org/styles/ieee", None);
+    doc.refresh_citations(Selection::default(), Some("en-US"))
+        .unwrap();
+    assert_eq!(texts(&doc), ["[1]", "[2]"]);
+    let c = &doc.citations()[0];
+    assert_eq!(
+        c.json.as_ref().unwrap()["manualOverride"]["citeprocText"],
+        "[1]"
+    );
+    let bibs = doc.bibliographies();
+    assert_eq!(bibs.len(), 1);
+    let CiteAt::Paragraphs { first, last } = bibs[0].at else {
+        panic!("paragraphs");
+    };
+    assert_eq!(last - first, 1);
+    assert!(
+        shown(&doc, first).starts_with("[1]\tA. Nugroho"),
+        "{}",
+        shown(&doc, first)
+    );
+    assert_eq!(shown(&doc, last + 1), "Lampiran");
+    // Saved and read again: the same.
+    let bytes = doc.to_docx_bytes().unwrap();
+    let xml = String::from_utf8(parts(&bytes)["word/document.xml"].clone()).unwrap();
+    assert!(xml.contains("<w:tag w:val=\"MENDELEY_BIBLIOGRAPHY\"/>"));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("m.docx");
+    std::fs::write(&path, &bytes).unwrap();
+    let back = Document::open(&path).unwrap();
+    assert_eq!(texts(&back), ["[1]", "[2]"]);
+    assert_eq!(back.bibliographies().len(), 1);
+}
+
+#[test]
+fn word_and_endnote_citations_are_left_alone() {
+    let mut doc = Document::open(&corpus("cite_word.docx")).unwrap();
+    let before = doc.paragraphs().to_vec();
+    let (_, report) = doc.refresh_citations(Selection::default(), None).unwrap();
+    assert_eq!(report.other, 3);
+    assert_eq!(report.citations, 0);
+    assert_eq!(doc.paragraphs(), before.as_slice());
+}
+
+#[test]
+fn new_documents_get_preferences_and_a_source_list() {
+    let mut doc = Document::new();
+    doc.insert_text(Selection::default(), "Teks.", None);
+    doc.set_citation_prefs("http://www.zotero.org/styles/apa", Some("id-ID"));
+    let items = vec![
+        serde_json::json!({"id": "nugroho2021", "type": "book", "title": "Satu", "issued": {"date-parts": [[2021]]}}),
+        serde_json::json!({"id": "b", "type": "book", "title": "Dua"}),
+    ];
+    assert_eq!(doc.add_sources(items.clone()), 2);
+    assert_eq!(
+        doc.add_sources(vec![items[0].clone()]),
+        0,
+        "the same item again"
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("new.docx");
+    doc.save_as(&path).unwrap();
+    let saved = parts(&std::fs::read(&path).unwrap());
+    let rels = String::from_utf8(saved["_rels/.rels"].clone()).unwrap();
+    assert!(rels.contains("Target=\"docProps/custom.xml\""), "{rels}");
+    let ct = String::from_utf8(saved["[Content_Types].xml"].clone()).unwrap();
+    assert!(ct.contains("/docProps/custom.xml"));
+    assert!(ct.contains("customXmlProperties+xml"));
+    let doc_rels = String::from_utf8(saved["word/_rels/document.xml.rels"].clone()).unwrap();
+    assert!(doc_rels.contains("relationships/customXml\""), "{doc_rels}");
+    let back = Document::open(&path).unwrap();
+    assert_eq!(back.sources(), items);
+    assert_eq!(back.citation_prefs(None).locale.as_deref(), Some("id-ID"));
+    // Saved again: the same parts, not a second list.
+    let mut back = back;
+    back.add_sources(vec![serde_json::json!({"id": "c", "title": "Tiga"})]);
+    back.save().unwrap();
+    let again = parts(&std::fs::read(&path).unwrap());
+    assert_eq!(
+        again
+            .keys()
+            .filter(|k| k.starts_with("customXml/item"))
+            .count(),
+        1
+    );
+    assert_eq!(Document::open(&path).unwrap().sources().len(), 3);
+}

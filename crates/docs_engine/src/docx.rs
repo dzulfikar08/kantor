@@ -373,7 +373,7 @@ fn rels_name(part: &str) -> String {
 }
 
 /// `target` relative to the directory of `base` (for new relationships).
-fn relative_to(base: &str, target: &str) -> String {
+pub(crate) fn relative_to(base: &str, target: &str) -> String {
     match base.rsplit_once('/') {
         Some((dir, _)) => target
             .strip_prefix(&format!("{dir}/"))
@@ -3990,6 +3990,35 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
     for (name, xml) in doc.edited_parts().into_iter().rev() {
         if pkg.has_part(&name) {
             replace.insert(name, xml.as_bytes().to_vec());
+        }
+    }
+
+    // Citations: custom properties (Zotero's document preferences) and the
+    // document's own source list.
+    let mut root_rels = String::new();
+    crate::cite_edit::write_parts(
+        doc,
+        pkg,
+        crate::cite_edit::PartSink {
+            replace: &mut replace,
+            add: &mut add,
+            doc_rels: &mut new_rels,
+            root_rels: &mut root_rels,
+            overrides: &mut overrides,
+        },
+    )?;
+    if !root_rels.is_empty() {
+        let name = "_rels/.rels";
+        let rels = zip_text(&mut src, name)?.unwrap_or_else(|| {
+            format!(
+                "{XML_DECL}<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"></Relationships>"
+            )
+        });
+        let out = insert_before_close(&rels, "</Relationships>", &root_rels);
+        if src.by_name(name).is_ok() {
+            replace.insert(name.into(), out.into_bytes());
+        } else {
+            add.push((name.into(), out.into_bytes()));
         }
     }
 

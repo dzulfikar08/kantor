@@ -244,7 +244,7 @@ fn simple_holds(paras: &[Paragraph], s: &FieldSpan) -> bool {
 
 /// A complex field's start for `instr` (with a separator when it will
 /// have a result).
-fn complex_begin(instr: &str, result: bool) -> FieldMark {
+pub(crate) fn complex_begin(instr: &str, result: bool) -> FieldMark {
     match FieldMark::begin(instr) {
         FieldMark::Begin {
             instr,
@@ -262,7 +262,7 @@ fn complex_begin(instr: &str, result: bool) -> FieldMark {
 }
 
 /// Swap the object at `pos` for `o` (same run formatting, link, change).
-fn replace_mark(paras: &mut [Paragraph], pos: Position, o: Object) {
+pub(crate) fn replace_mark(paras: &mut [Paragraph], pos: Position, o: Object) {
     let p = &mut paras[pos.para];
     let i = p.split_run_at(pos.offset);
     if let Some(run) = p.runs.get_mut(i) {
@@ -688,7 +688,7 @@ impl Props {
 }
 
 /// `custom.xml`'s properties: name and text value.
-fn custom_props(src: &str) -> Vec<(String, String)> {
+pub(crate) fn custom_props(src: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut r = quick_xml::Reader::from_str(src);
     let mut name: Option<String> = None;
