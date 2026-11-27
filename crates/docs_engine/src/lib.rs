@@ -53,7 +53,8 @@ pub mod xml;
 
 pub use columns::{COLUMN_BREAK, Column, ColumnPreset, Columns, ColumnsApply};
 pub use document::{
-    Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Splice, Toggle, is_import_path,
+    Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, SaveJob, SavedJob, Splice, Toggle,
+    is_import_path,
 };
 pub use edit::TableEdit;
 pub use field_edit::{XrefKind, XrefTarget, XrefWhat, valid_bookmark_name};

@@ -1569,6 +1569,71 @@ impl Document {
         self.write(&path)
     }
 
+    /// Start a save away from the UI thread: the same checks as
+    /// [`Self::save`], and a copy of the document to write
+    /// ([`SaveJob::run`], then [`Self::finish_save`] here).
+    pub fn begin_save(&self) -> anyhow::Result<SaveJob> {
+        let Some(path) = self.path.clone() else {
+            anyhow::bail!("This document has no file yet; use Save As");
+        };
+        if self.has_unsupported_content() {
+            anyhow::bail!(
+                "{} has content Kantor can't keep ({}); use Save As to write a new file",
+                self.title(),
+                self.unsupported.join(", ")
+            );
+        }
+        Ok(SaveJob {
+            doc: self.clone(),
+            path,
+            revision: self.revision(),
+            lists: (
+                self.numbering.added_abstracts.len(),
+                self.numbering.added_nums.len(),
+            ),
+        })
+    }
+
+    /// A [`SaveJob`] is done: the written file becomes this document's
+    /// template for the next save, as after [`Self::save`]. Edits made
+    /// while it was written stay unsaved.
+    pub fn finish_save(&mut self, done: SavedJob) -> anyhow::Result<()> {
+        done.result?;
+        let saved = done.doc;
+        let Some(pkg) = saved.package else {
+            anyhow::bail!("the saved file wasn't read back");
+        };
+        if self.revision() == done.revision && self.stories.len() == saved.stories.len() {
+            // Nothing changed meanwhile: just as a save here leaves it.
+            self.new_media = saved.new_media;
+            self.numbering.added_abstracts = saved.numbering.added_abstracts;
+            self.numbering.added_nums = saved.numbering.added_nums;
+            self.comments_modified = saved.comments_modified;
+            for (st, was) in self.stories.iter_mut().zip(&saved.stories) {
+                st.modified = was.modified;
+                st.new = was.new;
+            }
+            self.body_sect = saved.body_sect;
+        } else {
+            // What was written is in the package now; later changes are
+            // written next time.
+            self.new_media.retain(|m| !pkg.has_rel(&m.rel_id));
+            let (a, n) = done.lists;
+            let a = a.min(self.numbering.added_abstracts.len());
+            self.numbering.added_abstracts.drain(..a);
+            let n = n.min(self.numbering.added_nums.len());
+            self.numbering.added_nums.drain(..n);
+            for st in &mut self.stories {
+                if pkg.has_part(&st.part) {
+                    st.new = false;
+                }
+            }
+        }
+        self.package = Some(pkg);
+        self.history.saved = saved.history.saved;
+        Ok(())
+    }
+
     /// Save to `path` and make it this document's file. Refuses to write over
     /// the original of a document with unsupported content.
     pub fn save_as(&mut self, path: &Path) -> anyhow::Result<()> {
@@ -1633,6 +1698,37 @@ impl Document {
         self.history.saved = self.history.top();
         Ok(())
     }
+}
+
+/// A save being written away from the UI thread ([`Document::begin_save`]).
+pub struct SaveJob {
+    doc: Document,
+    path: PathBuf,
+    revision: u64,
+    /// The list definitions added since the last save, as many as there
+    /// were then.
+    lists: (usize, usize),
+}
+
+impl SaveJob {
+    /// Write the file (slow for a long document: run it in the background).
+    pub fn run(mut self) -> SavedJob {
+        let result = self.doc.write(&self.path);
+        SavedJob {
+            doc: self.doc,
+            result,
+            revision: self.revision,
+            lists: self.lists,
+        }
+    }
+}
+
+/// A [`SaveJob`] written, for [`Document::finish_save`].
+pub struct SavedJob {
+    doc: Document,
+    result: anyhow::Result<()>,
+    revision: u64,
+    lists: (usize, usize),
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {

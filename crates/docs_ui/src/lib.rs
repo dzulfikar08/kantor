@@ -587,6 +587,8 @@ pub struct DocsView {
     /// A long document's layout being made in the background (see
     /// [`DocsView::first_layout`]); meanwhile only its start is laid out.
     bg_layout: Option<Task<()>>,
+    /// A save being written in the background (see [`DocsView::save_with`]).
+    saving: Option<Task<()>>,
     /// The main document's words and characters (see [`DocsView::counts`]).
     counts: Cell<Option<Counts>>,
 }
@@ -696,6 +698,7 @@ impl DocsView {
             perf,
             review_memo: RefCell::default(),
             bg_layout: None,
+            saving: None,
             counts: Cell::default(),
         };
         this.first_layout(cx);
@@ -1540,17 +1543,24 @@ impl DocsView {
     // ── saving ─────────────────────────────────────────────────────────────
 
     pub fn save_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.save(&Save, window, cx);
+        self.save_with(false, window, cx);
     }
 
     pub fn save_doc_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_as(&SaveAs, window, cx);
     }
 
+    /// Ctrl+S: a long document is written in the background.
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(p) = &self.perf {
             p.input("action Save");
         }
+        self.save_with(true, window, cx);
+    }
+
+    /// Save; `background`: a long document is written away from the UI
+    /// thread (the document is copied, edits go on meanwhile).
+    fn save_with(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.main_doc().needs_save_as() {
             self.save_as_task(window, cx).detach();
             return;
@@ -1567,7 +1577,7 @@ impl DocsView {
                     let _ = view.update(cx, |this, cx| match choice {
                         kantor_ui::disk_guard::Overwrite::Replace => {
                             this.disk_guard = None;
-                            this.save(&Save, window, cx);
+                            this.save_with(background, window, cx);
                         }
                         kantor_ui::disk_guard::Overwrite::SaveAs => {
                             this.save_as(&SaveAs, window, cx)
@@ -1577,10 +1587,57 @@ impl DocsView {
             );
             return;
         }
+        if self.saving.is_some() {
+            // One save at a time: this one waits for it, then saves (sync).
+            return self.after_background_save(window, cx);
+        }
+        if background && self.part.is_none() && self.doc.len() >= BACKGROUND_PARAS {
+            let job = {
+                let _t = docs_layout::perf::span("docs save (copy)");
+                self.doc.begin_save()
+            };
+            match job {
+                Ok(job) => {
+                    self.status = t("Saving…").into();
+                    let task = cx.background_spawn(async move {
+                        let _t = docs_layout::perf::span("docs save (background)");
+                        job.run()
+                    });
+                    self.saving = Some(cx.spawn_in(window, async move |this, cx| {
+                        let done = task.await;
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            this.saving = None;
+                            let result = this.doc.finish_save(done);
+                            this.after_save(result, window, cx);
+                        });
+                    }));
+                    cx.notify();
+                }
+                Err(e) => self.after_save(Err(e), window, cx),
+            }
+            return;
+        }
         let t = docs_layout::perf::span("docs save");
         let result = self.save_whole(window, cx, |doc| doc.save());
         drop(t);
         self.after_save(result, window, cx);
+    }
+
+    /// Save asked while a background save is going: wait for it, then save
+    /// on the UI thread (what changed since).
+    fn after_background_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(running) = self.saving.take() else {
+            return;
+        };
+        self.saving = Some(cx.spawn_in(window, async move |this, cx| {
+            running.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.saving = None;
+                if this.dirty() {
+                    this.save_with(false, window, cx);
+                }
+            });
+        }));
     }
 
     /// Run a save on the whole document: a header, footer or note being
@@ -1611,7 +1668,18 @@ impl DocsView {
         if self.doc.needs_save_as() {
             return self.save_as_task(window, cx);
         }
-        self.save(&Save, window, cx);
+        // A background save going on: after it, save what changed since.
+        if let Some(running) = self.saving.take() {
+            return cx.spawn_in(window, async move |this, cx| {
+                running.await;
+                this.update_in(cx, |this, window, cx| {
+                    this.save_with(false, window, cx);
+                    !this.doc.is_dirty()
+                })
+                .unwrap_or(false)
+            });
+        }
+        self.save_with(false, window, cx);
         Task::ready(!self.doc.is_dirty())
     }
 
