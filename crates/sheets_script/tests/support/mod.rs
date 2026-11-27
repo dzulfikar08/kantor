@@ -97,13 +97,6 @@ pub fn reopen(mut book: Workbook, file: &str) -> (Workbook, tempfile::TempDir) {
     (Workbook::open(&path).unwrap(), dir)
 }
 
-/// The entry names of a saved package, for checks on what was written.
-pub fn package_entries(path: &std::path::Path) -> Vec<String> {
-    let f = std::fs::File::open(path).unwrap();
-    let z = zip::ZipArchive::new(f).unwrap();
-    z.file_names().map(str::to_owned).collect()
-}
-
 /// One entry of a saved package as text.
 pub fn package_text(path: &std::path::Path, entry: &str) -> Option<String> {
     use std::io::Read;
