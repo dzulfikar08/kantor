@@ -4,7 +4,8 @@
 //! page, the middle page and the last page, Find All and Save As (to a
 //! copy next to the file, deleted afterwards). Layout goes through
 //! [`docs_pdf::LayoutCache`] as in the view. Prints one line per step;
-//! with `KANTOR_PERF=1` the layout phases too.
+//! with `KANTOR_PERF=1` the layout phases too. `--verify` (slow) checks
+//! every layout after an edit against a fresh full layout.
 
 use std::path::Path;
 use std::time::Instant;
@@ -46,19 +47,43 @@ fn spot(doc: &Document, laid: &docs_pdf::Layout, page: usize) -> Option<Position
         .map(|i| doc.clamp(Position::new(i, 10)))
 }
 
-pub fn run(file: &Path, keys: usize) -> Result<()> {
+pub fn run(file: &Path, keys: usize, verify: bool) -> Result<()> {
     let t = Instant::now();
     let mut doc = Document::open(file).with_context(|| format!("can't open {}", file.display()))?;
     println!("open (read): {:.1} ms, {} paragraphs", ms(t), doc.len());
     let mut engine = docs_layout::Engine::new();
     let mut cache = docs_pdf::LayoutCache::default();
     let t = Instant::now();
-    let mut laid = cache.lay_out(&doc, &mut engine);
+    let mut laid = cache.relayout(&doc, &mut engine, None);
     let pages = laid.paged.pages.len();
     println!("first layout: {:.1} ms, {pages} pages", ms(t));
     let t = Instant::now();
-    laid = cache.lay_out(&doc, &mut engine);
+    laid = cache.relayout(&doc, &mut engine, Some(laid));
     println!("layout again (nothing changed): {:.1} ms", ms(t));
+    // What the view does on opening a long document: its first pages,
+    // and the whole of it on other threads.
+    let t = Instant::now();
+    let first = docs_pdf::LayoutCache::default().relayout_prefix(&doc, &mut engine, 400);
+    println!(
+        "first pages only: {:.1} ms, {} pages",
+        ms(t),
+        first.paged.pages.len()
+    );
+    let threads = std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .saturating_sub(1)
+        .clamp(1, 8);
+    engine.fonts.source_cache.make_shared();
+    let fonts = engine.fonts.clone();
+    let t = Instant::now();
+    let bg = docs_pdf::cache::lay_out_parallel(&doc, &fonts, threads);
+    println!(
+        "whole layout on {threads} threads: {:.1} ms, {} pages",
+        ms(t),
+        bg.pages()
+    );
+    let mut fresh_engine = docs_layout::Engine::new();
+    let mut mismatches = 0;
 
     for (name, page) in [
         ("page 1", 0),
@@ -70,18 +95,46 @@ pub fn run(file: &Path, keys: usize) -> Result<()> {
             continue;
         };
         let mut times = Vec::with_capacity(keys);
-        for _ in 0..keys {
+        let mut quick = 0;
+        for k in 0..keys {
             let t = Instant::now();
-            let sel = doc.insert_text(Selection::caret(at), "x", None);
+            // Mostly letters, a space now and then.
+            let ch = if k % 6 == 5 { " " } else { "x" };
+            let sel = doc.insert_text(Selection::caret(at), ch, None);
             at = sel.head;
-            laid = cache.lay_out(&doc, &mut engine);
+            laid = cache.relayout(&doc, &mut engine, Some(laid));
             times.push(ms(t));
+            if matches!(cache.outcome, docs_pdf::cache::Outcome::Quick { .. }) {
+                quick += 1;
+            }
+            if verify {
+                let full = docs_pdf::lay_out(&doc, &mut fresh_engine);
+                if let Some(d) = docs_pdf::cache::difference(&laid, &full) {
+                    mismatches += 1;
+                    println!("  MISMATCH after key {k} on {name}: {d}");
+                }
+            }
         }
         println!(
-            "typing on {name} (page {}, {keys} keys, edit + relayout): {}",
+            "typing on {name} (page {}, {keys} keys, edit + relayout, {quick} quick): {}",
             page + 1,
             pct(times)
         );
+        // Enter and Backspace there: a paragraph more, then one less.
+        let mut times = Vec::new();
+        for _ in 0..3 {
+            let t = Instant::now();
+            let sel = doc.insert_text(Selection::caret(at), "\n", None);
+            at = sel.head;
+            laid = cache.relayout(&doc, &mut engine, Some(laid));
+            times.push(ms(t));
+            let t = Instant::now();
+            let sel = doc.backspace(Selection::caret(at));
+            at = sel.head;
+            laid = cache.relayout(&doc, &mut engine, Some(laid));
+            times.push(ms(t));
+        }
+        println!("Enter / Backspace on {name}: {}", pct(times));
     }
 
     let t = Instant::now();
@@ -98,6 +151,9 @@ pub fn run(file: &Path, keys: usize) -> Result<()> {
     doc.save_as(&out)?;
     println!("save: {:.1} ms", ms(t));
     std::fs::remove_file(&out).ok();
+    if verify {
+        println!("verify: {mismatches} mismatches");
+    }
     if let Some(mb) = peak_mb() {
         println!("peak memory: {mb:.0} MB");
     }

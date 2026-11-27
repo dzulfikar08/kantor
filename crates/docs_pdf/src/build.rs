@@ -807,6 +807,26 @@ pub fn build_marked(
     doc: &Document,
     marks: &Marks,
 ) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
+    build_marked_upto(doc, marks, doc.len())
+}
+
+/// [`build_marked`] for the first `cut` paragraphs (the start of a long
+/// document, shown while the rest is laid out); a table the cut falls in
+/// is built whole.
+pub fn build_marked_upto(
+    doc: &Document,
+    marks: &Marks,
+    cut: usize,
+) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
+    let paras = doc.paragraphs();
+    let mut cut = cut.min(paras.len());
+    while cut > 0
+        && cut < paras.len()
+        && paras[cut].cell.is_some()
+        && paras[cut].cell.map(|c| c.table) == paras[cut - 1].cell.map(|c| c.table)
+    {
+        cut += 1;
+    }
     let sections = doc.sections();
     let widths: Vec<u32> = sections
         .iter()
@@ -826,7 +846,7 @@ pub fn build_marked(
             .position(|s| i < s.paras.end)
             .unwrap_or(sections.len() - 1)
     };
-    build_with(doc, doc.paragraphs(), &|i| widths[section_of(i)], marks)
+    build_with(doc, &paras[..cut], &|i| widths[section_of(i)], marks)
 }
 
 /// [`build`] over `paras` (the document's paragraphs, or a header's with

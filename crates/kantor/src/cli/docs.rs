@@ -144,6 +144,8 @@ fn parse(args: &[OsString]) -> Result<Opts, Usage> {
             "--check" => o.check = true,
             "--json" => o.json = true,
             "--text" => o.text = true,
+            // kantor docs bench (see cli/docs_bench.rs).
+            "--verify" => {}
             "--start" => o.start = Some(num(it.next(), "--start")?),
             "--limit" => o.limit = Some(num(it.next(), "--limit")?),
             "--track" => {
@@ -191,7 +193,8 @@ pub fn main(args: &[OsString]) -> i32 {
             eprintln!("kantor docs bench: bench takes one FILE.docx");
             return 2;
         };
-        return match super::docs_bench::run(Path::new(file), opts.limit.unwrap_or(30)) {
+        let verify = args.iter().any(|a| a == "--verify");
+        return match super::docs_bench::run(Path::new(file), opts.limit.unwrap_or(30), verify) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("kantor docs bench: {e:#}");

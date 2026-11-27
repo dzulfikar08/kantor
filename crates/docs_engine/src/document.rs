@@ -100,6 +100,41 @@ struct History {
     sealed: bool,
     /// Counts edits, undos and redos (see [`Document::revision`]).
     changes: u64,
+    /// What the last edit, undo or redo did to the paragraphs.
+    splice: Option<Splice>,
+}
+
+/// What one edit, undo or redo did to the paragraphs (see
+/// [`Document::last_splice`]): `removed` paragraphs from `start` on were
+/// replaced by `inserted` ones.
+#[derive(Clone, Debug)]
+pub struct Splice {
+    /// The [`Document::revision`] it made.
+    pub revision: u64,
+    pub start: usize,
+    pub removed: usize,
+    pub inserted: usize,
+    /// It also changed tables, the page setup or headers and footers.
+    pub side: bool,
+    /// The paragraphs it replaced (empty when more than two).
+    pub old: Vec<Paragraph>,
+}
+
+impl Splice {
+    fn of(revision: u64, start: usize, old: &[Paragraph], inserted: usize, side: bool) -> Self {
+        Self {
+            revision,
+            start,
+            removed: old.len(),
+            inserted,
+            side,
+            old: if old.len() <= 2 {
+                old.to_vec()
+            } else {
+                Vec::new()
+            },
+        }
+    }
 }
 
 impl History {
@@ -111,6 +146,13 @@ impl History {
     /// same word of typing or deleting.
     fn push(&mut self, mut cmd: Command, word_boundary: bool) {
         self.changes += 1;
+        self.splice = Some(Splice::of(
+            self.changes,
+            cmd.start,
+            &cmd.old,
+            cmd.new.len(),
+            cmd.tables.is_some() || cmd.page.is_some() || cmd.hf.is_some(),
+        ));
         self.redo.clear();
         let sealed = std::mem::take(&mut self.sealed);
         if let Some(last) = self.undo.last_mut()
@@ -550,6 +592,16 @@ impl Document {
     /// callers can tell the document changed.
     pub fn revision(&self) -> u64 {
         self.history.changes
+    }
+
+    /// What the edit, undo or redo that made the current [`Self::revision`]
+    /// did to the paragraphs; `None` when the revision came from
+    /// something else (or nothing was edited yet).
+    pub fn last_splice(&self) -> Option<&Splice> {
+        self.history
+            .splice
+            .as_ref()
+            .filter(|s| s.revision == self.history.changes)
     }
 
     /// Forget the file (and any import source): the document is untitled.
@@ -1457,6 +1509,13 @@ impl Document {
     pub fn undo(&mut self) -> Option<Selection> {
         let cmd = self.history.undo.pop()?;
         self.history.changes += 1;
+        self.history.splice = Some(Splice::of(
+            self.history.changes,
+            cmd.start,
+            &cmd.new,
+            cmd.old.len(),
+            cmd.tables.is_some() || cmd.page.is_some() || cmd.hf.is_some(),
+        ));
         self.paragraphs.splice(
             cmd.start..cmd.start + cmd.new.len(),
             cmd.old.iter().cloned(),
@@ -1478,6 +1537,13 @@ impl Document {
     pub fn redo(&mut self) -> Option<Selection> {
         let cmd = self.history.redo.pop()?;
         self.history.changes += 1;
+        self.history.splice = Some(Splice::of(
+            self.history.changes,
+            cmd.start,
+            &cmd.old,
+            cmd.new.len(),
+            cmd.tables.is_some() || cmd.page.is_some() || cmd.hf.is_some(),
+        ));
         self.paragraphs.splice(
             cmd.start..cmd.start + cmd.old.len(),
             cmd.new.iter().cloned(),

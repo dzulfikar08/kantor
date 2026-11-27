@@ -1,31 +1,62 @@
-//! Paragraph layouts kept between layouts of a document being edited.
+//! Layouts kept between layouts of a document being edited.
 //!
-//! Layouts are keyed by a hash of everything that affects shaping and line
-//! breaking, so an edit reshapes only the paragraphs it touched. Each pass
-//! keeps only the layouts it used.
+//! Paragraph layouts are keyed by a hash of everything that affects shaping
+//! and line breaking, so an edit reshapes only the paragraphs it touched.
+//! Each full pass keeps only the layouts it used.
+//!
+//! [`LayoutCache::relayout`] also keeps the last result's body: when the
+//! only change since is one paragraph's text (typing, deleting, undoing
+//! that) and its lines keep their heights, nothing else on any page moves,
+//! so the new paragraph layout just replaces the old one in the last
+//! result (no rebuild, no pagination, no headers and footers). Anything
+//! else lays the whole document out again.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::hash::{Hash as _, Hasher as _};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
-use docs_engine::Document;
-use docs_layout::{Engine, ParaLayout};
+use docs_engine::{Document, Object};
+use docs_layout::parley::FontContext;
+use docs_layout::{COLUMN_BREAK, Engine, PAGE_BREAK, ParaLayout};
 
 use crate::Layout;
+use crate::build::{self, Marks};
+use crate::pages::Body;
+
+/// Feeds what's written to a hasher (hashing a `Debug` form without
+/// making a string of it: every paragraph is keyed on every layout).
+struct HashWrite<'a, H: std::hash::Hasher>(&'a mut H);
+
+impl<H: std::hash::Hasher> std::fmt::Write for HashWrite<'_, H> {
+    fn write_str(&mut self, s: &str) -> std::fmt::Result {
+        self.0.write(s.as_bytes());
+        Ok(())
+    }
+}
 
 /// Cache key: everything that affects shaping and line breaking.
 pub fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
+    use std::fmt::Write as _;
     let mut h = std::collections::hash_map::DefaultHasher::new();
     p.text.hash(&mut h);
     p.family.hash(&mut h);
     p.size_pt.to_bits().hash(&mut h);
-    format!("{:?}", p.line_height).hash(&mut h);
+    let _ = write!(HashWrite(&mut h), "{:?}", p.line_height);
     (p.align as u8).hash(&mut h);
     width.to_bits().hash(&mut h);
     for v in [p.indent_left_pt, p.indent_right_pt, p.first_line_pt] {
         v.to_bits().hash(&mut h);
     }
-    format!("{:?}{:?}{:?}{:?}", p.marker, p.objects, p.tabs, p.hidden).hash(&mut h);
+    let _ = write!(
+        HashWrite(&mut h),
+        "{:?}{:?}{:?}{:?}",
+        p.marker,
+        p.objects,
+        p.tabs,
+        p.hidden
+    );
     p.default_tab.to_bits().hash(&mut h);
     p.decimal.hash(&mut h);
     for s in &p.spans {
@@ -38,17 +69,49 @@ pub fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
     h.finish()
 }
 
-/// Paragraph layouts of the last pass.
+/// What the last full layout knew about the body.
+struct Last {
+    /// The document's revision it (or a quick update since) laid out.
+    revision: u64,
+    /// The document's paragraph storage (a stand-in for the document's
+    /// identity: a one-paragraph edit doesn't move it).
+    paras: usize,
+    len: usize,
+    /// Each body paragraph's column width and layout before pagination.
+    widths: Vec<f32>,
+    shaped: Vec<Arc<ParaLayout>>,
+    /// Some header or footer shows text of the body (`STYLEREF`).
+    style_refs: Vec<docs_engine::StyleRefs>,
+}
+
+/// How the last [`LayoutCache::relayout`] went (for `KANTOR_PERF`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Outcome {
+    #[default]
+    Full,
+    /// Only the start of the document ([`LayoutCache::relayout_prefix`]).
+    Prefix,
+    /// Paragraph `para`'s layout replaced.
+    Quick { para: usize },
+}
+
+/// Paragraph layouts of the last pass, and the last result's body.
 #[derive(Default)]
 pub struct LayoutCache {
     paras: HashMap<u64, Arc<ParaLayout>>,
+    last: Option<Last>,
+    /// How the last relayout went.
+    pub outcome: Outcome,
 }
 
 impl LayoutCache {
     /// Start a pass: lay out with [`Pass::lay_out`] (as often as needed),
-    /// then [`Pass::finish`] keeps what it used.
+    /// then [`Pass::finish`] keeps what it used. The next
+    /// [`Self::relayout`] lays the whole document out.
     pub fn pass<'a>(&'a mut self, engine: &'a mut Engine) -> Pass<'a> {
         let fresh = HashMap::with_capacity(self.paras.len());
+        self.last = None;
+        self.outcome = Outcome::Full;
         Pass {
             cache: self,
             engine,
@@ -63,6 +126,320 @@ impl LayoutCache {
         pass.finish();
         laid
     }
+
+    /// Lay `doc` out again after an edit. `prev` is the last result of
+    /// this cache for `doc` (if the caller still has it to give back): a
+    /// one-paragraph text edit that keeps its lines' heights updates it in
+    /// place.
+    pub fn relayout(
+        &mut self,
+        doc: &Document,
+        engine: &mut Engine,
+        prev: Option<Layout>,
+    ) -> Layout {
+        if let Some(prev) = prev {
+            let _t = docs_layout::perf::span("docs quick relayout");
+            if let Some((laid, para)) = self.quick(doc, engine, prev) {
+                self.outcome = Outcome::Quick { para };
+                return laid;
+            }
+        }
+        self.outcome = Outcome::Full;
+        let (laid, body) = self.full(doc, engine, None);
+        self.last = (body.shaped.len() == doc.len()).then(|| Last {
+            revision: doc.revision(),
+            paras: doc.paragraphs().as_ptr() as usize,
+            len: doc.len(),
+            widths: body.widths,
+            shaped: body.shaped,
+            style_refs: style_refs(doc),
+        });
+        laid
+    }
+
+    /// Lay out only the start of `doc`, about its first `limit`
+    /// paragraphs (a long document's first pages, shown while
+    /// [`lay_out_parallel`] lays out the rest). The pages after aren't
+    /// there yet, and the next [`Self::relayout`] lays out everything.
+    pub fn relayout_prefix(&mut self, doc: &Document, engine: &mut Engine, limit: usize) -> Layout {
+        let (laid, _) = self.full(doc, engine, Some(limit));
+        self.last = None;
+        self.outcome = Outcome::Prefix;
+        laid
+    }
+
+    /// Take a [`lay_out_parallel`] result for `doc`: its layout when
+    /// `doc` hasn't changed since (later edits go on from it), else `None`
+    /// (its paragraph layouts are kept: the next relayout reuses them).
+    pub fn install(&mut self, doc: &Document, bg: Background) -> Option<Layout> {
+        if doc.revision() != bg.revision || doc.len() != bg.body.shaped.len() {
+            self.paras.extend(bg.paras);
+            self.last = None;
+            return None;
+        }
+        self.paras = bg.paras;
+        self.last = Some(Last {
+            revision: bg.revision,
+            paras: doc.paragraphs().as_ptr() as usize,
+            len: doc.len(),
+            widths: bg.body.widths,
+            shaped: bg.body.shaped,
+            style_refs: bg.style_refs,
+        });
+        self.outcome = Outcome::Full;
+        Some(bg.laid)
+    }
+
+    /// A full layout with the cache (only the start with `limit`); the
+    /// cache keeps the paragraph layouts it used.
+    fn full(
+        &mut self,
+        doc: &Document,
+        engine: &mut Engine,
+        limit: Option<usize>,
+    ) -> (Layout, Body) {
+        let mut fresh = HashMap::with_capacity(self.paras.len());
+        let old = &self.paras;
+        let laid = crate::pages::lay_out_body(
+            doc,
+            &mut |p, width| {
+                let key = layout_key(p, width);
+                let layout = match old.get(&key).or_else(|| fresh.get(&key)) {
+                    Some(l) => l.clone(),
+                    None => Arc::new(engine.layout_paragraph(p, width)),
+                };
+                fresh.insert(key, layout.clone());
+                layout
+            },
+            limit,
+            None,
+        );
+        self.paras = fresh;
+        laid
+    }
+
+    /// The quick update (see the module docs), or `None` when it doesn't
+    /// apply.
+    fn quick(
+        &mut self,
+        doc: &Document,
+        engine: &mut Engine,
+        mut prev: Layout,
+    ) -> Option<(Layout, usize)> {
+        let last = self.last.as_mut()?;
+        let sp = doc.last_splice()?;
+        if sp.revision != last.revision + 1
+            || sp.removed != 1
+            || sp.inserted != 1
+            || sp.side
+            || sp.old.len() != 1
+            || doc.len() != last.len
+            || doc.paragraphs().as_ptr() as usize != last.paras
+            || doc.field_codes().is_some()
+            || doc.merge_view().is_some()
+        {
+            return None;
+        }
+        let i = sp.start;
+        if i >= last.shaped.len()
+            || prev.paged.layouts.len() != last.shaped.len()
+            || !Arc::ptr_eq(&prev.paged.layouts[i], &last.shaped[i])
+        {
+            return None;
+        }
+        let (old_p, new_p) = (&sp.old[0], doc.paragraph(i));
+        if old_p.props != new_p.props
+            || old_p.cell != new_p.cell
+            || !plain(old_p)
+            || !plain(new_p)
+            || last
+                .style_refs
+                .iter()
+                .any(|r| r.shows(doc, old_p) || r.shows(doc, new_p))
+        {
+            return None;
+        }
+        let width = last.widths[i];
+        let marker = last.shaped[i].marker.as_ref().map(|m| m.2.as_str());
+        let marks = Marks::default();
+        let old_lp = build::layout_paragraph(doc, old_p, marker, width, &marks);
+        let mut new_lp = build::layout_paragraph(doc, new_p, marker, width, &marks);
+        if !new_lp.floats.is_empty()
+            || !old_lp.floats.is_empty()
+            || structure(&old_lp) != structure(&new_lp)
+        {
+            return None;
+        }
+        let key = layout_key(&new_lp, width);
+        let shaped = match self.paras.get(&key) {
+            Some(l) => l.clone(),
+            None => Arc::new(engine.layout_paragraph(&new_lp, width)),
+        };
+        if !same_lines(&last.shaped[i], &shaped) {
+            return None;
+        }
+        // Struck-through text (tracked deletions) is drawn from the layout
+        // paragraphs, kept when some text is struck through.
+        if !prev.strikes.is_empty() {
+            let lps = Arc::make_mut(&mut prev.strikes);
+            let was = lps.get(i)?;
+            // Spacing comes from the neighbours (contextual spacing).
+            new_lp.space_before_pt = was.space_before_pt;
+            new_lp.space_after_pt = was.space_after_pt;
+            lps[i] = new_lp;
+        } else if !new_lp.strikes.is_empty() {
+            return None;
+        }
+        prev.paged.layouts[i] = shaped.clone();
+        last.shaped[i] = shaped;
+        last.revision = sp.revision;
+        Some((prev, i))
+    }
+}
+
+/// The headers' and footers' `STYLEREF` fields (they show body text).
+fn style_refs(doc: &Document) -> Vec<docs_engine::StyleRefs> {
+    doc.stories()
+        .iter()
+        .map(|s| docs_engine::StyleRefs::new(doc, s.doc.paragraphs()))
+        .filter(|r| !r.is_empty())
+        .collect()
+}
+
+/// A full layout made away from the view (see [`lay_out_parallel`]), for
+/// [`LayoutCache::install`].
+pub struct Background {
+    laid: Layout,
+    body: Body,
+    paras: HashMap<u64, Arc<ParaLayout>>,
+    revision: u64,
+    style_refs: Vec<docs_engine::StyleRefs>,
+}
+
+impl Background {
+    pub fn pages(&self) -> usize {
+        self.laid.paged.pages.len()
+    }
+}
+
+/// Lay `doc` out (all of it) with its body paragraphs shaped on `threads`
+/// threads first, each with a clone of `fonts` (give it a shared source
+/// cache, `SourceCache::make_shared`, so every thread uses the font files
+/// the view already loaded). For a long document opened in the view: run
+/// it in the background, show [`LayoutCache::relayout_prefix`] meanwhile.
+pub fn lay_out_parallel(doc: &Document, fonts: &FontContext, threads: usize) -> Background {
+    let mut engine = Engine::with_fonts(fonts.clone());
+    let map: RefCell<HashMap<u64, Arc<ParaLayout>>> = RefCell::default();
+    let mut pre = |lps: &[docs_layout::Paragraph], widths: &[f32]| {
+        let shaped = shape_parallel(fonts, lps, widths, threads);
+        map.borrow_mut().extend(shaped);
+    };
+    let (laid, body) = crate::pages::lay_out_body(
+        doc,
+        &mut |p, width| {
+            let key = layout_key(p, width);
+            if let Some(l) = map.borrow().get(&key) {
+                return l.clone();
+            }
+            let l = Arc::new(engine.layout_paragraph(p, width));
+            map.borrow_mut().insert(key, l.clone());
+            l
+        },
+        None,
+        Some(&mut pre as &mut crate::pages::PreFn<'_>),
+    );
+    Background {
+        laid,
+        body,
+        paras: map.into_inner(),
+        revision: doc.revision(),
+        style_refs: style_refs(doc),
+    }
+}
+
+/// Shape `lps` (at `widths`) on `threads` threads, by [`layout_key`].
+fn shape_parallel(
+    fonts: &FontContext,
+    lps: &[docs_layout::Paragraph],
+    widths: &[f32],
+    threads: usize,
+) -> Vec<(u64, Arc<ParaLayout>)> {
+    const BATCH: usize = 32;
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|s| {
+        let workers: Vec<_> = (0..threads.max(1))
+            .map(|_| {
+                let fonts = fonts.clone();
+                let next = &next;
+                s.spawn(move || {
+                    let mut engine = Engine::with_fonts(fonts);
+                    let mut out = Vec::new();
+                    loop {
+                        let start = next.fetch_add(BATCH, Ordering::Relaxed);
+                        if start >= lps.len() {
+                            break;
+                        }
+                        for k in start..(start + BATCH).min(lps.len()) {
+                            let w = widths.get(k).copied().unwrap_or(100.0);
+                            let key = layout_key(&lps[k], w);
+                            out.push((key, Arc::new(engine.layout_paragraph(&lps[k], w))));
+                        }
+                    }
+                    out
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap_or_default())
+            .collect()
+    })
+}
+
+/// A paragraph whose text changes can't move anything but its own lines:
+/// no page or column breaks, footnote references or floating objects.
+fn plain(p: &docs_engine::Paragraph) -> bool {
+    if p.text.contains([PAGE_BREAK, COLUMN_BREAK]) {
+        return false;
+    }
+    p.objects().all(|(_, o)| match o {
+        Object::Float(_) => false,
+        Object::Opaque(op) => docs_engine::notes::reference_in(&op.xml).is_none(),
+        _ => true,
+    })
+}
+
+/// Everything about a layout paragraph but its text and where its runs
+/// and objects are: what places its lines on the page.
+fn structure(p: &docs_layout::Paragraph) -> String {
+    let objects: Vec<_> = p
+        .objects
+        .iter()
+        .map(|o| (o.kind, o.width.to_bits(), o.height.to_bits(), &o.label))
+        .collect();
+    format!(
+        "{:?}",
+        (
+            (p.align, &p.family, p.size_pt, p.line_spacing, p.line_height),
+            (p.space_before_pt, p.space_after_pt),
+            (p.indent_left_pt, p.indent_right_pt, p.first_line_pt),
+            (&p.marker, objects, p.page_break_before, p.keep_next),
+            (&p.locale, &p.tabs, p.default_tab, p.decimal, p.no_wrap),
+            (&p.notes, &p.note_splits, &p.note_widths),
+        )
+    )
+}
+
+/// The same lines, as tall, at the same place.
+fn same_lines(a: &ParaLayout, b: &ParaLayout) -> bool {
+    a.layout.len() == b.layout.len()
+        && a.dx == b.dx
+        && a.shift == b.shift
+        && a.width == b.width
+        && a.layout
+            .lines()
+            .zip(b.layout.lines())
+            .all(|(x, y)| x.metrics().line_height.to_bits() == y.metrics().line_height.to_bits())
 }
 
 /// One pass over a document (see [`LayoutCache::pass`]).
@@ -89,4 +466,67 @@ impl Pass<'_> {
     pub fn finish(self) {
         self.cache.paras = self.fresh;
     }
+}
+
+/// The first difference between two layouts of one document as drawn:
+/// pages, where every line sits, every glyph, struck-through text, objects,
+/// headers and footers, floating objects. `None`: they draw the same.
+/// (Tests and `kantor docs bench --verify` check quick updates with it.)
+pub fn difference(a: &Layout, b: &Layout) -> Option<String> {
+    let (pa, pb) = (&a.paged, &b.paged);
+    if pa.pages.len() != pb.pages.len() {
+        return Some(format!("{} pages vs {}", pa.pages.len(), pb.pages.len()));
+    }
+    for page in 0..pa.pages.len() {
+        if pa.pages[page] != pb.pages[page] {
+            return Some(format!("page {} placed differently", page + 1));
+        }
+        let runs = |p: &docs_layout::PagedDocument| -> Vec<String> {
+            p.glyph_runs(page)
+                .iter()
+                .map(|r| {
+                    let glyphs: Vec<_> = r
+                        .glyphs
+                        .iter()
+                        .map(|g| (g.id, g.x.to_bits(), g.y.to_bits(), g.cluster.clone()))
+                        .collect();
+                    format!(
+                        "{} {:?} {:?} {} {:?} {:?}",
+                        r.para, r.text_range, r.source, r.font_size, r.color, glyphs
+                    )
+                })
+                .collect()
+        };
+        if runs(pa) != runs(pb) {
+            return Some(format!("page {} glyphs differ", page + 1));
+        }
+        if a.strike_rules(page) != b.strike_rules(page) {
+            return Some(format!("page {} strikes differ", page + 1));
+        }
+        if pa.objects(page) != pb.objects(page) {
+            return Some(format!("page {} objects differ", page + 1));
+        }
+        let furniture = |l: &Layout| -> Vec<String> {
+            l.furniture[page]
+                .iter()
+                .map(|p| {
+                    let texts: Vec<&str> = p.layout.paras.iter().map(|q| q.text.as_str()).collect();
+                    format!("{:?} {} {} {:?} {:?}", p.kind, p.x, p.y, p.note, texts)
+                })
+                .collect()
+        };
+        if furniture(a) != furniture(b) {
+            return Some(format!("page {} header, footer or notes differ", page + 1));
+        }
+        let floats = |l: &Layout| -> Vec<String> {
+            l.floats[page]
+                .iter()
+                .map(|f| format!("{} {} {:?} {:?}", f.para, f.index, f.story, f.rect))
+                .collect()
+        };
+        if floats(a) != floats(b) {
+            return Some(format!("page {} floating objects differ", page + 1));
+        }
+    }
+    None
 }

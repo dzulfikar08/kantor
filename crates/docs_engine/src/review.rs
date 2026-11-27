@@ -20,6 +20,8 @@
 //! edited ones are generated; the part (with its relationship and content
 //! type) is created when a document gets its first comment.
 
+use std::collections::{HashMap, HashSet};
+
 use crate::document::{Document, Kind};
 use crate::fmt_track;
 use crate::model::{OBJECT, Object, Paragraph, Position, Selection, element_name};
@@ -969,7 +971,10 @@ impl Document {
     /// Where each comment points (by comment id), from its range markers or
     /// its reference.
     pub fn comment_anchors(&self) -> Vec<(String, Anchor)> {
-        let mut starts: Vec<(String, Position)> = Vec::new();
+        // By id (the first start of each), and the ids already anchored:
+        // a reviewed document can have thousands of comments.
+        let mut starts: HashMap<String, Position> = HashMap::new();
+        let mut done: HashSet<String> = HashSet::new();
         let mut out: Vec<(String, Anchor)> = Vec::new();
         for (pi, p) in self.paragraphs.iter().enumerate() {
             for (off, o) in p.objects() {
@@ -978,15 +983,15 @@ impl Document {
                 };
                 let pos = Position::new(pi, off);
                 match kind {
-                    "start" => starts.push((id, pos)),
+                    "start" => {
+                        starts.entry(id).or_insert(pos);
+                    }
                     "end" | "ref" => {
-                        if out.iter().any(|(i, _)| *i == id) {
+                        if done.contains(&id) {
                             continue;
                         }
-                        let start = starts
-                            .iter()
-                            .find(|(i, _)| *i == id)
-                            .map_or(pos, |(_, s)| *s);
+                        let start = starts.get(&id).copied().unwrap_or(pos);
+                        done.insert(id.clone());
                         out.push((id, Anchor { start, end: pos }));
                     }
                     _ => {}

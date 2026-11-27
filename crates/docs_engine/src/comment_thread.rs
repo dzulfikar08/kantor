@@ -562,9 +562,26 @@ impl Document {
 
     /// The replies in `root`'s thread, in file order.
     pub fn thread_replies(&self, root: &str) -> Vec<&Comment> {
+        // Parents by id, so finding each comment's root is quick (a
+        // reviewed document can have thousands of comments).
+        let mut parent: std::collections::HashMap<&str, Option<&str>> =
+            std::collections::HashMap::with_capacity(self.comments.len());
+        for c in &self.comments {
+            parent.entry(c.id.as_str()).or_insert(c.parent.as_deref());
+        }
+        let root_of = |id: &str| -> &str {
+            let mut cur = id;
+            for _ in 0..self.comments.len() {
+                match parent.get(cur).copied().flatten() {
+                    Some(p) if parent.contains_key(p) => cur = p,
+                    _ => break,
+                }
+            }
+            cur
+        };
         self.comments
             .iter()
-            .filter(|c| c.id != root && self.thread_root(&c.id).as_deref() == Some(root))
+            .filter(|c| c.id != root && root_of(&c.id) == root)
             .collect()
     }
 

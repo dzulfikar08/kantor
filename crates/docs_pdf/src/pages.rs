@@ -352,6 +352,7 @@ fn body_with_notes(
     sections: &[Section],
     cache: &mut NoteCache,
     layout: &mut LayoutFn,
+    cut: usize,
 ) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
     let marks = Marks {
         refs: refs
@@ -364,7 +365,7 @@ fn body_with_notes(
         codes: doc.field_codes().cloned(),
         merge: doc.merge_view().cloned(),
     };
-    let (mut lps, widths, blocks) = build::build_marked(doc, &marks);
+    let (mut lps, widths, blocks) = build::build_marked_upto(doc, &marks, cut);
     for r in refs.iter().filter(|r| r.kind == NoteKind::Footnote) {
         let Some(i) = doc.note_index(r.kind, &r.id) else {
             continue;
@@ -594,17 +595,52 @@ fn separator(x: f32, y: f32, width: f32) -> RuleRect {
 /// Lay a document out on pages: sections, headers and footers, footnotes
 /// and endnotes.
 pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
+    lay_out_body(doc, layout, None, None).0
+}
+
+/// Called with the body's layout paragraphs and their widths before they
+/// are laid out one by one (to lay them out on several threads first).
+pub(crate) type PreFn<'a> = dyn FnMut(&[docs_layout::Paragraph], &[f32]) + 'a;
+
+/// The body paragraphs as [`lay_out_body`] paginated them: each one's
+/// column width and its layout before pagination.
+pub(crate) struct Body {
+    pub widths: Vec<f32>,
+    pub shaped: Vec<Arc<ParaLayout>>,
+}
+
+/// [`lay_out_with`], and the body paragraphs' widths and layouts. With
+/// `limit`, only about the first `limit` paragraphs are laid out (the
+/// start of a long document, shown while the rest is laid out: the
+/// others get an empty layout and no place on a page). `pre` sees the
+/// body's layout paragraphs first.
+pub(crate) fn lay_out_body(
+    doc: &Document,
+    layout: &mut LayoutFn,
+    limit: Option<usize>,
+    mut pre: Option<&mut PreFn>,
+) -> (Layout, Body) {
     use docs_layout::perf::span;
     let _all = span("docs lay_out_with");
     let t = span("docs sections+refs");
-    let sections = doc.sections();
+    let mut sections = doc.sections();
     let mut refs = doc.note_refs();
+    let cut = limit.map_or(doc.len(), |l| l.min(doc.len()));
+    if cut < doc.len() {
+        // Notes of the paragraphs laid out; no endnotes yet.
+        refs.retain(|r| r.pos.para < cut && r.kind == NoteKind::Footnote);
+        sections.retain(|s| s.paras.start < cut || s.paras.start == 0);
+    }
     drop(t);
     let mut notes_cache: NoteCache = HashMap::new();
     let t = span("docs build body");
     let (mut lps, mut widths, mut blocks) =
-        body_with_notes(doc, &refs, &sections, &mut notes_cache, layout);
+        body_with_notes(doc, &refs, &sections, &mut notes_cache, layout, cut);
     drop(t);
+    if let Some(pre) = pre.as_mut() {
+        let _t = span("docs shape body (threads)");
+        pre(&lps, &widths);
+    }
     let t = span("docs shape body");
     let mut layouts: Vec<Arc<ParaLayout>> = lps
         .iter()
@@ -612,6 +648,12 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         .map(|(p, &w)| layout(p, w))
         .collect();
     drop(t);
+    // Paragraphs not laid out yet: an empty layout each (no lines placed).
+    if layouts.len() < doc.len() {
+        let empty = layout(&docs_layout::Paragraph::new(String::new()), 100.0);
+        layouts.resize(doc.len(), empty);
+        widths.resize(doc.len(), 100.0);
+    }
 
     // Header/footer heights (with placeholder numbers) push the text in.
     let mut heights: HashMap<(usize, u32), f32> = HashMap::new();
@@ -689,12 +731,17 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         if renumbered != refs {
             refs = renumbered;
             (lps, widths, blocks) =
-                body_with_notes(doc, &refs, &sections, &mut notes_cache, layout);
+                body_with_notes(doc, &refs, &sections, &mut notes_cache, layout, cut);
             layouts = lps
                 .iter()
                 .zip(&widths)
                 .map(|(p, &w)| layout(p, w))
                 .collect();
+            if layouts.len() < doc.len() {
+                let empty = layout(&docs_layout::Paragraph::new(String::new()), 100.0);
+                layouts.resize(doc.len(), empty);
+                widths.resize(doc.len(), 100.0);
+            }
             let (gapped, gap_flows) = with_endnotes(
                 doc,
                 &refs,
@@ -704,7 +751,7 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
                 &mut notes_cache,
                 layout,
             );
-            paged = PagedDocument::paginate_sections(&lps, layouts, &gapped, &gap_flows);
+            paged = PagedDocument::paginate_sections(&lps, layouts.clone(), &gapped, &gap_flows);
         }
     }
     let t = span("docs place notes");
@@ -743,6 +790,7 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         on_page.push(range);
     }
     let labels = page_labels(doc, &sections, &paged);
+    let mut style_refs: HashMap<usize, docs_engine::StyleRefs> = HashMap::new();
     let mut furniture = Vec::with_capacity(paged.pages.len());
     for (pi, page) in paged.pages.iter().enumerate() {
         let si = page.section.min(sections.len() - 1);
@@ -767,8 +815,12 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
                 .copied()
                 .unwrap_or(1)
                 .to_string();
-            let refs =
-                docs_engine::style_ref_results(doc, doc.stories()[i].doc.paragraphs(), on_page[pi]);
+            let refs = style_refs
+                .entry(i)
+                .or_insert_with(|| {
+                    docs_engine::StyleRefs::new(doc, doc.stories()[i].doc.paragraphs())
+                })
+                .results(doc, on_page[pi]);
             let l = cache
                 .entry((
                     i,
@@ -807,12 +859,18 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
     let t = span("docs place floats");
     let floats = place_floats(doc, &paged, &furniture, layout);
     drop(t);
-    Layout {
-        paged,
-        furniture,
-        floats,
-        strikes,
-    }
+    (
+        Layout {
+            paged,
+            furniture,
+            floats,
+            strikes,
+        },
+        Body {
+            widths,
+            shaped: layouts,
+        },
+    )
 }
 
 /// Every page's number as its section shows it (format, and the chapter

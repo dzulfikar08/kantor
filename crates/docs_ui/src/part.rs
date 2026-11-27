@@ -210,6 +210,21 @@ impl Laid {
         out
     }
 
+    /// [`Self::selection_rects`] on pages `pages`.
+    pub(crate) fn selection_rects_on(
+        &self,
+        start: (usize, usize),
+        end: (usize, usize),
+        pages: std::ops::Range<usize>,
+    ) -> Vec<(usize, [f32; 4])> {
+        if self.part.is_none() {
+            return self.paged.selection_rects_on(start, end, pages);
+        }
+        let mut out = self.selection_rects(start, end);
+        out.retain(|(page, _)| pages.contains(page));
+        out
+    }
+
     /// Object boxes of the text being edited on `page`.
     pub(crate) fn objects(&self, page: usize) -> Vec<docs_layout::PlacedObject> {
         let Some(pieces) = &self.part else {

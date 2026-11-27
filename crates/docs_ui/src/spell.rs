@@ -39,6 +39,9 @@ pub(crate) struct SpellState {
     in_flight: HashSet<u64>,
     keys: Vec<u64>,
     lang: Option<Lang>,
+    /// The document `keys` are for: revision, paragraph storage, length
+    /// (after a one-paragraph edit only that paragraph is looked at again).
+    seen: Option<(u64, usize, usize)>,
     /// The caret is where the user is typing: don't flag the word it's in
     /// until it moves on (as Word).
     pub typing: bool,
@@ -99,11 +102,30 @@ impl DocsView {
         if st.lang != Some(lang) {
             st.cache.clear();
             st.lang = Some(lang);
+            st.seen = None;
         }
         let n = self.doc.len();
-        let mut keys = Vec::with_capacity(n);
+        let now = (
+            self.doc.revision(),
+            self.doc.paragraphs().as_ptr() as usize,
+            n,
+        );
+        // One paragraph changed since the last time: only it.
+        let one = self.doc.last_splice().and_then(|sp| {
+            (st.seen == Some((now.0.wrapping_sub(1), now.1, n))
+                && st.keys.len() == n
+                && sp.removed == 1
+                && sp.inserted == 1
+                && sp.start < n)
+                .then_some(sp.start)
+        });
+        st.seen = Some(now);
+        let (mut keys, range) = match one {
+            Some(i) => (std::mem::take(&mut st.keys), i..i + 1),
+            None => (vec![0; n], 0..n),
+        };
         let mut jobs = Vec::new();
-        for i in 0..n {
+        for i in range {
             let p = self.doc.paragraph(i);
             let mut h =
                 std::hash::BuildHasher::build_hasher(&foldhash::fast::FixedState::default());
@@ -111,7 +133,7 @@ impl DocsView {
             self.doc.table_style_of(p).hash(&mut h);
             lang.hash(&mut h);
             let key = h.finish();
-            keys.push(key);
+            keys[i] = key;
             if !st.cache.contains_key(&key) && !st.in_flight.contains(&key) {
                 if p.text.trim().is_empty() {
                     st.cache.insert(key, Arc::from([]));
@@ -168,7 +190,13 @@ impl DocsView {
             })
             .detach();
         }
-        self.spell_flags_from_cache();
+        match one {
+            Some(i) if st.flags.len() == n => {
+                let flag = st.cache.get(&st.keys[i]).cloned();
+                Rc::make_mut(&mut st.flags)[i] = flag;
+            }
+            _ => self.spell_flags_from_cache(),
+        }
     }
 
     fn spell_flags_from_cache(&mut self) {

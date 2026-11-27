@@ -23,6 +23,19 @@ use kantor_ui::{metrics::*, tokens};
 
 use crate::DocsView;
 
+/// The body's tracked changes and comment anchors, kept until it changes:
+/// every frame asks for them, and a reviewed long document has thousands.
+#[derive(Default)]
+pub(crate) struct ReviewMemo {
+    /// Revision, paragraph storage, paragraphs and comments of the
+    /// document they're from.
+    key: Option<(u64, usize, usize, usize)>,
+    changes: Option<std::rc::Rc<Vec<docs_engine::Change>>>,
+    anchors: Option<std::rc::Rc<Vec<(String, docs_engine::Anchor)>>>,
+    /// Some change shows as a balloon (formatting, field code edits).
+    balloons: Option<bool>,
+}
+
 /// Width of the markup column, screen px.
 pub(crate) const MARKUP_W: f32 = 264.0;
 /// Card width inside it.
@@ -159,17 +172,80 @@ fn short_date(iso: &str) -> String {
 }
 
 impl DocsView {
+    /// The memo for the body as it is now (`None` while a header, footer
+    /// or note is edited: the view's document is then that part, or the
+    /// part swapped in for a moment).
+    fn memo(&self) -> Option<std::cell::RefMut<'_, ReviewMemo>> {
+        if self.part.is_some() {
+            return None;
+        }
+        let d = &self.doc;
+        let key = (
+            d.revision(),
+            d.paragraphs().as_ptr() as usize,
+            d.len(),
+            d.comments().len(),
+        );
+        let mut m = self.review_memo.borrow_mut();
+        if m.key != Some(key) {
+            *m = ReviewMemo {
+                key: Some(key),
+                ..ReviewMemo::default()
+            };
+        }
+        Some(m)
+    }
+
+    /// The view's document's tracked changes.
+    pub(crate) fn doc_changes(&self) -> std::rc::Rc<Vec<docs_engine::Change>> {
+        match self.memo() {
+            Some(mut m) => m
+                .changes
+                .get_or_insert_with(|| std::rc::Rc::new(self.doc.changes()))
+                .clone(),
+            None => std::rc::Rc::new(self.doc.changes()),
+        }
+    }
+
+    /// The view's document's comment anchors.
+    pub(crate) fn doc_comment_anchors(&self) -> std::rc::Rc<Vec<(String, docs_engine::Anchor)>> {
+        match self.memo() {
+            Some(mut m) => m
+                .anchors
+                .get_or_insert_with(|| std::rc::Rc::new(self.doc.comment_anchors()))
+                .clone(),
+            None => std::rc::Rc::new(self.doc.comment_anchors()),
+        }
+    }
+
     /// Whether the markup column shows (the document has comments or
     /// changes shown in balloons).
     pub(crate) fn markup_visible(&self) -> bool {
-        self.comments_visible
-            && (!self.main_doc().comments().is_empty()
-                || self.comment_edit.is_some()
-                || self.main_doc().changes().iter().any(|c| {
-                    c.kind == docs_engine::RevKind::Format
-                        || (c.kind == docs_engine::RevKind::Insert
-                            && self.main_doc().tracked_field_code(c.start).is_some())
-                }))
+        if !self.comments_visible {
+            return false;
+        }
+        if !self.main_doc().comments().is_empty() || self.comment_edit.is_some() {
+            return true;
+        }
+        let balloons = |doc: &docs_engine::Document, changes: &[docs_engine::Change]| {
+            changes.iter().any(|c| {
+                c.kind == docs_engine::RevKind::Format
+                    || (c.kind == docs_engine::RevKind::Insert
+                        && doc.tracked_field_code(c.start).is_some())
+            })
+        };
+        if self.part.is_some() {
+            let main = self.main_doc();
+            return balloons(main, &main.changes());
+        }
+        if let Some(b) = self.memo().and_then(|m| m.balloons) {
+            return b;
+        }
+        let b = balloons(&self.doc, &self.doc_changes());
+        if let Some(mut m) = self.memo() {
+            m.balloons = Some(b);
+        }
+        b
     }
 
     pub fn toggle_comments_doc(&mut self, cx: &mut Context<Self>) {
@@ -557,16 +633,32 @@ impl DocsView {
     /// Change bars for the visible pages: every line holding a tracked
     /// change, `(page, top, height)`.
     pub(crate) fn change_bars(&self) -> Vec<(usize, f32, f32)> {
-        let changes = self.doc.changes();
+        let changes = self.doc_changes();
         if changes.is_empty() {
             return Vec::new();
         }
         let visible = self.geometry().visible_pages(self.laid.paged.pages.len());
+        // Changes in paragraphs the visible pages show.
+        let shown = if self.laid.editing_part() {
+            Some((0, usize::MAX))
+        } else {
+            self.laid.paged.paras_on(visible.clone())
+        };
+        let Some((lo, hi)) = shown else {
+            return Vec::new();
+        };
         let mut out: Vec<(usize, f32, f32)> = Vec::new();
-        for c in changes {
+        for c in changes
+            .iter()
+            .filter(|c| c.end.para >= lo && c.start.para <= hi)
+        {
             let mut rects: Vec<(usize, f32, f32)> = self
                 .laid
-                .selection_rects((c.start.para, c.start.offset), (c.end.para, c.end.offset))
+                .selection_rects_on(
+                    (c.start.para, c.start.offset),
+                    (c.end.para, c.end.offset),
+                    visible.clone(),
+                )
                 .into_iter()
                 .map(|(p, r)| (p, r[1], r[3]))
                 .collect();
@@ -595,8 +687,15 @@ impl DocsView {
         let visible = g.visible_pages(paged.pages.len());
         let (sa, sb) = self.sel.ordered();
         let mut cards: Vec<(f32, Card, f32)> = Vec::new();
-        let anchors = self.doc.comment_anchors();
-        for (id, a) in &anchors {
+        let anchors = self.doc_comment_anchors();
+        for (id, a) in anchors.iter() {
+            // On a visible page (asked first: there can be thousands).
+            let Some(c) = paged.caret(a.start.para, a.start.offset) else {
+                continue;
+            };
+            if !visible.contains(&c.page) {
+                continue;
+            }
             // Replies show in their thread's card.
             let Some(root) = self.doc.thread_root(id) else {
                 continue;
@@ -605,12 +704,6 @@ impl DocsView {
                 continue;
             }
             let (id, a) = (id.clone(), *a);
-            let Some(c) = paged.caret(a.start.para, a.start.offset) else {
-                continue;
-            };
-            if !visible.contains(&c.page) {
-                continue;
-            }
             let anchor = g.page_to_screen(c.page, c.x, c.top + c.height * 0.85);
             let (pw, _) = g.page_size(c.page);
             let right = g.page_to_screen(c.page, pw, c.top);
@@ -656,23 +749,29 @@ impl DocsView {
         // text's; a header, footer or note being edited shows its changes
         // on the page only).
         let body_changes = if self.part.is_none() {
-            self.doc.changes()
+            self.doc_changes()
         } else {
-            Vec::new()
+            std::rc::Rc::default()
         };
-        for c in body_changes {
-            // A field code edited with Track Changes on: one balloon (on
-            // its insertion; the codes are in the field's start mark).
-            let code = (c.kind == docs_engine::RevKind::Insert)
-                .then(|| self.doc.tracked_field_code(c.start))
-                .flatten();
-            if c.kind != docs_engine::RevKind::Format && code.is_none() {
+        for c in body_changes.iter() {
+            if !matches!(
+                c.kind,
+                docs_engine::RevKind::Format | docs_engine::RevKind::Insert
+            ) {
                 continue;
             }
             let Some(pc) = paged.caret(c.start.para, c.start.offset) else {
                 continue;
             };
             if !visible.contains(&pc.page) {
+                continue;
+            }
+            // A field code edited with Track Changes on: one balloon (on
+            // its insertion; the codes are in the field's start mark).
+            let code = (c.kind == docs_engine::RevKind::Insert)
+                .then(|| self.doc.tracked_field_code(c.start))
+                .flatten();
+            if c.kind != docs_engine::RevKind::Format && code.is_none() {
                 continue;
             }
             let anchor = g.page_to_screen(pc.page, pc.x, pc.top + pc.height * 0.85);
@@ -693,8 +792,8 @@ impl DocsView {
                     at,
                     active,
                     change: Some(ChangeNote {
-                        author: c.author,
-                        date: c.date,
+                        author: c.author.clone(),
+                        date: c.date.clone(),
                         label,
                         start: c.start,
                         end: c.end,

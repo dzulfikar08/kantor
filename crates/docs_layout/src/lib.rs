@@ -3735,6 +3735,45 @@ impl PagedDocument {
     /// `start` to `end` (`(paragraph, byte index)`, in order). A selection
     /// that continues past a paragraph's end gets a small box there, like
     /// Word's selected pilcrow.
+    /// The first and last paragraph with a line on pages `pages`.
+    pub fn paras_on(&self, pages: Range<usize>) -> Option<(usize, usize)> {
+        let n = self.pages.len();
+        let mut span: Option<(usize, usize)> = None;
+        for page in &self.pages[pages.start.min(n)..pages.end.min(n)] {
+            for l in &page.lines {
+                span = Some(match span {
+                    Some((lo, hi)) => (lo.min(l.para), hi.max(l.para)),
+                    None => (l.para, l.para),
+                });
+            }
+        }
+        span
+    }
+
+    /// [`Self::selection_rects`] on pages `pages` only: paragraphs with no
+    /// line there are skipped, so a long selection (or thousands of
+    /// highlighted ranges) costs what the pages show.
+    pub fn selection_rects_on(
+        &self,
+        start: (usize, usize),
+        end: (usize, usize),
+        pages: Range<usize>,
+    ) -> Vec<(usize, [f32; 4])> {
+        let Some((lo, hi)) = self.paras_on(pages.clone()) else {
+            return Vec::new();
+        };
+        if end.0 < lo || start.0 > hi {
+            return Vec::new();
+        }
+        let start = if start.0 < lo { (lo, 0) } else { start };
+        // Past the last paragraph shown: to the start of the next one, so
+        // the last one's paragraph mark is selected as before.
+        let end = if end.0 > hi { (hi + 1, 0) } else { end };
+        let mut out = self.selection_rects(start, end);
+        out.retain(|(page, _)| pages.contains(page));
+        out
+    }
+
     pub fn selection_rects(
         &self,
         start: (usize, usize),
