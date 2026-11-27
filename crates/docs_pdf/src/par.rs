@@ -6,19 +6,23 @@ pub(crate) const MIN_ITEMS: usize = 2048;
 
 /// Threads to use: the machine's, one left for the UI, at most 8.
 pub(crate) fn threads() -> usize {
-    std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
-        .saturating_sub(1)
-        .clamp(1, 8)
+    // Asked once: it reads the cgroup limits (slow next to a small layout).
+    static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *THREADS.get_or_init(|| {
+        std::thread::available_parallelism()
+            .map_or(4, |n| n.get())
+            .saturating_sub(1)
+            .clamp(1, 8)
+    })
 }
 
 /// `f(0)`, `f(1)`, … `f(n - 1)` in order, worked out on several threads
 /// when `n` is large.
 pub(crate) fn map<T: Send>(n: usize, f: &(dyn Fn(usize) -> T + Sync)) -> Vec<T> {
-    let threads = threads();
-    if n < MIN_ITEMS || threads < 2 {
+    if n < MIN_ITEMS || threads() < 2 {
         return (0..n).map(f).collect();
     }
+    let threads = threads();
     let chunk = n.div_ceil(threads);
     std::thread::scope(|s| {
         let parts: Vec<_> = (0..n)
