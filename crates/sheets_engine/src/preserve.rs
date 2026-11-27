@@ -8248,4 +8248,22 @@ mod tests {
         assert!(pkg.get("xl/media/image2.png") == again.get("xl/media/image2.png"));
         assert_eq!(problems_of(&pkg), Vec::<String>::new());
     }
+
+    #[test]
+    fn form_control_macros_are_found() {
+        let sheet = r#"<worksheet><mc:AlternateContent><mc:Choice Requires="x14"><controls><mc:AlternateContent><mc:Choice Requires="x14"><control shapeId="1025" r:id="rId3" name="Button 1"><controlPr defaultSize="0" print="0" autoFill="0" autoPict="0" macro="[0]!Macro1"><anchor/></controlPr></control></mc:Choice></mc:AlternateContent></controls></mc:Choice></mc:AlternateContent></worksheet>"#;
+        let at = super::find_tag(sheet, "control").unwrap();
+        let tag = &sheet[at..at + sheet[at..].find('>').unwrap()];
+        assert_eq!(super::tag_attr(tag, "shapeId").as_deref(), Some("1025"));
+        let pr = super::find_tag(&sheet[at..], "controlPr").unwrap() + at;
+        let tag = &sheet[pr..pr + sheet[pr..].find('>').unwrap()];
+        assert_eq!(super::tag_attr(tag, "macro").as_deref(), Some("[0]!Macro1"));
+        // `controls` isn't `control`; `spid` isn't `id`.
+        assert!(super::find_tag("<controls>", "control").is_none());
+        assert_eq!(
+            super::tag_attr(r#"<v:shape o:spid="_x0000_s1025""#, "id"),
+            None
+        );
+        assert_eq!(super::unescape_xml("a&amp;b &quot;c&quot;"), "a&b \"c\"");
+    }
 }
