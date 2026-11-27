@@ -361,10 +361,7 @@ impl Laid {
         if self.lines.is_empty() {
             return 0;
         }
-        let i = match self
-            .tops
-            .binary_search_by(|t| t.partial_cmp(&y).expect("finite"))
-        {
+        let i = match self.tops.binary_search(&y) {
             Ok(i) => i,
             Err(i) => i.saturating_sub(1),
         };
@@ -458,7 +455,7 @@ pub fn layout(
             tops.push(y);
             y += b.height;
             lines.push(b);
-            for tl in t.lines.start + 1..t.lines.end {
+            for _ in t.lines.start + 1..t.lines.end {
                 tops.push(y);
                 lines.push(Rc::new(LineBox {
                     pad_top: px(0.),
@@ -1063,7 +1060,7 @@ fn leading_ws(buf: &Buffer, r: &Range<usize>) -> usize {
 /// and absolute paths as they are. Web pictures aren't fetched.
 pub fn resolve(dir: Option<&Path>, dest: &str) -> Option<PathBuf> {
     let dest = dest.trim();
-    if dest.is_empty() || dest.contains("://") && !dest.starts_with("file://") {
+    if dest.is_empty() || (dest.contains("://") && !dest.starts_with("file://")) {
         return None;
     }
     let dest = dest.strip_prefix("file://").unwrap_or(dest);

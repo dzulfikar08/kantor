@@ -132,7 +132,7 @@ impl EntityInputHandler for NotesView {
         }
         let target = self.ime_target(range);
         let start = target.start;
-        let select = new_selected_range.map(|r| {
+        let select = new_selected_range.as_ref().map(|r| {
             let a = from_utf16(new_text, r.start);
             let b = from_utf16(new_text, r.end);
             a..b

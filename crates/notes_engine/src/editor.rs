@@ -636,7 +636,7 @@ impl Editor {
     /// (`- `, `1. `, `- [ ] `, `> `), or take it off when they all have it.
     /// A list marker of another kind is replaced.
     pub fn toggle_line_prefix(&mut self, prefix: &str) {
-        #[derive(PartialEq)]
+        #[derive(Clone, Copy, PartialEq)]
         enum Kind {
             Quote,
             Bullet,
@@ -667,9 +667,7 @@ impl Editor {
             if want == Kind::Quote {
                 !p.quote.is_empty()
             } else {
-                kind_of(&p) == Some(Kind::Bullet) && want == Kind::Bullet
-                    || kind_of(&p) == Some(Kind::Number) && want == Kind::Number
-                    || kind_of(&p) == Some(Kind::Task) && want == Kind::Task
+                kind_of(&p) == Some(want)
             }
         };
         let targets: Vec<usize> = lines
