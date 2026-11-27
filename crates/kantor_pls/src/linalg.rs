@@ -79,6 +79,7 @@ impl Mat {
         m
     }
 
+    #[cfg(test)]
     pub fn sub(&self, o: &Mat) -> Mat {
         Mat {
             rows: self.rows,

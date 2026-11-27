@@ -19,8 +19,6 @@ pub(crate) struct Core {
     /// p × k correlations of indicators with construct scores
     /// (cross-loadings).
     pub sw: Mat,
-    /// k × k correlations of the construct scores.
-    pub c: Mat,
     /// Dijkstra–Henseler's rho_A per construct (1 for single indicators).
     pub rho_a: Vec<f64>,
     /// The construct correlations the structural model uses: corrected
@@ -53,7 +51,7 @@ fn normalize(s: &Mat, spec: &Spec, w: &mut [f64]) -> Result<(), Error> {
                 v += w[a] * s[(a, c)] * w[c];
             }
         }
-        if !(v > 1e-300) || !v.is_finite() {
+        if v.is_nan() || v <= 1e-300 || !v.is_finite() {
             return Err(Error::Estimation(format!(
                 "the weights of {} vanished",
                 spec.names[j]
@@ -219,7 +217,7 @@ pub(crate) fn finish(
     let mut q = vec![1.0; k];
     for j in 0..k {
         if consistent(j) {
-            if !(rho[j] > 0.0) || !chat[j].is_finite() {
+            if rho[j].is_nan() || rho[j] <= 0.0 || !chat[j].is_finite() {
                 return Err(Error::Estimation(format!(
                     "rho_A of {} is not positive, so PLSc can't correct it",
                     spec.names[j]
@@ -269,7 +267,6 @@ pub(crate) fn finish(
         iterations,
         converged,
         sw,
-        c,
         rho_a: rho,
         cc,
         loadings,

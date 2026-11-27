@@ -451,6 +451,7 @@ pub fn short_args(name: &str, args: &Value) -> String {
     let text = match name {
         "build" => arrow(s("source"), s("output")),
         "convert" => arrow(s("input"), s("output")),
+        "pls" => arrow(s("data"), s("report").or_else(|| s("workbook"))),
         "edit" => {
             let ops = args
                 .get("ops")

@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kantor.paparanai.id/schema/pls-model.json",
+  "title": "Kantor PLS-SEM model",
+  "description": "A PLS-SEM path model for `kantor pls` and the MCP tool `pls_run` (docs/pls-json.md).",
+  "type": "object",
+  "required": ["constructs", "paths"],
+  "additionalProperties": false,
+  "properties": {
+    "constructs": {
+      "type": "array",
+      "minItems": 2,
+      "items": {"$ref": "#/$defs/construct"}
+    },
+    "paths": {
+      "description": "Structural paths: [from, to] pairs, or {from, to} objects whose from and to may be lists (every from to every to). The model must be recursive (no cycles).",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {"type": "array", "prefixItems": [{"type": "string"}, {"type": "string"}], "minItems": 2, "maxItems": 2},
+          {
+            "type": "object",
+            "required": ["from", "to"],
+            "additionalProperties": false,
+            "properties": {
+              "from": {"$ref": "#/$defs/names"},
+              "to": {"$ref": "#/$defs/names"}
+            }
+          }
+        ]
+      }
+    },
+    "options": {"$ref": "#/$defs/options"}
+  },
+  "$defs": {
+    "names": {
+      "oneOf": [
+        {"type": "string"},
+        {"type": "array", "items": {"type": "string"}, "minItems": 1}
+      ]
+    },
+    "construct": {
+      "type": "object",
+      "required": ["name", "indicators"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "indicators": {
+          "description": "Column names of the data (matched exactly, then ignoring case and outer spaces).",
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 1
+        },
+        "type": {
+          "description": "reflective (default; a common factor, Mode A, corrected by PLSc) or composite (alias formative; Mode B unless weights says otherwise).",
+          "enum": ["reflective", "composite", "formative"]
+        },
+        "weights": {
+          "description": "Outer weighting: mode_a (correlation weights) or mode_b (regression weights). Default: mode_a for reflective, mode_b for composite constructs.",
+          "enum": ["mode_a", "mode_b"]
+        },
+        "dimensions": {
+          "description": "Reserved for higher-order constructs (not estimated yet).",
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "higher_order": {
+          "description": "Reserved for higher-order constructs (not estimated yet).",
+          "enum": ["repeated_indicators", "two_stage"]
+        }
+      }
+    },
+    "options": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {"enum": ["pls", "plsc"], "default": "pls"},
+        "weighting": {"enum": ["path", "centroid", "factorial"], "default": "path"},
+        "max_iterations": {"type": "integer", "minimum": 1, "default": 300},
+        "stop": {"type": "number", "exclusiveMinimum": 0, "default": 1e-7},
+        "missing": {"enum": ["listwise", "mean"], "default": "listwise"},
+        "missing_value": {"type": "number", "description": "A number that means missing, e.g. -99."},
+        "bootstrap": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "samples": {"type": "integer", "minimum": 0, "default": 5000},
+            "seed": {"type": "integer", "minimum": 0, "default": 1},
+            "alpha": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1, "default": 0.05},
+            "bca": {"type": "boolean", "default": true},
+            "sign_changes": {"enum": ["none", "construct", "individual"], "default": "none"}
+          }
+        }
+      }
+    }
+  }
+}

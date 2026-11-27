@@ -13,6 +13,7 @@ pub mod docs_look;
 pub mod docs_pkg;
 pub mod docs_schema;
 pub mod notes_convert;
+pub mod pls;
 pub mod sheets;
 pub mod sheets_author;
 pub mod sheets_chart;

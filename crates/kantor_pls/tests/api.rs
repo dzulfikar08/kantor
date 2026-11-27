@@ -82,7 +82,7 @@ fn errors_name_the_problem() {
     let e = estimate(&d, &m, &Options::default())
         .unwrap_err()
         .to_string();
-    assert!(e.contains("cycle"), "{e}");
+    assert!(e.contains("non-recursive"), "{e}");
     let mut m = mediation();
     m.constructs[0].indicators.push("nope".into());
     let e = estimate(&d, &m, &Options::default())

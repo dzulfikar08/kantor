@@ -147,7 +147,7 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
     // Constant indicators.
     let (_, sd) = data::mean_sd(&x, p);
     for (i, s) in sd.iter().enumerate() {
-        if !(*s > 0.0) {
+        if s.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             let mut f = finding(
                 Level::Error,
                 "constant_indicator",

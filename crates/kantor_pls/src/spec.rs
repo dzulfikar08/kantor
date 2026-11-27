@@ -18,7 +18,6 @@ pub(crate) struct Spec {
     pub measurement: Vec<Measurement>,
     pub mode_b: Vec<bool>,
     pub preds: Vec<Vec<usize>>,
-    pub succs: Vec<Vec<usize>>,
     /// Paths in the model's order.
     pub paths: Vec<(usize, usize)>,
     /// Constructs with no predecessors first, then the rest in causal order.
@@ -187,7 +186,6 @@ impl Spec {
             measurement,
             mode_b,
             preds,
-            succs,
             paths,
             order,
             chains,

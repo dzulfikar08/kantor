@@ -174,7 +174,7 @@ impl Moments {
     /// (`None`: once). Centre `x` first (on the sample means): the
     /// correlations then lose no precision to cancellation.
     pub fn of(x: &[f64], p: usize, count: Option<&[u32]>) -> Self {
-        let n = if p == 0 { 0 } else { x.len() / p };
+        let n = x.len().checked_div(p).unwrap_or(0);
         let mut m = Moments {
             n: 0.0,
             sum: vec![0.0; p],
@@ -286,7 +286,7 @@ pub(crate) fn correlation_two_pass(x: &[f64], p: usize) -> Option<crate::linalg:
         }
     }
     let sd: Vec<f64> = (0..p).map(|i| cov[(i, i)].sqrt()).collect();
-    if sd.iter().any(|s| !(*s > 0.0) || !s.is_finite()) {
+    if sd.iter().any(|s| s.is_nan() || *s <= 0.0 || !s.is_finite()) {
         return None;
     }
     let mut c = crate::linalg::Mat::identity(p);

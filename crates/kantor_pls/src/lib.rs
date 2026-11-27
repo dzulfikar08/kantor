@@ -2,18 +2,18 @@
 //! SmartPLS does, as a pure Rust library (no UI, no file I/O, so it builds
 //! for WASM too).
 //!
-//! - [`Data`]: an n × p table with column names; missing values are NaN
+//! - [`Data`][]: an n × p table with column names; missing values are NaN
 //!   (or a code such as -99) and are deleted listwise or replaced by means.
-//! - [`Model`]: constructs (reflective or composite, Mode A or B weights)
+//! - [`Model`][]: constructs (reflective or composite, Mode A or B weights)
 //!   with their indicators, and the structural paths.
-//! - [`estimate`]: the PLS path algorithm (path, centroid or factorial
+//! - [`estimate`][]: the PLS path algorithm (path, centroid or factorial
 //!   weighting) or consistent PLS (PLSc), then outer loadings and weights,
 //!   reliability (alpha, rho_A, rho_C, AVE), discriminant validity
 //!   (Fornell–Larcker, HTMT, HTMT2, cross-loadings), VIFs, path
 //!   coefficients, R², f², indirect and total effects, model fit (SRMR,
 //!   d_ULS, d_G, chi², NFI) and, when asked, bootstrap standard errors,
 //!   t and p values and percentile/BCa confidence intervals.
-//! - [`check`]: the model against the data before estimating.
+//! - [`check`][]: the model against the data before estimating.
 //!
 //! docs/pls-json.md describes the model and results JSON;
 //! docs/decisions/0006-pls-sem.md the choices behind them.
@@ -109,7 +109,7 @@ fn prepare(data: &Data, spec: &Spec, opts: &Options) -> Result<Prepared, Error> 
     };
     let (mean, sd) = data::mean_sd(&x, p);
     for (i, s) in sd.iter().enumerate() {
-        if !(*s > 0.0) || !s.is_finite() {
+        if s.is_nan() || *s <= 0.0 || !s.is_finite() {
             return Err(Error::Data(format!(
                 "indicator {} has the same value in every row",
                 spec.ind_names[i]
