@@ -9,6 +9,30 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.27.0] - 2026-11-27
+
+### Added
+
+- Sheets runs VBA macros. A workbook with macros opens with them off and a bar says so; **Enable Content**
+  turns them on for that window. **Macros** (View ▸ Macros…, Alt+F8) lists them with their code, and **Run**
+  runs one: `Range`, `Cells`, `Worksheets`, `Offset`, `End(xlUp)`, copy and paste, Find/Replace, Sort,
+  AutoFilter, formatting and `WorksheetFunction` work, a whole run undoes with one Undo, MsgBox and InputBox are
+  real dialogs, a long run can be stopped, and an error shows Excel's "Run-time error" message with the line.
+  Buttons and shapes with a macro assigned run it on click, and VBA functions used in cells (`=MyTax(A2)`)
+  calculate while macros are on (`#NAME?` while off, as in Excel). Not yet: events such as `Workbook_Open`,
+  UserForms, other workbooks.
+- `kantor sheets macros FILE` lists a workbook's macros and prints their code; `kantor sheets macros run FILE
+  --macro NAME --out OUT.xlsm` runs one. The MCP `sheets_macros` and Paparan AI `macros` tools read macros
+  but never run them.
+- Cloud: OneDrive and Google Drive accounts, Save to Cloud, and cloud autosave.
+
+### Fixed
+
+- REGEXTEST, REGEXEXTRACT and REGEXREPLACE take Excel's optional arguments (`case_sensitivity`,
+  `return_mode`, `occurrence`), accept lookahead, lookbehind and backreferences, and work over ranges, so
+  `FILTER(A:A, REGEXTEST(A:A, "^INV-"))` works. REGEXEXTRACT's default mode gives the whole match, as Excel does.
+- Formulas calling a function Kantor doesn't know keep the name's case (`=MyTax` no longer becomes `=mytax`).
+
 ## [0.26.2] - 2026-11-27
 
 ### Fixed
@@ -2548,7 +2572,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.26.2...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.27.0...HEAD
+[0.27.0]: https://github.com/dzulfikar08/kantor/compare/v0.26.2...v0.27.0
 [0.26.2]: https://github.com/dzulfikar08/kantor/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/dzulfikar08/kantor/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/dzulfikar08/kantor/compare/v0.25.2...v0.26.0
