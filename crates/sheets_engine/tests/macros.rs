@@ -37,6 +37,11 @@ const VBA: &[u8] = b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1synthetic vba project for a
 /// A synthetic `.xlsm`: a Kantor-saved workbook with a VBA project added
 /// the way Excel stores one.
 fn xlsm(path: &Path) {
+    xlsm_with(path, VBA);
+}
+
+/// [`xlsm`] with the project `vba`.
+fn xlsm_with(path: &Path, vba: &[u8]) {
     let plain = path.with_extension("plain.xlsx");
     let mut wb = Workbook::new_empty().unwrap();
     wb.set_input(0, 0, 0, "Total").unwrap();
@@ -66,7 +71,7 @@ fn xlsm(path: &Path) {
         &workbook[at..]
     );
     parts.insert("xl/workbook.xml".into(), workbook.into_bytes());
-    parts.insert("xl/vbaProject.bin".into(), VBA.to_vec());
+    parts.insert("xl/vbaProject.bin".into(), vba.to_vec());
 
     let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default();
@@ -182,4 +187,54 @@ fn parts_of(path: &Path) -> BTreeMap<String, Vec<u8>> {
 
 fn parts_has_vba(path: &Path) -> bool {
     parts(path).keys().any(|k| k.contains("vbaProject"))
+}
+
+/// A real (synthesised) project is read from the workbook; it is the one
+/// a save keeps.
+#[test]
+fn reads_the_vba_project() {
+    use sheets_engine::vba::ModuleKind;
+    let vba = sheets_engine::vba::synth::Builder::new(1252)
+        .module(
+            "Module1",
+            ModuleKind::Standard,
+            "Sub Totals()\n    Range(\"B1\").Value = 3\nEnd Sub\n",
+        )
+        .module("ThisWorkbook", ModuleKind::Document, "")
+        .with_caches()
+        .build()
+        .unwrap();
+    let path = scratch("real.xlsm");
+    xlsm_with(&path, &vba);
+    let mut wb = Workbook::open(&path).unwrap();
+    let project = wb.vba_project().unwrap().unwrap();
+    let names: Vec<_> = project.modules().iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["Module1", "ThisWorkbook"]);
+    let procs = project.module("Module1").unwrap().procedures();
+    assert_eq!(procs[0].name, "Totals");
+
+    // Saved back: byte for byte, and still read.
+    wb.set_input(0, 1, 0, "edited").unwrap();
+    wb.save().unwrap();
+    assert_eq!(parts(&path)["xl/vbaProject.bin"], vba);
+    assert!(wb.vba_project().unwrap().is_ok());
+
+    // Saved as .xlsx: no project any more.
+    wb.save_as(&scratch("real.xlsx")).unwrap();
+    assert!(wb.vba_project().is_none());
+}
+
+/// A project Kantor can't read: the workbook opens and saves as before.
+#[test]
+fn unreadable_vba_project_still_opens() {
+    let path = scratch("junk.xlsm");
+    xlsm(&path);
+    let mut wb = Workbook::open(&path).unwrap();
+    assert!(wb.has_macros());
+    assert!(matches!(wb.vba_project(), Some(Err(_))));
+    wb.set_input(0, 1, 0, "edited").unwrap();
+    wb.save().unwrap();
+    assert_has_macros(&path);
+    // A workbook without macros has no project.
+    assert!(Workbook::new_empty().unwrap().vba_project().is_none());
 }
