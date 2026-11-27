@@ -919,12 +919,17 @@ impl DocsView {
             self.refresh_merge_view();
         }
         self.relayout();
+        let t = docs_layout::perf::span("docs find after edit");
         self.refresh_find(cx);
+        drop(t);
+        let t = docs_layout::perf::span("docs spelling after edit");
         self.refresh_spelling(cx);
+        drop(t);
         self.spell.typing = true;
         self.reveal_caret.set(true);
         self.status = SharedString::default();
         if self.title(cx) != was_dirty_title {
+            let _t = docs_layout::perf::span("docs title after edit");
             self.update_title(window, cx);
         }
         cx.notify();
@@ -1398,6 +1403,24 @@ impl DocsView {
     pub fn recovery_bytes(&self, _: &App) -> (anyhow::Result<Vec<u8>>, Vec<String>) {
         let doc = self.whole_doc();
         (doc.to_docx_bytes(), doc.unsupported_content().to_vec())
+    }
+
+    /// [`Self::recovery_bytes`] made later, away from the UI thread: a
+    /// copy of the document now, written as `.docx` by the closure (a long
+    /// document takes a second or more to write).
+    #[allow(clippy::type_complexity)]
+    pub fn recovery_build(
+        &self,
+        _: &App,
+    ) -> (
+        Box<dyn FnOnce() -> anyhow::Result<Vec<u8>> + Send>,
+        Vec<String>,
+    ) {
+        let t = docs_layout::perf::span("docs recovery copy of the document");
+        let doc = self.whole_doc().into_owned();
+        drop(t);
+        let unsupported = doc.unsupported_content().to_vec();
+        (Box::new(move || doc.to_docx_bytes()), unsupported)
     }
 
     /// Whether autosave may save it: it has a file it can be saved to
@@ -2796,6 +2819,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
 
 impl Render for DocsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _render = docs_layout::perf::span("docs render");
         self.perf_bench_step(window);
         let t = tokens(cx);
         if self.reveal_caret.get() && self.viewport.get().size.height > px(0.) {
@@ -2950,7 +2974,9 @@ impl Render for DocsView {
                 }
             },
             move |bounds, _, window, cx| {
+                let t = docs_layout::perf::span("docs paint");
                 paint_frame(&frame, bounds, window, cx);
+                drop(t);
                 if let Some(p) = &perf {
                     p.painted(frame.laid.paged.pages.len());
                 }

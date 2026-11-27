@@ -209,9 +209,11 @@ impl DocView {
                 ))
             }
             Self::Docs(e) => {
-                let (bytes, unsupported) = e.read(cx).recovery_bytes(cx);
+                // Written as .docx in the background (seconds for a long
+                // document).
+                let (build, unsupported) = e.read(cx).recovery_build(cx);
                 Some((
-                    Snapshot::Bytes(bytes),
+                    Snapshot::Build(build),
                     SnapshotInfo {
                         original: self.path(cx),
                         source_format: None,

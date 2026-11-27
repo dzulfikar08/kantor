@@ -750,6 +750,7 @@ pub(crate) fn lay_out_body(
     }
 
     // Header/footer heights (with placeholder numbers) push the text in.
+    let t = span("docs sections setup");
     let mut heights: HashMap<(usize, u32), f32> = HashMap::new();
     let mut height_of = |story: Option<usize>, width: f32, layout: &mut LayoutFn| -> f32 {
         let Some(i) = story else { return 0.0 };
@@ -802,6 +803,8 @@ pub(crate) fn lay_out_body(
         });
         stories.push(st);
     }
+    drop(t);
+    let t = span("docs endnotes");
     let (mut gapped, mut gap_flows) = with_endnotes(
         doc,
         &refs,
@@ -811,6 +814,7 @@ pub(crate) fn lay_out_body(
         &mut notes_cache,
         layout,
     );
+    drop(t);
     let t = span("docs paginate");
     // After an edit: the pages after it that come out the same are taken
     // from the last layout (see docs_layout::Reuse).
@@ -931,7 +935,9 @@ pub(crate) fn lay_out_body(
         last_para = range.1;
         on_page.push(range);
     }
+    let t2 = span("docs page labels");
     let labels = page_labels(doc, &sections, &paged);
+    drop(t2);
     let mut style_refs: HashMap<usize, docs_engine::StyleRefs> = HashMap::new();
     let mut furniture = Vec::with_capacity(paged.pages.len());
     for (pi, page) in paged.pages.iter().enumerate() {

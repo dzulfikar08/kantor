@@ -24,6 +24,7 @@ def main():
     lines = open(sys.argv[1], errors="replace").read().splitlines()
     step = "start"
     steps = defaultdict(list)
+    busy = defaultdict(list)
     order = []
     phases = defaultdict(list)
     for l in lines:
@@ -35,14 +36,22 @@ def main():
             continue
         m = re.match(r"\[docs\] input (.*)→paint\s+([\d.]+) ms", l)
         if m:
-            if step not in steps:
+            if step not in order:
                 order.append(step)
             steps[step].append(float(m.group(2)))
+        m = re.match(r"\[perf\] UI thread busy\s+([\d.]+) ms", l)
+        if m:
+            if step not in order:
+                order.append(step)
+            busy[step].append(float(m.group(1)))
         m = re.match(r"\[perf\] (.*?)\s+([\d.]+) ms", l)
         if m:
             phases[m.group(1).strip()].append(float(m.group(2)))
     for s in order:
-        print(f"{s:12} {pct(steps[s])}")
+        lat = pct(steps[s]) if steps[s] else "no input timed"
+        b = busy[s]
+        stall = f"  | UI busy ≥100 ms: {len(b)}×, max {max(b):.0f} ms" if b else ""
+        print(f"{s:12} {lat}{stall}")
     print("phases (mean ms, count):")
     for k, v in sorted(phases.items(), key=lambda kv: -sum(kv[1]) / len(kv[1]))[:16]:
         print(f"  {k:32} {sum(v) / len(v):8.1f}  x{len(v)}")
