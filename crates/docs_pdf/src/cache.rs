@@ -198,23 +198,9 @@ impl LayoutCache {
         engine: &mut Engine,
         limit: Option<usize>,
     ) -> (Layout, Body) {
-        let mut fresh = HashMap::with_capacity(self.paras.len());
-        let old = &self.paras;
-        let laid = crate::pages::lay_out_body(
-            doc,
-            &mut |p, width| {
-                let key = layout_key(p, width);
-                let layout = match old.get(&key).or_else(|| fresh.get(&key)) {
-                    Some(l) => l.clone(),
-                    None => Arc::new(engine.layout_paragraph(p, width)),
-                };
-                fresh.insert(key, layout.clone());
-                layout
-            },
-            limit,
-            None,
-        );
-        self.paras = fresh;
+        let fresh = RefCell::new(HashMap::with_capacity(self.paras.len()));
+        let laid = lay_out_shared(doc, &self.paras, &fresh, engine, limit);
+        self.paras = fresh.into_inner();
         laid
     }
 
@@ -322,51 +308,130 @@ impl Background {
     }
 }
 
-/// Lay `doc` out (all of it) with its body paragraphs shaped on `threads`
-/// threads first, each with a clone of `fonts` (give it a shared source
-/// cache, `SourceCache::make_shared`, so every thread uses the font files
-/// the view already loaded). For a long document opened in the view: run
-/// it in the background, show [`LayoutCache::relayout_prefix`] meanwhile.
-pub fn lay_out_parallel(doc: &Document, fonts: &FontContext, threads: usize) -> Background {
+/// Lay `doc` out (all of it) on other threads than the caller's: give
+/// it a clone of the view engine's fonts with a shared source cache
+/// (`SourceCache::make_shared`), so every thread uses the font files the
+/// view already loaded. For a long document opened in the view: run it in
+/// the background, show [`LayoutCache::relayout_prefix`] meanwhile.
+pub fn lay_out_parallel(doc: &Document, fonts: &FontContext) -> Background {
     let mut engine = Engine::with_fonts(fonts.clone());
-    let map: RefCell<HashMap<u64, Arc<ParaLayout>>> = RefCell::default();
-    let mut pre = |lps: &[docs_layout::Paragraph], widths: &[f32]| {
-        let shaped = shape_parallel(fonts, lps, widths, threads);
-        map.borrow_mut().extend(shaped);
-    };
-    let (laid, body) = crate::pages::lay_out_body(
-        doc,
-        &mut |p, width| {
-            let key = layout_key(p, width);
-            if let Some(l) = map.borrow().get(&key) {
-                return l.clone();
-            }
-            let l = Arc::new(engine.layout_paragraph(p, width));
-            map.borrow_mut().insert(key, l.clone());
-            l
-        },
-        None,
-        Some(&mut pre as &mut crate::pages::PreFn<'_>),
-    );
+    let fresh = RefCell::new(HashMap::new());
+    let (laid, body) = lay_out_shared(doc, &HashMap::new(), &fresh, &mut engine, None);
     Background {
         laid,
         body,
-        paras: map.into_inner(),
+        paras: fresh.into_inner(),
         revision: doc.revision(),
         style_refs: style_refs(doc),
     }
 }
 
-/// Shape `lps` (at `widths`) on `threads` threads, by [`layout_key`].
+type Shaped = HashMap<u64, Arc<ParaLayout>>;
+
+/// A layout of `doc` taking paragraph layouts from `old` (and `fresh`),
+/// keeping every one it uses in `fresh`. The body's paragraphs are keyed
+/// and those not laid out yet shaped on several threads.
+fn lay_out_shared(
+    doc: &Document,
+    old: &Shaped,
+    fresh: &RefCell<Shaped>,
+    engine: &mut Engine,
+    limit: Option<usize>,
+) -> (Layout, Body) {
+    let engine = RefCell::new(engine);
+    let mut one = |p: &docs_layout::Paragraph, width: f32| {
+        let key = layout_key(p, width);
+        let hit = old
+            .get(&key)
+            .cloned()
+            .or_else(|| fresh.borrow().get(&key).cloned());
+        if let Some(l) = hit {
+            fresh.borrow_mut().insert(key, l.clone());
+            return l;
+        }
+        let l = Arc::new(engine.borrow_mut().layout_paragraph(p, width));
+        fresh.borrow_mut().insert(key, l.clone());
+        l
+    };
+    let mut batch = |lps: &[docs_layout::Paragraph], widths: &[f32]| {
+        shape_body(lps, widths, old, fresh, &mut engine.borrow_mut())
+    };
+    crate::pages::lay_out_body(
+        doc,
+        &mut one,
+        limit,
+        Some(&mut batch as &mut crate::pages::BatchFn<'_>),
+    )
+}
+
+/// The layouts of body paragraphs `lps` at `widths`: keys hashed on
+/// several threads, layouts from `old` or `fresh`, the missing ones shaped
+/// on several threads (on `engine` when there are only a few).
+fn shape_body(
+    lps: &[docs_layout::Paragraph],
+    widths: &[f32],
+    old: &Shaped,
+    fresh: &RefCell<Shaped>,
+    engine: &mut Engine,
+) -> Vec<Arc<ParaLayout>> {
+    let width = |k: usize| widths.get(k).copied().unwrap_or(100.0);
+    let keys = crate::par::map(lps.len(), &|k| layout_key(&lps[k], width(k)));
+    let mut missing = Vec::new();
+    {
+        let have = fresh.borrow();
+        let mut seen = std::collections::HashSet::new();
+        for (k, key) in keys.iter().enumerate() {
+            if !old.contains_key(key) && !have.contains_key(key) && seen.insert(*key) {
+                missing.push(k);
+            }
+        }
+    }
+    let threads = crate::par::threads();
+    if missing.len() >= 64 && threads > 1 {
+        let _t = docs_layout::perf::span("docs shape (threads)");
+        engine.fonts.source_cache.make_shared();
+        let fonts = engine.fonts.clone();
+        let shaped = shape_parallel(&fonts, lps, &missing, &width, threads);
+        fresh
+            .borrow_mut()
+            .extend(missing.iter().map(|&k| keys[k]).zip(shaped));
+    } else {
+        let mut have = fresh.borrow_mut();
+        for &k in &missing {
+            have.insert(
+                keys[k],
+                Arc::new(engine.layout_paragraph(&lps[k], width(k))),
+            );
+        }
+    }
+    let mut have = fresh.borrow_mut();
+    keys.iter()
+        .zip(lps)
+        .enumerate()
+        .map(|(k, (key, p))| {
+            let l = match old.get(key).or_else(|| have.get(key)) {
+                Some(l) => l.clone(),
+                // Shaping failed on its thread: here.
+                None => Arc::new(engine.layout_paragraph(p, width(k))),
+            };
+            have.insert(*key, l.clone());
+            l
+        })
+        .collect()
+}
+
+/// Paragraphs `which` of `lps` shaped on `threads` threads (each with a
+/// clone of `fonts`), in the order of `which`.
 fn shape_parallel(
     fonts: &FontContext,
     lps: &[docs_layout::Paragraph],
-    widths: &[f32],
+    which: &[usize],
+    width: &(dyn Fn(usize) -> f32 + Sync),
     threads: usize,
-) -> Vec<(u64, Arc<ParaLayout>)> {
-    const BATCH: usize = 32;
+) -> Vec<Arc<ParaLayout>> {
+    const BATCH: usize = 16;
     let next = AtomicUsize::new(0);
-    std::thread::scope(|s| {
+    let mut out: Vec<(usize, Arc<ParaLayout>)> = std::thread::scope(|s| {
         let workers: Vec<_> = (0..threads.max(1))
             .map(|_| {
                 let fonts = fonts.clone();
@@ -376,13 +441,11 @@ fn shape_parallel(
                     let mut out = Vec::new();
                     loop {
                         let start = next.fetch_add(BATCH, Ordering::Relaxed);
-                        if start >= lps.len() {
+                        if start >= which.len() {
                             break;
                         }
-                        for (k, p) in lps.iter().enumerate().skip(start).take(BATCH) {
-                            let w = widths.get(k).copied().unwrap_or(100.0);
-                            let key = layout_key(p, w);
-                            out.push((key, Arc::new(engine.layout_paragraph(p, w))));
+                        for (j, &k) in which.iter().enumerate().skip(start).take(BATCH) {
+                            out.push((j, Arc::new(engine.layout_paragraph(&lps[k], width(k)))));
                         }
                     }
                     out
@@ -393,7 +456,14 @@ fn shape_parallel(
             .into_iter()
             .flat_map(|w| w.join().unwrap_or_default())
             .collect()
-    })
+    });
+    out.sort_by_key(|(j, _)| *j);
+    // A worker that panicked left its paragraphs out: none for them (the
+    // caller shapes them itself).
+    if out.len() != which.len() {
+        return Vec::new();
+    }
+    out.into_iter().map(|(_, l)| l).collect()
 }
 
 /// A paragraph whose text changes can't move anything but its own lines:

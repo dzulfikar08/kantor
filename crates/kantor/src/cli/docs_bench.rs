@@ -69,16 +69,12 @@ pub fn run(file: &Path, keys: usize, verify: bool) -> Result<()> {
         ms(t),
         first.paged.pages.len()
     );
-    let threads = std::thread::available_parallelism()
-        .map_or(4, |n| n.get())
-        .saturating_sub(1)
-        .clamp(1, 8);
     engine.fonts.source_cache.make_shared();
     let fonts = engine.fonts.clone();
     let t = Instant::now();
-    let bg = docs_pdf::cache::lay_out_parallel(&doc, &fonts, threads);
+    let bg = docs_pdf::cache::lay_out_parallel(&doc, &fonts);
     println!(
-        "whole layout on {threads} threads: {:.1} ms, {} pages",
+        "whole layout on several threads: {:.1} ms, {} pages",
         ms(t),
         bg.pages()
     );
@@ -90,7 +86,8 @@ pub fn run(file: &Path, keys: usize, verify: bool) -> Result<()> {
         ("middle page", pages / 2),
         ("last page", pages.saturating_sub(1)),
     ] {
-        let Some(mut at) = (page..pages).find_map(|p| spot(&doc, &laid, p)) else {
+        // That page, else the nearest before it with text.
+        let Some(mut at) = (0..=page).rev().find_map(|p| spot(&doc, &laid, p)) else {
             println!("typing on {name}: no text there");
             continue;
         };

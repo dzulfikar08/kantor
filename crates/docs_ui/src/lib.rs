@@ -723,13 +723,9 @@ impl DocsView {
             engine.fonts.source_cache.make_shared();
             engine.fonts.clone()
         };
-        let threads = std::thread::available_parallelism()
-            .map_or(4, |n| n.get())
-            .saturating_sub(1)
-            .clamp(1, 8);
         let task = cx.background_spawn(async move {
             let _t = docs_layout::perf::span("docs background layout");
-            docs_pdf::cache::lay_out_parallel(&doc, &fonts, threads)
+            docs_pdf::cache::lay_out_parallel(&doc, &fonts)
         });
         self.bg_layout = Some(cx.spawn(async move |this, cx| {
             let bg = task.await;

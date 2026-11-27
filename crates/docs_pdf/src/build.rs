@@ -892,14 +892,11 @@ pub fn build_with(
             }
         }
     }
-    let mut out: Vec<docs_layout::Paragraph> = paras
-        .iter()
-        .enumerate()
-        .map(|(k, p)| {
-            let marker = markers.get(k).and_then(|m| m.as_deref());
-            layout_paragraph(doc, p, marker, widths[k], marks)
-        })
-        .collect();
+    // On several threads for a long document.
+    let mut out: Vec<docs_layout::Paragraph> = crate::par::map(paras.len(), &|k| {
+        let marker = markers.get(k).and_then(|m| m.as_deref());
+        layout_paragraph(doc, &paras[k], marker, widths[k], marks)
+    });
     if let Some(values) = &marks.merge {
         show_merge_values(paras, &mut out, values, marks.codes.as_deref());
     }

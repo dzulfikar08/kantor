@@ -598,9 +598,10 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
     lay_out_body(doc, layout, None, None).0
 }
 
-/// Called with the body's layout paragraphs and their widths before they
-/// are laid out one by one (to lay them out on several threads first).
-pub(crate) type PreFn<'a> = dyn FnMut(&[docs_layout::Paragraph], &[f32]) + 'a;
+/// Lays out the body's layout paragraphs at their widths all at once (on
+/// several threads, say) instead of one by one.
+pub(crate) type BatchFn<'a> =
+    dyn FnMut(&[docs_layout::Paragraph], &[f32]) -> Vec<Arc<ParaLayout>> + 'a;
 
 /// The body paragraphs as [`lay_out_body`] paginated them: each one's
 /// column width and its layout before pagination.
@@ -612,13 +613,13 @@ pub(crate) struct Body {
 /// [`lay_out_with`], and the body paragraphs' widths and layouts. With
 /// `limit`, only about the first `limit` paragraphs are laid out (the
 /// start of a long document, shown while the rest is laid out: the
-/// others get an empty layout and no place on a page). `pre` sees the
-/// body's layout paragraphs first.
+/// others get an empty layout and no place on a page). `batch` lays out
+/// the body's paragraphs (else `layout`, one at a time).
 pub(crate) fn lay_out_body(
     doc: &Document,
     layout: &mut LayoutFn,
     limit: Option<usize>,
-    pre: Option<&mut PreFn>,
+    batch: Option<&mut BatchFn>,
 ) -> (Layout, Body) {
     use docs_layout::perf::span;
     let _all = span("docs lay_out_with");
@@ -637,16 +638,15 @@ pub(crate) fn lay_out_body(
     let (mut lps, mut widths, mut blocks) =
         body_with_notes(doc, &refs, &sections, &mut notes_cache, layout, cut);
     drop(t);
-    if let Some(pre) = pre {
-        let _t = span("docs shape body (threads)");
-        pre(&lps, &widths);
-    }
     let t = span("docs shape body");
-    let mut layouts: Vec<Arc<ParaLayout>> = lps
-        .iter()
-        .zip(&widths)
-        .map(|(p, &w)| layout(p, w))
-        .collect();
+    let mut layouts: Vec<Arc<ParaLayout>> = match batch {
+        Some(batch) => batch(&lps, &widths),
+        None => lps
+            .iter()
+            .zip(&widths)
+            .map(|(p, &w)| layout(p, w))
+            .collect(),
+    };
     drop(t);
     // Paragraphs not laid out yet: an empty layout each (no lines placed).
     if layouts.len() < doc.len() {

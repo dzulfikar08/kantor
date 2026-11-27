@@ -25,6 +25,7 @@ pub mod cache;
 pub mod chart;
 pub mod floats;
 pub mod pages;
+mod par;
 pub mod smartart;
 pub mod vector;
 
