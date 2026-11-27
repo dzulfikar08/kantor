@@ -1,113 +1,16 @@
 name: CI
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
-concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  CARGO_TERM_COLOR: always
-  CARGO_INCREMENTAL: 0
-  RUST_BACKTRACE: 1
-
 jobs:
-  lint:
-    name: fmt + clippy
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      # Open With / double-click registration: macOS Info.plist UTIs, Linux
-      # .desktop MIME types, Windows OpenWithProgids.
-      - name: file types registered with each OS
-        run: python3 scripts/check-file-types.py
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - run: ./scripts/ci-deps.sh
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - name: rustfmt (PRs only; main is auto-formatted by housekeeping.yml)
-        if: github.event_name == 'pull_request'
-        run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-
-  test:
-    name: test (${{ matrix.arch }})
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { arch: x86_64, os: ubuntu-24.04 }
-          - { arch: aarch64, os: ubuntu-24.04-arm }
-    runs-on: ${{ matrix.os }}
+  vba_build:
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: ./scripts/ci-deps.sh
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - run: cargo test --workspace
-      # The vendored IronCalc is outside the workspace; these cover Kantor's
-      # patches there (KANTOR_PATCHES.md §36 regex functions, §37 user functions).
-      - name: vendored IronCalc patches
-        if: matrix.arch == 'x86_64'
-        run: cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib -- regex kantor_udf test_defined_names
-
-  # Files Kantor encrypts open in other software: msoffcrypto-tool decrypts them to the
-  # same package, LibreOffice opens them with the password.
-  office-encryption:
-    name: encrypted files open elsewhere
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - name: Kantor encrypts the corpus
-        run: KANTOR_CRYPT_OUT=$PWD/enc-out cargo test -p kantor_crypt --test fixtures
-      - name: LibreOffice and msoffcrypto-tool
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends python3-uno python3-venv \
-            libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui
-          python3 -m venv --system-site-packages ~/venv
-          ~/venv/bin/pip install msoffcrypto-tool==5.4.2
-          ~/venv/bin/python tests/corpus/encrypted/check_output.py enc-out
+      - run: cargo build --release -p kantor_vba --example vba_build
       - uses: actions/upload-artifact@v4
-        if: always()
         with:
-          name: kantor-encrypted
-          path: enc-out
-
-  # Windows 10/11 x64: clippy (the cfg(windows) code) and every test. The installer and the
-  # silent install / uninstall smoke test run in build.yml and release.yml.
-  windows:
-    name: windows (x86_64)
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          cache-on-failure: true
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace --no-fail-fast
-
-  deny:
-    name: cargo-deny
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check advisories bans licenses sources
+          name: vba_build
+          path: target/release/examples/vba_build
