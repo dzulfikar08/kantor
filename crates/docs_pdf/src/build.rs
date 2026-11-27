@@ -893,10 +893,18 @@ pub fn build_with(
         }
     }
     // On several threads for a long document.
-    let mut out: Vec<docs_layout::Paragraph> = crate::par::map(paras.len(), &|k| {
-        let marker = markers.get(k).and_then(|m| m.as_deref());
-        layout_paragraph(doc, &paras[k], marker, widths[k], marks)
-    });
+    // (With whether it has contextual spacing: resolving a paragraph's
+    // style is most of the work.)
+    let (mut out, contextual): (Vec<docs_layout::Paragraph>, Vec<bool>) =
+        crate::par::map(paras.len(), &|k| {
+            let marker = markers.get(k).and_then(|m| m.as_deref());
+            (
+                layout_paragraph(doc, &paras[k], marker, widths[k], marks),
+                doc.resolve_para(&paras[k]).contextual,
+            )
+        })
+        .into_iter()
+        .unzip();
     if let Some(values) = &marks.merge {
         show_merge_values(paras, &mut out, values, marks.codes.as_deref());
     }
@@ -905,7 +913,7 @@ pub fn build_with(
     }
     // Contextual spacing: no space between paragraphs of the same style.
     for k in 0..paras.len() {
-        if !doc.resolve_para(&paras[k]).contextual {
+        if !contextual[k] {
             continue;
         }
         let same = |j: usize| {
