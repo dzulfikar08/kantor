@@ -278,7 +278,12 @@ fn compare_csem(c: &mut Check, r: &Results, s: &Value) {
 /// 15% and percentile bounds within a quarter standard error.
 fn compare_bootstrap(c: &mut Check, r: &Results, b: &Value, paths_only: bool) {
     let boot = r.bootstrap.as_ref().expect("bootstrap results");
-    assert_eq!(boot.failed, 0, "{}: failed subsamples", c.case);
+    // PLSc can fail on a rare subsample (rho_A not positive); those are left
+    // out, as seminr and SmartPLS do. More than 1% would be a bug.
+    if boot.failed * 100 > boot.samples {
+        c.failures
+            .push(format!("{}: {} failed subsamples", c.case, boot.failed));
+    }
     let mut one = |label: &str, mine: Option<&kantor_pls::Estimate>, want: &Value| {
         let Some(m) = mine else {
             c.failures

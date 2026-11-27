@@ -506,7 +506,7 @@ pub struct Words {
 }
 
 impl Words {
-    fn t<'a>(&self, en: &'a str, id: &'a str) -> &'a str {
+    fn pick<'a>(&self, en: &'a str, id: &'a str) -> &'a str {
         if self.id { id } else { en }
     }
 
@@ -527,7 +527,7 @@ impl Words {
         match x {
             Some(v) if v.is_finite() => {
                 if v < 0.001 {
-                    self.t("< .001", "< 0,001").to_owned()
+                    self.pick("< .001", "< 0,001").to_owned()
                 } else {
                     let s = format!("{v:.3}");
                     if self.id {
@@ -549,13 +549,13 @@ impl Words {
 
 fn paths_label(r: &Results, w: &Words) -> String {
     let algo = match r.algorithm {
-        Algorithm::Pls => w.t("PLS-SEM", "PLS-SEM"),
-        Algorithm::Plsc => w.t("consistent PLS (PLSc)", "PLS konsisten (PLSc)"),
+        Algorithm::Pls => w.pick("PLS-SEM", "PLS-SEM"),
+        Algorithm::Plsc => w.pick("consistent PLS (PLSc)", "PLS konsisten (PLSc)"),
     };
     let scheme = match r.weighting {
-        Weighting::Path => w.t("path weighting scheme", "skema pembobotan jalur (path)"),
-        Weighting::Centroid => w.t("centroid weighting scheme", "skema pembobotan sentroid"),
-        Weighting::Factorial => w.t("factorial weighting scheme", "skema pembobotan faktorial"),
+        Weighting::Path => w.pick("path weighting scheme", "skema pembobotan jalur (path)"),
+        Weighting::Centroid => w.pick("centroid weighting scheme", "skema pembobotan sentroid"),
+        Weighting::Factorial => w.pick("factorial weighting scheme", "skema pembobotan faktorial"),
     };
     format!("{algo}, {scheme}")
 }
@@ -563,9 +563,10 @@ fn paths_label(r: &Results, w: &Words) -> String {
 /// The report as docs JSON (docs/docs-json.md): APA-style tables.
 pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
     let mut blocks: Vec<Value> = Vec::new();
-    let title = title
-        .map(str::to_owned)
-        .unwrap_or_else(|| w.t("PLS-SEM results", "Hasil analisis PLS-SEM").to_owned());
+    let title = title.map(str::to_owned).unwrap_or_else(|| {
+        w.pick("PLS-SEM results", "Hasil analisis PLS-SEM")
+            .to_owned()
+    });
     let boot = r.bootstrap.as_ref();
     let mut setup = if w.id {
         format!(
@@ -612,11 +613,11 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
             )
         };
     }
-    blocks.push(json!({"h1": w.t("Estimation", "Estimasi")}));
+    blocks.push(json!({"h1": w.pick("Estimation", "Estimasi")}));
     blocks.push(json!(setup));
 
     // Measurement model.
-    blocks.push(json!({"h1": w.t("Measurement model", "Model pengukuran (outer model)")}));
+    blocks.push(json!({"h1": w.pick("Measurement model", "Model pengukuran (outer model)")}));
     let mut rows: Vec<Value> = Vec::new();
     for c in r
         .constructs
@@ -641,12 +642,12 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
     if !rows.is_empty() {
         blocks.push(json!({
             "type": "table", "id": "reliability",
-            "caption": w.t("Indicator loadings, reliability and convergent validity", "Loading indikator, reliabilitas dan validitas konvergen"),
-            "header": [w.t("Construct", "Konstruk"), w.t("Indicator", "Indikator"), "Loading", "α", "ρA", "ρC", "AVE"],
+            "caption": w.pick("Indicator loadings, reliability and convergent validity", "Loading indikator, reliabilitas dan validitas konvergen"),
+            "header": [w.pick("Construct", "Konstruk"), w.pick("Indicator", "Indikator"), "Loading", "α", "ρA", "ρC", "AVE"],
             "columns": [3, 2, 1, 1, 1, 1, 1],
             "rows": rows,
         }));
-        blocks.push(json!(w.t(
+        blocks.push(json!(w.pick(
             "*Note.* α = Cronbach's alpha; ρA and ρC = composite reliability (Dijkstra–Henseler's rho_A, Jöreskog's rho_C); AVE = average variance extracted. Loadings of at least 0.708, reliability between 0.70 and 0.95 and AVE of at least 0.50 are commonly recommended (Hair et al., 2022).",
             "*Catatan.* α = Cronbach's alpha; ρA dan ρC = reliabilitas komposit (rho_A Dijkstra–Henseler, rho_C Jöreskog); AVE = average variance extracted. Umumnya dianjurkan loading minimal 0,708, reliabilitas antara 0,70 dan 0,95, serta AVE minimal 0,50 (Hair dkk., 2022)."
         )));
@@ -684,14 +685,14 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
         }
         blocks.push(json!({
             "type": "table", "id": "formative",
-            "caption": w.t("Formative indicators", "Indikator formatif"),
-            "header": [w.t("Construct", "Konstruk"), w.t("Indicator", "Indikator"), w.t("Weight", "Bobot"), "t", "p", "Loading", "VIF"],
+            "caption": w.pick("Formative indicators", "Indikator formatif"),
+            "header": [w.pick("Construct", "Konstruk"), w.pick("Indicator", "Indikator"), w.pick("Weight", "Bobot"), "t", "p", "Loading", "VIF"],
             "columns": [3, 2, 1, 1, 1, 1, 1],
             "rows": rows,
         }));
     }
     // Discriminant validity.
-    blocks.push(json!({"h1": w.t("Discriminant validity", "Validitas diskriminan")}));
+    blocks.push(json!({"h1": w.pick("Discriminant validity", "Validitas diskriminan")}));
     let matrix = |t: &kantor_pls::Table| -> (Vec<String>, Vec<Value>) {
         let keep: Vec<usize> = (0..t.rows.len())
             .filter(|&i| {
@@ -724,11 +725,11 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
     if !rows.is_empty() {
         blocks.push(json!({
             "type": "table", "id": "htmt",
-            "caption": w.t("Heterotrait–monotrait ratio (HTMT)", "Heterotrait–monotrait ratio (HTMT)"),
+            "caption": w.pick("Heterotrait–monotrait ratio (HTMT)", "Heterotrait–monotrait ratio (HTMT)"),
             "header": h, "rows": rows,
         }));
         let mut note = w
-            .t(
+            .pick(
                 "*Note.* HTMT values below 0.90 (0.85 for conceptually distinct constructs) indicate discriminant validity (Henseler et al., 2015).",
                 "*Catatan.* Nilai HTMT di bawah 0,90 (0,85 untuk konstruk yang berbeda secara konseptual) menunjukkan validitas diskriminan (Henseler dkk., 2015).",
             )
@@ -765,17 +766,17 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
     if !rows.is_empty() {
         blocks.push(json!({
             "type": "table", "id": "fornell_larcker",
-            "caption": w.t("Fornell–Larcker criterion", "Kriteria Fornell–Larcker"),
+            "caption": w.pick("Fornell–Larcker criterion", "Kriteria Fornell–Larcker"),
             "header": h, "rows": rows,
         }));
-        blocks.push(json!(w.t(
+        blocks.push(json!(w.pick(
             "*Note.* The diagonal shows the square root of the AVE; it should exceed the construct's correlations below it.",
             "*Catatan.* Diagonal berisi akar kuadrat AVE; nilainya sebaiknya lebih besar daripada korelasi konstruk di bawahnya."
         )));
     }
 
     // Structural model.
-    blocks.push(json!({"h1": w.t("Structural model", "Model struktural (inner model)")}));
+    blocks.push(json!({"h1": w.pick("Structural model", "Model struktural (inner model)")}));
     let mut rows = Vec::new();
     for p in &r.paths {
         let e = boot.and_then(|b| {
@@ -794,32 +795,32 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
             row.push(json!(e.map_or_else(|| "–".to_owned(), |e| w.ci(e.ci))));
             let sig = e.and_then(|e| e.p).is_some_and(|p| p < b.alpha);
             row.push(json!(if sig {
-                w.t("Supported", "Diterima")
+                w.pick("Supported", "Diterima")
             } else {
-                w.t("Not supported", "Ditolak")
+                w.pick("Not supported", "Ditolak")
             }));
         }
         row.push(json!(w.num(p.f2)));
         row.push(json!(w.num(p.vif)));
         rows.push(Value::Array(row));
     }
-    let mut header = vec![json!(w.t("Path", "Jalur")), json!("β")];
+    let mut header = vec![json!(w.pick("Path", "Jalur")), json!("β")];
     if boot.is_some() {
         header.extend([
             json!("SE"),
             json!("t"),
             json!("p"),
-            json!(w.t("95% CI", "IK 95%")),
-            json!(w.t("Decision", "Keputusan")),
+            json!(w.pick("95% CI", "IK 95%")),
+            json!(w.pick("Decision", "Keputusan")),
         ]);
     }
     header.extend([json!("f²"), json!("VIF")]);
     blocks.push(json!({
         "type": "table", "id": "paths",
-        "caption": w.t("Path coefficients", "Koefisien jalur"),
+        "caption": w.pick("Path coefficients", "Koefisien jalur"),
         "header": header, "rows": rows,
     }));
-    blocks.push(json!(w.t(
+    blocks.push(json!(w.pick(
         "*Note.* β = standardized path coefficient; f² of 0.02, 0.15 and 0.35 are small, medium and large effects (Cohen, 1988); inner VIF below 3 shows no collinearity problem.",
         "*Catatan.* β = koefisien jalur terstandar; f² sebesar 0,02, 0,15 dan 0,35 berarti efek kecil, sedang dan besar (Cohen, 1988); VIF inner di bawah 3 menunjukkan tidak ada masalah kolinearitas."
     )));
@@ -831,8 +832,8 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
         .collect();
     blocks.push(json!({
         "type": "table", "id": "r2",
-        "caption": w.t("Coefficient of determination", "Koefisien determinasi"),
-        "header": [w.t("Construct", "Konstruk"), "R²", w.t("Adjusted R²", "R² disesuaikan")],
+        "caption": w.pick("Coefficient of determination", "Koefisien determinasi"),
+        "header": [w.pick("Construct", "Konstruk"), "R²", w.pick("Adjusted R²", "R² disesuaikan")],
         "rows": rows,
     }));
     if !r.effects.specific_indirect.is_empty() {
@@ -848,23 +849,23 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
             rows.push(Value::Array(row));
         }
         let mut header = vec![
-            json!(w.t("Indirect path", "Jalur tidak langsung")),
-            json!(w.t("Effect", "Efek")),
+            json!(w.pick("Indirect path", "Jalur tidak langsung")),
+            json!(w.pick("Effect", "Efek")),
         ];
         if boot.is_some() {
-            header.extend([json!("t"), json!("p"), json!(w.t("95% CI", "IK 95%"))]);
+            header.extend([json!("t"), json!("p"), json!(w.pick("95% CI", "IK 95%"))]);
         }
         blocks.push(json!({
             "type": "table", "id": "indirect",
-            "caption": w.t("Specific indirect effects", "Efek tidak langsung spesifik"),
+            "caption": w.pick("Specific indirect effects", "Efek tidak langsung spesifik"),
             "header": header, "rows": rows,
         }));
     }
     let f = &r.fit;
     blocks.push(json!({
         "type": "table", "id": "fit",
-        "caption": w.t("Model fit", "Kecocokan model (model fit)"),
-        "header": ["", w.t("Saturated model", "Model jenuh"), w.t("Estimated model", "Model estimasi")],
+        "caption": w.pick("Model fit", "Kecocokan model (model fit)"),
+        "header": ["", w.pick("Saturated model", "Model jenuh"), w.pick("Estimated model", "Model estimasi")],
         "rows": [
             ["SRMR", w.num(f.saturated.srmr), w.num(f.estimated.srmr)],
             ["d_ULS", w.num(f.saturated.d_uls), w.num(f.estimated.d_uls)],
@@ -873,12 +874,12 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
             ["NFI", w.num(f.saturated.nfi), w.num(f.estimated.nfi)],
         ],
     }));
-    blocks.push(json!(w.t(
+    blocks.push(json!(w.pick(
         "*Note.* SRMR below 0.08 indicates good fit (Hu & Bentler, 1999).",
         "*Catatan.* SRMR di bawah 0,08 menunjukkan kecocokan yang baik (Hu & Bentler, 1999)."
     )));
     if !r.warnings.is_empty() {
-        blocks.push(json!({"h2": w.t("Warnings", "Peringatan")}));
+        blocks.push(json!({"h2": w.pick("Warnings", "Peringatan")}));
         blocks.push(json!({"bullets": r.warnings}));
     }
     json!({
@@ -922,7 +923,7 @@ pub fn results_book(r: &Results, w: &Words) -> Value {
     };
     let boot = r.bootstrap.as_ref();
     sheets.push(sheet(
-        w.t("Constructs", "Konstruk"),
+        w.pick("Constructs", "Konstruk"),
         [
             "Construct",
             "Type",
@@ -958,7 +959,7 @@ pub fn results_book(r: &Results, w: &Words) -> Value {
             .collect(),
     ));
     sheets.push(sheet(
-        w.t("Outer model", "Model luar"),
+        w.pick("Outer model", "Model luar"),
         ["Indicator", "Construct", "Loading", "Weight", "VIF"]
             .map(|s| json!(s))
             .to_vec(),
@@ -976,7 +977,7 @@ pub fn results_book(r: &Results, w: &Words) -> Value {
             .collect(),
     ));
     sheets.push(sheet(
-        w.t("Paths", "Jalur"),
+        w.pick("Paths", "Jalur"),
         ["From", "To", "Coefficient", "f²", "Inner VIF"]
             .map(|s| json!(s))
             .to_vec(),
@@ -1012,11 +1013,11 @@ pub fn results_book(r: &Results, w: &Words) -> Value {
     sheets.push(matrix_sheet("HTMT2", &r.htmt2));
     sheets.push(matrix_sheet("Fornell-Larcker", &r.fornell_larcker));
     sheets.push(matrix_sheet(
-        w.t("Correlations", "Korelasi"),
+        w.pick("Correlations", "Korelasi"),
         &r.correlations,
     ));
     sheets.push(matrix_sheet(
-        w.t("Cross loadings", "Cross loading"),
+        w.pick("Cross loadings", "Cross loading"),
         &r.cross_loadings,
     ));
     let mut effects = Vec::new();
@@ -1042,7 +1043,7 @@ pub fn results_book(r: &Results, w: &Words) -> Value {
         ]);
     }
     sheets.push(sheet(
-        w.t("Effects", "Efek"),
+        w.pick("Effects", "Efek"),
         ["Effect", "Path", "Value"].map(|s| json!(s)).to_vec(),
         effects,
     ));
@@ -1127,7 +1128,7 @@ pub fn results_book(r: &Results, w: &Words) -> Value {
     let mut header = vec![json!("Row")];
     header.extend(r.scores.cols.iter().map(|c| json!(c)));
     sheets.push(sheet(
-        w.t("Scores", "Skor"),
+        w.pick("Scores", "Skor"),
         header,
         r.scores
             .rows
@@ -1140,7 +1141,7 @@ pub fn results_book(r: &Results, w: &Words) -> Value {
             })
             .collect(),
     ));
-    json!({"sheets": sheets, "active": w.t("Paths", "Jalur")})
+    json!({"sheets": sheets, "active": w.pick("Paths", "Jalur")})
 }
 
 /// Run `pls_run`'s arguments: `{model, data, sheet, range, ...settings,
