@@ -186,6 +186,19 @@ pub fn main(args: &[OsString]) -> i32 {
             return 2;
         }
     };
+    if cmd == "bench" {
+        let [file] = opts.rest.as_slice() else {
+            eprintln!("kantor docs bench: bench takes one FILE.docx");
+            return 2;
+        };
+        return match super::docs_bench::run(Path::new(file), opts.limit.unwrap_or(30)) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("kantor docs bench: {e:#}");
+                1
+            }
+        };
+    }
     if cmd == "check" {
         let [file] = opts.rest.as_slice() else {
             eprintln!("kantor docs check: check takes one FILE.docx\n\n{USAGE}");

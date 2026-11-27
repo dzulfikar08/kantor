@@ -18,6 +18,7 @@
 
 mod float;
 pub mod instance;
+pub mod perf;
 
 use std::collections::HashMap;
 use std::ops::Range;

@@ -21,12 +21,14 @@
 
 pub mod blur;
 pub mod build;
+pub mod cache;
 pub mod chart;
 pub mod floats;
 pub mod pages;
 pub mod smartart;
 pub mod vector;
 
+pub use cache::LayoutCache;
 pub use floats::FloatItem;
 pub use pages::{Layout, Placed, StoryLayout, lay_out_with};
 

@@ -35,6 +35,7 @@ mod mailings_address;
 mod note_menu;
 mod page_menu;
 mod part;
+mod perf;
 mod review;
 mod ruler;
 mod spell;
@@ -45,7 +46,6 @@ pub mod turned_text;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::hash::{Hash as _, Hasher as _};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -54,9 +54,7 @@ use std::sync::Arc;
 use docs_engine::{
     Align, Document, ListKind, OBJECT, Object, Position, RunProps, Selection, TableEdit, Toggle,
 };
-use docs_layout::{
-    Engine, ObjectKind, PageSetup, PagedDocument, ParaLayout, PlacedObject, RunSource,
-};
+use docs_layout::{Engine, ObjectKind, PageSetup, PagedDocument, PlacedObject, RunSource};
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
@@ -500,7 +498,7 @@ pub struct DocsView {
     /// IME composition: byte range in the caret's paragraph.
     marked: Option<Range<usize>>,
     laid: Rc<Laid>,
-    cache: HashMap<u64, Arc<ParaLayout>>,
+    cache: docs_pdf::LayoutCache,
     /// Decoded-on-demand pictures by relationship id.
     images: HashMap<String, Arc<gpui_kit::Image>>,
     /// Turned floating pictures, by [`floats::picture_key`].
@@ -567,35 +565,13 @@ pub struct DocsView {
     field_menu: Option<field_menu::FieldMenu>,
     /// The Mailings bar (mail merge), when shown.
     mailings: Option<mailings::Mailings>,
-}
-
-/// Cache key: everything that affects shaping and line breaking.
-fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    p.text.hash(&mut h);
-    p.family.hash(&mut h);
-    p.size_pt.to_bits().hash(&mut h);
-    format!("{:?}", p.line_height).hash(&mut h);
-    (p.align as u8).hash(&mut h);
-    width.to_bits().hash(&mut h);
-    for v in [p.indent_left_pt, p.indent_right_pt, p.first_line_pt] {
-        v.to_bits().hash(&mut h);
-    }
-    format!("{:?}{:?}{:?}{:?}", p.marker, p.objects, p.tabs, p.hidden).hash(&mut h);
-    p.default_tab.to_bits().hash(&mut h);
-    p.decimal.hash(&mut h);
-    for s in &p.spans {
-        s.range.hash(&mut h);
-        (s.bold, s.italic, s.underline).hash(&mut h);
-        s.size_pt.map(f32::to_bits).hash(&mut h);
-        s.color.hash(&mut h);
-        s.family.hash(&mut h);
-    }
-    h.finish()
+    /// `KANTOR_PERF` timings (see [`perf`]).
+    perf: Option<Rc<perf::Perf>>,
 }
 
 impl DocsView {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let perf = perf::Perf::new();
         // A protected file's password, checked by the workspace before this
         // tab opened (kantor_ui::office_password).
         let open = |p: &std::path::Path| {
@@ -612,19 +588,23 @@ impl DocsView {
             }
             None => (Document::new(), String::new()),
         };
-        Self::with_document(doc, status, window, cx)
+        if let Some(p) = &perf {
+            p.opened("read");
+        }
+        Self::with_document(doc, status, perf, window, cx)
     }
 
     /// A pane showing a document restored from a recovery copy (see
     /// `kantor_core::recovery`), unsaved.
     pub fn new_recovered(doc: Document, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let status = tf("Restored unsaved changes to {}", &[&doc.title()]);
-        Self::with_document(doc, status, window, cx)
+        Self::with_document(doc, status, perf::Perf::new(), window, cx)
     }
 
     fn with_document(
         mut doc: Document,
         status: String,
+        perf: Option<Rc<perf::Perf>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -650,7 +630,7 @@ impl DocsView {
                 boxes: Rc::default(),
                 part: None,
             }),
-            cache: HashMap::new(),
+            cache: docs_pdf::LayoutCache::default(),
             images: HashMap::new(),
             turned_images: HashMap::new(),
             turned_texts: HashMap::new(),
@@ -689,8 +669,13 @@ impl DocsView {
             part: None,
             field_menu: None,
             mailings: None,
+            perf,
         };
         this.relayout();
+        if let Some(p) = &this.perf {
+            p.opened("layout");
+            p.pages_final(this.laid.paged.pages.len());
+        }
         this.refresh_spelling(cx);
         this
     }
@@ -699,26 +684,15 @@ impl DocsView {
 
     /// Lay out the document again, reusing cached paragraph layouts.
     fn relayout(&mut self) {
+        let _t = docs_layout::perf::span("docs relayout");
         let mut engine = self.engine.borrow_mut();
-        let mut fresh = HashMap::with_capacity(self.doc.len());
-        let cache = &self.cache;
-        let mut lay = |doc: &Document| {
-            docs_pdf::lay_out_with(doc, &mut |p, width| {
-                let key = layout_key(p, width);
-                let layout = match cache.get(&key).or_else(|| fresh.get(&key)) {
-                    Some(l) => l.clone(),
-                    None => Arc::new(engine.layout_paragraph(p, width)),
-                };
-                fresh.insert(key, layout.clone());
-                layout
-            })
-        };
+        let mut pass = self.cache.pass(&mut engine);
         // A part being edited goes back into the main document while it
         // is laid out.
         let (laid, texts) = match &mut self.part {
             Some(s) => {
                 s.main.swap_part(&s.edit, &mut self.doc);
-                let mut laid = lay(&s.main);
+                let mut laid = pass.lay_out(&s.main);
                 // A "Resize shape to fit text" box that grew (or shrank) as
                 // it is typed in: the text around it wraps around its new
                 // size now, not only when the box is left.
@@ -728,7 +702,7 @@ impl DocsView {
                 {
                     let cy = (it.rect[3] * docs_engine::object::EMU_PER_PX).round() as i64;
                     if s.main.fit_text_box_live(b, cy) {
-                        laid = lay(&s.main);
+                        laid = pass.lay_out(&s.main);
                     }
                 }
                 s.main.swap_part(&s.edit, &mut self.doc);
@@ -736,7 +710,8 @@ impl DocsView {
                 (laid, texts)
             }
             None => {
-                let laid = lay(&self.doc);
+                let laid = pass.lay_out(&self.doc);
+                let _t = docs_layout::perf::span("docs relayout texts");
                 let texts = self
                     .doc
                     .paragraphs()
@@ -746,8 +721,7 @@ impl DocsView {
                 (laid, texts)
             }
         };
-        drop(lay);
-        self.cache = fresh;
+        pass.finish();
         drop(engine);
         let boxes = Rc::new(PageBoxes::of(&laid.paged));
         let part = self.part_pieces(&laid.furniture, &laid.floats);
@@ -1420,7 +1394,9 @@ impl DocsView {
             );
             return;
         }
+        let t = docs_layout::perf::span("docs save");
         let result = self.save_whole(window, cx, |doc| doc.save());
+        drop(t);
         self.after_save(result, window, cx);
     }
 
@@ -1799,6 +1775,9 @@ impl DocsView {
     }
 
     fn on_scroll(&mut self, ev: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(p) = &self.perf {
+            p.input("wheel");
+        }
         let delta = ev.delta.pixel_delta(window.line_height());
         if ev.modifiers.control || ev.modifiers.platform {
             let dy = f32::from(delta.y);
@@ -2633,6 +2612,7 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
 
 impl Render for DocsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.perf_bench_step(window);
         let t = tokens(cx);
         if self.reveal_caret.get() && self.viewport.get().size.height > px(0.) {
             self.reveal_caret.set(false);
@@ -2767,6 +2747,7 @@ impl Render for DocsView {
         let viewport = self.viewport.clone();
         let reveal = self.reveal_caret.clone();
         let entity = cx.entity().downgrade();
+        let perf = self.perf.clone();
         let page = canvas(
             move |bounds, _, cx| {
                 let old = viewport.replace(bounds);
@@ -2776,7 +2757,12 @@ impl Render for DocsView {
                     let _ = entity.update(cx, |_, cx| cx.notify());
                 }
             },
-            move |bounds, _, window, cx| paint_frame(&frame, bounds, window, cx),
+            move |bounds, _, window, cx| {
+                paint_frame(&frame, bounds, window, cx);
+                if let Some(p) = &perf {
+                    p.painted(frame.laid.paged.pages.len());
+                }
+            },
         )
         .size_full();
 
@@ -2811,6 +2797,18 @@ impl Render for DocsView {
 
         let root = v_flex()
             .key_context(KEY_CONTEXT)
+            .when_some(self.perf.clone(), |el, p| {
+                el.capture_key_down(move |ev: &KeyDownEvent, _, _| {
+                    let k = &ev.keystroke;
+                    let m = k.modifiers;
+                    p.input(format!(
+                        "key {}{}{}",
+                        if m.control { "ctrl-" } else { "" },
+                        if m.shift { "shift-" } else { "" },
+                        k.key
+                    ))
+                })
+            })
             .track_focus(&self.focus)
             .size_full()
             .bg(t.bg)
@@ -3061,6 +3059,7 @@ mod tests {
         assert!(paras[1].spans.iter().any(|s| s.bold));
         assert!(!paged.glyph_runs(0).is_empty());
         let w = paged.setup.content_width();
+        use docs_pdf::cache::layout_key;
         assert_eq!(layout_key(&paras[1], w), layout_key(&paras[1].clone(), w));
         assert_ne!(layout_key(&paras[0], w), layout_key(&paras[1], w));
         assert_ne!(layout_key(&paras[1], w), layout_key(&paras[1], w + 1.0));

@@ -594,16 +594,24 @@ fn separator(x: f32, y: f32, width: f32) -> RuleRect {
 /// Lay a document out on pages: sections, headers and footers, footnotes
 /// and endnotes.
 pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
+    use docs_layout::perf::span;
+    let _all = span("docs lay_out_with");
+    let t = span("docs sections+refs");
     let sections = doc.sections();
     let mut refs = doc.note_refs();
+    drop(t);
     let mut notes_cache: NoteCache = HashMap::new();
+    let t = span("docs build body");
     let (mut lps, mut widths, mut blocks) =
         body_with_notes(doc, &refs, &sections, &mut notes_cache, layout);
+    drop(t);
+    let t = span("docs shape body");
     let mut layouts: Vec<Arc<ParaLayout>> = lps
         .iter()
         .zip(&widths)
         .map(|(p, &w)| layout(p, w))
         .collect();
+    drop(t);
 
     // Header/footer heights (with placeholder numbers) push the text in.
     let mut heights: HashMap<(usize, u32), f32> = HashMap::new();
@@ -667,7 +675,9 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         &mut notes_cache,
         layout,
     );
+    let t = span("docs paginate");
     let mut paged = PagedDocument::paginate_sections(&lps, layouts.clone(), &gapped, &gap_flows);
+    drop(t);
     // Footnotes numbered per page: renumber where they landed and lay out
     // again (the numbers' widths can move text).
     let per_page = refs.iter().any(|r| {
@@ -697,7 +707,10 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
             paged = PagedDocument::paginate_sections(&lps, layouts, &gapped, &gap_flows);
         }
     }
+    let t = span("docs place notes");
     let notes = place_notes(doc, &refs, &sections, &mut paged, &mut notes_cache, layout);
+    drop(t);
+    let t = span("docs headers+footers");
     let strikes = if lps.iter().any(|p| !p.strikes.is_empty()) {
         Arc::new(lps)
     } else {
@@ -790,7 +803,10 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         placed.extend(notes.get(pi).into_iter().flatten().cloned());
         furniture.push(placed);
     }
+    drop(t);
+    let t = span("docs place floats");
     let floats = place_floats(doc, &paged, &furniture, layout);
+    drop(t);
     Layout {
         paged,
         furniture,
