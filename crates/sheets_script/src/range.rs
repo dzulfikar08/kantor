@@ -266,6 +266,21 @@ impl RangeObj {
                     }
                 }
                 v => {
+                    // One A1 formula over several cells is written as Excel
+                    // does: relative references move with each cell.
+                    let shifted = match (v, what) {
+                        (Value::String(f), Write::Value | Write::Formula)
+                            if f.starts_with('=')
+                                && (area.top != area.bottom || area.left != area.right) =>
+                        {
+                            Some(Value::String(addr::a1_to_r1c1(f, area.top, area.left)))
+                        }
+                        _ => None,
+                    };
+                    let (v, what) = match &shifted {
+                        Some(r1c1) => (r1c1, Write::FormulaR1C1),
+                        None => (v, what),
+                    };
                     for r in area.top..=area.bottom {
                         for c in area.left..=area.right {
                             write_cell(&mut book, idx, r, c, v, what)?;
