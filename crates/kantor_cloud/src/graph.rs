@@ -11,7 +11,6 @@
 //! no locks to apps: [`Client::lock`] says so and saves rely on versions.
 
 use serde_json::Value;
-use ureq::http;
 
 use crate::{Client, Entry, Error, Precondition, Progress, Reply, percent_encode, reply_wait};
 

@@ -1,16 +1,18 @@
-//! Open from Cloud: browse an account's folders (PROPFIND depth 1) and pick
-//! a file. The workspace downloads it (see `super::open_remote`).
+//! Open from Cloud: browse an account's folders and pick a file. The
+//! workspace downloads it (see `super::open_remote`). Save to Cloud uses
+//! the same panel to pick a folder and a name (see `super::save_to_cloud`).
 
 use gpui_kit::assets::IconName;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::input;
+use gpui_kit::component::input::{self, Input, InputState};
 use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::{Disableable as _, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_cloud::Entry;
+use kantor_core::layout::PaneId;
 use kantor_core::settings::{CloudAccount, Settings};
-use kantor_ui::i18n::tr;
+use kantor_ui::i18n::{t, tr};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
@@ -19,7 +21,16 @@ use super::widgets::{CLOUD_PANEL, ClosePanel, Status, card, footer, note, status
 use super::{PanelEvent, remote_for};
 use crate::workspace::AppKind;
 
+/// Save to Cloud: the document, and the name to save it under.
+struct SaveTarget {
+    pane: PaneId,
+    name: Entity<InputState>,
+    /// The document's extension (`.xlsx`), kept on the name.
+    ext: String,
+}
+
 pub struct BrowserPanel {
+    save: Option<SaveTarget>,
     accounts: Vec<CloudAccount>,
     account: usize,
     folder: String,
@@ -43,6 +54,7 @@ impl BrowserPanel {
             .and_then(|a| settings.cloud.last_folder.get(&a.id).cloned())
             .unwrap_or_default();
         let mut this = Self {
+            save: None,
             accounts,
             account: 0,
             folder,
@@ -57,8 +69,61 @@ impl BrowserPanel {
         this
     }
 
+    /// The panel for Save to Cloud of `pane`'s document, `file_name`.
+    pub fn for_save(
+        pane: PaneId,
+        file_name: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut this = Self::new(cx);
+        let ext = std::path::Path::new(file_name)
+            .extension()
+            .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))
+            .unwrap_or_default();
+        let file_name = file_name.to_owned();
+        let name = cx.new(|cx| {
+            let mut i = InputState::new(window, cx);
+            i.set_value(file_name, window, cx);
+            i
+        });
+        this.save = Some(SaveTarget { pane, name, ext });
+        this
+    }
+
     pub fn focus_first(&self, window: &mut Window, cx: &mut Context<Self>) {
-        window.focus(&self.focus, cx);
+        match &self.save {
+            Some(s) => s.name.update(cx, |i, cx| i.focus(window, cx)),
+            None => window.focus(&self.focus, cx),
+        }
+    }
+
+    /// Save to Cloud: into the folder shown, under the name typed (with
+    /// the document's extension). On Google Drive the top means Kantor's
+    /// own folder (Kantor can't see the top of "My Drive" afterwards).
+    fn save_here(&mut self, cx: &mut Context<Self>) {
+        let (Some(save), Some(account)) = (&self.save, self.current().cloned()) else {
+            return;
+        };
+        let mut name = save.name.read(cx).value().trim().replace(['/', '\\'], "-");
+        if name.is_empty() {
+            self.status = Status::Error(t("Type a file name.").into());
+            cx.notify();
+            return;
+        }
+        if !save.ext.is_empty() && !name.to_lowercase().ends_with(&save.ext) {
+            name.push_str(&save.ext);
+        }
+        let folder = if self.folder.is_empty() && account.provider == "gdrive" {
+            kantor_cloud::gdrive::KANTOR_FOLDER.to_owned()
+        } else {
+            self.folder.clone()
+        };
+        cx.emit(PanelEvent::SaveTo {
+            pane: save.pane,
+            account: Box::new(account),
+            remote: join(&folder, &name),
+        });
     }
 
     fn current(&self) -> Option<&CloudAccount> {
@@ -152,10 +217,16 @@ impl BrowserPanel {
         self.go(folder, cx);
     }
 
-    fn pick(&mut self, entry: &Entry, cx: &mut Context<Self>) {
+    fn pick(&mut self, entry: &Entry, window: &mut Window, cx: &mut Context<Self>) {
         let path = join(&self.folder, &entry.name);
         if entry.is_dir {
             self.go(path, cx);
+            return;
+        }
+        if let Some(save) = &self.save {
+            // Take its name as a start (saving over it is refused).
+            let name = entry.name.clone();
+            save.name.update(cx, |i, cx| i.set_value(name, window, cx));
             return;
         }
         let Some(account) = self.current().cloned() else {
@@ -343,9 +414,9 @@ impl Render for BrowserPanel {
                     .gap(SPACE_4)
                     .rounded(RADIUS_MD)
                     .when(openable, |d| {
-                        d.cursor_pointer()
-                            .hover(|s| s.bg(t.hover))
-                            .on_click(cx.listener(move |this, _, _, cx| this.pick(&entry, cx)))
+                        d.cursor_pointer().hover(|s| s.bg(t.hover)).on_click(
+                            cx.listener(move |this, _, window, cx| this.pick(&entry, window, cx)),
+                        )
                     })
                     .child(
                         gpui_kit::component::Icon::new(icon_for(e))
@@ -410,6 +481,33 @@ impl Render for BrowserPanel {
                     .p(SPACE_2)
                     .child(rows),
             );
+        let gdrive = self.current().is_some_and(|a| a.provider == "gdrive");
+        let body = body
+            .when(gdrive, |b| {
+                b.child(note(
+                    t("Google Drive: Kantor sees only the files it created or opened, not the rest of your Drive. To work on another file, open it on this computer and choose Save to Cloud."),
+                    cx,
+                ))
+            })
+            .when_some(self.save.as_ref(), |b, save| {
+                b.child(super::widgets::field(
+                    t("File name"),
+                    Input::new(&save.name),
+                    cx,
+                ))
+                .when(gdrive && self.folder.is_empty(), |b| {
+                    b.child(note(
+                        t("At the top of Google Drive, Kantor saves into its “Kantor” folder."),
+                        cx,
+                    ))
+                })
+            });
+        let title = if self.save.is_some() {
+            t("Save to Cloud")
+        } else {
+            tr("Open from Cloud", "Buka dari Cloud")
+        };
+        let saving = self.save.is_some();
 
         div()
             .id("cloud-browser")
@@ -419,13 +517,7 @@ impl Render for BrowserPanel {
             .on_action(cx.listener(|this, _: &input::Escape, _, cx| this.close(cx)))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(
-                card(
-                    IconName::Cloud,
-                    tr("Open from Cloud", "Buka dari Cloud"),
-                    cx,
-                )
-                .child(body)
-                .child(
+                card(IconName::Cloud, title, cx).child(body).child(
                     footer(cx)
                         .child(
                             div()
@@ -448,7 +540,17 @@ impl Render for BrowserPanel {
                                 .small()
                                 .label(tr("Cancel", "Batal"))
                                 .on_click(cx.listener(|this, _, _, cx| this.close(cx))),
-                        ),
+                        )
+                        .when(saving, |f| {
+                            f.child(
+                                Button::new("cloud-browser-save")
+                                    .primary()
+                                    .small()
+                                    .label(t("Save Here"))
+                                    .disabled(self.loading)
+                                    .on_click(cx.listener(|this, _, _, cx| this.save_here(cx))),
+                            )
+                        }),
                 ),
             )
     }

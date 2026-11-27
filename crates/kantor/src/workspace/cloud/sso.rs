@@ -61,7 +61,7 @@ fn origin(server: &str) -> String {
     s
 }
 
-fn done_page() -> DonePage {
+pub(super) fn done_page() -> DonePage {
     DonePage {
         title: "Kantor".into(),
         ok: t("You're signed in. You can close this tab and go back to Kantor.").into(),
@@ -164,6 +164,7 @@ pub fn sign_in(
             issuer: endpoints.issuer.clone(),
             client_id: client_id.clone(),
             dav_url: String::new(),
+            provider: String::new(),
         },
     };
     // The sign-in this one replaces (Sign in again, or the same account
@@ -255,7 +256,8 @@ fn client_id(account: &CloudAccount) -> String {
 /// Whether the account's sign-in has ended this run (the provider refused
 /// its refresh token).
 pub fn ended(account: &CloudAccount) -> bool {
-    account.is_sso() && oidc::source_of(&account.id).is_some_and(|s| s.needs_sign_in())
+    (account.is_sso() || account.is_oauth())
+        && oidc::source_of(&account.id).is_some_and(|s| s.needs_sign_in())
 }
 
 /// What to tell the user when the sign-in has ended.
