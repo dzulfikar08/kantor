@@ -10,11 +10,10 @@
 //! forms (`BaseClass=UserForm1`) apart.
 //!
 //! Reading: [`VbaProject::read`], [`VbaProject::modules`],
-//! [`Module::procedures`]. What isn't read: the compiled caches
+//! [`Module::procedures`], and a UserForm's designer (its controls) with
+//! [`VbaProject::form`] (see [`forms`]). What isn't read: the compiled caches
 //! (`_VBA_PROJECT`, `__SRP_*` and module PerformanceCaches, a
-//! version-specific format with no public spec), UserForm designers (the
-//! form's storage with its controls: a form is listed with its code only),
-//! the project's password protection (`DPB`; the source isn't encrypted by
+//! version-specific format with no public spec), the project's password protection (`DPB`; the source isn't encrypted by
 //! it, so it reads), digital signatures (they live outside this file),
 //! and `.frx`-style binary resources.
 //!
@@ -36,6 +35,7 @@ pub mod codepage;
 pub mod compression;
 #[doc(hidden)]
 pub mod dir;
+pub mod forms;
 mod procedures;
 pub mod synth;
 
@@ -76,7 +76,7 @@ pub enum ModuleKind {
     Class,
     /// A document's own module: `ThisWorkbook`, `Sheet1` (events).
     Document,
-    /// A UserForm's code (its designer, the form itself, isn't read).
+    /// A UserForm's code; its designer is read by [`VbaProject::form`].
     Form,
 }
 
@@ -413,6 +413,40 @@ impl VbaProject {
         self.modules
             .iter()
             .find(|m| m.name.eq_ignore_ascii_case(name))
+    }
+
+    /// The designer of UserForm `name` (any case): its controls and
+    /// properties. `None` when there is no such form module.
+    pub fn form(&self, name: &str) -> Option<Result<forms::FormDesign>> {
+        let module = self
+            .modules
+            .iter()
+            .find(|m| m.kind == ModuleKind::Form && m.name.eq_ignore_ascii_case(name))?;
+        let mut cfb = match cfb::CompoundFile::open(Cursor::new(&self.bytes)) {
+            Ok(c) => c,
+            Err(e) => return Some(Err(Error::new(e.to_string()))),
+        };
+        let r = forms::read_from_cfb(&mut cfb, &self.root, &module.name).or_else(|e| {
+            if module.stream_name.eq_ignore_ascii_case(&module.name) {
+                Err(e)
+            } else {
+                forms::read_from_cfb(&mut cfb, &self.root, &module.stream_name)
+            }
+        });
+        Some(r.map(|mut d| {
+            d.name = module.name.clone();
+            d
+        }))
+    }
+
+    /// Every UserForm's designer, in module order (forms whose designer
+    /// can't be read are left out).
+    pub fn forms(&self) -> Vec<forms::FormDesign> {
+        self.modules
+            .iter()
+            .filter(|m| m.kind == ModuleKind::Form)
+            .filter_map(|m| self.form(&m.name)?.ok())
+            .collect()
     }
 
     /// The project's bytes as read.
