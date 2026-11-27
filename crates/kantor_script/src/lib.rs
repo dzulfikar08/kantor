@@ -16,6 +16,6 @@ pub mod object;
 pub mod vba;
 
 pub use object::{
-    Arg, Array, CancelToken, Dispatch, ErrorKind, Host, Location, NullHost, ObjectRef, Record,
-    ScriptError, Value, find_arg,
+    Arg, Array, CancelToken, Dispatch, ErrorKind, Host, HostCall, Location, NullHost, ObjectRef,
+    Record, ScriptError, ScriptMember, Value, find_arg,
 };

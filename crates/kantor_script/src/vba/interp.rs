@@ -31,6 +31,8 @@ pub(crate) struct State {
     pub max_steps: Option<u64>,
     pub max_depth: usize,
     pub constants: HashMap<String, Value>,
+    /// Modules and instances with `WithEvents` variables (see `events`).
+    pub sinks: Vec<super::events::Sink>,
 }
 
 impl State {
@@ -46,6 +48,7 @@ impl State {
             max_steps: None,
             max_depth: 100,
             constants: HashMap::new(),
+            sinks: Vec::new(),
         }
     }
 
@@ -56,6 +59,7 @@ impl State {
         self.statics.clear();
         self.err.clear();
         self.print_line.clear();
+        self.sinks.clear();
     }
 }
 
@@ -90,7 +94,7 @@ pub(crate) struct Place {
 }
 
 impl Place {
-    fn slot(s: Slot) -> Place {
+    pub(crate) fn slot(s: Slot) -> Place {
         Place {
             root: Root::Slot(s),
             path: Vec::new(),
@@ -158,7 +162,7 @@ pub(crate) struct Frame {
     locals: HashMap<Rc<str>, Slot>,
     result: Option<Slot>,
     /// `Me` and the instance's variables, in a class module.
-    me: Option<(ObjectRef, Rc<Scope>)>,
+    pub me: Option<(ObjectRef, Rc<Scope>)>,
     temps: Vec<Temp>,
     withs: Vec<WithTarget>,
     handler: Handler,
@@ -357,6 +361,7 @@ impl Interp<'_> {
             let slot = self.make_var(d, &mut frame)?;
             scope.borrow_mut().insert(d.name.key.clone(), slot);
         }
+        self.register_module_sink(m);
         Ok(scope)
     }
 
@@ -794,7 +799,9 @@ impl Interp<'_> {
                 match v {
                     Value::Object(None) => Ok(Value::Boolean(false)),
                     Value::Object(Some(o)) => Ok(Value::Boolean(
-                        short == "object" || o.type_name().eq_ignore_ascii_case(short),
+                        short == "object"
+                            || o.type_name().eq_ignore_ascii_case(short)
+                            || Self::implements(&o, short),
                     )),
                     _ => Err(ScriptError::runtime(424)),
                 }
@@ -905,7 +912,7 @@ impl Interp<'_> {
     }
 
     /// Evaluates arguments for a VBA procedure, keeping where variables live for `ByRef`.
-    fn eval_args_in(&mut self, args: &[ArgExpr], f: &mut Frame) -> R<Vec<ArgIn>> {
+    pub(crate) fn eval_args_in(&mut self, args: &[ArgExpr], f: &mut Frame) -> R<Vec<ArgIn>> {
         let mut out = Vec::with_capacity(args.len());
         for a in args {
             let name = a.name.as_ref().map(|n| n.key.clone());
@@ -994,6 +1001,9 @@ impl Interp<'_> {
                 ))),
                 Binding::Host(g) => {
                     let a = self.eval_args(args, f)?;
+                    if g.script_member(&id.text) == Some(ScriptMember::Run) {
+                        return self.app_run(a);
+                    }
                     let r = if access == Access::Call {
                         g.call(&id.text, &a)
                     } else {
@@ -1063,11 +1073,19 @@ impl Interp<'_> {
         let obj = self.eval(base, f)?;
         match obj {
             Value::Object(Some(o)) => {
-                if as_instance(&o).is_some() {
+                if let Some(inst) = as_instance(&o) {
+                    let via = if inst.module.implements.is_empty() {
+                        None
+                    } else {
+                        self.interface_of(base, f)
+                    };
                     let a = self.eval_args_in(args, f)?;
-                    return self.instance_member(&o, &name.key, a, access);
+                    return self.instance_member_via(&o, &name.key, a, access, via.as_deref());
                 }
                 let a = self.eval_args(args, f)?;
+                if o.script_member(&name.text) == Some(ScriptMember::Run) {
+                    return self.app_run(a);
+                }
                 if access == Access::Call {
                     o.call(&name.text, &a)
                 } else {
@@ -1120,6 +1138,26 @@ impl Interp<'_> {
         }
     }
 
+    /// The interface an expression is declared as (`Dim s As IShape`), when it names a
+    /// variable of a class type: members called through it go to `IShape_Member`.
+    fn interface_of(&mut self, base: &Expr, f: &Frame) -> Option<Rc<str>> {
+        let Expr::Name(id) = base else {
+            return None;
+        };
+        let slot = f.locals.get(&id.key).cloned().or_else(|| {
+            let m = f.module.clone();
+            match self.module_member(&m, &id.key, f, true) {
+                Ok(Some(Binding::Slot(s))) => Some(s),
+                _ => None,
+            }
+        })?;
+        let ty = slot.borrow().ty.clone();
+        match ty {
+            Ty::Named(n) => Some(Rc::from(n.rsplit('.').next().unwrap_or(&n))),
+            _ => None,
+        }
+    }
+
     /// A member of a class instance, from outside it (public members only).
     fn instance_member(
         &mut self,
@@ -1128,11 +1166,44 @@ impl Interp<'_> {
         args: Vec<ArgIn>,
         access: Access,
     ) -> R<Value> {
+        self.instance_member_via(o, key, args, access, None)
+    }
+
+    /// [`Self::instance_member`] through a variable declared as interface `via`: the
+    /// instance's `via_key` implementation comes first. Without one, an implemented
+    /// interface's procedure is used when the class has no public member of that name.
+    fn instance_member_via(
+        &mut self,
+        o: &ObjectRef,
+        key: &str,
+        args: Vec<ArgIn>,
+        access: Access,
+        via: Option<&str>,
+    ) -> R<Value> {
         let Some(inst) = as_instance(o) else {
             return Err(ScriptError::runtime(438));
         };
         let module = inst.module.clone();
         let fields = inst.fields.clone();
+        if !key.is_empty() && !module.implements.is_empty() {
+            let ifaces: Vec<Rc<str>> = match via {
+                Some(v) if module.implements.iter().any(|i| &**i == v) => vec![Rc::from(v)],
+                Some(_) => Vec::new(),
+                None if module.procs.get(key).is_some_and(|g| g.is_public())
+                    || module.public_vars.contains(key) =>
+                {
+                    Vec::new()
+                }
+                None => module.implements.clone(),
+            };
+            for iface in ifaces {
+                let k = format!("{iface}_{key}");
+                if let Some(g) = module.procs.get(k.as_str()) {
+                    let g = g.clone();
+                    return self.call_group(&module, &g, args, Some((o.clone(), fields)), access);
+                }
+            }
+        }
         let key: Rc<str> = if key.is_empty() {
             match &module.default_member {
                 Some(d) => d.clone(),
@@ -1220,6 +1291,23 @@ impl Interp<'_> {
             let a = args.into_iter().map(|a| ArgIn::value(a.value)).collect();
             return self.call_property_put(&module, &g, a, value, set, Some((o.clone(), fields)));
         }
+        if !module.public_vars.contains(&key) {
+            // A property of an implemented interface (`IShape_Name`).
+            for iface in module.implements.clone() {
+                let k = format!("{iface}_{key}");
+                if let Some(g) = module.procs.get(k.as_str()).cloned() {
+                    let a = args.into_iter().map(|a| ArgIn::value(a.value)).collect();
+                    return self.call_property_put(
+                        &module,
+                        &g,
+                        a,
+                        value,
+                        set,
+                        Some((o.clone(), fields)),
+                    );
+                }
+            }
+        }
         if module.public_vars.contains(&key) {
             let slot = fields.borrow().get(&key).cloned();
             if let Some(s) = slot {
@@ -1302,6 +1390,7 @@ impl Interp<'_> {
             module: m.clone(),
             fields: fields.clone(),
         });
+        self.register_instance_sink(m, &obj, &fields);
         if let Some(p) = m.procs.get("class_initialize").and_then(|g| g.sub.clone()) {
             self.call_proc(m, &p, Vec::new(), Some((obj.clone(), fields)), None)?;
         }
@@ -1872,7 +1961,11 @@ impl Interp<'_> {
         let mut pc = 0usize;
         while pc < proc.ops.len() {
             self.tick()?;
-            match self.exec_op(&proc.ops[pc], pc, f) {
+            let step = match self.host_calls() {
+                Ok(()) => self.exec_op(&proc.ops[pc], pc, f),
+                Err(e) => Err(e),
+            };
+            match step {
                 Ok(Flow::Next) => pc += 1,
                 Ok(Flow::Jump(t)) => pc = t,
                 Ok(Flow::Exit) => break,
@@ -1989,6 +2082,29 @@ impl Interp<'_> {
             Op::GoSub(t) => {
                 f.gosubs.push(pc + 1);
                 Ok(Flow::Jump(*t))
+            }
+            Op::OnJump {
+                index,
+                targets,
+                gosub,
+                ..
+            } => {
+                // MS-VBAL §5.4.2.10: 0 or past the list falls through; below 0 or above 255
+                // is error 5.
+                let v = self.eval_value(index, f)?;
+                let n = convert::to_i64(&convert::convert(&v, Scalar::Long)?)?;
+                if !(0..=255).contains(&n) {
+                    return Err(ScriptError::runtime(5));
+                }
+                match targets.get((n as usize).wrapping_sub(1)) {
+                    Some(&t) if n > 0 => {
+                        if *gosub {
+                            f.gosubs.push(pc + 1);
+                        }
+                        Ok(Flow::Jump(t))
+                    }
+                    _ => Ok(Flow::Next),
+                }
             }
             Op::Return => f
                 .gosubs
@@ -2270,6 +2386,11 @@ impl Interp<'_> {
                 kind: ErrorKind::Halt,
                 ..ScriptError::new(0, "End")
             }),
+            StmtKind::RaiseEvent { name, args } => {
+                let module = f.module.clone();
+                let me = f.me.as_ref().map(|(o, _)| o.clone());
+                self.raise_event_stmt(name, args, &module, me, f)
+            }
             StmtKind::Unsupported(feature) => Err(ScriptError::unsupported(feature)),
             StmtKind::Invalid(msg) => Err(ScriptError::syntax(msg.clone())),
             _ => Ok(()),

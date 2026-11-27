@@ -531,6 +531,36 @@ pub trait Dispatch {
     fn as_any(&self) -> Option<&dyn Any> {
         None
     }
+
+    /// A member the script runtime answers itself instead of the object (Excel's
+    /// `Application.Run`, which calls a procedure of the running project).
+    fn script_member(&self, _name: &str) -> Option<ScriptMember> {
+        None
+    }
+}
+
+/// Members of host objects that the language runtime implements ([`Dispatch::script_member`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScriptMember {
+    /// `Run(Macro, Arg1, Arg2…)`: call a procedure of the project by name (`"Macro1"`,
+    /// `"Module1.Macro1"`, `"'Book.xlsm'!Macro1"`) and return its result.
+    Run,
+}
+
+/// Something the host asks the script runtime to run between two statements: the event
+/// handlers for what the script just did (a cell it changed fires `Worksheet_Change`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum HostCall {
+    /// A procedure by name (`"Sheet1.Worksheet_Change"`), arguments by value. Skipped when the
+    /// project has no such procedure.
+    Proc { name: String, args: Vec<Value> },
+    /// An event of a host object, for the `WithEvents` variables holding an object of type
+    /// `source_type` (`"Application"`): each one's `<variable>_<event>` procedure runs.
+    Event {
+        source_type: String,
+        event: String,
+        args: Vec<Value>,
+    },
 }
 
 /// Where a script runs: global names, UI and output, time and cancellation.
@@ -580,6 +610,12 @@ pub trait Host {
     /// Polled while a script runs; returning true stops it with error 18 (user interrupt).
     fn cancelled(&mut self) -> bool {
         false
+    }
+
+    /// Asked between statements: procedures to run now (event handlers for changes the
+    /// script made). Keep it cheap: it is called before every statement.
+    fn take_calls(&mut self) -> Vec<HostCall> {
+        Vec::new()
     }
 }
 

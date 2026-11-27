@@ -262,8 +262,15 @@ impl Parser {
                 self.end_of_statement()?;
                 continue;
             }
-            if self.is_word("attribute") || self.is_word("implements") {
+            if self.is_word("attribute") {
                 self.skip_to_eos();
+                continue;
+            }
+            if self.eat_word("implements") {
+                let name = self.dotted_name()?;
+                let short: Rc<str> = Rc::from(name.rsplit('.').next().unwrap_or(&name));
+                m.items.push(ModuleItem::Implements(short));
+                self.end_of_statement()?;
                 continue;
             }
             if let Some(ty) = self.word_at(0).and_then(deftype_word) {
@@ -329,7 +336,12 @@ impl Parser {
                     self.skip_to_eos();
                     m.items.push(ModuleItem::Declare { name, lib });
                 }
-                "event" => self.skip_to_eos(),
+                "event" => {
+                    self.bump();
+                    let (name, _) = self.ident()?;
+                    m.items.push(ModuleItem::Event(name));
+                    self.skip_to_eos();
+                }
                 _ => {
                     let is_dim = self.eat_word("dim");
                     if public.is_none() && !is_dim {
@@ -435,7 +447,7 @@ impl Parser {
     }
 
     fn var_decl(&mut self) -> R<VarDecl> {
-        self.eat_word("withevents");
+        let with_events = self.eat_word("withevents");
         let line = self.line();
         let (name, suffix) = self.ident()?;
         let mut ty = suffix.and_then(Ty::from_suffix);
@@ -459,6 +471,7 @@ impl Parser {
             ty,
             array,
             auto_new,
+            with_events,
             line,
         })
     }
@@ -997,7 +1010,16 @@ impl Parser {
             "load" | "unload" if !matches!(next, Tok::Op("=") | Tok::Dot | Tok::LParen) => {
                 return self.unsupported("UserForms (Load/Unload)");
             }
-            "raiseevent" => return self.unsupported("Events (RaiseEvent)"),
+            "raiseevent" => {
+                self.bump();
+                let (name, _) = self.ident()?;
+                let args = if self.eat(&Tok::LParen) {
+                    self.paren_args()?
+                } else {
+                    Vec::new()
+                };
+                return Ok(StmtKind::RaiseEvent { name, args });
+            }
             "attribute" => {
                 // `Attribute Item.VB_UserMemId = 0` marks the class's default member.
                 let mut saw = false;
@@ -1167,7 +1189,23 @@ impl Parser {
         self.bump();
         self.eat_word("local");
         if !self.eat_word("error") {
-            return self.unsupported("Computed branches (On ... GoTo/GoSub)");
+            // `On expr GoTo l1, l2...` / `On expr GoSub ...` (MS-VBAL §5.4.2.10).
+            let index = self.expr()?;
+            let gosub = if self.eat_word("gosub") {
+                true
+            } else {
+                self.expect_word("goto")?;
+                false
+            };
+            let mut labels = vec![self.label_name()?];
+            while self.eat(&Tok::Comma) {
+                labels.push(self.label_name()?);
+            }
+            return Ok(StmtKind::OnJump {
+                index,
+                labels,
+                gosub,
+            });
         }
         if self.eat_word("resume") {
             self.expect_word("next")?;

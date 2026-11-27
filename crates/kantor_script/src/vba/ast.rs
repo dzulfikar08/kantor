@@ -153,6 +153,8 @@ pub struct VarDecl {
     pub array: Option<Vec<Bounds>>,
     /// `As New Class`: created on first use.
     pub auto_new: bool,
+    /// `WithEvents`: the object's events call `<name>_<Event>` procedures of the module.
+    pub with_events: bool,
     pub line: u32,
 }
 
@@ -333,6 +335,17 @@ pub enum StmtKind {
     GoTo(Rc<str>),
     GoSub(Rc<str>),
     Return,
+    /// `On expr GoTo a, b, c` (`gosub`: `On expr GoSub ...`).
+    OnJump {
+        index: Expr,
+        labels: Vec<Rc<str>>,
+        gosub: bool,
+    },
+    /// `RaiseEvent Name(args)`.
+    RaiseEvent {
+        name: Ident,
+        args: Vec<ArgExpr>,
+    },
     OnError(OnError),
     Resume(Resume),
     Exit(ExitKind),
@@ -400,6 +413,10 @@ pub enum ModuleItem {
         lib: String,
     },
     Proc(ProcDef),
+    /// `Event Name(params)`: an event the class raises.
+    Event(Ident),
+    /// `Implements Interface`: the lower-case class name.
+    Implements(Rc<str>),
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
