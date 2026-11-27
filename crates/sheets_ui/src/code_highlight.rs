@@ -410,7 +410,7 @@ fn js_tokens(text: &str) -> Vec<(Range<usize>, TokenKind)> {
                 out.push((i..j, TokenKind::String));
                 i = j;
             }
-            c if c.is_ascii_digit() && !previous_char(b, i).is_some_and(is_ident) => {
+            c if c.is_ascii_digit() && !(i > 0 && is_ident(b[i - 1])) => {
                 let j = if c == b'0' && matches!(b.get(i + 1), Some(b'x' | b'X')) {
                     let mut j = i + 2;
                     while j < b.len() && b[j].is_ascii_hexdigit() {
