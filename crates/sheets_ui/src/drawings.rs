@@ -382,6 +382,8 @@ pub(crate) struct Pane {
 /// An object placed on screen this frame.
 struct Placed {
     drawing: Drawing,
+    /// A macro is assigned to it (a button): a click runs it.
+    on_action: bool,
     /// Sheet px.
     rect: [f64; 4],
     /// Screen rectangle (full, unclipped) in each pane it shows in, with
@@ -761,6 +763,7 @@ fn prepaint(
             continue;
         }
         placed.push(Placed {
+            on_action: grid.book.drawing_macro(d.key).is_some(),
             drawing: d.clone(),
             rect,
             shown,
@@ -833,6 +836,7 @@ fn prepaint(
             continue;
         }
         placed.push(Placed {
+            on_action: false,
             drawing: Drawing {
                 key,
                 name: "Note".into(),
@@ -857,7 +861,7 @@ fn prepaint(
     let mut hitboxes = Vec::new();
     if interactive {
         for (i, p) in placed.iter().enumerate() {
-            if !p.drawing.editable {
+            if !p.drawing.editable && !p.on_action {
                 continue;
             }
             for (r, clip) in &p.shown {
@@ -1082,9 +1086,15 @@ fn paint(
     if !frame.interactive {
         return;
     }
-    for (_, grip, hb) in &frame.hitboxes {
-        window.set_cursor_style(cursor(*grip), hb);
+    for (i, grip, hb) in &frame.hitboxes {
+        let style = if *grip == Grip::Move && frame.placed[*i].on_action {
+            CursorStyle::PointingHand
+        } else {
+            cursor(*grip)
+        };
+        window.set_cursor_style(style, hb);
     }
+    let actions: Vec<bool> = frame.placed.iter().map(|p| p.on_action).collect();
     // Mouse: press on an object selects it and starts a drag; a press
     // elsewhere lets go of the selection.
     let keys: Vec<(DrawingKey, [f64; 4])> = frame
@@ -1161,6 +1171,13 @@ fn paint(
                 return;
             };
             let (key, rect) = keys[i];
+            // A button or shape with a macro runs it (Ctrl+click selects
+            // it, as in Excel).
+            if grip == Grip::Move && actions[i] && !(e.modifiers.control || e.modifiers.platform) {
+                cx.stop_propagation();
+                let _ = view.update(cx, |this, cx| this.drawing_macro_clicked(key, window, cx));
+                return;
+            }
             // A slicer's buttons filter (its frame selects and moves it).
             if grip == Grip::Move
                 && let Some((kind, rects)) = &slicers[i]

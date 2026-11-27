@@ -382,10 +382,7 @@ impl RangeObj {
             }
             Some(_) => {
                 // To the next filled cell, or the sheet's edge.
-                loop {
-                    let Some((nr, nc)) = step(r, c) else {
-                        break;
-                    };
+                while let Some((nr, nc)) = step(r, c) {
                     (r, c) = (nr, nc);
                     if filled(r, c) {
                         break;

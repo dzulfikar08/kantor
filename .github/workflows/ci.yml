@@ -57,7 +57,7 @@ jobs:
       # KANTOR PATCH §37 (user functions) in the vendored IronCalc, which the
       # workspace's test run doesn't cover.
       - if: matrix.arch == 'x86_64'
-        run: cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib kantor_udf
+        run: cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib -- kantor_udf test_defined_names
 
   # Files Kantor encrypts open in other software: msoffcrypto-tool decrypts them to the
   # same package, LibreOffice opens them with the password.

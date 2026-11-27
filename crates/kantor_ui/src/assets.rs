@@ -23,6 +23,8 @@ icon_assets!(
         Pilcrow,
         ZoomIn,
         ZoomOut,
+        // Sheets: a macro's MsgBox with vbQuestion
+        CircleQuestionMark,
         // Slides toolbar
         Type,
         Circle,

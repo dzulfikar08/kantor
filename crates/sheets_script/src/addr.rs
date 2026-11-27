@@ -12,7 +12,7 @@ pub fn parse_col(letters: &str) -> Option<u32> {
     let n = letters.bytes().fold(0u32, |n, b| {
         n * 26 + u32::from(b.to_ascii_uppercase() - b'A' + 1)
     });
-    (n >= 1 && n <= MAX_COLS).then(|| n - 1)
+    (1..=MAX_COLS).contains(&n).then(|| n - 1)
 }
 
 fn parse_row(digits: &str) -> Option<u32> {
@@ -20,7 +20,7 @@ fn parse_row(digits: &str) -> Option<u32> {
         return None;
     }
     let n: u32 = digits.parse().ok()?;
-    (n >= 1 && n <= MAX_ROWS).then(|| n - 1)
+    (1..=MAX_ROWS).contains(&n).then(|| n - 1)
 }
 
 /// `B12`, `$B$12`: `(row, col)` 0-based.

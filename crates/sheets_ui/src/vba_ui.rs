@@ -1,14 +1,18 @@
 //! Workbooks with macros (a VBA project): a bar when one opens, and the
 //! Macros dialog (Excel's View ▸ Macros, Alt+F8) listing the project's
-//! modules and procedures, with a module's code shown read-only.
+//! modules and procedures, with a module's code shown read-only, Run, and
+//! the macros' `Debug.Print` output.
 //!
-//! Kantor doesn't run macros. The bar says so; its state ([`MacroTrust`])
-//! is per pane and starts `Disabled` for every workbook with macros, so a
-//! later "Enable Content" (per file, as Excel's trusted documents) only
-//! needs a new state and a button on the bar.
+//! Macros start disabled ([`MacroTrust`], per pane), as Excel opens a file
+//! from the internet: the bar's Enable Content enables them for this pane
+//! until it closes (nothing is remembered). Then Run, buttons and shapes
+//! with an assigned macro run them (`macro_run`), and the workbook's VBA
+//! functions work in its formulas. [`initial_trust`] is where trusted
+//! locations or "always trust this file" would decide otherwise.
 
 use std::rc::Rc;
 
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex, input, v_flex};
 use gpui_kit::prelude::*;
@@ -19,6 +23,7 @@ use sheets_engine::vba::{Module, ModuleKind, Procedure, VbaProject};
 
 use crate::SheetsView;
 use crate::dialog;
+use crate::macro_run::MacroRun;
 
 /// What the workbook's macros may do.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -26,15 +31,39 @@ pub(crate) enum MacroTrust {
     /// No VBA project.
     #[default]
     NoMacros,
-    /// Macros are shown, never run (running them isn't supported yet).
+    /// Macros are shown and not run until the user enables them.
     Disabled,
+    /// Enable Content was pressed: macros run (for this pane's session).
+    Enabled,
 }
 
-/// A pane's macros: the trust, and whether the bar was closed.
+/// Whether a workbook's macros may run when it opens. Always `Disabled`
+/// for now; trusted locations and trusted documents (a remembered Enable
+/// Content per file) would return `Enabled` here.
+fn initial_trust(_path: Option<&std::path::Path>, has_macros: bool) -> MacroTrust {
+    if has_macros {
+        MacroTrust::Disabled
+    } else {
+        MacroTrust::NoMacros
+    }
+}
+
+/// A pane's macros: the trust, whether the bar was closed, the project to
+/// run, a run in progress and the last run's error and output.
 #[derive(Default)]
 pub(crate) struct MacroState {
     pub(crate) trust: MacroTrust,
-    bar_closed: bool,
+    pub(crate) bar_closed: bool,
+    /// The modules to run (read when content is enabled).
+    pub(crate) project: Option<sheets_script::MacroProject>,
+    pub(crate) run: Option<MacroRun>,
+    /// The macro run last (`Module1.Macro1`).
+    pub(crate) last_run: Option<String>,
+    /// The run-time error dialog showing.
+    pub(crate) error: Option<sheets_script::MacroError>,
+    pub(crate) error_focus: Option<FocusHandle>,
+    /// `Debug.Print` lines, oldest first.
+    pub(crate) output: Vec<SharedString>,
 }
 
 /// The Macros dialog.
@@ -77,15 +106,50 @@ fn code_lines(module: &Module) -> Rc<Vec<SharedString>> {
 impl SheetsView {
     /// After a workbook was opened: the bar when it has macros.
     pub(crate) fn macros_after_open(&mut self, cx: &mut Context<Self>) {
-        let has = self.table.read(cx).delegate().book.has_macros();
-        self.macros = MacroState {
-            trust: if has {
-                MacroTrust::Disabled
-            } else {
-                MacroTrust::NoMacros
-            },
-            bar_closed: false,
+        let (has, path) = {
+            let book = &self.table.read(cx).delegate().book;
+            (book.has_macros(), book.path().map(|p| p.to_path_buf()))
         };
+        self.macros = MacroState {
+            trust: initial_trust(path.as_deref(), has),
+            ..Default::default()
+        };
+        if self.macros.trust == MacroTrust::Enabled {
+            self.macros.trust = MacroTrust::Disabled;
+            self.enable_content_now(cx);
+        }
+    }
+
+    /// Enable Content: macros run in this pane until it closes, and the
+    /// workbook's VBA functions work in its formulas.
+    pub(crate) fn enable_content(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.busy.is_some() || !self.enable_content_now(cx) {
+            return;
+        }
+        // Formulas using the VBA functions get their values.
+        self.calculate_doc(window, cx);
+        self.status = t("Macros enabled for this session").into();
+        cx.notify();
+    }
+
+    fn enable_content_now(&mut self, cx: &mut Context<Self>) -> bool {
+        let read = sheets_script::MacroProject::of_book(&self.table.read(cx).delegate().book);
+        let project = match read {
+            Some(Ok(p)) => p,
+            Some(Err(e)) => {
+                self.status = tf("Kantor can't read this workbook's macros: {}", &[&e]).into();
+                cx.notify();
+                return false;
+            }
+            None => return false,
+        };
+        self.table.update(cx, |table, _| {
+            sheets_script::enable_functions(&mut table.delegate_mut().book, Some(&project));
+        });
+        self.macros.project = Some(project);
+        self.macros.trust = MacroTrust::Enabled;
+        cx.notify();
+        true
     }
 
     /// The bar saying the workbook has macros (until closed).
@@ -119,8 +183,15 @@ impl SheetsView {
                         .truncate()
                         .text_color(t_.fg_muted)
                         .child(t(
-                            "This workbook contains macros. Kantor can show them; running macros is not supported yet.",
+                            "Macros have been disabled. Enable them only if you trust where this file came from.",
                         )),
+                )
+                .child(
+                    Button::new("sheets-macro-enable")
+                        .label(t("Enable Content"))
+                        .primary()
+                        .small()
+                        .on_click(cx.listener(|this, _, window, cx| this.enable_content(window, cx))),
                 )
                 .child(
                     Button::new("sheets-macro-view")
@@ -377,23 +448,95 @@ impl SheetsView {
                 card = card.child(h_flex().gap(SPACE_4).items_start().child(list).child(code));
             }
         }
+        // The selected procedure, when it is a macro Run can start.
+        let picked = d
+            .procedure
+            .and_then(|i| d.procedures.get(d.module)?.get(i))
+            .filter(|p| p.is_macro())
+            .and_then(|p| {
+                let m = d.project.as_ref().ok()?.modules().get(d.module)?;
+                Some(format!("{}.{}", m.name, p.name))
+            });
+        let enabled = self.macros.trust == MacroTrust::Enabled;
+        let note = if enabled {
+            t("Run starts the selected macro. One Undo takes back everything it changed.")
+        } else {
+            t(
+                "Macros are disabled. Enable Content on the bar to run them. Paparan AI can explain a macro or turn it into formulas.",
+            )
+        };
+        // `Debug.Print` output of the runs so far.
+        let output = (!self.macros.output.is_empty()).then(|| {
+            let lines = &self.macros.output;
+            let shown = &lines[lines.len().saturating_sub(8)..];
+            v_flex()
+                .gap(SPACE_1)
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .text_size(FONT_SMALL)
+                        .text_color(t_.fg_muted)
+                        .child(t("Output (Debug.Print)"))
+                        .child(
+                            Button::new("macros-output-clear")
+                                .label(t("Clear"))
+                                .ghost()
+                                .xsmall()
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.macros.output.clear();
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    v_flex()
+                        .id("macros-output")
+                        .max_h(LINE_H * 8.)
+                        .overflow_y_scroll()
+                        .p(SPACE_2)
+                        .border_1()
+                        .border_color(t_.border)
+                        .rounded(RADIUS_SM)
+                        .bg(t_.surface)
+                        .font_family(cx.theme().mono_font_family.clone())
+                        .text_size(FONT_SMALL)
+                        .children(shown.iter().map(|l| div().child(l.clone()))),
+                )
+        });
         let close = view.clone();
+        let run_view = view.clone();
         let card = card
-            .child(dialog::note(
-                t("Kantor shows macros but doesn't run them yet. Paparan AI can explain a macro or turn it into formulas."),
-                false,
-                cx,
-            ))
+            .children(output)
+            .child(dialog::note(note, false, cx))
             .child(
-                h_flex().justify_end().child(
-                    Button::new("macros-close")
-                        .label(t("Close"))
-                        .primary()
-                        .small()
-                        .on_click(move |_, window, cx| {
-                            let _ = close.update(cx, |this, cx| this.close_macros(window, cx));
-                        }),
-                ),
+                h_flex()
+                    .justify_end()
+                    .gap(SPACE_3)
+                    .child(
+                        Button::new("macros-close")
+                            .label(t("Close"))
+                            .ghost()
+                            .small()
+                            .on_click(move |_, window, cx| {
+                                let _ = close.update(cx, |this, cx| this.close_macros(window, cx));
+                            }),
+                    )
+                    .child(
+                        Button::new("macros-run")
+                            .label(t("Run"))
+                            .primary()
+                            .small()
+                            .disabled(!enabled || picked.is_none())
+                            .on_click(move |_, window, cx| {
+                                let Some(name) = picked.clone() else {
+                                    return;
+                                };
+                                let _ = run_view.update(cx, |this, cx| {
+                                    this.close_macros(window, cx);
+                                    this.run_macro(name, window, cx);
+                                });
+                            }),
+                    ),
             );
         Some(dialog::place(card, self, cx).into_any_element())
     }

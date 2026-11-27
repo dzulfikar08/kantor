@@ -18,6 +18,9 @@ kantor_mem.workspace = true
 kantor_spell.workspace = true
 kantor_ui.workspace = true
 sheets_engine.workspace = true
+# Running a workbook's macros (Enable Content, Run, buttons).
+kantor_script.workspace = true
+sheets_script.workspace = true
 kantor_ooxml.workspace = true
 # Charts and pictures over the grid: built by sheets_scene (the Slides chart
 # renderer), painted by Slides' scene painter with Docs' font bridge.

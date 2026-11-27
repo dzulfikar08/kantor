@@ -951,7 +951,10 @@ args) -> Option<KantorValue>`, `None` for a name it doesn't define), set with
 defined name asks the user functions before giving `#NAME?`; its arguments are
 evaluated in the cell's context, ranges read cell by cell (so they are
 dependencies like any read; ranges over 65 536 cells are clipped to the used
-area). The formula text is untouched, so files save as they were.
+area). The formula text is untouched, so files save as they were: in
+`expressions/parser/stringify.rs` a call to a name that isn't bound by LET
+keeps the case it was written in (upstream lowercased it: `=MyTax(A2)` became
+`=mytax(A2)`; `test/user_model/test_defined_names.rs` expects the case now).
 `Model::kantor_evaluate_formula` parses and evaluates a formula in a cell's
 context without storing it (stored values only, like conditional formatting's
 `cf_evaluate`), a range result coming back as its values;

@@ -113,6 +113,7 @@ mod plain_cell;
 pub use notes_ui::NoteCommand;
 pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
+mod macro_run;
 mod toolbar;
 mod vba_ui;
 mod web_ui;
@@ -1726,11 +1727,14 @@ impl SheetsView {
 
     /// While opening or recalculating, refuse a command (and say why).
     fn blocked(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.busy.is_some() {
+        // A macro showing a dialog has lent the grid its workbook: edits
+        // wait until it ends.
+        let busy = self.busy.is_some() || self.macros.run.is_some();
+        if busy {
             self.status = i18n::t("Please wait until the workbook is ready").into();
             cx.notify();
         }
-        self.busy.is_some()
+        busy
     }
 
     /// Select a sheet cell in the table (scrolls to it and emits `SelectCell`).
@@ -3118,7 +3122,7 @@ impl Render for SheetsView {
             })
             // Excel's security bar for downloads (see `web_ui`).
             .children(web_bar)
-            // Workbooks with macros: shown, not run (see `vba_ui`).
+            // Workbooks with macros: disabled until Enable Content (see `vba_ui`).
             .children(macro_bar)
             // Formula bar: name box + input
             .when(chart_sheet.is_none(), |root| {
@@ -3268,6 +3272,7 @@ impl Render for SheetsView {
             .children(self.render_sort_panel(cx))
             .children(self.render_custom_lists(cx))
             .children(self.render_macros_dialog(cx))
+            .children(self.render_macro_dialog(cx))
             .children(self.render_filter_menu(cx))
             .children(self.render_pivot_dialog(cx))
             .children(self.render_page_setup(cx))
