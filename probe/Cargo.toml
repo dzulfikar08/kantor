@@ -5,11 +5,17 @@ edition = "2024"
 
 [features]
 js = ["dep:rquickjs"]
-py = ["dep:rustpython-vm"]
+py = ["dep:rustpython-vm", "dep:ruff_python_ast", "dep:ruff_python_parser", "dep:ruff_text_size", "dep:ruff_source_file", "dep:ruff_python_trivia"]
 
 [dependencies]
 rquickjs = { version = "0.14", default-features = false, features = ["std"], optional = true }
 rustpython-vm = { version = "0.6", default-features = false, features = ["compiler"], optional = true }
+# rustpython-codegen 0.6.0 doesn't build with the 0.16.10 ruff fork: pin what it was released with.
+ruff_python_ast = { package = "rustpython-ruff_python_ast", version = "=0.16.5", optional = true }
+ruff_python_parser = { package = "rustpython-ruff_python_parser", version = "=0.16.5", optional = true }
+ruff_text_size = { package = "rustpython-ruff_text_size", version = "=0.16.5", optional = true }
+ruff_source_file = { package = "rustpython-ruff_source_file", version = "=0.16.5", optional = true }
+ruff_python_trivia = { package = "rustpython-ruff_python_trivia", version = "=0.16.5", optional = true }
 
 [profile.release]
 lto = "fat"
