@@ -637,7 +637,7 @@ pub(crate) fn lay_out_body(
     let (mut lps, mut widths, mut blocks) =
         body_with_notes(doc, &refs, &sections, &mut notes_cache, layout, cut);
     drop(t);
-    if let Some(pre) = pre.as_mut() {
+    if let Some(pre) = pre.as_deref_mut() {
         let _t = span("docs shape body (threads)");
         pre(&lps, &widths);
     }

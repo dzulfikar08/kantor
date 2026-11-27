@@ -236,12 +236,12 @@ impl DocsView {
         };
         if self.part.is_some() {
             let main = self.main_doc();
-            return balloons(main, &main.changes());
+            return balloons(main, &main.changes()[..]);
         }
         if let Some(b) = self.memo().and_then(|m| m.balloons) {
             return b;
         }
-        let b = balloons(&self.doc, &self.doc_changes());
+        let b = balloons(&self.doc, &self.doc_changes()[..]);
         if let Some(mut m) = self.memo() {
             m.balloons = Some(b);
         }

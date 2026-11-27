@@ -351,6 +351,19 @@ impl Paragraph {
         }
     }
 
+    /// Its words, as [`crate::Document::word_count`] counts them.
+    pub fn word_count(&self) -> usize {
+        self.text
+            .split_whitespace()
+            .filter(|w| w.chars().any(|c| c != OBJECT))
+            .count()
+    }
+
+    /// Its characters, as [`crate::Document::char_count`] counts them.
+    pub fn char_count(&self) -> usize {
+        self.text.chars().filter(|&c| c != OBJECT).count()
+    }
+
     pub fn with_style(mut self, style: &str) -> Self {
         self.props.style = Some(style.into());
         self

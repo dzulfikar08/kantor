@@ -587,6 +587,8 @@ pub struct DocsView {
     /// A long document's layout being made in the background (see
     /// [`DocsView::first_layout`]); meanwhile only its start is laid out.
     bg_layout: Option<Task<()>>,
+    /// The main document's words and characters (see [`DocsView::counts`]).
+    counts: Cell<Option<((u64, usize, usize), usize, usize)>>,
 }
 
 /// Documents with at least this many paragraphs are laid out in the
@@ -690,6 +692,7 @@ impl DocsView {
             perf,
             review_memo: RefCell::default(),
             bg_layout: None,
+            counts: Cell::default(),
         };
         this.first_layout(cx);
         this.refresh_spelling(cx);
@@ -1452,7 +1455,41 @@ impl DocsView {
         tf("Page {} of {} · {}", &[&page, &pages, &counts])
     }
 
+    /// Words and characters of the main document (kept until it changes:
+    /// the inspector asks on every frame).
+    fn counts(&self) -> (usize, usize) {
+        let main = self.main_doc();
+        let key = (
+            main.revision(),
+            main.paragraphs().as_ptr() as usize,
+            main.len(),
+        );
+        let last = self.counts.get();
+        if let Some((k, w, c)) = last
+            && k == key
+        {
+            return (w, c);
+        }
+        // One paragraph changed since: count it again.
+        let one = main
+            .last_splice()
+            .filter(|sp| sp.removed == 1 && sp.inserted == 1 && sp.old.len() == 1);
+        let counted = match (last, one) {
+            (Some((k, w, c)), Some(sp)) if k.0 + 1 == key.0 && (k.1, k.2) == (key.1, key.2) => {
+                let (old, new) = (&sp.old[0], main.paragraph(sp.start));
+                (
+                    (w + new.word_count()).saturating_sub(old.word_count()),
+                    (c + new.char_count()).saturating_sub(old.char_count()),
+                )
+            }
+            _ => (main.word_count(), main.char_count()),
+        };
+        self.counts.set(Some((key, counted.0, counted.1)));
+        counted
+    }
+
     pub fn info(&self) -> DocInfo {
+        let (words, chars) = self.counts();
         let main = self.main_doc();
         let p = self.doc.paragraph(self.sel.head.para);
         let style = p
@@ -1467,8 +1504,8 @@ impl DocsView {
             path: main.source_path().map(|p| p.to_path_buf()),
             dirty: self.dirty(),
             pages: self.laid.paged.pages.len(),
-            words: main.word_count(),
-            chars: main.char_count(),
+            words,
+            chars,
             paragraphs: main.len(),
             style,
             font: format!("{} {} pt", r.font, r.size_pt),

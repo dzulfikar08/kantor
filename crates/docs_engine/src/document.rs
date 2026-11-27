@@ -814,22 +814,11 @@ impl Document {
     }
 
     pub fn word_count(&self) -> usize {
-        self.paragraphs
-            .iter()
-            .map(|p| {
-                p.text
-                    .split_whitespace()
-                    .filter(|w| w.chars().any(|c| c != OBJECT))
-                    .count()
-            })
-            .sum()
+        self.paragraphs.iter().map(Paragraph::word_count).sum()
     }
 
     pub fn char_count(&self) -> usize {
-        self.paragraphs
-            .iter()
-            .map(|p| p.text.chars().filter(|&c| c != OBJECT).count())
-            .sum()
+        self.paragraphs.iter().map(Paragraph::char_count).sum()
     }
 
     /// Clamp a position into the document (and onto a char boundary).
