@@ -148,23 +148,20 @@ fn header(text: &str, line: usize) -> Option<Procedure> {
             break;
         }
     }
-    let (kind, rest) = if let Some(r) = after_word(rest, "Sub") {
-        (ProcedureKind::Sub, r)
-    } else if let Some(r) = after_word(rest, "Function") {
-        (ProcedureKind::Function, r)
-    } else if let Some(r) = after_word(rest, "Property") {
-        if let Some(r) = after_word(r, "Get") {
-            (ProcedureKind::PropertyGet, r)
-        } else if let Some(r) = after_word(r, "Let") {
-            (ProcedureKind::PropertyLet, r)
-        } else if let Some(r) = after_word(r, "Set") {
-            (ProcedureKind::PropertySet, r)
-        } else {
-            return None;
+    const KINDS: [(&str, Option<&str>, ProcedureKind); 5] = [
+        ("Sub", None, ProcedureKind::Sub),
+        ("Function", None, ProcedureKind::Function),
+        ("Property", Some("Get"), ProcedureKind::PropertyGet),
+        ("Property", Some("Let"), ProcedureKind::PropertyLet),
+        ("Property", Some("Set"), ProcedureKind::PropertySet),
+    ];
+    let (kind, rest) = KINDS.iter().find_map(|(word, second, kind)| {
+        let r = after_word(rest, word)?;
+        match second {
+            Some(w) => Some((*kind, after_word(r, w)?)),
+            None => Some((*kind, r)),
         }
-    } else {
-        return None;
-    };
+    })?;
     let name_end = rest
         .find(|c: char| c == '(' || c.is_whitespace())
         .unwrap_or(rest.len());

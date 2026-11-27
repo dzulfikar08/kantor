@@ -6,6 +6,7 @@
 //! kantor sheets edit book.xlsx to_numbers '{"range": "Data!B2:B500"}'
 //! kantor sheets edit book.xlsx -o out.xlsx --ops ops.json
 //! kantor sheets check book.xlsx [--json] [--sheet Data]
+//! kantor sheets macros book.xlsm [--module Module1] [--json]
 //! kantor sheets schema > sheets-json.schema.json
 //! ```
 //!
@@ -20,11 +21,12 @@ use anyhow::{Context as _, Result, bail};
 use serde_json::{Value, json};
 use sheets_engine::Workbook;
 
-use crate::agent::{sheets_author, sheets_check, sheets_list, sheets_schema};
+use crate::agent::{sheets_author, sheets_check, sheets_list, sheets_macros, sheets_schema};
 
 pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [--check [--json]]\n\
     \x20      kantor sheets list FILE [--sheet S] [--range R] [--formulas] [--max-rows N]\n\
     \x20      kantor sheets check FILE [--json] [--sheet S]\n\
+    \x20      kantor sheets macros FILE [--module NAME] [--json]\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] TOOL ARGS\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] --ops OPS.json\n\
     \x20      kantor sheets schema\n\
@@ -56,6 +58,9 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20          content outside the print area or split by page breaks,\n\
     \x20          unsorted bar charts. Each finding has a sheet and range.\n\
     \x20          Exit status 1 on errors.\n\
+    \x20 macros   list the workbook's macros (its VBA project): modules and\n\
+    \x20          their Subs and Functions with line numbers; --module NAME\n\
+    \x20          prints a module's code. Kantor doesn't run macros.\n\
     \x20 edit     run editing tools on a file and save it (in place unless -o):\n\
     \x20          TOOL is one of the tools below, ARGS its JSON arguments (or\n\
     \x20          @FILE); --ops runs a list of {\"tool\": ..., \"args\": {...}}.\n\
@@ -80,7 +85,9 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20 -o, --output FILE   the .xlsx to write\n\
     \x20 -f, --force         overwrite an existing output file\n\
     \x20     --check         build: check the workbook it wrote\n\
-    \x20     --json          check: findings as JSON\n\
+    \x20     --json          check: findings as JSON; macros: the listing (and\n\
+    \x20                     --module's code) as JSON\n\
+    \x20     --module NAME   macros: the module whose code to print\n\
     \x20     --sheet S       list, check: one sheet (name or number from 1)\n\
     \x20     --range R       list: the cells to show (A1:H200, Data!A1:H200)\n\
     \x20     --formulas      list: formulas in place of their values\n\
@@ -110,6 +117,7 @@ struct Opts {
     range: Option<String>,
     formulas: bool,
     max_rows: Option<u32>,
+    module: Option<String>,
     rest: Vec<String>,
 }
 
@@ -134,6 +142,7 @@ fn parse(args: &[OsString]) -> Result<Opts, Usage> {
             "--sheet" => o.sheet = Some(value(&mut it, a)?),
             "--range" => o.range = Some(value(&mut it, a)?),
             "--ops" => o.ops = Some(value(&mut it, a)?),
+            "--module" => o.module = Some(value(&mut it, a)?),
             "--max-rows" => {
                 let v = value(&mut it, a)?;
                 o.max_rows = Some(
@@ -210,6 +219,7 @@ pub fn main(args: &[OsString]) -> i32 {
             _ => Ok(Err("check takes one FILE".into())),
         },
         "edit" => edit(&opts),
+        "macros" => macros(&opts),
         "schema" => {
             println!(
                 "{}",
@@ -293,6 +303,31 @@ fn list(o: &Opts) -> Outcome {
     )?;
     v["file"] = json!(file);
     println!("{}", serde_json::to_string_pretty(&v)?);
+    Ok(Ok(()))
+}
+
+fn macros(o: &Opts) -> Outcome {
+    let [file] = o.rest.as_slice() else {
+        return Ok(Err("macros takes one FILE".into()));
+    };
+    let book = open(file)?;
+    let opts = sheets_macros::MacrosOpts {
+        module: o.module.clone(),
+        code: false,
+    };
+    if o.json {
+        let mut v = sheets_macros::json(&book, &opts)?;
+        v["file"] = json!(file);
+        println!("{}", serde_json::to_string_pretty(&v)?);
+    } else if let Some(name) = &o.module {
+        let v = sheets_macros::json(&book, &opts)?;
+        print!("{}", v["modules"][0]["code"].as_str().unwrap_or_default());
+        if let Some(e) = v["modules"][0]["error"].as_str() {
+            eprintln!("kantor sheets macros: {name}: {e}");
+        }
+    } else {
+        print!("{}", sheets_macros::text(&book)?);
+    }
     Ok(Ok(()))
 }
 

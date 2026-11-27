@@ -467,7 +467,7 @@ pub fn short_args(name: &str, args: &Value) -> String {
             (Some(f), Some(p)) => format!("{f} · {p}"),
             (f, _) => f.unwrap_or_default(),
         },
-        "check" | "list" => s("file").unwrap_or_default(),
+        "check" | "list" | "macros" => s("file").unwrap_or_default(),
         "schema" => arrow(s("kind"), s("defs")),
         FINISH => String::new(),
         _ => match s("path").or_else(|| s("file")) {

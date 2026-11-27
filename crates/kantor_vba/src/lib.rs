@@ -201,6 +201,10 @@ fn read_stream<F: Read + Seek>(cfb: &mut cfb::CompoundFile<F>, path: &str) -> Re
     Ok(out)
 }
 
+/// A reference being read from `dir`: name (code page), name (UTF-16),
+/// kind, library id.
+type RawReference = (Vec<u8>, Option<String>, ReferenceKind, Vec<u8>);
+
 /// Module being read from `dir`.
 #[derive(Default)]
 struct Raw {
@@ -238,7 +242,7 @@ impl VbaProject {
         let mut code_page = 1252u16;
         let mut sys_kind = 0;
         let mut name = Vec::new();
-        let mut references: Vec<(Vec<u8>, Option<String>, ReferenceKind, Vec<u8>)> = Vec::new();
+        let mut references: Vec<RawReference> = Vec::new();
         let mut ref_name: (Vec<u8>, Option<String>) = (Vec::new(), None);
         let mut raws: Vec<Raw> = Vec::new();
         let mut current: Option<Raw> = None;

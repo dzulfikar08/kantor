@@ -129,6 +129,8 @@ icon_assets!(
         NotepadText,
         // Paparan AI chat
         Paperclip,
+        // Sheets: View ▸ Macros
+        FileCode,
     ]
 );
 

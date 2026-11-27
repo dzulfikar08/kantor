@@ -95,8 +95,10 @@ pub(crate) fn u32_at(data: &[u8]) -> Option<u32> {
 /// UTF-16LE bytes as text.
 pub(crate) fn utf16(data: &[u8]) -> String {
     let units: Vec<u16> = data
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|c| u16::from_le_bytes(*c))
         .collect();
     String::from_utf16_lossy(&units)
 }
