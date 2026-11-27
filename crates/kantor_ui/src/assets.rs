@@ -129,6 +129,12 @@ icon_assets!(
         NotepadText,
         // Paparan AI chat
         Paperclip,
+        // Notes.
+        Link,
+        Code,
+        TextQuote,
+        FileCode,
+        NotebookPen,
     ]
 );
 

@@ -632,6 +632,85 @@ impl Editor {
         true
     }
 
+    /// Toolbar list and quote buttons: give the selected lines `prefix`
+    /// (`- `, `1. `, `- [ ] `, `> `), or take it off when they all have it.
+    /// A list marker of another kind is replaced.
+    pub fn toggle_line_prefix(&mut self, prefix: &str) {
+        #[derive(PartialEq)]
+        enum Kind {
+            Quote,
+            Bullet,
+            Number,
+            Task,
+        }
+        let kind_of = |p: &crate::prefix::LinePrefix| match &p.list {
+            Some(item) if item.task.is_some() => Some(Kind::Task),
+            Some(item) if matches!(item.bullet, crate::prefix::Bullet::Number { .. }) => {
+                Some(Kind::Number)
+            }
+            Some(_) => Some(Kind::Bullet),
+            None => None,
+        };
+        let want = if prefix.starts_with('>') {
+            Kind::Quote
+        } else if prefix.contains('[') {
+            Kind::Task
+        } else if prefix.starts_with(|c: char| c.is_ascii_digit()) {
+            Kind::Number
+        } else {
+            Kind::Bullet
+        };
+        let lines = self.selected_lines();
+        let several = lines.len() > 1;
+        let has = |l: usize| {
+            let p = line_prefix(self.buf.line(l));
+            if want == Kind::Quote {
+                !p.quote.is_empty()
+            } else {
+                kind_of(&p) == Some(Kind::Bullet) && want == Kind::Bullet
+                    || kind_of(&p) == Some(Kind::Number) && want == Kind::Number
+                    || kind_of(&p) == Some(Kind::Task) && want == Kind::Task
+            }
+        };
+        let targets: Vec<usize> = lines
+            .clone()
+            .filter(|&l| !several || !self.buf.line(l).trim().is_empty())
+            .collect();
+        let remove = !targets.is_empty() && targets.iter().all(|&l| has(l));
+        let mut edits = Vec::new();
+        let mut n = 0u64;
+        for l in targets {
+            let start = self.buf.line_start(l);
+            let p = line_prefix(self.buf.line(l));
+            let marker_at = start + p.quote.len() + p.indent.len();
+            if want == Kind::Quote {
+                if remove {
+                    edits.push((start..start + p.quote.len(), String::new()));
+                } else {
+                    edits.push((start..start, "> ".to_owned()));
+                }
+                continue;
+            }
+            let old_end = if p.list.is_some() {
+                start + p.len
+            } else {
+                marker_at
+            };
+            if remove {
+                edits.push((marker_at..old_end, String::new()));
+            } else {
+                n += 1;
+                let new = if want == Kind::Number {
+                    format!("{n}. ")
+                } else {
+                    prefix.to_owned()
+                };
+                edits.push((marker_at..old_end, new));
+            }
+        }
+        self.edit_keeping_selection(edits);
+    }
+
     /// Make the caret's line a heading of `level` (0: plain text).
     pub fn set_heading(&mut self, level: u8) {
         let line = self.buf.line_of(self.sel.head);
@@ -829,6 +908,26 @@ mod tests {
         let mut e = ed("a\r\nb", 1);
         e.insert("x\ny", Merge::No);
         assert_eq!(e.text(), "ax\r\ny\r\nb");
+    }
+
+    #[test]
+    fn list_buttons() {
+        let mut e = Editor::new("a\nb");
+        e.select_all();
+        e.toggle_line_prefix("1. ");
+        assert_eq!(e.text(), "1. a\n2. b");
+        e.select_all();
+        e.toggle_line_prefix("- ");
+        assert_eq!(e.text(), "- a\n- b");
+        e.select_all();
+        e.toggle_line_prefix("- ");
+        assert_eq!(e.text(), "a\nb");
+        let mut e = ed("x", 1);
+        e.toggle_line_prefix("> ");
+        assert_eq!(e.text(), "> x");
+        assert_eq!(e.selection(), Selection::caret(3));
+        e.toggle_line_prefix("> ");
+        assert_eq!(e.text(), "x");
     }
 
     #[test]

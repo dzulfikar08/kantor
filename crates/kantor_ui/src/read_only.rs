@@ -19,7 +19,7 @@ use std::sync::OnceLock;
 use gpui_kit::*;
 
 /// Action namespaces of the document apps (and their shared parts).
-const APP_NAMESPACES: &[&str] = &["docs", "sheets", "slides", "kantor_ai"];
+const APP_NAMESPACES: &[&str] = &["docs", "sheets", "slides", "notes", "kantor_ai"];
 
 /// Allowed while read-only, by the part after `::`: names starting with
 /// one of these…
@@ -46,6 +46,8 @@ const ALLOWED_NAMES: &[&str] = &[
     "LineEnd",
     "SaveAs",
     "ToggleNotes",
+    "ToggleReading",
+    "ToggleSource",
     "Recalculate",
     "RecalculateSheet",
     "ExplainFormula",
