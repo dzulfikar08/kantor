@@ -935,6 +935,33 @@ theme's), `alignment.indent` (0-250 steps) and `alignment.text_rotation`
 
 Tests: Kantor's `crates/sheets_engine/tests/author.rs`.
 
+## 36. Regex functions with Excel's arguments
+
+Why: upstream's REGEXTEST, REGEXEXTRACT and REGEXREPLACE lacked Excel's
+optional arguments (a formula using them was `#ERROR!`), REGEXEXTRACT's
+default mode gave the first capture group where Excel gives the whole match,
+and the `regex` crate rejects lookaround and backreferences, which Excel's
+PCRE2 accepts. They also read one value, so `REGEXTEST(A2:A100, …)` inside
+FILTER did not work.
+
+What: `functions/text/regex_functions.rs` is rewritten on `fancy-regex`
+(new dependency in `Cargo.toml`): `case_sensitivity` on all three,
+REGEXEXTRACT `return_mode` 0/1/2 (1 and 2 give a row; a group that took no
+part is empty text), REGEXREPLACE `occurrence` (n-th, or -n-th from the end)
+with `$n` references read as Excel does (`$1a` is group 1 then "a"). Every
+argument can be a range or array and the result is element-wise
+(`common.rs` `text_arg`/`broadcast_text`); a REGEXEXTRACT element with
+several results is `#CALC!`. Each pattern compiles once per formula.
+`expressions/parser/static_analysis.rs`: the new argument counts and
+element-wise results.
+
+Left as is: PCRE2 details `fancy-regex` reads differently (`\d`, `\w` and
+`\b` are Unicode, and `$` matches only at the very end, not before a
+final line break).
+
+Tests: `test/text_functions/fn_regex.rs`, run in CI by `ci.yml`
+(`cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib regex`).
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the
