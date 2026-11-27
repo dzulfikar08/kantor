@@ -1,6 +1,6 @@
 # 0006: PLS-SEM is a pure Rust engine inside Kantor
 
-- **Status:** accepted (2026-11-27). Phase 1: the engine (`crates/kantor_pls`), `kantor pls`, the MCP tools `pls_check` / `pls_run` and Paparan AI's `pls` tool. Phase 2 (the Sheets dialog, path diagram and results tab) builds on it.
+- **Status:** accepted (2026-11-27). Phase 1: the engine (`crates/kantor_pls`), `kantor pls`, the MCP tool `pls_run` and Paparan AI's `pls` tool. Phase 2 (the Sheets dialog, path diagram and results tab) builds on it.
 - **Decides:** how Kantor estimates partial least squares structural equation models, the analysis Indonesian thesis students run in SmartPLS.
 
 ## Context
@@ -22,7 +22,7 @@ Most Indonesian management, accounting and education theses analyse questionnair
 - Bootstrap: seeded (one ChaCha stream per subsample from the seed, so results don't depend on the thread count), run with rayon; 5000 subsamples by default; SE, t, p (Student's t, samples − 1 df), percentile and BCa intervals; sign-change options as SmartPLS 3.
 - `check`: the model against the data before estimating (unknown columns, constant or text columns, missing values, sample size, collinear Mode B blocks, non-recursive models).
 
-**Front ends** (`crates/kantor`): `agent::pls` reads the data through the sheets engine (any format Kantor opens; CSV directly), runs the engine, makes the compact summary with rule-of-thumb flags, the APA-style `.docx` report (through the docs builder, English or Indonesian with decimal commas) and the results `.xlsx` (through the sheets builder). `kantor pls run|check|schema`, the MCP tools `pls_check` and `pls_run` (no app needed) and the agent harness's `pls` tool all call it.
+**Front ends** (`crates/kantor`): `agent::pls` reads the data through the sheets engine (any format Kantor opens; CSV directly), runs the engine, makes the compact summary with rule-of-thumb flags, the APA-style `.docx` report (through the docs builder, English or Indonesian with decimal commas) and the results `.xlsx` (through the sheets builder). `kantor pls run|check|schema`, the MCP tool `pls_run` (no app needed; `check: true` only checks) and the agent harness's `pls` tool all call it.
 
 **Goldens**: `tools/pls/gen_data.py` makes synthetic datasets; `tools/pls/goldens.R` estimates them with seminr 2.6.0 and cSEM 0.7.1 (10 cases: PLS with each weighting scheme, PLSc, listwise and mean replacement, formative blocks, mediation); `tools/pls/smartpls_refs.py` turns SmartPLS 4's own output for 14 textbook models (the openpls-engine validation supplement, Zenodo 10.5281/zenodo.20511533, CC BY 4.0) into `tests/smartpls.json`. CI downloads that supplement's datasets (they aren't copied into the repository).
 

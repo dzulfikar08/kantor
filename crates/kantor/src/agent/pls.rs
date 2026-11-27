@@ -9,8 +9,8 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, bail};
 use kantor_pls::{
-    Algorithm, Bootstrap, Data, Estimate, Finding, Level, Measurement, Model, Options, Results,
-    SignChanges, Weighting,
+    Algorithm, Bootstrap, Data, Estimate, Measurement, Model, Options, Results, SignChanges,
+    Weighting,
 };
 use serde_json::{Map, Value, json};
 use sheets_engine::Workbook;
@@ -285,21 +285,6 @@ pub fn check_json(loaded: &Loaded, model: &Model, opts: &Options) -> Value {
         "warnings": warnings,
         "findings": findings,
     })
-}
-
-/// Findings as text lines.
-pub fn check_text(findings: &[Finding]) -> String {
-    findings
-        .iter()
-        .map(|f| {
-            let level = match f.level {
-                Level::Error => "error",
-                Level::Warning => "warning",
-                Level::Info => "info",
-            };
-            format!("{level}: {}\n", f.message)
-        })
-        .collect()
 }
 
 fn r4(x: Option<f64>) -> Value {

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
 use kantor_pls::Results;
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::agent::pls::{self, Settings, Words};
 
@@ -359,6 +359,7 @@ fn text_summary(r: &Results) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
 
     #[std::prelude::v1::test]
     fn schema_is_json_and_options_parse() {

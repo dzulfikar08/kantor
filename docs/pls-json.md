@@ -16,8 +16,8 @@ kantor pls run   --model model.json --data survey.csv --json      # the summary 
 kantor pls schema > pls-json.schema.json
 ```
 
-The MCP server (`kantor mcp`) offers `pls_check` and `pls_run` with the same
-arguments (absolute paths), and Paparan AI's agent has a `pls` tool on the
+The MCP server (`kantor mcp`) offers `pls_run` with the same arguments
+(absolute paths; `check: true` runs `check` instead), and Paparan AI's agent has a `pls` tool on the
 files of its work folder. `pls_run` returns the summary below; its `report`,
 `workbook` and `results_json` arguments write the files.
 

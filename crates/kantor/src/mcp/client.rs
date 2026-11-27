@@ -376,7 +376,7 @@ pub fn mail_merge(args: &Value) -> Result<Value, String> {
     go().map_err(|e| format!("{e:#}"))
 }
 
-/// `pls_check`: a model against a data file.
+/// `pls_run` with `check: true`: a model against a data file.
 fn pls_check(args: &Value) -> Result<Value, String> {
     let go = || -> anyhow::Result<Value> {
         use anyhow::Context as _;
@@ -417,10 +417,10 @@ impl Backend for AppClient {
             return mail_merge(&args);
         }
         if tool == "pls_run" {
+            if args.get("check").and_then(Value::as_bool) == Some(true) {
+                return pls_check(&args);
+            }
             return crate::agent::pls::run_tool(&args, None).map_err(|e| format!("{e:#}"));
-        }
-        if tool == "pls_check" {
-            return pls_check(&args);
         }
         if tool == "slides_check" && args.get("path").is_some_and(|p| !p.is_null()) {
             return check_file(&args);
