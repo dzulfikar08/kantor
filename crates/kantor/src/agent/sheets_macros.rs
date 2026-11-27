@@ -1,6 +1,8 @@
 //! A workbook's macros (its VBA project) as JSON and text: `kantor sheets
 //! macros`, the MCP tool `sheets_macros` and Paparan AI's `macros`. Kantor
-//! doesn't run macros: this is for reading them, so the assistant (or the
+//! tools don't run macros (only the user does, in Sheets after Enable
+//! Content or with `kantor sheets macros run`): this is for reading them, so
+//! the assistant (or the
 //! user) can explain what one does or rebuild it with formulas.
 
 use anyhow::{Result, anyhow};
@@ -9,7 +11,7 @@ use sheets_engine::Workbook;
 use sheets_engine::vba::{Module, ReferenceKind, VbaProject};
 
 /// What the JSON says about running them.
-pub const NOTE: &str = "Kantor shows macros but doesn't run them. Read the code to explain what a macro does, or rebuild it with formulas and sheets editing tools.";
+pub const NOTE: &str = "AI tools don't run macros: a macro is code from the file, and only the user runs it (Kantor Sheets after Enable Content, or kantor sheets macros run). Read the code to explain what a macro does, or rebuild it with formulas and sheets editing tools.";
 
 /// What to list.
 #[derive(Clone, Debug, Default)]

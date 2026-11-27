@@ -1090,7 +1090,7 @@ impl Tools for DocTools {
             ),
             ToolSpec::new(
                 "macros",
-                "A workbook's macros (VBA), as `kantor sheets macros`: modules, their Subs and Functions with line numbers, and with module (or code: true) the code. Kantor doesn't run macros: read the code to explain what a macro does, or redo its work with formulas and edit ops.",
+                "A workbook's macros (VBA), as `kantor sheets macros`: modules, their Subs and Functions with line numbers, and with module (or code: true) the code. These tools never run macros (only the user does): read the code to explain what a macro does, or redo its work with formulas and edit ops.",
                 params(
                     json!({
                         "file": s("The workbook (.xlsm)"),

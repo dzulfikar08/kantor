@@ -291,9 +291,11 @@ pixels. The page setup options
 
 ## Macros
 
-Kantor keeps a workbook's VBA project when it saves an `.xlsm`, shows its
-code (View ▸ Macros, Alt+F8) and doesn't run it. `kantor sheets macros
-FILE` lists the modules (standard, class, document such as `ThisWorkbook`
+Kantor keeps a workbook's VBA project when it saves an `.xlsm` and shows its
+code (View ▸ Macros, Alt+F8); it runs a macro only when the user asks (Run
+in the Macros dialog after Enable Content, a button, or `kantor sheets
+macros run FILE --macro NAME`, see docs/scripting.md). The AI tools never run
+macros. `kantor sheets macros FILE` lists the modules (standard, class, document such as `ThisWorkbook`
 and `Sheet1`, UserForm) and their `Sub`s, `Function`s and `Property`
 procedures with line numbers; `--module NAME` prints a module's code
 (attribute lines left out, as the Visual Basic Editor shows it); `--json`
@@ -305,7 +307,7 @@ gives the listing as JSON:
  "modules": [{"name": "Module1", "kind": "standard", "lines": 12,
               "procedures": [{"name": "TestMacro", "kind": "Sub", "private": false,
                               "arguments": false, "macro": true, "line": 1, "end_line": 12}]}],
- "note": "Kantor shows macros but doesn't run them. …"}
+ "note": "AI tools don't run macros: … "}
 ```
 
 `macro` marks what Excel's Macros dialog lists (a public `Sub` without

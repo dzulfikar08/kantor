@@ -235,6 +235,23 @@ impl UserModel<'_> {
             .kantor_evaluate_formula(sheet, row, column, formula)
     }
 
+    /// Copies the selected area (as `copy_to_clipboard`) and pastes it with
+    /// its top-left at (`row`, `column`) of sheet `target` (as
+    /// `paste_from_clipboard`; with `cut`, a move): VBA's `Range.Copy
+    /// Destination:=…`, without a clipboard in between.
+    pub fn kantor_copy_selection_to(
+        &mut self,
+        target: u32,
+        row: i32,
+        column: i32,
+        cut: bool,
+    ) -> Result<(), String> {
+        let clip = self.copy_to_clipboard()?;
+        self.set_selected_sheet(target)?;
+        self.set_selected_cell(row, column)?;
+        self.paste_from_clipboard(clip.sheet, clip.range, &clip.data, cut)
+    }
+
     /// [`Model::kantor_cell_value`].
     pub fn kantor_cell_value(&mut self, sheet: u32, row: i32, column: i32) -> KantorValue {
         self.model.kantor_cell_value(sheet, row, column)

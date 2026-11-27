@@ -145,19 +145,8 @@ impl Workbook {
                 src.right as i32 + 1,
             )
             .map_err(e)?;
-        let clip = self.model.copy_to_clipboard().map_err(e)?;
-        self.model.set_selected_sheet(dst_sheet).map_err(e)?;
         self.model
-            .set_selected_cell(row as i32 + 1, col as i32 + 1)
-            .map_err(e)?;
-        let tuple = (
-            src.top as i32 + 1,
-            src.left as i32 + 1,
-            src.bottom as i32 + 1,
-            src.right as i32 + 1,
-        );
-        self.model
-            .paste_from_clipboard(src_sheet, tuple, &clip.data, cut)
+            .kantor_copy_selection_to(dst_sheet, row as i32 + 1, col as i32 + 1, cut)
             .map_err(e)?;
         self.history.edited();
         Ok(dst)

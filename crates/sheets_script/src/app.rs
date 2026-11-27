@@ -380,11 +380,7 @@ pub fn worksheet_function(
 fn range_ref(s: &Rc<Session>, r: &RangeObj) -> Result<String, ScriptError> {
     let idx = s.sheet_index(r.sheet)?;
     let name = s.read()?.sheet_names()[idx as usize].clone();
-    let mut a = r.first();
-    // Whole columns or rows as such (`$A:$A`).
-    if a.is_whole_columns() || a.is_whole_rows() {
-        a = r.first();
-    }
+    let a = r.first();
     Ok(format!(
         "{}!{}",
         addr::sheet_ref(&name),

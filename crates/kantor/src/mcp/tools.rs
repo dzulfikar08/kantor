@@ -282,7 +282,7 @@ const SPECS: &[Spec] = &[
     (
         "sheets_macros",
         "Read a workbook's macros",
-        "A workbook's macros (its VBA project, as `kantor sheets macros`): the modules (standard, class, document such as ThisWorkbook or Sheet1, UserForm), each one's procedures (Sub, Function, Property; private or public, with arguments or not, `macro`: what Excel's Macros dialog lists; line numbers in the module's code) and the project's references. `module` adds that module's code; `code: true` every module's. Kantor doesn't run macros: use this to explain what a macro does, or to do its work with formulas and sheets_edit tools instead. The open workbook (`document`) or a file (`path`); `has_macros` is false for workbooks without a project.",
+        "A workbook's macros (its VBA project, as `kantor sheets macros`): the modules (standard, class, document such as ThisWorkbook or Sheet1, UserForm), each one's procedures (Sub, Function, Property; private or public, with arguments or not, `macro`: what Excel's Macros dialog lists; line numbers in the module's code) and the project's references. `module` adds that module's code; `code: true` every module's. This tool never runs macros (only the user does, in Kantor Sheets or with `kantor sheets macros run`): use this to explain what a macro does, or to do its work with formulas and sheets_edit tools instead. The open workbook (`document`) or a file (`path`); `has_macros` is false for workbooks without a project.",
         || {
             json!({
                 "document": document(),

@@ -1149,6 +1149,9 @@ pub fn sort_range(
     }
     book.sort_range_by(idx, range, &levels, header)
         .map_err(engine)?;
+    drop(book);
+    // Formulas that read the sorted cells are recalculated before the next
+    // read.
     s.write()?;
     Ok(())
 }

@@ -955,7 +955,9 @@ area). The formula text is untouched, so files save as they were.
 `Model::kantor_evaluate_formula` parses and evaluates a formula in a cell's
 context without storing it (stored values only, like conditional formatting's
 `cf_evaluate`), a range result coming back as its values;
-`Model::kantor_cell_value` reads one cell's value with errors by name.
+`Model::kantor_cell_value` reads one cell's value with errors by name, and
+`UserModel::kantor_copy_selection_to` copies the selected area and pastes it at
+a cell (VBA's `Range.Copy Destination:=…`; the clipboard's data is private).
 
 Tests: `test/test_kantor_udf.rs`; Kantor's `crates/sheets_script/tests`.
 
