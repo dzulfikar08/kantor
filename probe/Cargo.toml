@@ -1,0 +1,18 @@
+[package]
+name = "probe"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+js = ["dep:rquickjs"]
+py = ["dep:rustpython-vm"]
+
+[dependencies]
+rquickjs = { version = "0.14", default-features = false, features = ["std"], optional = true }
+rustpython-vm = { version = "0.6", default-features = false, features = ["compiler"], optional = true }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+opt-level = 3

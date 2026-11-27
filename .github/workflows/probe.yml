@@ -1,0 +1,30 @@
+name: size probe
+on: push
+jobs:
+  size:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: probe
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build
+        run: |
+          for f in none js py; do
+            if [ $f = none ]; then cargo build --release -q; else cargo build --release -q --features $f; fi
+            exe=target/release/probe; [ -f $exe.exe ] && exe=$exe.exe
+            cp $exe ../probe-$f.bin
+            echo "$f $(wc -c < ../probe-$f.bin)" | tee -a ../sizes.txt
+          done
+          ./target/release/probe "sum(range(10))" || true
+      - name: run
+        run: |
+          cat ../sizes.txt
+          ../probe-js.bin "6*7"
+          ../probe-py.bin "6*7"
