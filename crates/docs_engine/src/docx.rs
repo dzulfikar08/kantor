@@ -55,9 +55,12 @@
 //!    begin`, the instruction runs and the separator run, or the
 //!    `<w:fldSimple>` start tag), the end its closing run or tag. A field
 //!    may span paragraphs (a table of contents); its result is ordinary
-//!    text, nested fields included. A table of contents' block content
-//!    control is unwrapped the same way: its start and end tags are
-//!    zero-width markers (`Level::Wrap`) on its first and last paragraph.
+//!    text, nested fields included. A table of contents' or a
+//!    bibliography's block content control is unwrapped the same way: its
+//!    start and end tags are zero-width markers (`Level::Wrap`) on its first
+//!    and last paragraph. Inline citation content controls (Mendeley Cite,
+//!    Word's `w:citation`) stay opaque objects that show their text (see
+//!    [`crate::citations`]).
 //!    See [`crate::fields`].
 //! 4. **Unsupported** (the conservative whole-document flag, see
 //!    [`Read::unsupported`]): tracked changes (`w:ins`, `w:del`, moves,
@@ -188,6 +191,11 @@ impl Package {
 
     pub fn has_part(&self, name: &str) -> bool {
         self.parts.contains(name)
+    }
+
+    /// Every zip entry name.
+    pub fn part_names(&self) -> impl Iterator<Item = &String> {
+        self.parts.iter()
     }
 }
 
@@ -728,8 +736,8 @@ enum Frame {
     Hyperlink,
     /// Inside a simple field (`w:fldSimple`): its result runs.
     Simple,
-    /// A table of contents' block content control (`w:sdt`) whose
-    /// paragraphs are read as ordinary ones.
+    /// A table of contents' or bibliography's block content control
+    /// (`w:sdt`) whose paragraphs are read as ordinary ones.
     Wrap,
     /// Inside a tracked insertion or deletion (`w:ins`, `w:del`, moves).
     Rev,
@@ -1127,6 +1135,15 @@ impl BodyParser<'_> {
         let text = short(&xml::inner_text(xml, &["t"]), 40);
         match local {
             "sdt" => {
+                // Citations show their text (see `crate::citations`).
+                let o = Opaque {
+                    level: Level::Para,
+                    xml: xml.to_owned(),
+                    label: String::new(),
+                };
+                if let Some(t) = crate::citations::control_text(&o) {
+                    return t;
+                }
                 self.preserved.insert("content controls".into());
                 if text.is_empty() {
                     "Content control".into()
@@ -1267,7 +1284,7 @@ impl BodyParser<'_> {
                 Tbl
             }
             (Body, "sectPr") => cap(self, Cap::BodySect),
-            (Body, "sdt") if !empty && self.cell().is_none() => match self.toc_sdt(before) {
+            (Body, "sdt") if !empty && self.cell().is_none() => match self.wrap_sdt(before) {
                 Some((content_start, _)) => {
                     let xml = &self.src[before..content_start];
                     self.pending.push(Self::opaque(Level::Wrap, xml, ""));
@@ -1475,15 +1492,19 @@ impl BodyParser<'_> {
         }
     }
 
-    /// A table of contents' content control starting at byte `start`
-    /// (Word's `docPartGallery` "Table of Contents") holding only
-    /// paragraphs: where its content starts and ends.
-    fn toc_sdt(&self, start: usize) -> Option<(usize, usize)> {
+    /// A block content control starting at byte `start` whose paragraphs
+    /// read as ordinary ones: a table of contents (Word's `docPartGallery`
+    /// "Table of Contents") or a bibliography (gallery "Bibliographies",
+    /// `w:bibliography`, Mendeley Cite's `MENDELEY_BIBLIOGRAPHY` tag)
+    /// holding only paragraphs (a bibliography also nested controls, read
+    /// the same way): where its content starts and ends.
+    fn wrap_sdt(&self, start: usize) -> Option<(usize, usize)> {
         let src = &self.src[start..];
         let mut r = quick_xml::Reader::from_str(src);
         let mut depth = 0usize;
         let mut content: Option<usize> = None;
         let mut content_end = None;
+        let mut nested = false;
         let end;
         loop {
             let before = r.buffer_position() as usize;
@@ -1496,12 +1517,12 @@ impl BodyParser<'_> {
                     let name = name.as_ref();
                     if depth == 1 && name == b"sdtContent" && !empty {
                         content = Some(start + after);
-                    } else if depth == 2
-                        && content.is_some()
-                        && content_end.is_none()
-                        && !matches!(name, b"p" | b"bookmarkStart" | b"bookmarkEnd")
-                    {
-                        return None;
+                    } else if depth == 2 && content.is_some() && content_end.is_none() {
+                        match name {
+                            b"p" | b"bookmarkStart" | b"bookmarkEnd" => {}
+                            b"sdt" => nested = true,
+                            _ => return None,
+                        }
                     }
                     if !empty {
                         depth += 1;
@@ -1522,18 +1543,24 @@ impl BodyParser<'_> {
             }
         }
         let (content, content_end) = (content?, content_end?);
-        // The control without its content: is it a table of contents?
+        // The control without its content: what is it?
         let shell = format!(
             "{}{}",
             &self.src[start..content],
             &self.src[content_end..start + end]
         );
         let el = xml::parse(&shell)?;
-        let gallery = find(&el, "docPartGallery")?.attr("val")?;
-        gallery
-            .to_ascii_lowercase()
-            .starts_with("table of contents")
-            .then_some((content, content_end))
+        let gallery = find(&el, "docPartGallery")
+            .and_then(|g| g.attr("val"))
+            .map(str::to_ascii_lowercase)
+            .unwrap_or_default();
+        let bibliography = gallery.starts_with("bibliograph")
+            || find(&el, "bibliography").is_some()
+            || find(&el, "tag")
+                .and_then(|t| t.attr("val"))
+                .is_some_and(|v| v.starts_with("MENDELEY_BIBLIOGRAPHY"));
+        let toc = gallery.starts_with("table of contents");
+        ((toc && !nested) || bibliography).then_some((content, content_end))
     }
 
     /// Where the parser is: stack depth, hyperlink, tracked change.

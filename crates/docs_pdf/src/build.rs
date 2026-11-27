@@ -351,6 +351,17 @@ pub fn layout_paragraph(
                         label: String::new(),
                     }
                 }
+                // A citation content control (Mendeley Cite, Word): its
+                // text, as the run shows it.
+                Level::Para if let Some(text) = docs_engine::citations::control_text(op) => {
+                    InlineObject {
+                        index,
+                        kind: ObjectKind::Text,
+                        width: 0.0,
+                        height: 0.0,
+                        label: text,
+                    }
+                }
                 Level::Run | Level::Para => InlineObject {
                     index,
                     kind: ObjectKind::Placeholder,
