@@ -2943,14 +2943,9 @@ fn cite_setup(v: &Value, base: Option<&Path>, lang: &str, all: &Value) -> Result
 
 /// Open `bytes` in the docs engine, update every field from Kantor's
 /// layout (tables of contents, page references, cross-references,
-/// captions), save; returns the file and its page count.
-pub fn finish(bytes: Vec<u8>, now: chrono::NaiveDateTime) -> Result<(Vec<u8>, usize)> {
-    finish_with(bytes, now, None)
-}
-
-/// [`finish`], with citations rendered first (`cite`: the style, written
-/// as Zotero's document preference, and the sources, kept as the
-/// document's source list).
+/// captions), save; returns the file and its page count. With `cite`,
+/// citations are rendered first (the style written as Zotero's document
+/// preference, the sources kept as the document's source list).
 pub fn finish_with(
     bytes: Vec<u8>,
     now: chrono::NaiveDateTime,

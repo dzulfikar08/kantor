@@ -307,8 +307,8 @@ fn zotero_refresh_and_restyle() {
     assert!(t[1].ends_with("; Santoso & Wijaya, 2019)"), "{}", t[1]);
     assert_eq!(t[2], "(Rahmawati dkk., 2022)");
     // The code records the text Zotero would compare.
-    for i in 0..3 {
-        assert_eq!(instr_json(&doc, i)["properties"]["plainCitation"], t[i]);
+    for (i, want) in t.iter().enumerate().take(3) {
+        assert_eq!(instr_json(&doc, i)["properties"]["plainCitation"], *want);
     }
     // The bibliography: three entries, one paragraph each, sorted.
     let h = find(&doc, "Daftar Pustaka");

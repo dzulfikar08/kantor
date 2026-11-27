@@ -720,6 +720,23 @@ pub(crate) fn custom_props(src: &str) -> Vec<(String, String)> {
                     last.1.push_str(&s);
                 }
             }
+            // `&lt;` and the like (Zotero's preferences are escaped XML).
+            Ok(quick_xml::events::Event::GeneralRef(g)) if name.is_some() && depth > 0 => {
+                if let Some(last) = out.last_mut() {
+                    if let Ok(Some(c)) = g.resolve_char_ref() {
+                        last.1.push(c);
+                    } else {
+                        last.1.push_str(match &*g as &[u8] {
+                            b"amp" => "&",
+                            b"lt" => "<",
+                            b"gt" => ">",
+                            b"quot" => "\"",
+                            b"apos" => "'",
+                            _ => "",
+                        });
+                    }
+                }
+            }
             Ok(quick_xml::events::Event::Eof) | Err(_) => break,
             _ => {}
         }
