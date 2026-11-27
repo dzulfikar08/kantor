@@ -136,12 +136,15 @@ impl Session {
         let sheet_id = book.sheet_id(view.sheet.min(book.sheet_names().len() as u32 - 1));
         let title = book.title();
         let (full, folder) = match book.path() {
-            Some(p) => (
-                p.display().to_string(),
-                p.parent()
-                    .map(|d| d.display().to_string())
-                    .unwrap_or_default(),
-            ),
+            Some(p) => {
+                let p = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+                (
+                    p.display().to_string(),
+                    p.parent()
+                        .map(|d| d.display().to_string())
+                        .unwrap_or_default(),
+                )
+            }
             None => (title.clone(), String::new()),
         };
         let mut code_names = Vec::new();

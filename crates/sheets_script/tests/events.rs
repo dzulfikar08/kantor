@@ -415,7 +415,9 @@ End Sub
 #[test]
 fn on_time_schedules_on_a_fake_clock() {
     let module = r#"
-Public Const At As Date = #1/2/2030 9:00:00 AM#
+Function At() As Date
+    At = DateSerial(2030, 1, 2) + TimeSerial(9, 0, 0)
+End Function
 Sub Plan()
     Application.OnTime At, "Tick"
     Application.OnTime At + TimeSerial(0, 0, 30), "Module1.Tick"
