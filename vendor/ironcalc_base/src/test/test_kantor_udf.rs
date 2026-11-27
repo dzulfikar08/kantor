@@ -41,25 +41,25 @@ fn text(m: &UserModel, cell: (i32, i32)) -> String {
 fn user_functions_evaluate_and_follow_their_arguments() {
     let mut m = UserModel::new_empty("t", "en", "UTC", "en").unwrap();
     m.set_user_input(0, 1, 1, "200").unwrap();
-    m.set_user_input(0, 1, 2, "=MyTax(A1)").unwrap();
-    m.set_user_input(0, 2, 2, "=Cells(A1:C4)").unwrap();
-    m.set_user_input(0, 3, 2, "=Fails()").unwrap();
-    m.set_user_input(0, 4, 2, "=NoSuch(1)").unwrap();
-    assert_eq!(text(&m, (1, 2)), "#NAME?");
+    m.set_user_input(0, 1, 5, "=MyTax(A1)").unwrap();
+    m.set_user_input(0, 2, 5, "=Cells(A1:C4)").unwrap();
+    m.set_user_input(0, 3, 5, "=Fails()").unwrap();
+    m.set_user_input(0, 4, 5, "=NoSuch(1)").unwrap();
+    assert_eq!(text(&m, (1, 5)), "#NAME?");
     m.kantor_set_user_functions(Some(Arc::new(Funcs)));
     m.evaluate();
-    assert_eq!(text(&m, (1, 2)), "20");
-    assert_eq!(text(&m, (2, 2)), "4x3");
-    assert_eq!(text(&m, (3, 2)), "#N/A");
-    assert_eq!(text(&m, (4, 2)), "#NAME?");
+    assert_eq!(text(&m, (1, 5)), "20");
+    assert_eq!(text(&m, (2, 5)), "4x3");
+    assert_eq!(text(&m, (3, 5)), "#N/A");
+    assert_eq!(text(&m, (4, 5)), "#NAME?");
     // The formula text stays as written.
-    assert_eq!(m.get_cell_content(0, 1, 2).unwrap(), "=MyTax(A1)");
+    assert_eq!(m.get_cell_content(0, 1, 5).unwrap(), "=MyTax(A1)");
     m.set_user_input(0, 1, 1, "50").unwrap();
     m.evaluate();
-    assert_eq!(text(&m, (1, 2)), "5");
+    assert_eq!(text(&m, (1, 5)), "5");
     m.kantor_set_user_functions(None);
     m.evaluate();
-    assert_eq!(text(&m, (1, 2)), "#NAME?");
+    assert_eq!(text(&m, (1, 5)), "#NAME?");
 }
 
 #[test]
