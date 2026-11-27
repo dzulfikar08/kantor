@@ -40,8 +40,8 @@ fn decode(bytes: &[u8], side: u32) -> Option<Arc<RenderImage>> {
         img.to_rgba8()
     };
     let mut rgba = rgba;
-    for px in rgba.chunks_exact_mut(4) {
-        px.swap(0, 2);
+    for px in rgba.pixels_mut() {
+        px.0.swap(0, 2);
     }
     Some(Arc::new(RenderImage::new(vec![image::Frame::new(rgba)])))
 }
