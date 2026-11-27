@@ -171,35 +171,55 @@ pub fn replacement(with: &str) -> String {
         .replace('\n', &docs_engine::LINE_BREAK.to_string())
 }
 
-/// Run `f` where `args`' `in` says (find_replace, format): `all` (the
-/// default) is the body and every header and footer, as Word's Replace
-/// All; `body`; `headers` (headers and footers). `f` gets each part's
+/// Run `f` where `args`' `in` says (find_replace, format), as Word's
+/// Replace All: `all` (the default) is everything below; `body` the main
+/// text and its text boxes; `headers` the headers and footers and their
+/// text boxes; `notes` the footnotes and endnotes. `f` gets each part's
 /// document and whether it's the body; returns the sum of its counts.
-/// A header or footer Kantor won't edit is skipped.
+/// Parts Kantor won't edit are skipped.
 pub fn in_parts(
     doc: &mut Document,
     args: &Value,
     mut f: impl FnMut(&mut Document, bool) -> Result<usize>,
 ) -> Result<usize> {
-    let (body, parts) = match opt_str(args, "in")?.unwrap_or("all") {
-        "all" => (true, true),
-        "body" => (true, false),
-        "headers" => (false, true),
-        other => bail!("`in` must be all, body or headers, not \"{other}\""),
+    let (body, headers, notes) = match opt_str(args, "in")?.unwrap_or("all") {
+        "all" => (true, true, true),
+        "body" => (true, false, false),
+        "headers" => (false, true, false),
+        "notes" => (false, false, true),
+        other => bail!("`in` must be all, body, headers or notes, not \"{other}\""),
     };
     let mut n = 0;
     if body {
         n += f(doc, true)?;
     }
-    if parts {
+    // A part left as it was isn't rewritten on save.
+    let mut run = |doc: &mut Document, taken: Option<(docs_engine::PartEdit, Document)>| {
+        let Some((e, mut part)) = taken else {
+            return Ok(0);
+        };
+        let r = f(&mut part, false);
+        doc.finish_part(e, part, SEL_START);
+        r
+    };
+    if headers {
         for i in 0..doc.stories().len() {
-            // A part left as it was isn't rewritten on save.
-            let Some((e, mut part)) = doc.edit_story(i) else {
-                continue;
-            };
-            let r = f(&mut part, false);
-            doc.finish_part(e, part, SEL_START);
-            n += r?;
+            let taken = doc.edit_story(i);
+            n += run(doc, taken)?;
+        }
+    }
+    // Text boxes after the text they sit in: their places don't move.
+    for b in doc.text_boxes() {
+        if (b.story.is_none() && body) || (b.story.is_some() && headers) {
+            let taken = doc.edit_text_box(b);
+            n += run(doc, taken)?;
+        }
+    }
+    if notes {
+        let ids: Vec<_> = doc.notes().iter().map(|x| (x.kind, x.id.clone())).collect();
+        for (kind, id) in ids {
+            let taken = doc.edit_note(kind, &id);
+            n += run(doc, taken)?;
         }
     }
     Ok(n)

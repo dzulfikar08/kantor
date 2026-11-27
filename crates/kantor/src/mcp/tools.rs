@@ -376,7 +376,7 @@ const SPECS: &[Spec] = &[
     (
         "docs_find_replace",
         "Find and replace",
-        "Replace every occurrence of `find` with `replace` in the document's text, in the body and in every header and footer by default (within paragraphs; formatting of each match is kept; a line break in `replace` is a line break in the paragraph). Returns how many were replaced.",
+        "Replace every occurrence of `find` with `replace` in the document's text, in the body, every header and footer, text boxes and footnotes/endnotes by default (within paragraphs; formatting of each match is kept; a line break in `replace` is a line break in the paragraph). Returns how many were replaced.",
         || {
             json!({
                 "document": document(),
@@ -384,7 +384,7 @@ const SPECS: &[Spec] = &[
                 "replace": {"type": "string"},
                 "match_case": {"type": "boolean", "default": false},
                 "whole_word": {"type": "boolean", "default": false},
-                "in": {"type": "string", "enum": ["all", "body", "headers"], "default": "all", "description": "Where to look: the body and every header and footer, only the body, or only headers and footers."},
+                "in": {"type": "string", "enum": ["all", "body", "headers", "notes"], "default": "all", "description": "Where to look: everywhere; the body and its text boxes; the headers and footers and their text boxes; or the footnotes and endnotes."},
             })
         },
         &["find", "replace"],

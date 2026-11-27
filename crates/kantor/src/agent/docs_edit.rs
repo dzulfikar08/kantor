@@ -1638,7 +1638,7 @@ mod tests {
             assert!(
                 s.run(
                     "find_replace",
-                    &json!({"find": "a", "replace": "b", "in": "notes"})
+                    &json!({"find": "a", "replace": "b", "in": "margins"})
                 )
                 .is_err()
             );
@@ -1668,6 +1668,102 @@ mod tests {
                 "Lanjutan PT CONTOH|Jakarta"
             );
             assert_eq!(shown(HfKind::Footer, HfType::Default), "Jl. Merdeka 1");
+        }
+    }
+
+    /// `find_replace` also goes into text boxes (the body's and a
+    /// header's) and footnotes; `in` picks them.
+    #[std::prelude::v1::test]
+    fn find_replace_covers_text_boxes_and_notes() {
+        // The corpus' text box run, with a token in place of its text.
+        let floats = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests/corpus/docx/floats.docx"),
+        )
+        .unwrap();
+        let fx = Pkg::read(&floats)
+            .unwrap()
+            .text("word/document.xml")
+            .unwrap();
+        let i = fx.find("Text Box 1").unwrap();
+        let a = fx[..i].rfind("<w:r ").unwrap();
+        let end = "</mc:AlternateContent></w:r>";
+        let b = fx[i..].find(end).unwrap() + i + end.len();
+        let run = fx[a..b].replace("Text box", "$BOX");
+        assert_eq!(run.matches("$BOX").count(), 2, "shape and VML fallback");
+        let ns_start = fx.find("<w:document ").unwrap() + "<w:document ".len();
+        let ns = &fx[ns_start..fx[ns_start..].find('>').unwrap() + ns_start];
+
+        let built = super::super::docs_author::build(
+            &json!({"header": "Kop", "blocks": ["Isi[^Catatan $NOTE.]"]}),
+            None,
+        )
+        .unwrap()
+        .bytes;
+        let mut pkg = Pkg::read(&built).unwrap();
+        let header = (1..9)
+            .map(|k| format!("word/header{k}.xml"))
+            .find(|h| pkg.has(h))
+            .unwrap();
+        let plant = |xml: String, root: &str| {
+            let s = xml.find(&format!("<w:{root}")).unwrap();
+            let e = xml[s..].find('>').unwrap() + s;
+            let mut out = format!("{}<w:{root} {ns}>{}", &xml[..s], &xml[e + 1..]);
+            let at = match root {
+                "document" => out.rfind("<w:sectPr").unwrap(),
+                _ => out.rfind("</w:hdr>").unwrap(),
+            };
+            out.insert_str(at, &format!("<w:p>{run}</w:p>"));
+            out
+        };
+        let body = plant(pkg.text("word/document.xml").unwrap(), "document");
+        pkg.set_text("word/document.xml", body);
+        let hdr = plant(pkg.text(&header).unwrap(), "hdr");
+        pkg.set_text(&header, hdr);
+        let bytes = pkg.to_bytes().unwrap();
+        let read = |b: Vec<u8>| Document::from_read(docs_engine::docx::read(b).unwrap(), None);
+        assert_eq!(read(bytes.clone()).text_boxes().len(), 2);
+
+        let replace = |track: Option<&str>, args: Value| {
+            let mut s =
+                Session::from_doc(read(bytes.clone()), None, track.map(str::to_owned)).unwrap();
+            let n = s.run("find_replace", &args).unwrap()["replaced"]
+                .as_u64()
+                .unwrap();
+            (n, s.save().unwrap())
+        };
+        let all = |find: &str, with: &str| json!({"find": find, "replace": with});
+        assert_eq!(replace(None, all("$BOX", "Kotak")).0, 2);
+        assert_eq!(replace(None, all("$NOTE", "isi")).0, 1);
+        for (scope, boxes, notes) in [("body", 1, 0), ("headers", 1, 0), ("notes", 0, 1)] {
+            let mut a = all("$BOX", "Kotak");
+            a["in"] = json!(scope);
+            assert_eq!(replace(None, a).0, boxes, "{scope}");
+            let mut a = all("$NOTE", "isi");
+            a["in"] = json!(scope);
+            assert_eq!(replace(None, a).0, notes, "{scope}");
+        }
+        for track in [None, Some("AI")] {
+            let (_, out) = replace(track, all("$BOX", "Kotak"));
+            let p = Pkg::read(&out).unwrap();
+            let (doc_xml, hdr_xml) = (
+                p.text("word/document.xml").unwrap(),
+                p.text(&header).unwrap(),
+            );
+            // The shape and its VML fallback both carry the new text.
+            assert_eq!(doc_xml.matches("Kotak").count(), 2, "{track:?}");
+            assert_eq!(hdr_xml.matches("Kotak").count(), 2, "{track:?}");
+            let (_, out) = replace(track, all("$NOTE", "isi"));
+            let notes = Pkg::read(&out).unwrap().text("word/footnotes.xml").unwrap();
+            assert!(notes.contains("isi"), "{track:?}");
+            if track.is_some() {
+                assert!(doc_xml.contains("w:author=\"AI\""));
+                assert!(hdr_xml.contains("w:author=\"AI\""));
+                assert!(notes.contains("w:author=\"AI\"") && notes.contains("<w:del "));
+            } else {
+                assert!(!doc_xml.contains("$BOX") && !hdr_xml.contains("$BOX"));
+                assert!(!notes.contains("$NOTE"));
+            }
         }
     }
 

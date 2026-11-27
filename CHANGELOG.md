@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Fixed
+
+- `find_replace` and `format` in `kantor docs edit` (and the MCP `docs_find_replace`) also go through text boxes
+  (in the body and in headers and footers) and footnotes and endnotes, tracked with `--track`; `"in": "notes"`
+  picks the notes only, and `body`/`headers` now include their text boxes.
+
 ## [0.26.0] - 2026-11-27
 
 ### Fixed
