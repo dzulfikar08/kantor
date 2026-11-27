@@ -128,7 +128,7 @@ impl SheetsView {
         match &self.macro_editor {
             Some(ed) => {
                 let state = ed.modules[ed.current].state.clone();
-                if state.read(cx).focus_handle().contains_focused(window, cx) {
+                if state.read(cx).focus_handle(cx).contains_focused(window, cx) {
                     self.focus_grid(window, cx);
                 } else {
                     state.update(cx, |s, cx| s.focus(window, cx));
@@ -1045,20 +1045,16 @@ impl SheetsView {
 fn show_problems(state: &Entity<EditorState>, problems: &[Diagnostic], cx: &mut App) {
     state.update(cx, |s, cx| {
         let text = s.text().clone();
-        let lines = text.len_lines();
+        let value = s.value().to_string();
+        let lines: Vec<&str> = value.split('\n').collect();
         if let Some(set) = s.diagnostics_mut() {
             set.reset(&text);
             for p in problems {
                 let line = (p.line.max(1) - 1) as usize;
-                if line >= lines {
+                let Some(code) = lines.get(line) else {
                     continue;
-                }
-                let len = text
-                    .line(line)
-                    .to_string()
-                    .trim_end_matches(['\n', '\r'])
-                    .encode_utf16()
-                    .count() as u32;
+                };
+                let len = code.trim_end_matches('\r').encode_utf16().count() as u32;
                 let range = Position {
                     line: line as u32,
                     character: 0,
