@@ -856,6 +856,8 @@ impl SheetsView {
             deferred(
                 v_flex()
                     .id(("macro-form-drop-list", i))
+                    // A pick mustn't also reach the control under it.
+                    .occlude()
                     .absolute()
                     .top(px(c.height * S))
                     .left_0()

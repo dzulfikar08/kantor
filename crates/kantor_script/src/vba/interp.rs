@@ -2118,9 +2118,10 @@ impl Interp<'_> {
         let proc = f.proc.clone();
         let mut pc = 0usize;
         while pc < proc.ops.len() {
-            self.tick()?;
+            // The step check fails at a line too (Stop shows where).
             let step = self
-                .host_calls()
+                .tick()
+                .and_then(|()| self.host_calls())
                 .and_then(|()| self.exec_op(&proc.ops[pc], pc, f));
             match step {
                 Ok(Flow::Next) => pc += 1,

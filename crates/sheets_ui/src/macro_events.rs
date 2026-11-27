@@ -121,20 +121,29 @@ impl SheetsView {
         self.macros.seen_sel = Some((grid.sheet, grid.range()));
     }
 
-    /// After an edit, undo or redo (from `update_title`): a waiting event,
-    /// or `Change` for the cells the step changed (then `Calculate`).
+    /// After an edit, undo or redo (from `update_title`): `Change` for the
+    /// cells the step changed (then `Calculate`), ahead of the events
+    /// waiting; then the next of those.
     pub(crate) fn macro_after_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.busy.is_some() || self.macros.run.is_some() || self.macros.lent {
             return;
         }
-        if !self.macros.pending.is_empty() {
-            let (event, fold_from) = self.macros.pending.remove(0);
-            if !self.fire_macro_event(event, fold_from, window, cx) {
-                // Nobody handles it after all: go on with the next.
-                cx.defer_in(window, |this, window, cx| this.macro_after_edit(window, cx));
-            }
+        let edit = self.unseen_edit_events(cx);
+        self.macros.pending.splice(0..0, edit);
+        if self.macros.pending.is_empty() {
             return;
         }
+        let (event, fold_from) = self.macros.pending.remove(0);
+        if !self.fire_macro_event(event, fold_from, window, cx) {
+            // Nobody handles it after all: go on with the next.
+            cx.defer_in(window, |this, window, cx| this.macro_after_edit(window, cx));
+        }
+    }
+
+    /// The events of the edits, undos and redos events haven't seen yet
+    /// (`Change` per sheet, the first folding into the edit's undo step,
+    /// then `Calculate`), those with handlers; they count as seen now.
+    pub(crate) fn unseen_edit_events(&mut self, cx: &App) -> Vec<(Event, Option<usize>)> {
         let (now, changes, sheet, automatic) = {
             let grid = self.table.read(cx).delegate();
             let book = &grid.book;
@@ -155,27 +164,23 @@ impl SheetsView {
         };
         self.macros.seen_hist = Some(now);
         let Some((events, fold)) = changes else {
-            return;
+            return Vec::new();
         };
         if events.is_empty() {
-            return;
+            return Vec::new();
         }
         // An edit after a close was let through: ask again next time.
         self.macros.close_approved = false;
-        let mut events = events.into_iter();
-        let first = events.next();
-        for e in events {
-            if self.macros.wants(EventKind::Change) {
-                self.macros.pending.push((e, None));
+        let mut out = Vec::new();
+        if self.macros.wants(EventKind::Change) {
+            for (i, e) in events.into_iter().enumerate() {
+                out.push((e, if i == 0 { fold } else { None }));
             }
         }
         if automatic && self.macros.wants(EventKind::Calculate) {
-            self.macros.pending.push((Event::Calculate { sheet }, None));
+            out.push((Event::Calculate { sheet }, None));
         }
-        let started = first.is_some_and(|e| self.fire_macro_event(e, fold, window, cx));
-        if !started && !self.macros.pending.is_empty() {
-            cx.defer_in(window, |this, window, cx| this.macro_after_edit(window, cx));
-        }
+        out
     }
 
     /// The active cell or range moved.
@@ -191,7 +196,12 @@ impl SheetsView {
             return;
         }
         self.macros.seen_sel = Some((sheet, range));
-        self.fire_macro_event(Event::SelectionChange { sheet, range }, None, window, cx);
+        // Behind the `Change` of an edit Enter or Tab just ended (its check
+        // is deferred), as in Excel: the edit's event isn't lost to this run.
+        self.macros
+            .pending
+            .push((Event::SelectionChange { sheet, range }, None));
+        self.macro_after_edit(window, cx);
     }
 
     /// Another sheet was picked: `Deactivate`, then `Activate`.

@@ -315,7 +315,9 @@ Excel's order: the sheet module's (matched by code name), then `ThisWorkbook`'s,
   undo steps (an edit or redo) give the cells of those steps, fewer (an undo) the cells the
   undone steps changed. One `Change` per sheet, `Target` holding every changed area; a sheet
   changed as a whole (rows inserted) gives its used range. In automatic calculation
-  `Worksheet_Calculate` follows; F9 fires it too.
+  `Worksheet_Calculate` follows; F9 fires it too. An edit ended with Enter or Tab fires its
+  `Change` before the `SelectionChange` of the move, as in Excel, and an edit not yet seen
+  when another run starts fires after that run.
 - **Undo.** The user's edit and what its `Change` handlers do are one undo step
   (`MacroEngine::fire` with `fold_from`, the undo mark before the edit): Ctrl+Z takes back the
   typing and the handler's reaction together, where Excel would clear the undo list.
