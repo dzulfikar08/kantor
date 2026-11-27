@@ -363,10 +363,11 @@ impl Loopback {
         let until = Instant::now() + timeout;
         loop {
             if cancel.load(Ordering::Relaxed) {
-                return Err(Error::Protocol("sign-in cancelled".into()));
+                return Err(Error::Cancelled);
             }
+            // The browser page was closed or left: the user gave up.
             if Instant::now() > until {
-                return Err(Error::Protocol("sign-in timed out".into()));
+                return Err(Error::Cancelled);
             }
             match self.listener.accept() {
                 Ok((stream, _)) => {
@@ -396,11 +397,7 @@ fn answer(mut stream: TcpStream, state: &str, page: &DonePage) -> Option<Result<
     let get = |k: &str| params.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
     let result = if let Some(err) = get("error") {
         let desc = get("error_description").unwrap_or_default();
-        Some(Err(Error::Protocol(
-            format!("the sign-in was refused: {err} {desc}")
-                .trim()
-                .to_owned(),
-        )))
+        Some(Err(refusal(&err, &desc)))
     } else if let Some(code) = get("code") {
         if get("state").as_deref() == Some(state) {
             Some(Ok(code))
@@ -430,6 +427,20 @@ fn answer(mut stream: TcpStream, state: &str, page: &DonePage) -> Option<Result<
     );
     let _ = stream.flush();
     result
+}
+
+/// An `error=` reply from the authorization endpoint. `access_denied` is
+/// the user declining (Google's Cancel on the consent page, Microsoft's
+/// "No" or closing its account picker), so a cancel, not a failure.
+fn refusal(err: &str, desc: &str) -> Error {
+    if err == "access_denied" {
+        return Error::Cancelled;
+    }
+    Error::Protocol(
+        format!("the sign-in was refused: {err} {desc}")
+            .trim()
+            .to_owned(),
+    )
 }
 
 fn html_escape(s: &str) -> String {
@@ -748,7 +759,7 @@ pub fn device_wait(
         let wake = Instant::now() + interval;
         while Instant::now() < wake {
             if cancel.load(Ordering::Relaxed) {
-                return Err(Error::Protocol("sign-in cancelled".into()));
+                return Err(Error::Cancelled);
             }
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -770,9 +781,7 @@ pub fn device_wait(
         match json["error"].as_str() {
             Some("authorization_pending") => {}
             Some("slow_down") => interval += Duration::from_secs(5),
-            Some("access_denied") => {
-                return Err(Error::Protocol("the sign-in was refused".into()));
-            }
+            Some("access_denied") => return Err(Error::Cancelled),
             Some("expired_token") => {
                 return Err(Error::Protocol("the code expired; start again".into()));
             }
@@ -1218,39 +1227,67 @@ mod tests {
         assert!(f.starts_with("HTTP/1.1 404"));
         assert!(ok.starts_with("HTTP/1.1 200") && ok.contains("signed in"));
 
-        // Another request's state, or a refusal, is an error.
-        let lb = Loopback::bind().unwrap();
-        let port = lb
-            .redirect_uri
-            .trim_start_matches("http://127.0.0.1:")
-            .trim_end_matches('/')
-            .to_owned();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(150));
-            let mut s = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
-            write!(s, "GET /?error=access_denied&state=xyz HTTP/1.1\r\n\r\n").unwrap();
-        });
-        assert!(
+        // The browser's reply to `path`, as the listener reads it.
+        let reply = |path: &'static str| {
+            let lb = Loopback::bind().unwrap();
+            let port = lb
+                .redirect_uri
+                .trim_start_matches("http://127.0.0.1:")
+                .trim_end_matches('/')
+                .to_owned();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(150));
+                let mut s = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+                write!(s, "GET {path} HTTP/1.1\r\n\r\n").unwrap();
+            });
             lb.wait_for_code(
                 "xyz",
                 Duration::from_secs(10),
-                &cancel,
-                &DonePage::default()
+                &AtomicBool::new(false),
+                &DonePage::default(),
             )
-            .is_err()
-        );
-        // Cancelled.
+        };
+        // Declining consent is a cancel, not a failure.
+        assert!(matches!(
+            reply("/?error=access_denied&state=xyz"),
+            Err(Error::Cancelled)
+        ));
+        assert!(matches!(
+            reply("/?error=access_denied&error_subcode=cancel&state=xyz"),
+            Err(Error::Cancelled)
+        ));
+        // Another request's state, or the provider failing, is an error.
+        assert!(matches!(
+            reply("/?state=other&code=abc"),
+            Err(Error::Protocol(_))
+        ));
+        assert!(matches!(
+            reply("/?error=server_error&state=xyz"),
+            Err(Error::Protocol(_))
+        ));
+        // Cancelled in Kantor.
         let lb = Loopback::bind().unwrap();
         cancel.store(true, Ordering::Relaxed);
-        assert!(
+        assert!(matches!(
             lb.wait_for_code(
                 "xyz",
                 Duration::from_secs(10),
                 &cancel,
                 &DonePage::default()
-            )
-            .is_err()
-        );
+            ),
+            Err(Error::Cancelled)
+        ));
+        // The browser page closed: nothing comes back before the timeout.
+        let lb = Loopback::bind().unwrap();
+        assert!(matches!(
+            lb.wait_for_code(
+                "xyz",
+                Duration::from_millis(200),
+                &AtomicBool::new(false),
+                &DonePage::default()
+            ),
+            Err(Error::Cancelled)
+        ));
     }
 
     #[test]

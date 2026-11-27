@@ -35,6 +35,7 @@ use kantor_ui::i18n::{Lang, lang, t, tf, tr};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
+use super::notices::{NoticeKind, upload_progress};
 use super::read_only::ReadOnly;
 use super::{AppKind, Workspace};
 use crate::actions::{CloudAccounts, OpenFromCloud, SaveToCloud, SyncNow};
@@ -198,6 +199,11 @@ impl Workspace {
         self.notice(text.into(), cx);
     }
 
+    /// A failure: stays in the status bar until the user's next action.
+    fn cloud_error(&mut self, text: impl Into<String>, cx: &mut Context<Self>) {
+        self.notice_as(text.into(), NoticeKind::Error, cx);
+    }
+
     // ── panels ─────────────────────────────────────────────────────────────
 
     pub(super) fn open_from_cloud(
@@ -261,13 +267,21 @@ impl Workspace {
         let place = account
             .provider_name()
             .map_or_else(|| account.label(), str::to_owned);
-        self.cloud_notice(tf("Saving to {}…", &[&place]), cx);
+        let saving = tf("Saving to {}…", &[&place]);
+        let notice = self.notice_as(saving.clone(), NoticeKind::Progress, cx);
         let job_account = account.clone();
         jobs::spawn_in(
             cx,
             window,
-            move |_: &dyn Fn(())| upload_new(&job_account, &path, &remote),
-            |_, _, _, _| {},
+            move |progress: &dyn Fn((u64, u64))| {
+                upload_new(&job_account, &path, &remote, &mut throttled(progress))
+            },
+            move |ws: &mut Self, (sent, total), _, cx| {
+                let text = format!("{saving} {}", upload_progress(sent, total));
+                if ws.notices.progress(notice, text.into()) {
+                    cx.notify();
+                }
+            },
             move |ws: &mut Self, r, window, cx| match r {
                 Ok((entry, lock)) => {
                     let local = entry.local.clone();
@@ -284,7 +298,7 @@ impl Workspace {
                         cx,
                     );
                 }
-                Err(e) => ws.cloud_notice(tf("Couldn't save to the cloud: {}", &[&e]), cx),
+                Err(e) => ws.cloud_error(tf("Couldn't save to the cloud: {}", &[&e]), cx),
             },
         );
     }
@@ -451,7 +465,7 @@ impl Workspace {
                         );
                     }
                 }
-                Err(e) => ws.cloud_notice(
+                Err(e) => ws.cloud_error(
                     format!(
                         "{} {e}",
                         tr("Couldn't open from the cloud:", "Gagal membuka dari cloud:")
@@ -738,7 +752,6 @@ impl Workspace {
                     Ok(r) => r,
                     Err(e) => return (UploadOutcome::Failed(e), entry),
                 };
-                let mut last = 0u64;
                 // A panic in the upload must not leave the chip at
                 // "Uploading" for good: report it as a failure instead.
                 let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -748,18 +761,7 @@ impl Workspace {
                         &entry,
                         lock.as_ref(),
                         force,
-                        &mut |sent, total| {
-                            // At most ~100 updates per upload. `sent` goes
-                            // back when a part is sent again after a drop.
-                            if total == 0
-                                || sent == total
-                                || sent < last
-                                || (sent - last) * 100 >= total
-                            {
-                                last = sent;
-                                progress((sent, total));
-                            }
-                        },
+                        &mut throttled(progress),
                     )
                 }))
                 .unwrap_or_else(|_| {
@@ -816,6 +818,10 @@ impl Workspace {
                     UploadOutcome::Failed(m) if sso::ended(&cd.account) => Some(m.clone()),
                     _ => None,
                 };
+                let failed = match &outcome {
+                    UploadOutcome::Failed(m) if signed_out.is_none() => Some(m.clone()),
+                    _ => None,
+                };
                 let action = cd.sync.on_upload(outcome);
                 if offline {
                     cd.retry_at = Some(std::time::Instant::now() + cd.retry_wait);
@@ -836,7 +842,9 @@ impl Workspace {
                         cx,
                     );
                 } else if let Some(m) = signed_out {
-                    ws.cloud_notice(m, cx);
+                    ws.cloud_error(m, cx);
+                } else if let Some(m) = failed {
+                    ws.cloud_error(tf("Couldn't save to the cloud: {}", &[&m]), cx);
                 } else if offline {
                     ws.cloud_notice(
                         tr(
@@ -1043,7 +1051,7 @@ impl Workspace {
                                 cx,
                             );
                         }
-                        Err(e) => ws.cloud_notice(
+                        Err(e) => ws.cloud_error(
                             format!(
                                 "{} {e}",
                                 tr("Couldn't save the copy:", "Gagal menyimpan salinan:")
@@ -1088,7 +1096,7 @@ impl Workspace {
                         cx,
                     );
                 }
-                Err(e) => ws.cloud_notice(
+                Err(e) => ws.cloud_error(
                     format!("{} {e}", tr("Couldn't reload:", "Gagal memuat ulang:")),
                     cx,
                 ),
@@ -1665,6 +1673,7 @@ fn upload_new(
     account: &CloudAccount,
     path: &std::path::Path,
     remote: &str,
+    progress: &mut dyn FnMut(u64, u64),
 ) -> Result<(CacheEntry, LockState), String> {
     let r = remote_for(account)?;
     let cache = cache();
@@ -1691,7 +1700,7 @@ fn upload_new(
         local,
         ..Default::default()
     };
-    match session::upload(&r, &cache, &entry, None, false, &mut |_, _| {}) {
+    match session::upload(&r, &cache, &entry, None, false, progress) {
         UploadOutcome::Synced {
             server,
             stamp,
@@ -1713,6 +1722,19 @@ fn upload_new(
         UploadOutcome::Offline(m) | UploadOutcome::Failed(m) => Err(m),
         UploadOutcome::LockedBy(who) => Err(read_only_notice(&who)),
         UploadOutcome::Busy => Err(t("The drive is busy. Try again in a moment.").to_owned()),
+    }
+}
+
+/// An upload's progress callback that passes on at most ~100 reports per
+/// upload (and every report where `sent` goes back: a part sent again
+/// after a drop).
+fn throttled(progress: &dyn Fn((u64, u64))) -> impl FnMut(u64, u64) + '_ {
+    let mut last = 0u64;
+    move |sent, total| {
+        if total == 0 || sent == total || sent < last || (sent - last) * 100 >= total {
+            last = sent;
+            progress((sent, total));
+        }
     }
 }
 
