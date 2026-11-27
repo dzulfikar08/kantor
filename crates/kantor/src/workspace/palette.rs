@@ -55,12 +55,6 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.open_from_cloud(&OpenFromCloud, window, cx),
     },
     Command {
-        title: tk("Save to Cloud…"),
-        detail: tk("Upload this document to OneDrive, Google Drive or a WebDAV drive"),
-        keys: "",
-        run: |ws, window, cx| ws.save_to_cloud(&SaveToCloud, window, cx),
-    },
-    Command {
         title: tk("Sync Now"),
         detail: tk("Upload a cloud document saved offline, recheck a lock"),
         keys: "",
@@ -105,6 +99,12 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("Current document"),
         keys: "Ctrl Shift S",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save_as(w, cx)),
+    },
+    Command {
+        title: tk("Save to Cloud…"),
+        detail: tk("Upload this document to OneDrive, Google Drive or a WebDAV drive"),
+        keys: "",
+        run: |ws, window, cx| ws.save_to_cloud(&SaveToCloud, window, cx),
     },
     Command {
         title: tk("Export as PDF…"),
