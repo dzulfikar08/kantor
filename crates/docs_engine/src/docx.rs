@@ -3255,7 +3255,19 @@ fn unique_rev_ids(xml: String) -> String {
     let mut out = String::with_capacity(xml.len());
     let mut rest = xml.as_str();
     loop {
-        let next = TAGS.iter().filter_map(|t| rest.find(t)).min();
+        // The next revision tag: the next `<w:` that starts one (one pass
+        // over the text; finding each tag separately from here every time
+        // took ~50 s on a 1,000-page document with thousands of changes).
+        let mut from = 0;
+        let next = loop {
+            match rest[from..].find("<w:") {
+                Some(k) if TAGS.iter().any(|t| rest[from + k..].starts_with(t)) => {
+                    break Some(from + k);
+                }
+                Some(k) => from += k + 3,
+                None => break None,
+            }
+        };
         let Some(at) = next else {
             out.push_str(rest);
             break;

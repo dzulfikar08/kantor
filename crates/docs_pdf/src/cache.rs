@@ -379,10 +379,10 @@ fn shape_parallel(
                         if start >= lps.len() {
                             break;
                         }
-                        for k in start..(start + BATCH).min(lps.len()) {
+                        for (k, p) in lps.iter().enumerate().skip(start).take(BATCH) {
                             let w = widths.get(k).copied().unwrap_or(100.0);
-                            let key = layout_key(&lps[k], w);
-                            out.push((key, Arc::new(engine.layout_paragraph(&lps[k], w))));
+                            let key = layout_key(p, w);
+                            out.push((key, Arc::new(engine.layout_paragraph(p, w))));
                         }
                     }
                     out

@@ -618,7 +618,7 @@ pub(crate) fn lay_out_body(
     doc: &Document,
     layout: &mut LayoutFn,
     limit: Option<usize>,
-    mut pre: Option<&mut PreFn>,
+    pre: Option<&mut PreFn>,
 ) -> (Layout, Body) {
     use docs_layout::perf::span;
     let _all = span("docs lay_out_with");
@@ -637,7 +637,7 @@ pub(crate) fn lay_out_body(
     let (mut lps, mut widths, mut blocks) =
         body_with_notes(doc, &refs, &sections, &mut notes_cache, layout, cut);
     drop(t);
-    if let Some(pre) = pre.as_deref_mut() {
+    if let Some(pre) = pre {
         let _t = span("docs shape body (threads)");
         pre(&lps, &widths);
     }
