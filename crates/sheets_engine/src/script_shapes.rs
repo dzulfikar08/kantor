@@ -174,7 +174,7 @@ fn theme_scheme(theme: Option<&str>) -> Vec<(&'static str, u32)> {
         return out;
     };
     for (name, rgb) in &mut out {
-        let value = child(scheme, *name)
+        let value = child(scheme, name)
             .and_then(|el| el.children().find(|n| n.is_element()))
             .and_then(|c| {
                 if c.tag_name().name() == "srgbClr" {

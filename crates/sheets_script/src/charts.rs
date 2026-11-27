@@ -472,7 +472,7 @@ pub fn charts(s: &Rc<Session>, args: &[Arg]) -> Result<Value, ScriptError> {
 /// `Shapes("Chart 1").Chart`).
 pub fn chart_by_name(s: &Rc<Session>, sheet: u32, name: &str) -> Result<Value, ScriptError> {
     let idx = s.sheet_index(sheet)?;
-    let key = charts_on(&s.read()?, idx)
+    let key = charts_on(&*s.read()?, idx)
         .into_iter()
         .find(|d| d.name.eq_ignore_ascii_case(name))
         .map(|d| d.key)
@@ -555,7 +555,7 @@ pub struct ChartObjectsObj {
 impl ChartObjectsObj {
     fn keys(&self) -> Result<Vec<Drawing>, ScriptError> {
         let idx = self.s.sheet_index(self.sheet)?;
-        Ok(charts_on(&self.s.read()?, idx))
+        Ok(charts_on(&*self.s.read()?, idx))
     }
 
     fn item(&self, key: &Value) -> Result<Value, ScriptError> {
@@ -745,7 +745,7 @@ impl Dispatch for ChartObjectObj {
             "visible" => Ok(Value::Boolean(!find_drawing(&self.s, self.key)?.1.hidden)),
             "index" => {
                 let idx = self.s.sheet_index(self.key.sheet_id)?;
-                let all = charts_on(&self.s.read()?, idx);
+                let all = charts_on(&*self.s.read()?, idx);
                 let i = all
                     .iter()
                     .position(|d| d.key == self.key)
@@ -953,7 +953,7 @@ impl ChartObj {
             .map_err(|e| failed("Location", "_Chart", e))?;
         let key = match moved {
             MovedChart::Object { key, .. } => key,
-            MovedChart::ChartSheet(k) => chart_sheet_key(&self.s.read()?, k).ok_or_else(gone)?,
+            MovedChart::ChartSheet(k) => chart_sheet_key(&*self.s.read()?, k).ok_or_else(gone)?,
         };
         Ok(chart_value(&self.s, key))
     }
@@ -2483,7 +2483,7 @@ impl ChartsObj {
     }
 
     fn chart(&self, k: usize) -> Result<Value, ScriptError> {
-        let key = chart_sheet_key(&self.s.read()?, k).unwrap_or(DrawingKey {
+        let key = chart_sheet_key(&*self.s.read()?, k).unwrap_or(DrawingKey {
             sheet_id: chart_sheet_key_id(k),
             index: 0,
         });
@@ -2562,7 +2562,7 @@ impl ChartsObj {
             last = Some(k);
         }
         let k = last.ok_or_else(|| ScriptError::runtime(5))?;
-        let key = chart_sheet_key(&self.s.read()?, k).ok_or_else(gone)?;
+        let key = chart_sheet_key(&*self.s.read()?, k).ok_or_else(gone)?;
         set_active(&self.s, key);
         Ok(chart_value(&self.s, key))
     }
