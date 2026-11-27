@@ -54,11 +54,11 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo test --workspace
-      # The vendored IronCalc is outside the workspace; its regex tests cover
-      # Kantor's patch (KANTOR_PATCHES.md section 36).
-      - name: vendored IronCalc regex functions
+      # The vendored IronCalc is outside the workspace; these cover Kantor's
+      # patches there (KANTOR_PATCHES.md §36 regex functions, §37 user functions).
+      - name: vendored IronCalc patches
         if: matrix.arch == 'x86_64'
-        run: cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib regex
+        run: cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib -- regex kantor_udf test_defined_names
 
   # Files Kantor encrypts open in other software: msoffcrypto-tool decrypts them to the
   # same package, LibreOffice opens them with the password.

@@ -678,7 +678,7 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
 }
 
 /// The View menu: Normal and Page Break Preview, Excel's Freeze Panes
-/// choices, then Hide / Unhide.
+/// choices, Hide / Unhide, then Macros.
 fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>, pbp: bool) -> PopupMenu {
     use crate::GridCommand as G;
     for (label, on) in [(tk("Normal"), false), (tk("Page Break Preview"), true)] {
@@ -716,7 +716,15 @@ fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>, pbp: bool) -> 
             let _ = view.update(cx, |v, cx| v.grid_command(command, window, cx));
         }));
     }
-    menu
+    // Excel's View ▸ Macros: the workbook's VBA code (shown, not run).
+    let view = view.clone();
+    menu.separator().item(
+        PopupMenuItem::new(format!("{}  (Alt+F8)", i18n::t("Macros…")))
+            .icon(Lucide::FileCode)
+            .on_click(move |_, window, cx| {
+                let _ = view.update(cx, |v, cx| v.macros_doc(window, cx));
+            }),
+    )
 }
 
 /// The Table menu: Format as Table, Table Design, Convert to Range.

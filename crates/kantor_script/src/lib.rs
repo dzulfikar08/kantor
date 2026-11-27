@@ -1,0 +1,21 @@
+//! Kantor's scripting core.
+//!
+//! - [`object`]: the host-neutral object layer. [`Value`] is a Variant, [`Dispatch`] is an
+//!   IDispatch-like object interface (case-insensitive member names, named arguments, a default
+//!   member, enumeration), [`Host`] supplies the global names (`Range`, `Cells`, `ActiveSheet`),
+//!   UI callbacks (`MsgBox`, `InputBox`), `Debug.Print` output and cancellation. Nothing in it is
+//!   VBA-specific: a JavaScript or Python binding can wrap the same objects.
+//! - [`vba`]: a VBA interpreter (lexer, parser, tree-walking runtime, the VBA standard library,
+//!   `Collection` and `Scripting.Dictionary`). Input is module source text.
+//! - [`date`]: OLE Automation dates (days since 1899-12-30), shared by every language binding.
+//!
+//! See `docs/scripting.md` for the design and how the Sheets object model plugs in.
+
+pub mod date;
+pub mod object;
+pub mod vba;
+
+pub use object::{
+    Arg, Array, CancelToken, Dispatch, ErrorKind, Host, Location, NullHost, ObjectRef, Record,
+    ScriptError, Value, find_arg,
+};

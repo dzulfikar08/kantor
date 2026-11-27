@@ -1,0 +1,19 @@
+[package]
+name = "sheets_script"
+description = "Kantor Sheets' object model for macros: Application, Workbook, Worksheet, Range… over sheets_engine, for the kantor_script VBA interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kantor_script.workspace = true
+sheets_engine.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+zip.workspace = true

@@ -1073,6 +1073,12 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Macros…"),
+        detail: tk("Sheets · the workbook's VBA modules and procedures, shown but not run"),
+        keys: "Alt+F8",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.macros_doc(w, cx)),
+    },
+    Command {
         title: tk("Page Break Preview"),
         detail: tk("Sheets · show where the pages break; drag the breaks and the print area"),
         keys: "",

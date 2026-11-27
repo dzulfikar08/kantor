@@ -960,7 +960,36 @@ Left as is: PCRE2 details `fancy-regex` reads differently (`\d`, `\w` and
 final line break).
 
 Tests: `test/text_functions/fn_regex.rs`, run in CI by `ci.yml`
-(`cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib regex`).
+(`cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib -- regex kantor_udf test_defined_names`).
+
+## 37. User functions and formulas evaluated without a cell
+
+Why: a workbook's VBA `Public Function`s are used in cell formulas
+(`=MyTax(A2)`); with macros enabled Excel evaluates them, with macros off
+they show `#NAME?`. Kantor's macros (`crates/sheets_script`) also evaluate
+`WorksheetFunction.Sum(...)` and `Evaluate("...")` with the engine's
+functions, without writing a cell.
+
+What: the new file `kantor_udf.rs`: the trait `KantorUserFunctions` (`call(name,
+args) -> Option<KantorValue>`, `None` for a name it doesn't define), set with
+`Model::kantor_set_user_functions` / `UserModel::kantor_set_user_functions`
+(a new `Model` field `kantor_udfs`, `None` in both constructors). In
+`model.rs`, a `NamedFunctionKind` call that is neither bound by LET nor a LAMBDA
+defined name asks the user functions before giving `#NAME?`; its arguments are
+evaluated in the cell's context, ranges read cell by cell (so they are
+dependencies like any read; ranges over 65 536 cells are clipped to the used
+area). The formula text is untouched, so files save as they were: in
+`expressions/parser/stringify.rs` a call to a name that isn't bound by LET
+keeps the case it was written in (upstream lowercased it: `=MyTax(A2)` became
+`=mytax(A2)`; `test/user_model/test_defined_names.rs` expects the case now).
+`Model::kantor_evaluate_formula` parses and evaluates a formula in a cell's
+context without storing it (stored values only, like conditional formatting's
+`cf_evaluate`), a range result coming back as its values;
+`Model::kantor_cell_value` reads one cell's value with errors by name, and
+`UserModel::kantor_copy_selection_to` copies the selected area and pastes it at
+a cell (VBA's `Range.Copy Destination:=…`; the clipboard's data is private).
+
+Tests: `test/test_kantor_udf.rs`; Kantor's `crates/sheets_script/tests`.
 
 ## Updating or dropping
 

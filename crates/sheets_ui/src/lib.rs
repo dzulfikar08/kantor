@@ -113,7 +113,9 @@ mod plain_cell;
 pub use notes_ui::NoteCommand;
 pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
+mod macro_run;
 mod toolbar;
+mod vba_ui;
 mod web_ui;
 mod zoom;
 pub use web_ui::{toggle_web_formulas, web_formulas_enabled};
@@ -143,7 +145,8 @@ actions!(
         ExtendRight,
         ToggleBold,
         ToggleItalic,
-        ToggleUnderline
+        ToggleUnderline,
+        ShowMacros
     ]
 );
 
@@ -298,6 +301,7 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new(kantor_ui::keys::primary("ctrl-s"), Save, ctx),
         KeyBinding::new("super-s", Save, ctx),
+        KeyBinding::new("alt-f8", ShowMacros, ctx),
         KeyBinding::new(kantor_ui::keys::primary("ctrl-shift-s"), SaveAs, ctx),
         KeyBinding::new("super-shift-s", SaveAs, ctx),
         KeyBinding::new(kantor_ui::keys::primary("ctrl-z"), Undo, Some(GRID_CONTEXT)),
@@ -1606,6 +1610,10 @@ pub struct SheetsView {
     note_clip: Option<(String, sheets_engine::NoteClip)>,
     /// IMAGE and WEBSERVICE downloads (see [`web_ui`]).
     web: web_ui::WebState,
+    /// The workbook's macros and their bar ([`vba_ui`]).
+    macros: vba_ui::MacroState,
+    /// The Macros dialog ([`vba_ui`]).
+    macros_dialog: Option<vba_ui::MacrosDialog>,
     /// The zoom slider and the Zoom dialog ([`zoom`]).
     zoom: zoom::ZoomState,
     _subscriptions: Vec<Subscription>,
@@ -1701,6 +1709,8 @@ impl SheetsView {
             saving: None,
             pending_save: None,
             web: web_ui::WebState::default(),
+            macros: vba_ui::MacroState::default(),
+            macros_dialog: None,
             zoom: Default::default(),
             _subscriptions: subscriptions,
         };
@@ -1717,11 +1727,14 @@ impl SheetsView {
 
     /// While opening or recalculating, refuse a command (and say why).
     fn blocked(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.busy.is_some() {
+        // A macro showing a dialog has lent the grid its workbook: edits
+        // wait until it ends.
+        let busy = self.busy.is_some() || self.macros.run.is_some();
+        if busy {
             self.status = i18n::t("Please wait until the workbook is ready").into();
             cx.notify();
         }
-        self.busy.is_some()
+        busy
     }
 
     /// Select a sheet cell in the table (scrolls to it and emits `SelectCell`).
@@ -3045,6 +3058,7 @@ impl Render for SheetsView {
         self.apply_pending_chart(window, cx);
         self.sync_web_soon(window, cx);
         let web_bar = self.render_web_bar(cx);
+        let macro_bar = self.render_macro_bar(cx);
         self.sync_chart_panel(window, cx);
         self.sync_shape_panel(window, cx);
         let root = self.editor_actions(v_flex(), cx);
@@ -3062,6 +3076,7 @@ impl Render for SheetsView {
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
+            .on_action(cx.listener(|this, _: &ShowMacros, w, cx| this.macros_doc(w, cx)))
             .on_action(cx.listener(|this, _: &fb::OpenFind, w, cx| this.open_find(false, w, cx)))
             .on_action(cx.listener(|this, _: &fb::OpenReplace, w, cx| this.open_find(true, w, cx)))
             .on_action(cx.listener(|this, _: &fb::FindNext, w, cx| this.find_next_doc(true, w, cx)))
@@ -3107,6 +3122,8 @@ impl Render for SheetsView {
             })
             // Excel's security bar for downloads (see `web_ui`).
             .children(web_bar)
+            // Workbooks with macros: disabled until Enable Content (see `vba_ui`).
+            .children(macro_bar)
             // Formula bar: name box + input
             .when(chart_sheet.is_none(), |root| {
                 root.child(
@@ -3254,6 +3271,8 @@ impl Render for SheetsView {
             .children(self.render_alert(cx))
             .children(self.render_sort_panel(cx))
             .children(self.render_custom_lists(cx))
+            .children(self.render_macros_dialog(cx))
+            .children(self.render_macro_dialog(cx))
             .children(self.render_filter_menu(cx))
             .children(self.render_pivot_dialog(cx))
             .children(self.render_page_setup(cx))

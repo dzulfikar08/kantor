@@ -121,6 +121,7 @@ pub mod check;
 pub mod format;
 pub mod formula;
 pub mod grid;
+pub mod script;
 pub mod tsv;
 pub mod web;
 
@@ -281,6 +282,8 @@ pub use format::{
 pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use hide::Unhidden;
 pub use icons::IconPath;
+/// VBA projects (`Workbook::vba_project`).
+pub use kantor_vba as vba;
 pub use look::CellLook;
 pub use notes::NoteClip;
 pub use numfmt::Display;
@@ -1081,6 +1084,17 @@ impl Workbook {
             .is_some_and(|b| preserve::has_macros(&b))
     }
 
+    /// The workbook's VBA project, read from the file it was opened from or
+    /// last saved to (the project a save as `.xlsm` keeps). `None`: no
+    /// macros; `Some(Err)`: a project Kantor can't read (opening and saving
+    /// the workbook don't depend on it: the project is kept byte for byte).
+    /// Parsed on each call: callers keep what they need.
+    pub fn vba_project(&self) -> Option<Result<kantor_vba::VbaProject, String>> {
+        let bytes = self.origin_bytes()?;
+        let project = preserve::vba_project_bytes(&bytes)?;
+        Some(kantor_vba::VbaProject::read(&project).map_err(|e| e.to_string()))
+    }
+
     /// What the last save could not carry over from the original `.xlsx`
     /// (e.g. `sheet "Data": tableParts not kept`), or error values it had to
     /// rewrite. Empty when everything was kept.
@@ -1132,12 +1146,27 @@ impl Workbook {
         if !self.can_undo() {
             return Ok(false);
         }
-        for _ in 0..self.history.undo_steps() {
+        let steps = self.history.undo_steps();
+        // A step made of many edits (a macro run) recalculates once.
+        let pause = steps > 1 && self.calc.mode == CalcMode::Automatic;
+        if pause {
+            self.model.pause_evaluation();
+        }
+        let mut result = Ok(());
+        for _ in 0..steps {
             if !self.model.can_undo() {
                 break;
             }
-            self.model.undo().map_err(|e| anyhow!("undo: {e}"))?;
+            if let Err(e) = self.model.undo() {
+                result = Err(anyhow!("undo: {e}"));
+                break;
+            }
         }
+        if pause {
+            self.model.resume_evaluation();
+            self.model.kantor_evaluate_changes();
+        }
+        result?;
         self.history.undone();
         self.sync_pivot_grids(true);
         Ok(true)
@@ -1148,12 +1177,26 @@ impl Workbook {
         if !self.can_redo() {
             return Ok(false);
         }
-        for _ in 0..self.history.redo_steps() {
+        let steps = self.history.redo_steps();
+        let pause = steps > 1 && self.calc.mode == CalcMode::Automatic;
+        if pause {
+            self.model.pause_evaluation();
+        }
+        let mut result = Ok(());
+        for _ in 0..steps {
             if !self.model.can_redo() {
                 break;
             }
-            self.model.redo().map_err(|e| anyhow!("redo: {e}"))?;
+            if let Err(e) = self.model.redo() {
+                result = Err(anyhow!("redo: {e}"));
+                break;
+            }
         }
+        if pause {
+            self.model.resume_evaluation();
+            self.model.kantor_evaluate_changes();
+        }
+        result?;
         self.history.redone();
         self.sync_pivot_grids(true);
         Ok(true)

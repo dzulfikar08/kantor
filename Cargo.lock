@@ -4413,6 +4413,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "kantor_script"
+version = "0.26.2"
+
+[[package]]
 name = "kantor_spell"
 version = "0.26.2"
 dependencies = [
