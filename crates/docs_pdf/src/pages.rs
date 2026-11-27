@@ -763,6 +763,7 @@ fn reuse_of<'a>(
         block_shift: db,
         para_shift: d,
         renumber,
+        from_para: first_same,
     })
 }
 
@@ -1028,6 +1029,7 @@ pub(crate) fn lay_out_body(
     let last = prev.as_ref().map(|p| p.laid);
     let shift = old_len.map_or(0, |n| lps.len() as isize - n as isize);
     let taken = paged.reused().filter(|_| last.is_some());
+    let moved_from = reuse.as_ref().map_or(0, |r| r.from_para);
     let unmoved = match (last, splice) {
         (Some(laid), Some((start, _, _))) => {
             // Not past the page the edit starts on (text changes there
@@ -1246,7 +1248,10 @@ pub(crate) fn lay_out_body(
             };
             *items = old.clone();
             if moved {
-                for it in items.iter_mut().filter(|it| it.story.is_none()) {
+                // (Paragraphs before the edit didn't move.)
+                for it in items.iter_mut().filter(|it| {
+                    it.story.is_none() && it.para as isize + shift >= moved_from as isize
+                }) {
                     it.para = (it.para as isize + shift).max(0) as usize;
                 }
             }

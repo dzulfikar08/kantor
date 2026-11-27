@@ -1425,6 +1425,9 @@ pub struct Reuse<'a> {
     /// Page numbers may differ from the old ones there (nothing depends on
     /// whether a page is odd or even); the old pages are renumbered.
     pub renumber: bool,
+    /// The first paragraph (new numbering) that moved by `para_shift`:
+    /// those before are where they were.
+    pub from_para: usize,
 }
 
 /// `index` hit on line `k` of `layout`, kept on that line. A hit past the
@@ -1973,7 +1976,13 @@ impl<'a> Flow<'a> {
                 block: (s.block as isize + reuse.block_shift).max(0) as usize,
                 para: shift(s.para),
                 number: number(s.number),
-                floats_placed: s.floats_placed.map(shift),
+                floats_placed: s.floats_placed.map(|p| {
+                    if p as isize >= reuse.from_para as isize - d {
+                        shift(p)
+                    } else {
+                        p
+                    }
+                }),
                 ..s
             }));
         }
@@ -2026,7 +2035,14 @@ impl<'a> Flow<'a> {
         let Some(Some(old)) = reuse.old.starts.get(j) else {
             return;
         };
-        let floats = start.floats_placed.map(|p| shift(p, reuse.para_shift));
+        // (Paragraphs before the edit didn't move.)
+        let floats = start.floats_placed.map(|p| {
+            if p >= reuse.from_para {
+                shift(p, reuse.para_shift)
+            } else {
+                Some(p)
+            }
+        });
         if old.section != start.section
             || old.setup != start.setup
             || floats != old.floats_placed.map(Some)
