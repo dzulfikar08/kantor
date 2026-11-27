@@ -62,7 +62,9 @@ impl MacroThread {
 
     /// Hands `work` to the thread; gives it back if the thread is gone.
     pub(crate) fn send(&self, work: Work) -> Result<(), Box<Work>> {
-        self.jobs.send(work).map_err(|mpsc::SendError(w)| Box::new(w))
+        self.jobs
+            .send(work)
+            .map_err(|mpsc::SendError(w)| Box::new(w))
     }
 }
 
