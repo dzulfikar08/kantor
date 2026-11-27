@@ -263,6 +263,9 @@ pub struct Model<'a> {
     /// KANTOR PATCH (functions): what IMAGE and WEBSERVICE fetched and wait
     /// for (see `functions/kantor_web.rs`).
     pub kantor_web: crate::functions::kantor_web::KantorWeb,
+    /// KANTOR PATCH (user functions, §37): the host's functions for names
+    /// that aren't built in (see `kantor_udf.rs`).
+    pub(crate) kantor_udfs: Option<std::sync::Arc<dyn crate::kantor_udf::KantorUserFunctions>>,
 }
 
 /// Formula text to index in `Worksheet::shared_formulas`, for one sheet.
@@ -851,11 +854,15 @@ impl<'a> Model<'a> {
                             CalcResult::Lambda(lambda_id)
                         }
                         _ => {
+                            // KANTOR PATCH (user functions, §37)
+                            if let Some(result) = self.kantor_call_user_function(name, args, cell) {
+                                return result;
+                            }
                             return CalcResult::new_error(
                                 Error::NAME,
                                 cell,
                                 format!("Invalid function: {name}"),
-                            )
+                            );
                         }
                     }
                 };
@@ -1970,6 +1977,7 @@ impl<'a> Model<'a> {
             kantor_evaluations: 0,
             kantor_last_partial: None,
             kantor_web: Default::default(),
+            kantor_udfs: None,
             shared_strings,
             parsed_defined_names: HashMap::new(),
             parser,

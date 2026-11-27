@@ -8,7 +8,7 @@ use std::time::Duration;
 use crate::cache::{
     Cache, CacheEntry, Compare, HeldLock, PendingUpload, Stamp, sha256_hex, write_atomic,
 };
-use crate::chunked::{RESUMABLE_MIN, Resumable};
+use crate::chunked::Resumable;
 use crate::sync::{LockState, UploadOutcome, numbered};
 use crate::{Client, Error, LockToken, Precondition};
 
@@ -201,7 +201,7 @@ pub fn upload(
         (None, false) => Precondition::IfNoneMatch,
     };
     let mut lock_lost = false;
-    if bytes.len() >= RESUMABLE_MIN {
+    if bytes.len() >= r.client.resumable_min() {
         match resumable_upload(r, cache, entry, &bytes, &if_match, force, lock, progress) {
             Some(Ok((etag, lock_lost))) => {
                 return synced(r, entry, &bytes, etag, stamp, lock_lost);
@@ -346,6 +346,23 @@ fn resumable_upload(
                 record(u);
             }
             res.map(|()| (None, lock_lost))
+        }
+        Resumable::Session => {
+            let cond = match (if_match, force) {
+                (_, true) => Precondition::Overwrite,
+                (Some(e), false) => Precondition::IfMatch(e),
+                (None, false) => Precondition::IfNoneMatch,
+            };
+            let mut url = (!id.is_empty()).then_some(id);
+            let res = r
+                .client
+                .upload_session(&entry.remote, bytes, cond, &mut url, progress);
+            if res.is_err()
+                && let Some(u) = &url
+            {
+                record(u);
+            }
+            res.map(|etag| (etag, false))
         }
         Resumable::None => return None,
     };

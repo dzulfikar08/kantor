@@ -11,6 +11,7 @@ mod accounts;
 mod browser;
 mod conflict;
 pub(crate) mod jobs;
+mod oauth;
 mod sso;
 mod widgets;
 
@@ -30,13 +31,13 @@ use kantor_cloud::sync::{Action, DocSync, LockState, Status, UploadOutcome, conf
 use kantor_cloud::{Auth, Client};
 use kantor_core::layout::PaneId;
 use kantor_core::settings::{CloudAccount, Settings};
-use kantor_ui::i18n::{Lang, lang, tr};
+use kantor_ui::i18n::{Lang, lang, t, tf, tr};
 use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
 use super::read_only::ReadOnly;
 use super::{AppKind, Workspace};
-use crate::actions::{CloudAccounts, OpenFromCloud, SyncNow};
+use crate::actions::{CloudAccounts, OpenFromCloud, SaveToCloud, SyncNow};
 use accounts::AccountsPanel;
 use browser::BrowserPanel;
 use conflict::{ConflictPanel, Resolution};
@@ -65,6 +66,12 @@ pub enum PanelEvent {
     AccountsChanged,
     OpenAccounts,
     Open {
+        account: Box<CloudAccount>,
+        remote: String,
+    },
+    /// Save to Cloud: upload `pane`'s document as `remote`.
+    SaveTo {
+        pane: PaneId,
         account: Box<CloudAccount>,
         remote: String,
     },
@@ -104,6 +111,8 @@ pub(super) struct Cloud {
     pub(super) close_ok: bool,
     /// Lock releases of documents closed this run, still running.
     unlocking: Vec<std::thread::JoinHandle<()>>,
+    /// The user turned cloud autosave off (`[cloud] autosave = false`).
+    autosave_off: bool,
 }
 
 /// The working copies (`<data dir>/cloud`: unsynced work must not live
@@ -149,6 +158,9 @@ const PRUNE_AFTER: Duration = Duration::from_secs(30 * 24 * 3600);
 /// A client for `account` with its stored app password (worker thread:
 /// the keychain may block).
 pub(crate) fn remote_for(account: &CloudAccount) -> Result<Remote, String> {
+    if account.is_oauth() {
+        return oauth::remote(account);
+    }
     if account.is_sso() {
         return sso::remote(account);
     }
@@ -199,6 +211,84 @@ impl Workspace {
         self.show_cloud_panel(panel, window, cx);
     }
 
+    /// Save to Cloud: pick an account, folder and name for the focused
+    /// document, which must be saved on this computer first.
+    pub(super) fn save_to_cloud(
+        &mut self,
+        _: &SaveToCloud,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(pane) = self
+            .active
+            .and_then(|i| self.tabs.get(i))
+            .map(|t| t.focused)
+        else {
+            return;
+        };
+        let Some(view) = self.docs.get(&pane).map(|d| d.view.clone()) else {
+            return;
+        };
+        let Some(path) = view.path(cx).filter(|_| !view.is_dirty(cx)) else {
+            self.cloud_notice(
+                t("Save the document on this computer first, then choose Save to Cloud."),
+                cx,
+            );
+            return;
+        };
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let panel = cx.new(|cx| BrowserPanel::for_save(pane, &name, window, cx));
+        panel.update(cx, |p, cx| p.focus_first(window, cx));
+        self.show_cloud_panel(panel, window, cx);
+    }
+
+    /// Upload `pane`'s file as `remote` (never over an existing file), then
+    /// open the cloud copy in a new tab: its edits save to the cloud.
+    fn upload_to_cloud(
+        &mut self,
+        pane: PaneId,
+        account: CloudAccount,
+        remote: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.docs.get(&pane).and_then(|d| d.view.path(cx)) else {
+            return;
+        };
+        let place = account
+            .provider_name()
+            .map_or_else(|| account.label(), str::to_owned);
+        self.cloud_notice(tf("Saving to {}…", &[&place]), cx);
+        let job_account = account.clone();
+        jobs::spawn_in(
+            cx,
+            window,
+            move |_: &dyn Fn(())| upload_new(&job_account, &path, &remote),
+            |_, _, _, _| {},
+            move |ws: &mut Self, r, window, cx| match r {
+                Ok((entry, lock)) => {
+                    let local = entry.local.clone();
+                    let name = entry.name().to_owned();
+                    ws.open_path(local.clone(), window, cx);
+                    if let Some((_, pane)) = ws.find_path(&local, cx) {
+                        ws.attach_cloud(pane, DocSync::new(entry, lock), account, window, cx);
+                    }
+                    ws.cloud_notice(
+                        tf(
+                            "Saved to {}: “{}”. It's open in a new tab; edits there save to the cloud.",
+                            &[&place, &name],
+                        ),
+                        cx,
+                    );
+                }
+                Err(e) => ws.cloud_notice(tf("Couldn't save to the cloud: {}", &[&e]), cx),
+            },
+        );
+    }
+
     pub(super) fn open_cloud_accounts(
         &mut self,
         _: &CloudAccounts,
@@ -231,6 +321,15 @@ impl Workspace {
                         let (account, remote) = ((**account).clone(), remote.clone());
                         ws.close_cloud_panel(window, cx);
                         ws.open_remote(account, remote, window, cx);
+                    }
+                    PanelEvent::SaveTo {
+                        pane,
+                        account,
+                        remote,
+                    } => {
+                        let (pane, account, remote) = (*pane, (**account).clone(), remote.clone());
+                        ws.close_cloud_panel(window, cx);
+                        ws.upload_to_cloud(pane, account, remote, window, cx);
                     }
                     PanelEvent::Resolve { pane, resolution } => {
                         let (pane, resolution) = (*pane, *resolution);
@@ -466,6 +565,7 @@ impl Workspace {
     /// documents again (lock retaken, server checked), and locks a crashed
     /// run left behind are released.
     pub(super) fn init_cloud(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cloud.autosave_off = !Settings::load().cloud.autosave;
         let store = cache();
         let mut restored = Vec::new();
         for (&pane, doc) in &self.docs {
@@ -724,7 +824,9 @@ impl Workspace {
                     cd.retry_at = None;
                     cd.retry_wait = RETRY_FIRST;
                 }
-                if synced {
+                // With autosave the status bar chip says it; a notice for
+                // every save would be noise.
+                if synced && ws.cloud.autosave_off {
                     ws.cloud_notice(
                         format!(
                             "{} {}",
@@ -1190,7 +1292,18 @@ impl Workspace {
         let cd = self.cloud.docs.get(&pane)?;
         let t = tokens(cx);
         let status = cd.sync.status();
+        let dirty = self.docs.get(&pane).is_some_and(|d| d.view.is_dirty(cx));
         let (icon, text, color): (IconName, String, Hsla) = match &status {
+            // Edits not saved to the working copy yet.
+            Status::Synced if dirty => (
+                IconName::Cloud,
+                if self.cloud_autosaves(pane) == Some(true) {
+                    kantor_ui::i18n::t("Edited · autosaves shortly").into()
+                } else {
+                    kantor_ui::i18n::t("Edited · not saved").into()
+                },
+                t.fg_muted,
+            ),
             Status::Synced => (
                 IconName::Cloud,
                 tr("Synced", "Tersinkron").into(),
@@ -1359,6 +1472,12 @@ impl Workspace {
                         Some("Ctrl Shift S"),
                         None,
                         |ws, w, cx| ws.with_active(w, cx, |v, w, cx| v.save_as(w, cx)),
+                    ))
+                    .item(item(
+                        t("Save to Cloud…"),
+                        None,
+                        Some(IconName::CloudUpload),
+                        |ws, w, cx| ws.save_to_cloud(&SaveToCloud, w, cx),
                     ));
                 let menu = if cloud_doc {
                     menu.item(item(
@@ -1461,6 +1580,43 @@ impl Workspace {
         self.run_action(pane, action, window, cx);
     }
 
+    pub(super) fn cloud_autosave_on(&self) -> bool {
+        !self.cloud.autosave_off
+    }
+
+    /// For a cloud document: whether autosave may save it now (switch on,
+    /// not read-only, no conflict waiting). `None`: not a cloud document.
+    pub(super) fn cloud_autosaves(&self, pane: PaneId) -> Option<bool> {
+        let cd = self.cloud.docs.get(&pane)?;
+        Some(
+            !self.cloud.autosave_off
+                && cd.sync.read_only_by().is_none()
+                && !matches!(
+                    cd.sync.state,
+                    kantor_cloud::sync::SyncState::Conflict { .. }
+                ),
+        )
+    }
+
+    /// The status bar switch on a cloud document.
+    pub(super) fn toggle_cloud_autosave(&mut self, cx: &mut Context<Self>) {
+        self.cloud.autosave_off = !self.cloud.autosave_off;
+        let mut settings = Settings::load();
+        settings.cloud.autosave = !self.cloud.autosave_off;
+        if let Err(e) = settings.save() {
+            log::warn!("saving settings: {e:#}");
+        }
+        let text = if self.cloud.autosave_off {
+            t("Autosave off for cloud documents: choose Save to send your changes to the cloud.")
+        } else {
+            t(
+                "Autosave on for cloud documents: changes go to the cloud a few seconds after you stop typing.",
+            )
+        };
+        self.cloud_notice(text, cx);
+        cx.notify();
+    }
+
     /// Whether the focused document is a cloud document (for the palette).
     pub(super) fn focused_is_cloud(&self) -> bool {
         self.active
@@ -1499,6 +1655,64 @@ fn reattach(account: &CloudAccount, cache: &Cache, entry: CacheEntry) -> (DocSyn
             }
             (sync, false)
         }
+    }
+}
+
+/// Save to Cloud's network part (worker thread): make the folder, refuse
+/// an existing file, put the bytes in a working copy, upload it, take the
+/// lock where the drive has locks.
+fn upload_new(
+    account: &CloudAccount,
+    path: &std::path::Path,
+    remote: &str,
+) -> Result<(CacheEntry, LockState), String> {
+    let r = remote_for(account)?;
+    let cache = cache();
+    let folder = remote.rsplit_once('/').map_or("", |(f, _)| f);
+    if !folder.is_empty() {
+        r.client.mkcol(folder).map_err(|e| e.to_string())?;
+    }
+    let taken =
+        || t("There's already a file with this name there. Choose another name.").to_owned();
+    match r.client.stat(remote) {
+        Ok(_) => return Err(taken()),
+        Err(kantor_cloud::Error::NotFound) => {}
+        Err(e) => return Err(e.to_string()),
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let local = cache.local_path(&r.account, remote);
+    if let Some(dir) = local.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    kantor_cloud::cache::write_atomic(&local, &bytes).map_err(|e| e.to_string())?;
+    let mut entry = CacheEntry {
+        account: r.account.clone(),
+        remote: remote.to_owned(),
+        local,
+        ..Default::default()
+    };
+    match session::upload(&r, &cache, &entry, None, false, &mut |_, _| {}) {
+        UploadOutcome::Synced {
+            server,
+            stamp,
+            sha256,
+            sha1,
+            ..
+        } => {
+            entry.synced = stamp;
+            entry.sha256 = sha256;
+            entry.sha1 = sha1;
+            if let Some(s) = server {
+                entry.rebase(&s);
+            }
+            cache.save_entry(&entry).map_err(|e| e.to_string())?;
+            let lock = session::take_lock(&r, &cache, remote);
+            Ok((entry, lock))
+        }
+        UploadOutcome::Conflict { .. } => Err(taken()),
+        UploadOutcome::Offline(m) | UploadOutcome::Failed(m) => Err(m),
+        UploadOutcome::LockedBy(who) => Err(read_only_notice(&who)),
+        UploadOutcome::Busy => Err(t("The drive is busy. Try again in a moment.").to_owned()),
     }
 }
 

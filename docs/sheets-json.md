@@ -13,6 +13,7 @@ kantor sheets list book.xlsx --sheet Data --range A31:H60 --formulas
 kantor sheets edit book.xlsx to_numbers '{"range": "Data!B2:B500"}'
 kantor sheets edit book.xlsx -o out.xlsx --ops ops.json   # [{"tool": "fill_down", "args": {...}}, ...]
 kantor sheets check book.xlsx [--json] [--sheet Data]     # the audit (see "Checking a workbook")
+kantor sheets macros book.xlsm [--module Module1] [--json] # the VBA macros: modules, procedures, code
 kantor sheets schema > sheets-json.schema.json
 kantor convert book.xlsx -o shots/ --to png       # each printed page as a PNG
 ```
@@ -20,7 +21,8 @@ kantor convert book.xlsx -o shots/ --to png       # each printed page as a PNG
 The MCP server (`kantor mcp`) offers the same: `sheets_edit` runs a list of
 these tools on the workbook open in Kantor (one undo step), `sheets_list`
 and `sheets_check` read the open workbook or a file (`path`), and
-`sheets_build` writes a `.xlsx` (`open: true` opens it). The tools' JSON is
+`sheets_build` writes a `.xlsx` (`open: true` opens it). `sheets_macros`
+reads a workbook's macros (see "Macros"). The tools' JSON is
 the same everywhere. The full schema is
 [sheets-json.schema.json](sheets-json.schema.json).
 
@@ -286,3 +288,31 @@ pixels. The page setup options
   rule's bold or number format), look at the first 60 pages of a sheet,
   and skip sheets of more than 50,000 filled cells (as do
   `outside_print_area` and `split_by_page`).
+
+## Macros
+
+Kantor keeps a workbook's VBA project when it saves an `.xlsm` and shows its
+code (View ▸ Macros, Alt+F8); it runs a macro only when the user asks (Run
+in the Macros dialog after Enable Content, a button, or `kantor sheets
+macros run FILE --macro NAME`, see docs/scripting.md). The AI tools never run
+macros. `kantor sheets macros FILE` lists the modules (standard, class, document such as `ThisWorkbook`
+and `Sheet1`, UserForm) and their `Sub`s, `Function`s and `Property`
+procedures with line numbers; `--module NAME` prints a module's code
+(attribute lines left out, as the Visual Basic Editor shows it); `--json`
+gives the listing as JSON:
+
+```json
+{"has_macros": true, "project": "VBAProject", "codepage": 1252,
+ "references": [{"name": "stdole", "kind": "library", "libid": "*\\G{00020430-…}#2.0#0#…#OLE Automation"}],
+ "modules": [{"name": "Module1", "kind": "standard", "lines": 12,
+              "procedures": [{"name": "TestMacro", "kind": "Sub", "private": false,
+                              "arguments": false, "macro": true, "line": 1, "end_line": 12}]}],
+ "note": "AI tools don't run macros: … "}
+```
+
+`macro` marks what Excel's Macros dialog lists (a public `Sub` without
+arguments). The MCP tool `sheets_macros` takes the same `module`, and
+`code: true` for every module's code, on the open workbook or a `path`;
+Paparan AI's `macros` tool does the same for files in its folder. Use it
+to explain what a macro does, or to do its work with formulas and the
+editing tools instead.

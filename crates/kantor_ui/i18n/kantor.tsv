@@ -4,7 +4,7 @@ All commands	Semua perintah
 Coming soon	Segera hadir
 Commands	Perintah
 Create	Buat
-Docs, Sheets and Slides — native, fast, yours.	Docs, Sheets dan Slides — native, cepat, milik Anda.
+Docs, Sheets, Slides, PDF and Notes — native, fast, yours.	Docs, Sheets, Slides, PDF dan Catatan — native, cepat, milik Anda.
 Edit .xlsx spreadsheets	Edit spreadsheet .xlsx
 New  →	Baru  →
 New document	Dokumen baru
@@ -428,9 +428,9 @@ Recover Unsaved Work…	Pulihkan Pekerjaan yang Belum Disimpan…
 Check for Updates…	Periksa Pembaruan…
 Restart to Update	Mulai Ulang untuk Memperbarui
 Quit Kantor	Keluar dari Kantor
-Nextcloud, OpenCloud or any WebDAV drive	Nextcloud, OpenCloud atau drive WebDAV lain
+OneDrive, Google Drive, Nextcloud, OpenCloud or any WebDAV drive	OneDrive, Google Drive, Nextcloud, OpenCloud atau drive WebDAV lain
 Upload a cloud document saved offline, recheck a lock	Unggah dokumen cloud yang disimpan saat luring, periksa ulang kunci
-Add, test or remove a WebDAV account	Tambah, uji atau hapus akun WebDAV
+Add, test or remove a cloud account	Tambah, uji atau hapus akun cloud
 AI agents can edit open documents (kantor mcp)	Agen AI dapat mengedit dokumen yang terbuka (kantor mcp)
 Current document	Dokumen saat ini
 Refuse edits to this document until you allow them	Tolak pengeditan dokumen ini sampai Anda mengizinkannya
@@ -620,6 +620,7 @@ Sheets · lists that sort orders and the fill handle follow (Low, Medium, High)	
 Sheets · show where the pages break; drag the breaks and the print area	Sheets · tampilkan letak hentian halaman; seret hentian dan area cetak
 Normal View	Tampilan Normal
 Sheets · leave Page Break Preview	Sheets · keluar dari Pratinjau Hentian Halaman
+Sheets · the workbook's VBA modules and procedures, shown but not run	Sheets · modul dan prosedur VBA buku kerja, ditampilkan tetapi tidak dijalankan
 Sheets · a table style of this workbook: format of each table element, stripe sizes, default style	Sheets · gaya tabel buku kerja ini: format tiap elemen tabel, ukuran pita, gaya default
 Let Formulas Download from the Internet	Izinkan Rumus Mengunduh dari Internet
 Sheets · IMAGE and WEBSERVICE (turn on or off)	Sheets · IMAGE dan WEBSERVICE (aktifkan atau nonaktifkan)
@@ -746,3 +747,32 @@ Make a deck, a document or a workbook with AI	Buat paparan, dokumen, atau buku k
 Ask for changes…	Minta perubahan…
 Can't reach the AI service. Check the connection and try again.	Layanan AI tidak bisa dihubungi. Periksa koneksi lalu coba lagi.
 Try again	Coba lagi
+# OneDrive and Google Drive (workspace/cloud/oauth.rs, accounts.rs, browser.rs, mod.rs).
+This copy of Kantor can't sign in to {}.	Salinan Kantor ini tidak dapat masuk ke {}.
+{} refused the sign-in. Try again.	{} menolak proses masuk. Coba lagi.
+{} gave no refresh token, so Kantor can't stay signed in. Try again.	{} tidak memberikan token penyegaran, jadi Kantor tidak dapat tetap masuk. Coba lagi.
+Signed in. Opening your drive…	Berhasil masuk. Membuka drive Anda…
+This account's drive isn't known to this copy of Kantor.	Drive akun ini tidak dikenal oleh salinan Kantor ini.
+Sign in with your Microsoft account (personal, work or school) in the browser. Kantor can then open and save the files in your OneDrive. The sign-in is kept in the system keychain; no password is stored.	Masuk dengan akun Microsoft Anda (pribadi, kantor atau sekolah) di peramban. Setelah itu Kantor dapat membuka dan menyimpan berkas di OneDrive Anda. Sesi masuk disimpan di keychain sistem; tidak ada kata sandi yang disimpan.
+Sign in with your Google account in the browser. Kantor only gets the files it creates or opens, not the rest of your Drive; new files go in a “Kantor” folder. The sign-in is kept in the system keychain; no password is stored.	Masuk dengan akun Google Anda di peramban. Kantor hanya mendapat berkas yang dibuat atau dibukanya, bukan seluruh Drive Anda; berkas baru masuk ke folder “Kantor”. Sesi masuk disimpan di keychain sistem; tidak ada kata sandi yang disimpan.
+Sign in with Microsoft	Masuk dengan Microsoft
+Sign in with Google	Masuk dengan Google
+Type a file name.	Ketik nama berkas.
+Google Drive: Kantor sees only the files it created or opened, not the rest of your Drive. To work on another file, open it on this computer and choose Save to Cloud.	Google Drive: Kantor hanya melihat berkas yang dibuat atau dibukanya, bukan seluruh Drive Anda. Untuk mengerjakan berkas lain, buka berkas itu di komputer ini lalu pilih Simpan ke Cloud.
+At the top of Google Drive, Kantor saves into its “Kantor” folder.	Di tingkat teratas Google Drive, Kantor menyimpan ke folder “Kantor” miliknya.
+Save to Cloud	Simpan ke Cloud
+Save to Cloud…	Simpan ke Cloud…
+Save Here	Simpan di Sini
+Upload this document to OneDrive, Google Drive or a WebDAV drive	Unggah dokumen ini ke OneDrive, Google Drive atau drive WebDAV
+Save the document on this computer first, then choose Save to Cloud.	Simpan dulu dokumen ini di komputer ini, lalu pilih Simpan ke Cloud.
+Saving to {}…	Menyimpan ke {}…
+Saved to {}: “{}”. It's open in a new tab; edits there save to the cloud.	Tersimpan ke {}: “{}”. Berkas terbuka di tab baru; perubahan di sana tersimpan ke cloud.
+Couldn't save to the cloud: {}	Gagal menyimpan ke cloud: {}
+There's already a file with this name there. Choose another name.	Sudah ada berkas dengan nama ini di sana. Pilih nama lain.
+The drive is busy. Try again in a moment.	Drive sedang sibuk. Coba lagi sebentar lagi.
+Autosave off for cloud documents: choose Save to send your changes to the cloud.	Simpan otomatis nonaktif untuk dokumen cloud: pilih Simpan untuk mengirim perubahan ke cloud.
+Autosave on for cloud documents: changes go to the cloud a few seconds after you stop typing.	Simpan otomatis aktif untuk dokumen cloud: perubahan dikirim ke cloud beberapa detik setelah Anda berhenti mengetik.
+Edited · autosaves shortly	Diubah · segera disimpan otomatis
+Edited · not saved	Diubah · belum disimpan
+Open  →	Buka  →
+Read and sign .pdf files	Baca dan tanda tangani berkas .pdf

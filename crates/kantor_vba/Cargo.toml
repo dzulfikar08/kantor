@@ -1,0 +1,20 @@
+[package]
+name = "kantor_vba"
+description = "Reads and rewrites VBA projects (vbaProject.bin, MS-OVBA): modules, their source and procedures"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# The project's compound file (MS-CFB).
+cfb.workspace = true
+# Module source in the project's code page.
+encoding_rs.workspace = true
+
+[dev-dependencies]
+cfb.workspace = true

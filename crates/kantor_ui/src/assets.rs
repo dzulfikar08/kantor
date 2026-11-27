@@ -23,6 +23,8 @@ icon_assets!(
         Pilcrow,
         ZoomIn,
         ZoomOut,
+        // Sheets: a macro's MsgBox with vbQuestion
+        CircleQuestionMark,
         // Slides toolbar
         Type,
         Circle,
@@ -129,11 +131,12 @@ icon_assets!(
         NotepadText,
         // Paparan AI chat
         Paperclip,
+        // Sheets: View ▸ Macros
+        FileCode,
         // Notes.
         Link,
         Code,
         TextQuote,
-        FileCode,
         NotebookPen,
     ]
 );

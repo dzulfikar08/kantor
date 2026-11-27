@@ -48,6 +48,8 @@ pdf_ui.workspace = true
 pdf_engine.workspace = true
 serde_json.workspace = true
 sheets_engine.workspace = true
+# `kantor sheets macros run`: macros run headless.
+sheets_script.workspace = true
 sheets_pdf.workspace = true
 sheets_ui.workspace = true
 slides_engine.workspace = true

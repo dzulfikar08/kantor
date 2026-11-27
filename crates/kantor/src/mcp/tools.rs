@@ -317,6 +317,21 @@ const SPECS: &[Spec] = &[
         true,
     ),
     (
+        "sheets_macros",
+        "Read a workbook's macros",
+        "A workbook's macros (its VBA project, as `kantor sheets macros`): the modules (standard, class, document such as ThisWorkbook or Sheet1, UserForm), each one's procedures (Sub, Function, Property; private or public, with arguments or not, `macro`: what Excel's Macros dialog lists; line numbers in the module's code) and the project's references. `module` adds that module's code; `code: true` every module's. This tool never runs macros (only the user does, in Kantor Sheets or with `kantor sheets macros run`): use this to explain what a macro does, or to do its work with formulas and sheets_edit tools instead. The open workbook (`document`) or a file (`path`); `has_macros` is false for workbooks without a project.",
+        || {
+            json!({
+                "document": document(),
+                "path": {"type": "string", "description": "Absolute path of a workbook (.xlsm) to read without opening it (~ allowed); instead of document."},
+                "module": {"type": "string", "description": "A module's name (Module1, ThisWorkbook…): its code is included."},
+                "code": {"type": "boolean", "description": "Include every module's code."},
+            })
+        },
+        &[],
+        true,
+    ),
+    (
         "sheets_edit",
         "Edit a workbook (tools)",
         "Run editing tools on a workbook, as one undo step (the same JSON as `kantor sheets edit FILE --ops`): `ops` is a list of {tool, args}. Tools: write_range, write_columns, clear, fill_down, fill_right (a formula down a column), format (font, size, colours, fill, alignment, wrap, any number format code, indent, rotation, borders {edges, style, color}, merge), column_width, autofit, row_height, freeze, insert_rows, delete_rows, insert_columns, delete_columns, hide, add_sheet, delete_sheet, rename_sheet, move_sheet, copy_sheet, hide_sheet, sort, remove_duplicates, trim, to_numbers, to_dates, split_column, combine_columns, find_replace, add_table (with style and totals), add_chart (column, bar, line, area, pie, doughnut, scatter, combo of cell ranges: `data` or categories/series ranges, placed `at`/`to` cells; the slides chart options), add_conditional_format (data_bar, color_scale, icon_set, cell_value, text, top, bottom, above_average, below_average, duplicates, unique, blanks, formula, dates), clear_conditional_formats, add_validation (list, whole, decimal, date, time, text_length, custom), clear_validation, define_name, delete_name, add_pivot (rows, columns, values by field name), page_setup, recalculate. Cells are A1-style (Data!A1:D20, C:E, 3:5); `sheet` is a name or number. Each tool's arguments are in `kantor sheets schema` and docs/sheets-json.md. Returns each tool's result (written formulas' values and errors).",

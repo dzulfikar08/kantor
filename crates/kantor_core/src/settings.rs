@@ -49,13 +49,28 @@ pub struct Settings {
     pub number_format: Option<String>,
 }
 
-/// `[cloud]`: WebDAV accounts (Nextcloud, OpenCloud, any RFC 4918 server).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// `[cloud]`: WebDAV accounts (Nextcloud, OpenCloud, any RFC 4918 server),
+/// Microsoft OneDrive and Google Drive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CloudSettings {
     pub accounts: Vec<CloudAccount>,
     /// The folder "Open from Cloud" showed last, per account id.
     pub last_folder: BTreeMap<String, String>,
+    /// Cloud documents save themselves (to the working copy, then the
+    /// cloud) a few seconds after the last change, as in OneDrive and
+    /// Google Docs. On by default; the status bar switch turns it off.
+    pub autosave: bool,
+}
+
+impl Default for CloudSettings {
+    fn default() -> Self {
+        Self {
+            accounts: Vec::new(),
+            last_folder: BTreeMap::new(),
+            autosave: true,
+        }
+    }
 }
 
 /// One cloud account. The app password is in the keychain under `id`.
@@ -87,6 +102,12 @@ pub struct CloudAccount {
     /// `budi`, while Nextcloud's id may be a hash).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
+    /// The kind of drive: empty for WebDAV, `onedrive` (Microsoft Graph) or
+    /// `gdrive` (Google Drive). Those sign in with OAuth (`auth = "oauth"`;
+    /// the refresh token is in the keychain under `id`) and `user` is the
+    /// e-mail address.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub provider: String,
 }
 
 impl CloudAccount {
@@ -107,8 +128,25 @@ impl CloudAccount {
         self.auth == "oidc"
     }
 
-    /// `budi @ drive.example.go.id`.
+    /// Whether it is a OneDrive or Google Drive account (OAuth sign-in).
+    pub fn is_oauth(&self) -> bool {
+        !self.provider.is_empty()
+    }
+
+    /// The product name of a OneDrive or Google Drive account.
+    pub fn provider_name(&self) -> Option<&'static str> {
+        match self.provider.as_str() {
+            "onedrive" => Some("OneDrive"),
+            "gdrive" => Some("Google Drive"),
+            _ => None,
+        }
+    }
+
+    /// `budi @ drive.example.go.id`, or `budi@contoso.com · OneDrive`.
     pub fn label(&self) -> String {
+        if let Some(p) = self.provider_name() {
+            return format!("{} · {p}", self.user);
+        }
         let host = self
             .server
             .trim()
@@ -444,6 +482,14 @@ mod tests {
             "https://drive.example.go.id/remote.php/dav/files/budi/"
         );
         assert_eq!(a.label(), "budi @ drive.example.go.id");
+        let od = CloudAccount {
+            user: "budi@contoso.com".into(),
+            provider: "onedrive".into(),
+            ..Default::default()
+        };
+        assert!(od.is_oauth() && !a.is_oauth());
+        assert_eq!(od.label(), "budi@contoso.com · OneDrive");
+        assert!(CloudSettings::default().autosave);
         a.server = "https://x.example/remote.php/dav/files/budi".into();
         assert_eq!(a.dav_root(), "https://x.example/remote.php/dav/files/budi/");
         a.dav_url = "https://y.example/webdav/".into();

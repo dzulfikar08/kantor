@@ -696,6 +696,7 @@ impl<'a> Model<'a> {
             kantor_evaluations: 0,
             kantor_last_partial: None,
             kantor_web: Default::default(),
+            kantor_udfs: None,
             parsed_defined_names: HashMap::new(),
             parser,
             locale,

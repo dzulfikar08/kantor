@@ -19,6 +19,7 @@ pub mod sheets_chart;
 pub mod sheets_check;
 pub mod sheets_clean;
 pub mod sheets_list;
+pub mod sheets_macros;
 pub mod sheets_objects;
 pub mod sheets_schema;
 pub mod slides;

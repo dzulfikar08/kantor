@@ -58,6 +58,8 @@ pub(crate) enum Job {
     Calculating,
     /// An edit IronCalc follows with a recalculation in any mode (fill).
     Editing(&'static str),
+    /// A macro running (see `macro_run`): its name.
+    Macro(String),
 }
 
 impl Job {
@@ -66,6 +68,7 @@ impl Job {
             Job::Opening { name, .. } => tf("Opening {}…", &[name]),
             Job::Calculating => tf("Calculating {}…", &[&doc]),
             Job::Editing(what) => tf("{} and recalculating {}…", &[&i18n::t_dyn(what), &doc]),
+            Job::Macro(name) => tf("Running macro {}…", &[name]),
         }
     }
 }
@@ -198,6 +201,7 @@ impl SheetsView {
                 self.load_selected_into_formula(window, cx);
                 let path = self.path(cx);
                 self.web_after_open(path, cx);
+                self.macros_after_open(cx);
             }
             Err(err) => {
                 log::error!("{err:#}");
@@ -376,6 +380,7 @@ impl SheetsView {
     fn calc_mode_status(&self, cx: &App) -> Option<String> {
         match self.busy.as_ref().map(|b| &b.what) {
             Some(Job::Opening { .. }) => return None,
+            Some(Job::Macro(_)) => return Some(i18n::t("Running a macro…").into()),
             Some(_) => return Some(i18n::t("Calculating…").into()),
             None => {}
         }
@@ -412,6 +417,7 @@ impl SheetsView {
             Job::Calculating | Job::Editing(_) => {
                 tf("{} s · editing resumes when it is done", &[&secs])
             }
+            Job::Macro(_) => tf("{} s · Esc or Stop ends it", &[&secs]),
         };
         let cancel = matches!(busy.what, Job::Opening { .. }).then(|| {
             Button::new("sheets-cancel-open")
@@ -420,6 +426,13 @@ impl SheetsView {
                 .small()
                 .on_click(cx.listener(|this, _, _, cx| this.cancel_open(cx)))
         });
+        let stop = matches!(busy.what, Job::Macro(_)).then(|| {
+            Button::new("sheets-stop-macro")
+                .label(i18n::t("Stop"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| this.stop_macro(cx)))
+        });
+        let is_macro = matches!(busy.what, Job::Macro(_));
         // The spinner's animation redraws the view every frame, which also
         // moves the time on.
         Some(
@@ -448,6 +461,8 @@ impl SheetsView {
                         .child(detail),
                 )
                 .children(cancel)
+                .children(stop)
+                .when(is_macro, |pane| self.macro_busy_keys(pane, cx))
                 .into_any_element(),
         )
     }

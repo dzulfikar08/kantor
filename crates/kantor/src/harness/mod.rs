@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 
 use crate::agent::{
     docs_check, docs_edit, docs_list, docs_schema, sheets_author, sheets_check, sheets_list,
-    sheets_schema, slides, slides_author, slides_check, slides_schema,
+    sheets_macros, sheets_schema, slides, slides_author, slides_check, slides_schema,
 };
 use crate::cli::render_png::{self, PngOptions};
 use crate::cli::slides::write_file;
@@ -714,6 +714,17 @@ impl DocTools {
         ))
     }
 
+    /// A workbook's macros (VBA): modules, procedures, and code on request.
+    fn macros(&self, args: &Value) -> Result<ToolOutput> {
+        let path = self.existing(args, "file")?;
+        if app_of(&path)? != App::Sheets {
+            bail!("macros reads workbooks (.xlsm, .xlsx)");
+        }
+        let book = open_book(&path)?;
+        let v = sheets_macros::json(&book, &sheets_macros::opts_from(args))?;
+        Ok(ToolOutput::ok(v.to_string()).more("ask for one module's code with module"))
+    }
+
     fn edit(&self, args: &Value) -> Result<ToolOutput> {
         let file = self.existing(args, "file")?;
         let out = match str_arg(args, "output") {
@@ -1078,6 +1089,18 @@ impl Tools for DocTools {
                 ),
             ),
             ToolSpec::new(
+                "macros",
+                "A workbook's macros (VBA), as `kantor sheets macros`: modules, their Subs and Functions with line numbers, and with module (or code: true) the code. These tools never run macros (only the user does): read the code to explain what a macro does, or redo its work with formulas and edit ops.",
+                params(
+                    json!({
+                        "file": s("The workbook (.xlsm)"),
+                        "module": s("A module's name: its code is included"),
+                        "code": b("Every module's code"),
+                    }),
+                    &["file"],
+                ),
+            ),
+            ToolSpec::new(
                 "edit",
                 "Change a file with editing tools, as `kantor … edit FILE -o OUT --ops`: ops is the list itself. Give output for a new file (required for the user's own files).",
                 params(
@@ -1167,6 +1190,7 @@ impl Tools for DocTools {
             "build" => self.build(args),
             "check" => self.check(args),
             "list" => self.list(args),
+            "macros" => self.macros(args),
             "edit" => self.edit(args),
             "schema" => self.schema(args),
             "look" => self.look(args),

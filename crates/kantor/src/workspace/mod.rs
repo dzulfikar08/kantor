@@ -1020,6 +1020,7 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::new_note))
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(Self::open_from_cloud))
+            .on_action(cx.listener(Self::save_to_cloud))
             .on_action(cx.listener(Self::open_cloud_accounts))
             .on_action(cx.listener(Self::sync_now))
             .on_action(cx.listener(Self::print))

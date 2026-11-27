@@ -24,6 +24,7 @@ actions!(
         NewNote,
         OpenFile,
         OpenFromCloud,
+        SaveToCloud,
         CloudAccounts,
         SyncNow,
         Print,

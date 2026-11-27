@@ -51,6 +51,10 @@ const NO_RECOVERY_COPY: &str =
 const CHANGED_ON_DISK: &str =
     kantor_ui::i18n::tk("“{}” changed on disk since it was opened: not autosaved");
 
+/// Cloud documents autosave this long after the last change (then the
+/// upload starts at once, see `cloud`).
+const CLOUD_AUTOSAVE_IDLE: Duration = Duration::from_secs(10);
+
 /// A copy is due this long after a document's first unsaved change.
 const INTERVAL: Duration = Duration::from_secs(120);
 /// ...at a pause in typing at least this long.
@@ -224,6 +228,10 @@ impl Workspace {
 
     /// Turn autosave on or off (palette) and remember it.
     pub(super) fn toggle_autosave(&mut self, cx: &mut Context<Self>) {
+        if self.focused_is_cloud() {
+            self.toggle_cloud_autosave(cx);
+            return;
+        }
         let mut settings = Settings::load();
         settings.autosave.enabled = !self.recovery.autosave.enabled;
         self.recovery.autosave = settings.autosave.clone();
@@ -259,7 +267,12 @@ impl Workspace {
         .detach();
     }
 
+    /// The status bar switch: the cloud documents' autosave for a cloud
+    /// document, else the local one.
     pub(super) fn autosave_enabled(&self) -> bool {
+        if self.focused_is_cloud() {
+            return self.cloud_autosave_on();
+        }
         self.recovery.autosave.enabled
     }
 
@@ -445,11 +458,18 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let settings = &self.recovery.autosave;
-        if !settings.enabled {
+        // Cloud documents autosave on their own switch (on by default),
+        // sooner, and not while read-only or in conflict.
+        let (on, idle) = match self.cloud_autosaves(pane) {
+            Some(on) => (on, CLOUD_AUTOSAVE_IDLE),
+            None => (
+                self.recovery.autosave.enabled,
+                self.recovery.autosave.idle(),
+            ),
+        };
+        if !on {
             return;
         }
-        let idle = settings.idle();
         let st = self.recovery.docs.get_mut(&pane).expect("state");
         if st.autosaving || now.duration_since(st.changed_at) < idle || !view.can_autosave(cx) {
             return;

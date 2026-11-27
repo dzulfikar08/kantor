@@ -1184,6 +1184,16 @@ macros are kept but not run	makro tetap disimpan tetapi tidak dijalankan
 The following features cannot be saved in macro-free workbooks: VB project	Fitur berikut tidak bisa disimpan di buku kerja tanpa makro: proyek VB
 An .xlsx workbook can't hold macros: saving as .xlsx leaves them out. To keep them, save it as a macro-enabled workbook (.xlsm).	Buku kerja .xlsx tidak bisa memuat makro: menyimpan sebagai .xlsx membuangnya. Agar makro tetap ada, simpan sebagai buku kerja dengan makro (.xlsm).
 Save Without Macros	Simpan Tanpa Makro
+# Macros: the bar and the Macros dialog (vba_ui)
+Macros	Makro
+Macros…	Makro…
+View Macros	Lihat Makro
+This workbook has no macros	Buku kerja ini tidak memiliki makro
+Kantor can't read this workbook's macros: {}	Kantor tidak dapat membaca makro buku kerja ini: {}
+This module has no code.	Modul ini tidak berisi kode.
+Module	Modul
+Class Module	Modul Kelas
+UserForm	UserForm
 Save as .xlsm	Simpan sebagai .xlsm
 Top N items	N item teratas
 Bottom N items	N item terbawah
@@ -1311,3 +1321,27 @@ Zoom…	Zoom…
 Zoom with window	Zoom mengikuti jendela
 Fit selection	Paskan pilihan
 Type a zoom from {}% to {}%	Ketik zoom dari {}% sampai {}%
+The macro couldn't start	Makro tidak dapat dimulai
+The macro stopped unexpectedly	Makro berhenti secara tak terduga
+Stopping the macro…	Menghentikan makro…
+Ran {}	{} selesai dijalankan
+Cannot run the macro '{}'	Tidak dapat menjalankan makro '{}'
+Macros are disabled. Enable Content to run them.	Makro dinonaktifkan. Pilih Aktifkan Konten untuk menjalankannya.
+Compile error:	Kesalahan kompilasi:
+Code execution has been interrupted	Eksekusi kode telah dihentikan
+Run-time error '{}':	Kesalahan run-time '{}':
+in {}	di {}
+in {}, line {}	di {}, baris {}
+Macro Error	Kesalahan Makro
+End	Akhiri
+Abort	Hentikan
+Ignore	Abaikan
+Running macro {}…	Menjalankan makro {}…
+{} s · Esc or Stop ends it	{} dtk · Esc atau Berhenti mengakhirinya
+Running a macro…	Menjalankan makro…
+Macros enabled for this session	Makro diaktifkan untuk sesi ini
+Macros have been disabled. Enable them only if you trust where this file came from.	Makro telah dinonaktifkan. Aktifkan hanya jika Anda memercayai asal file ini.
+Enable Content	Aktifkan Konten
+Run starts the selected macro. One Undo takes back everything it changed.	Jalankan memulai makro yang dipilih. Satu kali Urungkan membatalkan semua perubahannya.
+Macros are disabled. Enable Content on the bar to run them. Paparan AI can explain a macro or turn it into formulas.	Makro dinonaktifkan. Pilih Aktifkan Konten pada bilah untuk menjalankannya. Paparan AI dapat menjelaskan makro atau mengubahnya menjadi rumus.
+Output (Debug.Print)	Keluaran (Debug.Print)

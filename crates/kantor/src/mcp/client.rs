@@ -399,7 +399,7 @@ impl Backend for AppClient {
         if tool == "slides_check" && args.get("path").is_some_and(|p| !p.is_null()) {
             return check_file(&args);
         }
-        if matches!(tool, "sheets_list" | "sheets_check")
+        if matches!(tool, "sheets_list" | "sheets_check" | "sheets_macros")
             && args.get("path").is_some_and(|p| !p.is_null())
         {
             return sheets_file(tool, &args);
