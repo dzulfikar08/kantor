@@ -26,7 +26,7 @@ use serde_json::{Value, json};
 use crate::citations::{Bibliography, Citation, CiteAt, CiteSource, MENDELEY_CITE_TAG};
 use crate::document::{Document, Kind};
 use crate::fields::{FieldSpan, complex_begin, replace_mark, spans};
-use crate::model::{Object, Paragraph, Position, RunProps, Selection};
+use crate::model::{Object, Paragraph, Position, Run, RunProps, Selection};
 use crate::object::{FieldMark, Level, Opaque};
 use crate::xml;
 
@@ -174,7 +174,12 @@ fn zotero_style(pref: &str) -> Option<(String, Option<String>)> {
 
 /// Zotero's preferences with a new style and locale (a fresh set when
 /// there were none).
-fn zotero_pref_with(pref: Option<&str>, style: &str, locale: Option<&str>) -> String {
+fn zotero_pref_with(
+    pref: Option<&str>,
+    style: &str,
+    locale: Option<&str>,
+    seed: Option<u64>,
+) -> String {
     let attrs = |l: Option<&str>| {
         format!(
             "id=\"{}\"{}",
@@ -201,7 +206,7 @@ fn zotero_pref_with(pref: Option<&str>, style: &str, locale: Option<&str>) -> St
     }
     format!(
         "<data data-version=\"3\" zotero-version=\"7.0\"><session id=\"{}\"/><style {} hasBibliography=\"1\" bibliographyStyleHasBeenSet=\"1\"/><prefs><pref name=\"fieldType\" value=\"Field\"/></prefs></data>",
-        session_id(),
+        seed.map_or_else(session_id, |s| random_id(s, 8)),
         attrs(locale)
     )
 }
@@ -212,12 +217,16 @@ fn session_id() -> String {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    random_id(n as u64, 8)
+    random_id(n as u64 ^ u64::from(std::process::id()), 8)
 }
 
-pub(crate) fn random_id(mut seed: u64, len: usize) -> String {
+/// `len` letters and digits made from `seed` (the same seed gives the same
+/// id).
+pub fn random_id(mut seed: u64, len: usize) -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    seed ^= std::process::id() as u64;
+    if seed == 0 {
+        seed = 0x9E37_79B9_7F4A_7C15;
+    }
     (0..len)
         .map(|_| {
             // xorshift
@@ -409,8 +418,8 @@ fn mark_with_instr(mark: &FieldMark, instr: &str) -> FieldMark {
 /// The formatting of a field's old result (its first text run), else of
 /// its start.
 fn result_props(paras: &[Paragraph], a: Position, b: Position) -> RunProps {
-    for k in a.para..=b.para.min(paras.len() - 1) {
-        let p = &paras[k];
+    let last = b.para.min(paras.len() - 1);
+    for (k, p) in paras.iter().enumerate().take(last + 1).skip(a.para) {
         let from = if k == a.para { a.offset } else { 0 };
         let to = if k == b.para { b.offset } else { p.text.len() };
         if let Some((_, run)) = p.run_ranges().find(|(r, run)| {
@@ -724,6 +733,18 @@ impl Document {
     /// as Mendeley Desktop does, in a document that has its citations).
     /// Not an undo step: like a document property. Refresh to apply it.
     pub fn set_citation_prefs(&mut self, style: &str, locale: Option<&str>) {
+        self.set_citation_prefs_seeded(style, locale, None);
+    }
+
+    /// [`Self::set_citation_prefs`] with Zotero's session id (for new
+    /// preferences) made from `seed`, so the same input gives the same
+    /// file (`kantor docs build`); `None`: from the clock.
+    pub fn set_citation_prefs_seeded(
+        &mut self,
+        style: &str,
+        locale: Option<&str>,
+        seed: Option<u64>,
+    ) {
         let props = self.custom_props_now();
         let cites = self.citations();
         let mendeley_only = cites.iter().any(|c| c.source == CiteSource::Mendeley)
@@ -737,7 +758,7 @@ impl Document {
                 &[(MENDELEY_STYLE.to_owned(), style.to_owned())],
             )
         } else {
-            let pref = zotero_pref_with(zotero_pref_xml(&props).as_deref(), style, locale);
+            let pref = zotero_pref_with(zotero_pref_xml(&props).as_deref(), style, locale, seed);
             let add: Vec<(String, String)> = chunks(&pref)
                 .into_iter()
                 .enumerate()
@@ -761,10 +782,44 @@ impl Document {
         sel: Selection,
         locale_default: Option<&str>,
     ) -> anyhow::Result<(Selection, RefreshReport)> {
+        self.refresh_citations_in(sel, locale_default, None)
+    }
+
+    /// [`Self::refresh_citations`] in `style` (a `.csl` file loaded by the
+    /// caller) instead of the one the document names.
+    pub fn refresh_citations_in(
+        &mut self,
+        sel: Selection,
+        locale_default: Option<&str>,
+        style: Option<&kantor_cite::CslStyle>,
+    ) -> anyhow::Result<(Selection, RefreshReport)> {
+        let (paras, report) = self.refreshed(self.paragraphs.clone(), locale_default, style)?;
+        if paras == self.paragraphs {
+            return Ok((sel, report));
+        }
+        let after = Selection::caret(sel.head);
+        Ok((self.apply_paragraphs(paras, sel, after), report))
+    }
+
+    /// `paras` with their CSL citations and bibliographies rendered again.
+    fn refreshed(
+        &self,
+        paras: Vec<Paragraph>,
+        locale_default: Option<&str>,
+        style: Option<&kantor_cite::CslStyle>,
+    ) -> anyhow::Result<(Vec<Paragraph>, RefreshReport)> {
+        let snap = self.snapshot(paras);
         let prefs = self.citation_prefs(locale_default);
-        let style = kantor_cite::load_style(&prefs.style)?;
-        let cites = self.citations();
-        let bibs = self.bibliographies();
+        let loaded;
+        let style = match style {
+            Some(s) => s,
+            None => {
+                loaded = kantor_cite::load_style(&prefs.style)?;
+                &loaded
+            }
+        };
+        let cites = snap.citations();
+        let bibs = snap.bibliographies();
         let mut report = RefreshReport {
             other: cites.iter().filter(|c| !c.source.is_csl()).count(),
             ..RefreshReport::default()
@@ -772,10 +827,10 @@ impl Document {
         let csl: Vec<&Citation> = cites.iter().filter(|c| c.source.is_csl()).collect();
         let csl_bibs: Vec<&Bibliography> = bibs.iter().filter(|b| b.source.is_csl()).collect();
         if csl.is_empty() && csl_bibs.is_empty() {
-            return Ok((sel, report));
+            return Ok((snap.paragraphs, report));
         }
         let ins: Vec<Vec<CiteIn>> = csl.iter().map(|c| inputs(c)).collect();
-        let out = kantor_cite::render(&style, prefs.locale.as_deref(), &ins);
+        let out = kantor_cite::render(style, prefs.locale.as_deref(), &ins);
         report.citations = csl.len();
         let mut changes: Vec<Change> = Vec::new();
         for (c, pieces) in csl.iter().zip(&out.citations) {
@@ -794,7 +849,7 @@ impl Document {
             match &c.at {
                 CiteAt::Field { begin, mark_id, .. } => {
                     let instr = json.as_ref().map(|j| {
-                        let old = spans(&self.paragraphs)
+                        let old = spans(&snap.paragraphs)
                             .into_iter()
                             .find(|s| s.mark_id() == *mark_id)
                             .map(|s| s.instr)
@@ -809,7 +864,7 @@ impl Document {
                     });
                 }
                 CiteAt::Control { at } => {
-                    let Some(Object::Opaque(op)) = self.paragraphs[at.para].object_at(at.offset)
+                    let Some(Object::Opaque(op)) = snap.paragraphs[at.para].object_at(at.offset)
                     else {
                         continue;
                     };
@@ -845,7 +900,7 @@ impl Document {
             }
         }
         changes.sort_by_key(|c| std::cmp::Reverse(c.at()));
-        let mut paras = self.paragraphs.clone();
+        let mut paras = snap.paragraphs.clone();
         for ch in changes {
             match ch {
                 Change::Field {
@@ -887,16 +942,151 @@ impl Document {
                 } => set_paragraph_entries(&mut paras, first, last, &entries),
             }
         }
-        if paras == self.paragraphs {
-            return Ok((sel, report));
+        Ok((paras, report))
+    }
+
+    /// The kind of citation fields Kantor writes here: Mendeley Desktop's
+    /// in a document whose citations are all Mendeley Desktop's, else
+    /// Zotero's.
+    pub fn new_citation_source(&self) -> CiteSource {
+        let cites = self.citations();
+        let bibs = self.bibliographies();
+        let mendeley = cites.iter().any(|c| c.source == CiteSource::Mendeley)
+            || bibs.iter().any(|b| b.source == CiteSource::Mendeley);
+        let zotero = cites.iter().any(|c| c.source == CiteSource::Zotero)
+            || bibs.iter().any(|b| b.source == CiteSource::Zotero);
+        if mendeley && !zotero {
+            CiteSource::Mendeley
+        } else {
+            CiteSource::Zotero
         }
-        let sel = self.apply_paragraphs(paras, sel);
-        Ok((sel, report))
+    }
+
+    /// Insert a citation of `items` at the selection (its text replaced),
+    /// as a Zotero field (Mendeley Desktop's in a Mendeley document; see
+    /// [`Self::new_citation_source`]), and render every citation and
+    /// bibliography again (numbers can shift): one undo step. Returns the
+    /// caret after the citation.
+    pub fn insert_citation(
+        &mut self,
+        sel: Selection,
+        items: &[crate::citations::CiteItem],
+        locale_default: Option<&str>,
+    ) -> anyhow::Result<Selection> {
+        anyhow::ensure!(!items.is_empty(), "no items to cite");
+        let source = self.new_citation_source();
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(7)
+            ^ u64::from(std::process::id())
+            ^ ((self.citations().len() as u64) << 32);
+        let mut cite_items = crate::citations::csl_citation_items(items);
+        let json = match source {
+            CiteSource::Mendeley => {
+                for (i, it) in cite_items.iter_mut().enumerate() {
+                    let id = format!("ITEM-{}", i + 1);
+                    if let Some(o) = it.as_object_mut() {
+                        o.insert("id".into(), Value::String(id.clone()));
+                        if let Some(d) = o.get_mut("itemData").and_then(Value::as_object_mut) {
+                            d.insert("id".into(), Value::String(id));
+                        }
+                    }
+                }
+                json!({
+                    "citationItems": cite_items,
+                    "mendeley": {"formattedCitation": "", "plainTextFormattedCitation": "", "previouslyFormattedCitation": ""},
+                    "properties": {"noteIndex": 0},
+                    "schema": crate::citations::CSL_CITATION_SCHEMA,
+                })
+            }
+            _ => json!({
+                "citationID": random_id(seed, 8),
+                "properties": {"formattedCitation": "", "plainCitation": "", "noteIndex": 0},
+                "citationItems": cite_items,
+                "schema": crate::citations::CSL_CITATION_SCHEMA,
+            }),
+        };
+        let instr = match source {
+            CiteSource::Mendeley => format!(" ADDIN CSL_CITATION {json} "),
+            _ => format!(" ADDIN ZOTERO_ITEM CSL_CITATION {json} "),
+        };
+        self.insert_cite_field(sel, &instr, false, locale_default)
+    }
+
+    /// Insert a bibliography at the caret (Zotero's field, or Mendeley
+    /// Desktop's in a Mendeley document), its entries rendered: one undo
+    /// step. A bibliography in an empty paragraph takes the
+    /// `Bibliography` style when the document has it.
+    pub fn insert_bibliography(
+        &mut self,
+        sel: Selection,
+        locale_default: Option<&str>,
+    ) -> anyhow::Result<Selection> {
+        let instr = match self.new_citation_source() {
+            CiteSource::Mendeley => " ADDIN Mendeley Bibliography CSL_BIBLIOGRAPHY ".to_owned(),
+            _ => {
+                " ADDIN ZOTERO_BIBL {\"uncited\":[],\"omitted\":[],\"custom\":[]} CSL_BIBLIOGRAPHY "
+                    .to_owned()
+            }
+        };
+        self.insert_cite_field(sel, &instr, true, locale_default)
+    }
+
+    fn insert_cite_field(
+        &mut self,
+        sel: Selection,
+        instr: &str,
+        block: bool,
+        locale_default: Option<&str>,
+    ) -> anyhow::Result<Selection> {
+        // Fail before changing anything when the style can't be found.
+        let prefs = self.citation_prefs(locale_default);
+        kantor_cite::load_style(&prefs.style)?;
+        let sel = self.clamp_selection(sel);
+        let (mut paras, at) = if sel.is_empty() {
+            (self.paragraphs.clone(), sel.head)
+        } else {
+            let mut d = self.snapshot(self.paragraphs.clone());
+            let at = d.delete_selection(sel).head;
+            (std::mem::take(&mut d.paragraphs), at)
+        };
+        let p = &mut paras[at.para];
+        let props = p.props_at(at.offset);
+        if block && p.text.is_empty() && self.styles.get("Bibliography").is_some() {
+            p.props.style = Some("Bibliography".into());
+        }
+        let begin = Arc::new(complex_begin(instr, true));
+        let mut b = Run::text(crate::model::OBJECT.len_utf8(), props.clone());
+        b.object = Some(Object::Field(begin));
+        let mut e = Run::text(crate::model::OBJECT.len_utf8(), props);
+        e.object = Some(Object::Field(Arc::new(FieldMark::end())));
+        p.insert_runs(at.offset, vec![b, e]);
+        let (paras, _) = self.refreshed(paras, locale_default, None)?;
+        // After the new field's end.
+        let end = spans(&paras)
+            .into_iter()
+            .find(|s| s.begin == at)
+            .map_or(at, |s| {
+                Position::new(s.end.para, s.end.offset + crate::model::OBJECT.len_utf8())
+            });
+        let after = Selection::caret(end);
+        let after = self.apply_paragraphs(paras, sel, after);
+        // Zotero's plug-in needs the document's preferences to go on.
+        if prefs.from == PrefsFrom::Default && self.new_citation_source() == CiteSource::Zotero {
+            self.set_citation_prefs(&prefs.style, prefs.locale.as_deref());
+        }
+        Ok(after)
     }
 
     /// Make `paras` the body as one undo step (the changed range only;
     /// tracked when Track Changes is on).
-    pub(crate) fn apply_paragraphs(&mut self, paras: Vec<Paragraph>, sel: Selection) -> Selection {
+    pub(crate) fn apply_paragraphs(
+        &mut self,
+        paras: Vec<Paragraph>,
+        sel: Selection,
+        after: Selection,
+    ) -> Selection {
         let old = &self.paragraphs;
         let start = old.iter().zip(&paras).take_while(|(a, b)| a == b).count();
         let tail = old[start..]
@@ -908,7 +1098,6 @@ impl Document {
         let count = old.len() - start - tail;
         let new: Vec<Paragraph> = paras[start..paras.len() - tail].to_vec();
         let new = self.track_rewrite(&self.paragraphs[start..start + count], new);
-        let after = self.clamp_selection(Selection::caret(sel.head));
         self.replace(start, count, new, (sel, after), Kind::Other, true);
         self.clamp_selection(after)
     }
@@ -1012,14 +1201,14 @@ mod tests {
                 Some("id-ID".into())
             ))
         );
-        let new = zotero_pref_with(Some(pref), "http://www.zotero.org/styles/ieee", None);
+        let new = zotero_pref_with(Some(pref), "http://www.zotero.org/styles/ieee", None, None);
         assert_eq!(
             zotero_style(&new),
             Some(("http://www.zotero.org/styles/ieee".into(), None))
         );
         assert!(new.contains("hasBibliography=\"1\""));
         assert!(new.contains("<session id=\"X\"/>"));
-        let fresh = zotero_pref_with(None, "apa", Some("en-US"));
+        let fresh = zotero_pref_with(None, "apa", Some("en-US"), Some(1));
         assert_eq!(
             zotero_style(&fresh),
             Some(("apa".into(), Some("en-US".into())))

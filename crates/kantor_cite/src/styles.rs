@@ -78,6 +78,22 @@ pub fn display_name(id: &str) -> String {
         .unwrap_or_else(|| short_name(id).to_owned())
 }
 
+/// The id a style is written into documents with: Zotero's URL for a
+/// short name the archive knows (`apa` → `http://www.zotero.org/styles/apa`),
+/// else as given.
+pub fn canonical_id(id: &str) -> String {
+    let id = id.trim();
+    if id.contains("://") || id.ends_with(".csl") {
+        return id.to_owned();
+    }
+    if let Some((b, _)) = BUNDLED.iter().find(|(b, _)| short_name(b) == id) {
+        return (*b).to_owned();
+    }
+    ArchivedStyle::by_name(id)
+        .map(|a| a.csl_id().to_owned())
+        .unwrap_or_else(|| id.to_owned())
+}
+
 fn archived(id: &str) -> Option<ArchivedStyle> {
     ArchivedStyle::by_id(id)
         .or_else(|| ArchivedStyle::by_id(&id.replace("https://", "http://")))
@@ -201,6 +217,15 @@ mod tests {
 
     #[test]
     fn names() {
+        assert_eq!(canonical_id("apa"), "http://www.zotero.org/styles/apa");
+        assert_eq!(
+            canonical_id("vancouver"),
+            "http://www.zotero.org/styles/vancouver"
+        );
+        assert_eq!(
+            canonical_id("chicago-author-date"),
+            "http://www.zotero.org/styles/chicago-author-date"
+        );
         assert_eq!(short_name("http://www.zotero.org/styles/apa"), "apa");
         assert_eq!(display_name("http://www.zotero.org/styles/ieee"), "IEEE");
     }

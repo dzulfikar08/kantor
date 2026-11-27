@@ -54,6 +54,7 @@ mod track_table;
 pub mod xml;
 
 pub use citations::{Bibliography, Citation, CiteAt, CiteItem, CiteSource};
+pub use cite_edit::{CitePrefs, PrefsFrom, RefreshReport};
 pub use columns::{COLUMN_BREAK, Column, ColumnPreset, Columns, ColumnsApply};
 pub use document::{
     Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, Toggle, is_import_path,

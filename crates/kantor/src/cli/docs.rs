@@ -6,6 +6,7 @@
 //! kantor docs check doc.docx [--json]
 //! kantor docs edit doc.docx [-o out.docx] TOOL ARGS | --ops ops.json
 //! kantor docs schema > docs-json.schema.json
+//! kantor docs citations list|refresh|style|import FILE.docx …
 //! ```
 //!
 //! The JSON is described in docs/docs-json.md.
@@ -25,6 +26,10 @@ pub const USAGE: &str = "usage: kantor docs build DOC.json -o OUT.docx [-f] [--c
     \x20      kantor docs edit FILE.docx [-o OUT.docx] [-f] [--track AUTHOR] TOOL ARGS\n\
     \x20      kantor docs edit FILE.docx [-o OUT.docx] [-f] [--track AUTHOR] --ops OPS.json\n\
     \x20      kantor docs schema\n\
+    \x20      kantor docs citations list FILE.docx\n\
+    \x20      kantor docs citations refresh FILE.docx [-o OUT.docx] [-f] [--locale L]\n\
+    \x20      kantor docs citations style FILE.docx [STYLE] [--locale L] [-o OUT.docx] [-f]\n\
+    \x20      kantor docs citations import FILE.docx SOURCES.bib… [-o OUT.docx] [-f]\n\
     \x20      kantor docs merge TEMPLATE.docx [DATA] -o DIR [options]\n\
     \n\
     Write and revise Word documents without opening a window, with JSON\n\
@@ -60,10 +65,19 @@ pub const USAGE: &str = "usage: kantor docs build DOC.json -o OUT.docx [-f] [--c
     \x20          insert_blocks, replace_blocks, delete_blocks, move_section,\n\
     \x20          set_style, restyle, format, add_comment, resolve_comment,\n\
     \x20          accept_changes, reject_changes, update_fields, set_header,\n\
-    \x20          set_footer, page_setup (docs/docs-json.md). ARGS is JSON or\n\
+    \x20          set_footer, page_setup, list_citations, refresh_citations,\n\
+    \x20          citation_style (docs/docs-json.md). ARGS is JSON or\n\
     \x20          @FILE; --ops runs [{\"tool\", \"args\"}, …]. --track AUTHOR\n\
     \x20          makes the edits tracked changes by AUTHOR.\n\
     \x20 schema   print the JSON Schema of documents and blocks\n\
+    \x20 citations  Zotero, Mendeley, Word and EndNote citations: list them\n\
+    \x20          (JSON: style, citations with their sources, bibliographies,\n\
+    \x20          the document's source list); refresh the Zotero and\n\
+    \x20          Mendeley ones and the bibliography in the document's style;\n\
+    \x20          style shows the style or sets it (apa, ieee, harvard-cite-\n\
+    \x20          them-right, chicago-author-date, vancouver, mla, a Zotero\n\
+    \x20          style id, or a .csl file) and refreshes; import adds .bib,\n\
+    \x20          RIS or CSL-JSON sources to the document's source list.\n\
     \x20 merge    one document per record of a workbook or CSV file (kantor\n\
     \x20          docs merge --help)\n\
     \n\
@@ -76,6 +90,8 @@ pub const USAGE: &str = "usage: kantor docs build DOC.json -o OUT.docx [-f] [--c
     \x20     --json          check: findings as JSON\n\
     \x20     --text          list: the paragraphs\n\
     \x20     --track AUTHOR  edit: tracked changes by AUTHOR\n\
+    \x20     --locale L      citations: the language of the citations (id-ID,\n\
+    \x20                     en-US…; default: the document's, else en-US)\n\
     \x20 -h, --help          show this help\n\
     \n\
     Exit status: 0 on success, 1 when the work failed, 2 for usage errors.";
@@ -120,6 +136,7 @@ struct Opts {
     start: Option<usize>,
     limit: Option<usize>,
     track: Option<String>,
+    locale: Option<String>,
     rest: Vec<String>,
 }
 
@@ -151,6 +168,12 @@ fn parse(args: &[OsString]) -> Result<Opts, Usage> {
                     .next()
                     .ok_or(Usage::from("--track needs an author name"))?;
                 o.track = Some(v.to_string_lossy().into_owned());
+            }
+            "--locale" => {
+                let v = it
+                    .next()
+                    .ok_or(Usage::from("--locale needs a language such as id-ID"))?;
+                o.locale = Some(v.to_string_lossy().into_owned());
             }
             "--ops" => {
                 let v = it.next().ok_or(Usage::from("--ops needs a file"))?;
@@ -197,6 +220,7 @@ pub fn main(args: &[OsString]) -> i32 {
         "build" => build(&opts),
         "list" => list(&opts),
         "edit" => edit(&opts),
+        "citations" => citations(&opts),
         "schema" => {
             println!(
                 "{}",
@@ -346,5 +370,114 @@ fn edit(o: &Opts) -> Outcome {
     let bytes = session.save()?;
     super::slides::write_file(&out, &bytes)?;
     println!("saved {}", out.display());
+    Ok(Ok(()))
+}
+
+/// `kantor docs citations list|refresh|style|import`.
+fn citations(o: &Opts) -> Outcome {
+    let Some((sub, args)) = o.rest.split_first() else {
+        return Ok(Err(
+            "citations takes list, refresh, style or import, then FILE.docx".into(),
+        ));
+    };
+    let Some((file, more)) = args.split_first() else {
+        return Ok(Err(format!("citations {sub} needs FILE.docx")
+            .as_str()
+            .into()));
+    };
+    let path = Path::new(file);
+    let mut doc = crate::agent::docs_edit::open(path)?;
+    let locale = o.locale.as_deref();
+    let save = |doc: &docs_engine::Document| -> Result<()> {
+        let out = o.output.clone().unwrap_or_else(|| PathBuf::from(file));
+        if !is_docx(&out) {
+            bail!("the output must be a .docx file (give -o)");
+        }
+        if o.output.is_some() && out.exists() && !o.force {
+            bail!("{} exists (use -f to overwrite)", out.display());
+        }
+        if o.output.is_none() && doc.needs_save_as() {
+            bail!("{file} can't be saved in place; give -o NEW.docx");
+        }
+        super::slides::write_file(&out, &doc.to_docx_bytes()?)?;
+        println!("saved {}", out.display());
+        Ok(())
+    };
+    match sub.as_str() {
+        "list" => {
+            if !more.is_empty() {
+                return Ok(Err("citations list takes one FILE.docx".into()));
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&crate::agent::docs_edit::citations_json(
+                    &doc, locale
+                ))?
+            );
+        }
+        "refresh" => {
+            if !more.is_empty() {
+                return Ok(Err("citations refresh takes one FILE.docx".into()));
+            }
+            let (_, r) = doc.refresh_citations(docs_engine::Selection::default(), locale)?;
+            println!(
+                "{} citations, {} changed, {} kept as edited by hand, {} bibliograph{}; {} Word/EndNote citations left as they are",
+                r.citations,
+                r.changed,
+                r.kept,
+                r.bibliographies,
+                if r.bibliographies == 1 { "y" } else { "ies" },
+                r.other
+            );
+            save(&doc)?;
+        }
+        "style" => match more {
+            [] => {
+                let p = doc.citation_prefs(locale);
+                println!(
+                    "{} ({}){}",
+                    kantor_cite::styles::display_name(&p.style),
+                    p.style,
+                    p.locale.map(|l| format!(", {l}")).unwrap_or_default()
+                );
+            }
+            [style] => {
+                let (id, r) = crate::agent::docs_edit::set_citation_style(&mut doc, style, locale)?;
+                println!(
+                    "style {} ({id}): {} citations, {} changed",
+                    kantor_cite::styles::display_name(&id),
+                    r.citations,
+                    r.changed
+                );
+                save(&doc)?;
+            }
+            _ => return Ok(Err("citations style takes FILE.docx and one STYLE".into())),
+        },
+        "import" => {
+            if more.is_empty() {
+                return Ok(Err(
+                    "citations import needs a .bib, RIS or CSL-JSON file".into()
+                ));
+            }
+            let mut items = Vec::new();
+            for f in more {
+                items.extend(kantor_cite::import::read_file(Path::new(f))?);
+            }
+            let n = items.len();
+            let added = doc.add_sources(items);
+            println!(
+                "{n} sources read, {added} new; {} in the document's list",
+                doc.sources().len()
+            );
+            save(&doc)?;
+        }
+        other => {
+            return Ok(Err(format!(
+                "citations takes list, refresh, style or import, not {other}"
+            )
+            .as_str()
+            .into()));
+        }
+    }
     Ok(Ok(()))
 }

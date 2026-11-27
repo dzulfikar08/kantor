@@ -1,9 +1,10 @@
 //! The text of a paragraph in the docs JSON: a string (with light markdown:
 //! `**bold**`, `*italic*`, `` `code` ``, `[text](url)`, `[^footnote]`,
-//! `{ref:id}` / `{ref:id:page}`; `\` escapes) or a list of runs (strings
-//! and `{"text", "bold", "link", "footnote", "ref", "field", ...}`).
+//! `{ref:id}` / `{ref:id:page}`, `{cite:key}` / `{cite:a;b@12}`; `\`
+//! escapes) or a list of runs (strings and `{"text", "bold", "link",
+//! "footnote", "ref", "field", "cite", ...}`).
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use serde_json::{Map, Value};
 
 use super::docs_look::{Look, RunFmt, get, object, opt_bool, opt_str, points};
@@ -32,6 +33,32 @@ pub enum Piece {
         result: String,
         fmt: RunFmt,
     },
+    /// A citation of sources by key (`citations.sources`), each with its
+    /// page or other locator.
+    Cite {
+        keys: Vec<(String, Option<String>)>,
+        prefix: Option<String>,
+        suffix: Option<String>,
+        /// Without the author's name (`Nugroho (2021)` written by hand).
+        no_author: bool,
+        fmt: RunFmt,
+    },
+}
+
+/// `a;b@12` (a markdown citation's keys, `@` a page): keys and locators.
+pub fn cite_keys(body: &str) -> Vec<(String, Option<String>)> {
+    body.split(';')
+        .filter_map(|k| {
+            let (key, loc) = match k.split_once('@') {
+                Some((k, l)) => (
+                    k.trim(),
+                    Some(l.trim().to_owned()).filter(|l| !l.is_empty()),
+                ),
+                None => (k.trim(), None),
+            };
+            (!key.is_empty()).then(|| (key.to_owned(), loc))
+        })
+        .collect()
 }
 
 /// Keys of a run object.
@@ -57,6 +84,11 @@ pub const RUN_KEYS: &[&str] = &[
     "show",
     "field",
     "result",
+    "cite",
+    "page",
+    "prefix",
+    "suffix",
+    "author",
 ];
 
 /// Ways a cross-reference shows its target.
@@ -253,6 +285,25 @@ pub fn markdown(s: &str, base: &RunFmt, mono: &str, notes: bool) -> Vec<Piece> {
                 continue;
             }
         }
+        if c == '{'
+            && chars[i..].starts_with(&['{', 'c', 'i', 't', 'e', ':'])
+            && let Some(end) = find(&chars, i + 6, "}")
+        {
+            let body: String = chars[i + 6..end].iter().collect();
+            let keys = cite_keys(&body);
+            if !keys.is_empty() {
+                flush(&mut buf, &mut out, m);
+                out.push(Piece::Cite {
+                    keys,
+                    prefix: None,
+                    suffix: None,
+                    no_author: false,
+                    fmt: fmt_of(m),
+                });
+                i = end + 1;
+                continue;
+            }
+        }
         buf.push(c);
         i += 1;
     }
@@ -337,6 +388,45 @@ fn run(o: &Map<String, Value>, look: &Look, base: &RunFmt, out: &mut Vec<Piece>)
             result: opt_str(o, "result")?.unwrap_or("").to_owned(),
             fmt: f.clone(),
         });
+    }
+    if let Some(c) = get(o, "cite") {
+        let mut keys: Vec<(String, Option<String>)> = match c {
+            Value::String(s) => cite_keys(s),
+            Value::Array(a) => a
+                .iter()
+                .map(|k| {
+                    k.as_str()
+                        .map(|k| (k.trim().to_owned(), None))
+                        .context("`cite` lists source keys: [\"nugroho2021\", …]")
+                })
+                .collect::<Result<_>>()?,
+            _ => bail!("`cite` is a source key or a list of keys"),
+        };
+        if keys.is_empty() {
+            bail!("`cite` needs a source key");
+        }
+        if let Some(p) = get(o, "page") {
+            let p = match p {
+                Value::String(s) => s.trim().to_owned(),
+                Value::Number(n) => n.to_string(),
+                _ => bail!("`page` is a page or page range, e.g. \"12\" or \"12-15\""),
+            };
+            if let Some(last) = keys.last_mut() {
+                last.1 = Some(p).filter(|p| !p.is_empty());
+            }
+        }
+        out.push(Piece::Cite {
+            keys,
+            prefix: opt_str(o, "prefix")?.map(str::to_owned),
+            suffix: opt_str(o, "suffix")?.map(str::to_owned),
+            no_author: opt_bool(o, "author")? == Some(false),
+            fmt: f.clone(),
+        });
+    } else if ["page", "prefix", "suffix", "author"]
+        .iter()
+        .any(|k| o.contains_key(*k))
+    {
+        bail!("`page`, `prefix`, `suffix` and `author` go with `cite`");
     }
     if let Some(n) = get(o, "footnote") {
         let note = match n {
@@ -427,6 +517,13 @@ pub fn plain(pieces: &[Piece]) -> String {
             Piece::Text { text, .. } => text.clone(),
             Piece::Field { result, .. } => result.clone(),
             Piece::Ref { id, .. } => format!("[{id}]"),
+            Piece::Cite { keys, .. } => format!(
+                "({})",
+                keys.iter()
+                    .map(|k| k.0.as_str())
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
             Piece::Note(_) => String::new(),
         })
         .collect()
@@ -537,5 +634,23 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn citations_in_markdown() {
+        assert_eq!(
+            cite_keys(" a@12 ; b ;"),
+            vec![
+                ("a".to_owned(), Some("12".to_owned())),
+                ("b".to_owned(), None)
+            ]
+        );
+        let b = RunFmt::default();
+        let p = markdown("Hasil {cite:nugroho2021@118;santoso2019}.", &b, "M", true);
+        assert!(p.iter().any(|p| matches!(p, Piece::Cite { keys, .. } if keys.len() == 2 && keys[0].1.as_deref() == Some("118"))));
+        assert_eq!(plain(&p), "Hasil (nugroho2021; santoso2019).");
+        // Not a citation: empty, escaped.
+        assert_eq!(plain(&markdown("{cite:}", &b, "M", true)), "{cite:}");
+        assert_eq!(plain(&markdown("\\{cite:x}", &b, "M", true)), "{cite:x}");
     }
 }

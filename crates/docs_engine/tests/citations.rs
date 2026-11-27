@@ -503,3 +503,144 @@ fn new_documents_get_preferences_and_a_source_list() {
     );
     assert_eq!(Document::open(&path).unwrap().sources().len(), 3);
 }
+
+// ── inserting ──────────────────────────────────────────────────────────────
+
+const BIB: &str = r#"
+@article{nugroho2021,
+  author = {Nugroho, Adi},
+  title = {Pengaruh media sosial terhadap prestasi belajar mahasiswa},
+  journal = {Jurnal Pendidikan Indonesia},
+  year = {2021}, volume = {10}, number = {2}, pages = {115--130}
+}
+@book{santoso2019,
+  author = {Santoso, Budi and Wijaya, Citra},
+  title = {Metodologi penelitian kuantitatif},
+  publisher = {Penerbit Andi}, address = {Yogyakarta}, year = {2019}
+}
+"#;
+
+fn bib_items() -> Vec<docs_engine::CiteItem> {
+    kantor_cite::import::from_bib(BIB)
+        .unwrap()
+        .into_iter()
+        .map(docs_engine::CiteItem::new)
+        .collect()
+}
+
+#[test]
+fn citations_inserted_as_zotero_fields() {
+    let mut doc = Document::new();
+    let c = doc.insert_text(Selection::default(), "Hasil penelitian sebelumnya .", None);
+    // Before the full stop.
+    let at = docs_engine::Position::new(0, c.head.offset - 1);
+    let items = bib_items();
+    let after = doc
+        .insert_citation(Selection::caret(at), &items, Some("id-ID"))
+        .unwrap();
+    assert_eq!(
+        shown(&doc, 0),
+        "Hasil penelitian sebelumnya (Nugroho, 2021; Santoso & Wijaya, 2019)."
+    );
+    let cites = doc.citations();
+    assert_eq!(cites.len(), 1);
+    assert_eq!(cites[0].source, CiteSource::Zotero);
+    let j = cites[0].json.as_ref().unwrap();
+    assert_eq!(j["citationID"].as_str().unwrap().len(), 8);
+    assert_eq!(j["citationItems"][0]["id"], "nugroho2021");
+    assert_eq!(
+        j["citationItems"][1]["itemData"]["publisher"],
+        "Penerbit Andi"
+    );
+    assert_eq!(
+        j["properties"]["plainCitation"],
+        "(Nugroho, 2021; Santoso & Wijaya, 2019)"
+    );
+    // The caret is after the citation; typing goes after it.
+    doc.insert_text(after, " Lagi", None);
+    assert!(
+        shown(&doc, 0).ends_with("2019) Lagi."),
+        "{}",
+        shown(&doc, 0)
+    );
+    // The preferences Zotero's plug-in needs were written.
+    assert_eq!(
+        doc.citation_prefs(None).from,
+        docs_engine::PrefsFrom::Zotero
+    );
+    assert_eq!(doc.citation_prefs(None).locale.as_deref(), Some("id-ID"));
+
+    // A bibliography in a new paragraph.
+    let end = doc.end();
+    doc.newline(Selection::caret(end), None);
+    let end = doc.end();
+    doc.insert_bibliography(Selection::caret(end), Some("id-ID"))
+        .unwrap();
+    let bibs = doc.bibliographies();
+    assert_eq!(bibs.len(), 1);
+    assert_eq!(bibs[0].source, CiteSource::Zotero);
+    assert!(
+        shown(&doc, 1).starts_with("Nugroho, A. (2021)."),
+        "{}",
+        shown(&doc, 1)
+    );
+    assert!(shown(&doc, 2).starts_with("Santoso, B., & Wijaya, C. (2019)."));
+
+    // IEEE: a new first citation shifts the numbers.
+    doc.set_citation_prefs("http://www.zotero.org/styles/ieee", Some("en-US"));
+    doc.refresh_citations(Selection::default(), None).unwrap();
+    assert_eq!(texts(&doc), ["[1], [2]"]);
+    let santoso = vec![items[1].clone()];
+    doc.insert_citation(Selection::default(), &santoso, None)
+        .unwrap();
+    assert_eq!(texts(&doc), ["[1]", "[1], [2]"]);
+    assert!(
+        shown(&doc, 1).starts_with("[1]\tB. Santoso"),
+        "{}",
+        shown(&doc, 1)
+    );
+
+    // One undo step each.
+    doc.undo();
+    assert_eq!(texts(&doc), ["[1], [2]"]);
+
+    // Saved and opened again: still Zotero fields Kantor and Zotero read.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("baru.docx");
+    doc.save_as(&path).unwrap();
+    let back = Document::open(&path).unwrap();
+    assert_eq!(texts(&back), ["[1], [2]"]);
+    assert_eq!(
+        back.citations()[0].items[1].data["title"],
+        "Metodologi penelitian kuantitatif"
+    );
+    let xml = String::from_utf8(parts(&std::fs::read(&path).unwrap())["word/document.xml"].clone())
+        .unwrap();
+    assert!(xml.contains("ADDIN ZOTERO_ITEM CSL_CITATION {"));
+    assert!(xml.contains("ADDIN ZOTERO_BIBL {&quot;uncited&quot;:[],&quot;omitted&quot;:[],&quot;custom&quot;:[]} CSL_BIBLIOGRAPHY") || xml.contains(r#"ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[],"custom":[]} CSL_BIBLIOGRAPHY"#));
+}
+
+#[test]
+fn mendeley_documents_get_mendeley_fields() {
+    let mut doc = Document::open(&corpus("cite_mendeley.docx")).unwrap();
+    assert_eq!(doc.new_citation_source(), CiteSource::Mendeley);
+    let p = find(&doc, "Paragraf ini diubah");
+    let at = docs_engine::Position::new(p, doc.paragraph(p).text.len());
+    doc.insert_citation(Selection::caret(at), &bib_items()[..1], Some("en-US"))
+        .unwrap();
+    let cites = doc.citations();
+    assert_eq!(cites.len(), 3);
+    assert!(cites.iter().all(|c| c.source == CiteSource::Mendeley));
+    assert_eq!(cites[2].items[0].id, "ITEM-1");
+    assert_eq!(cites[2].text, "[3]");
+    let h = find(&doc, "Referensi");
+    assert!(
+        shown(&doc, h + 3).starts_with("[3]\tA. Nugroho"),
+        "{}",
+        shown(&doc, h + 3)
+    );
+    assert_eq!(
+        doc.citation_prefs(None).from,
+        docs_engine::PrefsFrom::Mendeley
+    );
+}

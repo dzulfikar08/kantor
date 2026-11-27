@@ -1029,6 +1029,8 @@ pub struct Labels {
     pub contents: String,
     pub figures: String,
     pub tables: String,
+    /// A bibliography's heading.
+    pub bibliography: String,
 }
 
 /// The cover's design.
@@ -1310,6 +1312,7 @@ impl Look {
                 contents: "Contents".into(),
                 figures: "Figures".into(),
                 tables: "Tables".into(),
+                bibliography: "References".into(),
             },
             lang: lang.to_owned(),
         };
@@ -1320,6 +1323,7 @@ impl Look {
                 contents: "Daftar Isi".into(),
                 figures: "Daftar Gambar".into(),
                 tables: "Daftar Tabel".into(),
+                bibliography: "Daftar Pustaka".into(),
             };
         }
         look.table.rule = look.palette["rule"].clone();
@@ -1374,7 +1378,14 @@ impl Look {
             let lo = object(
                 l,
                 "`labels`",
-                &["figure", "table", "contents", "figures", "tables"],
+                &[
+                    "figure",
+                    "table",
+                    "contents",
+                    "figures",
+                    "tables",
+                    "bibliography",
+                ],
             )?;
             for (k, slot) in [
                 ("figure", &mut look.labels.figure),
@@ -1382,6 +1393,7 @@ impl Look {
                 ("contents", &mut look.labels.contents),
                 ("figures", &mut look.labels.figures),
                 ("tables", &mut look.labels.tables),
+                ("bibliography", &mut look.labels.bibliography),
             ] {
                 if let Some(s) = opt_str(lo, k)? {
                     *slot = s.to_owned();

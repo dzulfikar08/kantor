@@ -20,6 +20,8 @@ chrono = { workspace = true, features = ["clock"] }
 # PNG files of slides (`kantor convert --to png`).
 flate2 = "1"
 docs_engine.workspace = true
+# Citations: `kantor docs citations`, the docs JSON's `citations`.
+kantor_cite.workspace = true
 docs_layout.workspace = true
 docs_pdf.workspace = true
 docs_ui.workspace = true
