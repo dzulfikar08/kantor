@@ -842,9 +842,9 @@ pub(crate) fn lay_out_body(
     };
     let built = body_with_notes(doc, &refs, &sections, &mut notes_cache, layout, cut, prior);
     let build::Built {
-        lps: mut lps,
-        widths: mut widths,
-        blocks: mut blocks,
+        mut lps,
+        mut widths,
+        mut blocks,
         markers,
         fresh,
     } = built;
