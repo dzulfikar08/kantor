@@ -29,6 +29,32 @@ pub enum SsoStep {
     Progress(String),
 }
 
+/// Why a sign-in ended without an account.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SignInError {
+    /// The user stopped it (Cancel, declined consent, closed the browser
+    /// page): no error, at most a neutral note.
+    Cancelled,
+    /// A failure to show, in the user's words.
+    Failed(String),
+}
+
+impl From<String> for SignInError {
+    fn from(s: String) -> Self {
+        SignInError::Failed(s)
+    }
+}
+
+impl SignInError {
+    /// A cloud error, worded by `describe` unless the user cancelled.
+    pub fn of(e: &Error, describe: impl FnOnce(&Error) -> String) -> Self {
+        match e {
+            Error::Cancelled => SignInError::Cancelled,
+            e => SignInError::Failed(describe(e)),
+        }
+    }
+}
+
 /// A sign-in's request: the drive, and what the user typed.
 pub struct SsoRequest {
     pub server: String,
@@ -69,8 +95,9 @@ pub(super) fn done_page() -> DonePage {
     }
 }
 
-fn describe(e: &Error) -> String {
-    match e {
+fn describe(e: &Error) -> SignInError {
+    SignInError::of(e, |e| {
+        match e {
         Error::Auth(_) => t(
             "The drive refused the sign-in. Ask your administrator whether Kantor may use single sign-on on this drive.",
         )
@@ -81,6 +108,7 @@ fn describe(e: &Error) -> String {
         .into(),
         e => tf("Sign-in failed: {}", &[&e.to_string()]),
     }
+    })
 }
 
 /// Sign in and make the account (worker thread). Returns the account and
@@ -89,7 +117,7 @@ pub fn sign_in(
     req: SsoRequest,
     cancel: &AtomicBool,
     step: &dyn Fn(SsoStep),
-) -> Result<(CloudAccount, KeyLocation), String> {
+) -> Result<(CloudAccount, KeyLocation), SignInError> {
     let server = normalize_server(&req.server);
     let origin = origin(&server);
     // Where to sign in: the issuer typed, else what the drive says.
@@ -119,7 +147,8 @@ pub fn sign_in(
             Error::NotFound => t(
                 "This sign-in server has no sign-in with a code. Use the browser sign-in instead.",
             )
-            .to_owned(),
+            .to_owned()
+            .into(),
             e => describe(&e),
         })?
     } else {

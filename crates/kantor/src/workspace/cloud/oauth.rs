@@ -13,7 +13,7 @@ use kantor_cloud::{Auth, Client, Error, gdrive, graph};
 use kantor_core::settings::CloudAccount;
 use kantor_ui::i18n::{t, tf};
 
-use super::sso::{self, SsoStep};
+use super::sso::{self, SignInError, SsoStep};
 
 /// The account's provider.
 pub fn provider(account: &CloudAccount) -> Option<Provider> {
@@ -32,11 +32,11 @@ fn not_built(p: Provider) -> String {
     tf("This copy of Kantor can't sign in to {}.", &[&p.name()])
 }
 
-fn describe(p: Provider, e: &Error) -> String {
-    match e {
+fn describe(p: Provider, e: &Error) -> SignInError {
+    SignInError::of(e, |e| match e {
         Error::Auth(_) => tf("{} refused the sign-in. Try again.", &[&p.name()]),
         e => tf("Sign-in failed: {}", &[&e.to_string()]),
-    }
+    })
 }
 
 /// A client for `provider` with `auth`.
@@ -76,7 +76,7 @@ pub fn sign_in(
     again: Option<CloudAccount>,
     cancel: &AtomicBool,
     step: &dyn Fn(SsoStep),
-) -> Result<(CloudAccount, KeyLocation), String> {
+) -> Result<(CloudAccount, KeyLocation), SignInError> {
     let app = p.app().ok_or_else(|| not_built(p))?;
     let ep = p.endpoints();
     let open = |url: &str| step(SsoStep::OpenBrowser(url.to_owned()));
@@ -177,5 +177,19 @@ mod tests {
             "onedrive-budi_contoso.com"
         );
         assert_eq!(account_id(Provider::GoogleDrive, "a b@x"), "gdrive-a_b_x");
+    }
+
+    #[std::prelude::v1::test]
+    fn a_cancelled_sign_in_is_not_a_failure() {
+        let p = Provider::GoogleDrive;
+        assert_eq!(describe(p, &Error::Cancelled), SignInError::Cancelled);
+        assert!(matches!(
+            describe(p, &Error::Auth(401)),
+            SignInError::Failed(_)
+        ));
+        assert!(matches!(
+            describe(p, &Error::Protocol("x".into())),
+            SignInError::Failed(_)
+        ));
     }
 }

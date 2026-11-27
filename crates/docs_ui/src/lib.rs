@@ -2631,6 +2631,18 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
     );
 }
 
+/// Whether the page area's new `bounds` (painted) need the view rendered
+/// again. Render runs before the canvas learns its size, so what render
+/// places from the viewport (the ruler, the caret scroll, clamping, menus)
+/// used the old one. A cached view re-renders when its pane changes size
+/// and is then reused while nothing changes: without this, a page area
+/// that resized after its first paint (a tab opened by Save to Cloud, a
+/// view reloaded from the conflict dialog) kept its ruler off by half the
+/// change until the next edit.
+fn viewport_needs_render(old: Bounds<Pixels>, new: Bounds<Pixels>) -> bool {
+    old.size != new.size
+}
+
 impl Render for DocsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = tokens(cx);
@@ -2765,14 +2777,11 @@ impl Render for DocsView {
             view: cx.entity(),
         };
         let viewport = self.viewport.clone();
-        let reveal = self.reveal_caret.clone();
         let entity = cx.entity().downgrade();
         let page = canvas(
             move |bounds, _, cx| {
                 let old = viewport.replace(bounds);
-                // First paint (or a resize): re-render once the size is known
-                // so scrolling to the caret and clamping use real numbers.
-                if old.size != bounds.size && (reveal.get() || old.size.height <= px(0.)) {
+                if viewport_needs_render(old, bounds) {
                     let _ = entity.update(cx, |_, cx| cx.notify());
                 }
             },
@@ -3121,6 +3130,33 @@ mod tests {
         assert!((x - 120.0).abs() < 0.01 && (y - 300.0).abs() < 0.01);
         let vis = g.visible_pages(10);
         assert!(vis.contains(&1) && !vis.contains(&5), "{vis:?}");
+    }
+
+    #[std::prelude::v1::test]
+    fn a_resized_page_area_renders_the_ruler_again() {
+        // The page area first painted 1400 px wide, then 930 px (a panel
+        // beside it): the ruler (placed at render) needs the new width.
+        let at = |w: f32| Geometry {
+            origin: point(px(0.), px(80.)),
+            size: size(px(w), px(800.)),
+            zoom: 1.0,
+            scroll: point(0., 0.),
+            boxes: Rc::new(PageBoxes::new(vec![(793.7, 1122.5)])),
+            markup: 0.0,
+        };
+        let (wide, narrow) = (at(1400.), at(930.));
+        // A ruler from the old size is off by half the change.
+        assert!((wide.page_x(0) - narrow.page_x(0) - 235.0).abs() < 0.01);
+        let b = |g: &Geometry| Bounds::new(g.origin, g.size);
+        assert!(viewport_needs_render(b(&wide), b(&narrow)));
+        // First paint.
+        assert!(viewport_needs_render(Bounds::default(), b(&wide)));
+        // Moved only (the Header & Footer bar closing): the ruler's page
+        // x doesn't depend on the origin, nothing to redo.
+        let mut moved = b(&wide);
+        moved.origin.y = px(40.);
+        assert!(!viewport_needs_render(b(&wide), moved));
+        assert!(!viewport_needs_render(b(&wide), b(&wide)));
     }
 
     #[std::prelude::v1::test]

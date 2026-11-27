@@ -115,6 +115,10 @@ pub enum Error {
     },
     /// The server replied with something that isn't valid WebDAV.
     Protocol(String),
+    /// The user stopped a sign-in: Cancel in Kantor, declined consent in
+    /// the browser (`access_denied`), or never came back (timed out). Not
+    /// an error to show in red.
+    Cancelled,
 }
 
 impl std::fmt::Display for Error {
@@ -134,6 +138,7 @@ impl std::fmt::Display for Error {
                 Ok(())
             }
             Error::Protocol(m) => write!(f, "bad server reply: {m}"),
+            Error::Cancelled => f.write_str("the sign-in was cancelled"),
         }
     }
 }

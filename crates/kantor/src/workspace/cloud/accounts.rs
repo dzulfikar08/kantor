@@ -18,7 +18,7 @@ use kantor_ui::tokens;
 
 use super::jobs;
 use super::oauth;
-use super::sso::{self, SsoRequest, SsoStep};
+use super::sso::{self, SignInError, SsoRequest, SsoStep};
 use super::widgets::{CLOUD_PANEL, ClosePanel, Status, card, field, footer, note, status_line};
 use super::{PanelEvent, remote_for};
 use kantor_cloud::oauth::Provider;
@@ -289,7 +289,7 @@ impl AccountsPanel {
     fn run_sign_in(
         &mut self,
         again_id: Option<String>,
-        job: impl FnOnce(&dyn Fn(SsoStep)) -> Result<(CloudAccount, KeyLocation), String>
+        job: impl FnOnce(&dyn Fn(SsoStep)) -> Result<(CloudAccount, KeyLocation), SignInError>
         + Send
         + 'static,
         cx: &mut Context<Self>,
@@ -320,10 +320,18 @@ impl AccountsPanel {
             },
             move |this: &mut Self, r, cx| {
                 this.busy = false;
-                this.cancel = None;
+                // Taken already when the user pressed Cancel here.
+                let cancelled_here = this.cancel.take().is_none();
                 this.device_code = None;
                 match r {
-                    Err(e) => this.status = Status::Error(e),
+                    Err(SignInError::Failed(e)) => this.status = Status::Error(e),
+                    Err(SignInError::Cancelled) => {
+                        this.status = if cancelled_here {
+                            Status::None
+                        } else {
+                            Status::Busy(t("Sign-in cancelled. Nothing was changed.").into())
+                        }
+                    }
                     Ok((account, location)) => {
                         let mut settings = Settings::load();
                         let old = again_id.unwrap_or_else(|| account.id.clone());

@@ -52,12 +52,13 @@ With `drive.file` Kantor only sees files and folders it created, or that were op
 - Every save is checked against the version the working copy came from (OneDrive `eTag` in `If-Match`, answered `412` on a change; Google Drive's `version`, checked right before the write since Drive v3 has no conditional writes). A change by someone else opens the usual conflict dialog (keep theirs, overwrite, or save a copy).
 - Files of 4 MiB (OneDrive) or 8 MiB (Google Drive) and more go through an upload session in 5 MiB parts. A dropped link resumes from the last part the server has, also after Kantor restarts.
 - Neither service offers file locks to apps, so documents are never shown read-only for someone else; the version check above protects saves.
+- Save to Cloud shows the upload's progress in the status bar (percent and MB). A failed cloud save or open stays in the status bar until the next key press or click; later messages replace it, older ones never do.
 - Cloud documents autosave (10 s after the last change, then upload) unless the status bar switch is turned off on a cloud document (`[cloud] autosave = false` in settings.toml).
 
 ## Testing a registration
 
 1. Set the variables (above) and start Kantor.
-2. **Cloud Accounts →** the *OneDrive* / *Google Drive* button **→ Sign in with Microsoft / Google**. The browser opens; after consent the tab says you can go back to Kantor.
+2. **Cloud Accounts →** the *OneDrive* / *Google Drive* button **→ Sign in with Microsoft / Google**. The browser opens; after consent the tab says you can go back to Kantor. Declining consent, closing the browser page (the sign-in then stops after 5 minutes) or **Cancel** in Kantor counts as cancelled: Cloud Accounts shows a neutral note, not an error.
 3. **Open from Cloud**, open a file, edit it, wait for the status bar chip to say *Synced*; check the new version in the web UI. Edit the same file in the web UI, then save in Kantor: the conflict dialog appears.
 4. **Save to Cloud** a local document; on Google Drive it appears in the *Kantor* folder.
 5. Revoke access (<https://account.live.com/consent/Manage> or <https://myaccount.google.com/permissions>), edit and save in Kantor: the chip says the sign-in ended and the edits stay on the computer; **Sign in again** in Cloud Accounts, then **Sync Now**.
