@@ -1,17 +1,20 @@
 # Scripting: macros on one object layer
 
-Kantor Sheets runs the VBA macros of `.xlsm` files. `crates/kantor_script` is the language
-core: a host-neutral object layer and a VBA interpreter. `crates/sheets_script` is the Sheets
-object model on top of it (`Application`, `Workbook`, `Worksheet`, `Range`…) and the host that
-runs a workbook's macros; `sheets_ui` runs them after Enable Content, and `kantor sheets macros
-run` runs them headless. JavaScript and Python are meant to bind to the same objects later.
+Kantor Sheets runs the VBA macros of `.xlsm` files, and JavaScript macros stored in any
+`.xlsx`/`.xlsm`. `crates/kantor_script` is the language core: a host-neutral object layer and a
+VBA interpreter; `crates/kantor_script_js` binds JavaScript (QuickJS) to the same objects.
+`crates/sheets_script` is the Sheets object model on top of it (`Application`, `Workbook`,
+`Worksheet`, `Range`…) and the host that runs a workbook's macros; `sheets_ui` runs them after
+Enable Content, and `kantor sheets macros run` runs them headless. Python was built and measured
+and is left out for now (see [JavaScript and Python](#javascript-and-python-macros)).
 
 ## Layers
 
 ```
- VBA source ─► kantor_script::vba ─┐
- (later) JS ─► rquickjs binding  ──┼─► kantor_script::object ◄── sheets_script (Sheets object model)
- (later) Py ─► Python binding    ──┘     Value · Dispatch · Host
+ VBA source ─► kantor_script::vba ──┐
+ JavaScript ─► kantor_script_js   ──┼─► kantor_script::object ◄── sheets_script (Sheets object model)
+ (Python)   ─► kantor_script_py   ──┘     Value · Dispatch · Host
+               (not built: +16 MB)
 ```
 
 ### The object layer (`kantor_script::object`)
@@ -550,8 +553,9 @@ measures characters, not glyphs; `RemoveDuplicates` moves values, not formats.
   is remembered. `vba_ui::initial_trust` is where trusted locations or "always trust this file"
   would decide otherwise. With content disabled, Run is greyed out and a click on a macro
   button shows the bar again.
-- **Run.** The Macros dialog (Alt+F8) lists the modules and procedures; Run starts the selected
-  public parameterless `Sub` (what Excel's Alt+F8 lists). Buttons and shapes with an assigned
+- **Run.** The Macros dialog (Alt+F8) lists the modules and procedures, then the workbook's
+  JavaScript and Python modules with their functions; Run starts the selected public
+  parameterless `Sub` (what Excel's Alt+F8 lists) or script function. Buttons and shapes with an assigned
   macro (`macro="[0]!Macro1"` on the drawing object, or a form control's `controlPr macro` /
   VML `x:FmlaMacro`, read by `sheets_engine::drawing`) run it on click; Ctrl+click selects them.
 - **Where it runs.** The interpreter is built on `Rc` (not `Send`) and recurses on the native
@@ -586,7 +590,8 @@ measures characters, not glyphs; `RemoveDuplicates` moves values, not formats.
 ### Headless: `kantor sheets macros run`
 
 `kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]... [--events]
-[--allow-path PATH]... [--form-answers F.json]` runs a macro and saves the workbook (in place
+[--allow-path PATH]... [--form-answers F.json]` runs a macro (a VBA `Sub`, or a script's
+function: `Report.go`) and saves the workbook (in place
 unless `--out`). With `--events`, `Workbook_Open` runs first and `Workbook_BeforeSave` (which may
 cancel the save) and `Workbook_AfterSave` around the save, through one engine, so module
 variables `Workbook_Open` sets are there for the macro. `--allow-path` names files or folders
@@ -599,20 +604,221 @@ work in its formulas too. On a run-time error nothing is saved (exit status 1).
 
 ### AI tools don't run macros
 
-The MCP tool `sheets_macros` and Paparan AI's `macros` tool read macros; neither runs them, and
+The MCP tool `sheets_macros` and Paparan AI's `macros` tool read macros (VBA modules and
+scripts); neither runs them, and
 no AI tool can press Enable Content or Run. A macro is code that came with the file: running it
 is the user's decision. The tools' descriptions say so, so the assistant explains a macro or
 redoes its work with formulas and the sheets editing tools instead.
 
-## JavaScript and Python on the same layer
+## JavaScript and Python macros
 
-A binding needs four things: wrap a `Dispatch` object as a native object of the language
-(property get/set and method calls go to `get`/`put`/`call`, iteration to `enumerate`),
-convert `Value`s both ways, expose `Host::globals()` as the global scope, and map
-`ScriptError` to the language's exceptions. Named arguments become a trailing options object
-(JS) or keyword arguments (Python).
+Scripts are modules of JavaScript (or Python) kept in the workbook, run on the same object
+model as VBA: the same `Application`, `Range`, `Worksheet`… objects, the same Enable Content,
+the same macro thread, busy pane and Stop, the same `MsgBox`/`InputBox` dialogs, and one run is
+one undo step. A module's **top-level functions without parameters** are its macros (as a VBA
+`Sub` without parameters is): the Macros dialog lists them under the module with the VBA
+modules, Run starts one, and `kantor sheets macros run FILE --macro Report.go` runs one
+headless. A function whose name starts with `_` is private (not listed). A macro button can
+name one (`Report.go`). Events don't call scripts (only VBA handlers); UDFs are VBA only.
 
-### JavaScript: rquickjs vs boa
+### Where scripts live
+
+In the workbook, in one **custom XML part** (`customXml/itemN.xml` with its
+`customXml/itemPropsN.xml`, linked from the workbook part by the standard `customXml`
+relationship):
+
+```xml
+<scripts xmlns="https://kantor.paparanai.id/2026/scripts">
+  <script name="Report" language="javascript">function go() { … }</script>
+</scripts>
+```
+
+Why a custom XML part: it is the place OOXML gives an application for its own data. Excel
+keeps custom XML parts through its own saves (they are its `Workbook.CustomXMLParts`) and
+ignores what it doesn't know, so the scripts travel with the file through Excel, in `.xlsx`
+and `.xlsm` alike; a part of an unknown relationship type would be dropped by Excel's next save.
+The part is ordinary XML (content type `application/xml`, the properties part
+`customXmlProperties+xml`), so the package stays valid (`package_problems` checks it in the
+tests). Carriage returns are kept as `&#13;`.
+
+- `sheets_engine::scripts`: `Script { name, language, source }`, the XML.
+- `Workbook::scripts()` reads them from the file the workbook was opened from (or the list set
+  since); `Workbook::set_scripts` replaces them (not an undo step; the workbook becomes
+  unsaved); a save writes the set list in place of the old part, or carries the original's part
+  untouched (`preserve::with_scripts`, `read_scripts`).
+- A workbook with scripts opens with macros disabled, as one with VBA does (the bar, Enable
+  Content). Running a script trusts the file the same way.
+- There is no editor yet: `kantor sheets macros add FILE report.js [--module Report]` stores a
+  file as a module (replacing one of that name), `kantor sheets macros remove FILE --module
+  Report` takes it out, `kantor sheets macros FILE` lists modules and functions (scripts after
+  the VBA modules), `--module Report` prints its code. The MCP tool `sheets_macros` and Paparan
+  AI's `macros` tool list and show scripts too, and don't run them.
+
+### The binding (`kantor_script::binding`, `kantor_script_js`)
+
+JavaScript separates reading a property (`r.value`) from calling a method (`r.clear()`), and a
+property access can't know whether a call follows. Naming a member therefore:
+
+- gives a **method** (a function that runs it with the call's arguments) when the host lists it
+  as one (`Host::is_method`: `sheets_script::scripts::METHODS`, members that act or take
+  optional arguments that change what they give: `Clear`, `Select`, `Copy`, `Offset`,
+  `Resize`, `Address`, `Add`, `Find`…, and every `WorksheetFunction` member), or when reading
+  it without arguments fails for want of them (errors 449, 450: `ws.Range`, `End`, `Item`);
+- else reads the **property** right away (`r.value`, `ws.name`, `ws.cells`).
+
+So properties are read and assigned as properties, methods are called, and objects are called
+for their default member: `Worksheets("Data")`, `ws.cells(2, 1)`, `Range("A1:B2").cells(1, 1)`.
+A method's function also turns into its value where a primitive is needed (`"At " +
+r.address`), and an object turns into its default member's value (`Range("A1") + 1`).
+
+Member names are case-insensitive, as in VBA: `Range`, `range` and `RANGE` are one member. The
+idiomatic JavaScript spelling is camelCase (`ws.range("A1").numberFormat`); VBA's PascalCase
+works too.
+
+| | VBA | JavaScript |
+|---|---|---|
+| Property | `x = r.Value`, `r.Value = 5` | `x = r.value`, `r.value = 5` |
+| Default member | `Range("A1") = 5` | `Range("A1").value = 5` |
+| Method | `r.ClearContents` | `r.clearContents()` |
+| Method with arguments | `r.Offset(1, 0)` | `r.offset(1, 0)` |
+| Collection item | `Worksheets("Data")`, `ws.Cells(2, 1)` | the same |
+| Named arguments | `r.Copy Destination:=ws.Range("D1")` | `r.copy({ destination: ws.range("D1") })` |
+| Omitted argument | `r.Find("x", , xlValues)` | `r.find("x", undefined, xlValues)` |
+| `For Each` | `For Each ws In Worksheets` | `for (const ws of Worksheets)` |
+| `Debug.Print` | `Debug.Print x` | `console.log(x)` or `print(x)` |
+| Constants | `xlUp`, `vbYesNo` | the same |
+| Errors | `On Error`, `Err.Number` | `try { } catch (e) { e.number }` |
+
+Values:
+
+| Workbook (`Value`) | JavaScript |
+|---|---|
+| Empty cell, `Null`, `Nothing` | `null` (an omitted argument is `undefined`) |
+| Numbers (`Long`, `Double`, `Currency`…) | `number` (a whole number goes back as `Long`) |
+| `String`, `Boolean` | `string`, `boolean` |
+| `Date` | `Date`, local time (and back) |
+| Error value (`#N/A`) | `CellError` (`e.code` 2042; `String(e)` is `#N/A`); `CVErr(2042)` makes one |
+| 2-D array (`Range.Value`) | array of rows: `r.value[0][1]`; writing an array of arrays fills a range |
+| 1-D array | array |
+| Object | a proxy (`typeof` is `function`, it can be called); `TypeName(x)` gives `Range` |
+| `LongLong` beyond 2^53 | `number`; a `BigInt` goes in as `LongLong` |
+
+Globals: `Application`, `ActiveWorkbook`, `ActiveSheet`, `ActiveCell`, `ActiveChart`,
+`Selection`, `ThisWorkbook`, `Workbooks`, `Worksheets`, `Sheets`, `Charts`, `Range`, `Cells`,
+`Rows`, `Columns`, `WorksheetFunction`, `Evaluate`, `Intersect`, `Union` (each also in
+camelCase: `activeSheet`), read when used, so `ActiveSheet` is always the active sheet. Any
+other name the script doesn't define is looked up among the object model's constants (`xlUp`,
+`xlValues`, `msoShapeRectangle`), VBA's `vb…` constants, and the `Application`'s members
+(through a proxy as the global object's prototype). `MsgBox`/`msgBox(prompt, buttons, title)`
+returns the button (`vbYes`…), `InputBox`/`inputBox(prompt, title, default)` returns the text or
+`null`; `console.log`/`print` write to the Macros dialog's output (the Immediate window).
+
+Errors: a member that fails throws a `KantorError` (`e.number` 1004, `e.description`), which
+`try`/`catch` can catch. An uncaught one ends the run with Excel's dialog: "Run-time error
+'1004':" and "in Report.go, line 12". JavaScript's own errors (`TypeError`) show as "Run-time
+error:" with their message; a syntax error as "Compile error:".
+
+Running: each run starts a fresh QuickJS runtime (no state is kept between runs, unlike VBA's
+module variables), evaluates every JavaScript module of the workbook as a classic script (the
+target's module last, so its definitions win; functions are shared by all modules, like Public
+Subs), then calls the function. Sandbox: QuickJS has no file, network or process access
+unless the embedder adds it, and none is added; memory is capped (1 GiB) and so is the stack
+(512 KiB). Stop sets the run's cancel token: QuickJS's interrupt handler checks it (so a loop
+that calls nothing stops too), and every call into the object model checks it and the host.
+`async` functions aren't awaited (there is no event loop).
+
+Example, side by side:
+
+```vba
+Sub Report()
+    Dim ws As Worksheet, r As Long, total As Double
+    Set ws = ActiveSheet
+    For r = 2 To 5
+        total = total + ws.Cells(r, 3).Value
+    Next r
+    ws.Range("E1").Value = "Total"
+    ws.Range("F1").Value = total
+    ws.Range("E1:F1").Font.Bold = True
+    ws.Range("F1").NumberFormat = "#,##0.00"
+    If MsgBox("Add a chart?", vbYesNo) = vbYes Then
+        With ws.ChartObjects.Add(Left:=200, Top:=20, Width:=360, Height:=216).Chart
+            .SetSourceData Source:=ws.Range("A1:C5")
+            .ChartType = xlLine
+        End With
+    End If
+    Debug.Print "total", total
+End Sub
+```
+
+```javascript
+function report() {
+  const ws = ActiveSheet;
+  let total = 0;
+  for (let r = 2; r <= 5; r++) total += ws.cells(r, 3).value;
+  ws.range("E1").value = "Total";
+  ws.range("F1").value = total;
+  ws.range("E1:F1").font.bold = true;
+  ws.range("F1").numberFormat = "#,##0.00";
+  if (msgBox("Add a chart?", vbYesNo) === vbYes) {
+    const ch = ws.chartObjects.add({ left: 200, top: 20, width: 360, height: 216 }).chart;
+    ch.setSourceData(ws.range("A1:C5"));
+    ch.chartType = xlLine;
+  }
+  console.log("total", total);
+}
+```
+
+And the same in Python, as `kantor_script_py` (not built, below) runs it:
+
+```python
+def report():
+    ws = ActiveSheet
+    total = sum(ws.Cells(r, 3).Value for r in range(2, 6))
+    ws.Range("E1").Value = "Total"
+    ws.Range("F1").Value = total
+    ws.Range("E1:F1").Font.Bold = True
+    ws.Range("F1").number_format = "#,##0.00"
+    if MsgBox("Add a chart?", vbYesNo) == vbYes:
+        ch = ws.ChartObjects.Add(Left=200, Top=20, Width=360, Height=216).Chart
+        ch.SetSourceData(ws.Range("A1:C5"))
+        ch.ChartType = xlLine
+    print("total", total)
+```
+
+### Python: built, measured, left out
+
+`kantor_script_py` (branch `t3/sheets-python-wip`, not merged, never built in CI) binds
+RustPython 0.6 the same way: `_Obj` wrappers over object handles (`__getattr__`,
+`__setattr__`, `__call__`/`__getitem__` for the default member, `__iter__`, `len()` is `Count`),
+keyword arguments for named ones, underscores dropped so `r.number_format` is `NumberFormat`,
+globals as live objects (`ActiveSheet` looked up on each use; `Range(...)` and `Cells(...)` call
+the global), the constants defined up front (`Host::constants`), `Date` (a `float` of Excel's
+serial with `.year`…), `CellError`, `KantorError` with `number`, Stop through RustPython's user
+signal channel (raises `KeyboardInterrupt`, which `except Exception` doesn't catch), and no
+`host_env` (no `os`, `socket`, `subprocess`, `open`). It was left out because a size probe
+(a hello-world binary built release, fat LTO, one codegen unit, stripped, as Kantor's release
+profile; 2026-11-27, branch `t3/size-probe-js-py`) measured:
+
+| Binary | Linux x86_64 | macOS arm64 | Windows x64 |
+|---|---|---|---|
+| Hello world | 0.29 MB | 0.30 MB | 0.12 MB |
+| + rquickjs 0.14 (QuickJS-NG) | 1.49 MB (**+1.2 MB**) | 1.32 MB (**+1.0 MB**) | 1.21 MB (**+1.1 MB**) |
+| + rustpython-vm 0.6 (compiler, no stdlib, no `host_env`) | 16.5 MB (**+16.2 MB**) | 13.9 MB (**+13.6 MB**) | doesn't build |
+
+That is over the 15 MB this was allowed on Linux and a quarter of Kantor's 60 MB install
+budget, without
+even `math` (which needs `rustpython-stdlib`, more again). RustPython 0.6.0 also doesn't build
+as published: `rustpython-codegen` fails against the newest `rustpython-ruff_python_ast` (pin
+`=0.16.5`), and `rustpython-host_env` fails on Windows without its `ctypes` feature. Python
+scripts are therefore kept, listed and shown (`sheets_script::scripts::can_run` is false for
+them; running one says "Running Python macros is not supported in Kantor"). Ways forward: a
+smaller interpreter, or CPython as a separately downloaded add-on run out of process.
+
+The design notes below are what the choice was made from.
+
+### Choosing the engines
+
+#### JavaScript: rquickjs vs boa
 
 | | rquickjs (QuickJS-NG, C) | boa (pure Rust) |
 |---|---|---|
@@ -623,7 +829,7 @@ convert `Value`s both ways, expose `Host::globals()` as the global scope, and ma
 | Conformance | Nearly all of test262 (ES2025) | ~95–96% of test262 |
 | Sandboxing | Memory limit, interrupt handler for timeouts, no I/O unless we add it | No I/O unless we add it; limits through the runtime API |
 
-### Python: RustPython vs embedded CPython
+#### Python: RustPython vs embedded CPython
 
 | | RustPython | CPython (python-build-standalone) |
 |---|---|---|
@@ -634,7 +840,7 @@ convert `Value`s both ways, expose `Host::globals()` as the global scope, and ma
 | Compatibility | Targets CPython 3.15 syntax; slower than CPython | Reference implementation |
 | Sandboxing | Feasible: leave `os`/`socket`/`subprocess` out of the frozen stdlib | Not possible in-process; would need a separate process with OS sandboxing |
 
-### Recommendation
+#### Recommendation (2026-11-27, before the size probe)
 
 - **JavaScript: rquickjs.** Small, fast, near-complete ES conformance, and it can be sandboxed
   with a memory limit and an interrupt handler. Boa is the fallback if a C toolchain
