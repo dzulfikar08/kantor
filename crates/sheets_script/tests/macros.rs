@@ -326,7 +326,8 @@ End Sub
     assert!(book.cell_style(0, 1, 1).borders.left.is_some());
     assert_eq!(cell(&book, 0, "C2"), "300.00");
     assert_eq!(cell(&book, 0, "F1"), "TRUE");
-    assert_eq!(cell(&book, 0, "F2"), "300.00");
+    // Text "300.00" written as a value is the number 300, as in Excel.
+    assert_eq!(cell(&book, 0, "F2"), "300");
     assert_eq!(cell(&book, 0, "F3"), "TRUE");
     assert_eq!(cell(&book, 0, "F4"), "TRUE");
     assert_eq!(cell(&book, 0, "F5"), "20");
