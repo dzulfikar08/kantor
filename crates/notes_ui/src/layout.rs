@@ -450,7 +450,7 @@ pub fn layout(
                 hash_line(&mut h, buf, parsed, tl);
             }
             let key = h.finish();
-            let b = match cache.get(&key) {
+            let b = match cache.get(&key).or_else(|| next_cache.get(&key)) {
                 Some(b) => b.clone(),
                 None => Rc::new(table_box(ts, buf, parsed, look, table, width)),
             };
@@ -486,7 +486,7 @@ pub fn layout(
             f32::from(img.size.height).to_bits().hash(&mut h);
         }
         let key = h.finish();
-        let b = match cache.get(&key) {
+        let b = match cache.get(&key).or_else(|| next_cache.get(&key)) {
             Some(b) => b.clone(),
             None => Rc::new(line_box(
                 ts,
