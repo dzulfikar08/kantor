@@ -390,16 +390,24 @@ impl Editor {
                 return;
             }
             if empty_item && r.is_empty() {
-                // `- ` alone: end the list (keep the quote).
-                let keep = p.quote.len() + p.indent.len();
+                // `- ` alone: end the list (keep the quote). The line stays
+                // empty and the caret goes below it: text typed right
+                // under the list would continue its last item.
                 let end = self.buf.line_range(line).end;
-                self.edit(vec![(start + keep..end, String::new())], None, Merge::No);
+                let quote = p.quote.trim_end();
+                let new = if quote.is_empty() {
+                    eol.to_owned()
+                } else {
+                    format!("{quote}{eol}{quote} ")
+                };
+                self.edit(vec![(start..end, new)], None, Merge::No);
                 return;
             }
             if p.list.is_none() && !p.quote.is_empty() && text[p.len..].trim().is_empty() {
-                // `> ` alone: leave the quote.
+                // `> ` alone: leave the quote (an empty line ends it, the
+                // caret goes below).
                 let end = self.buf.line_range(line).end;
-                self.edit(vec![(start..end, String::new())], None, Merge::No);
+                self.edit(vec![(start..end, eol.to_owned())], None, Merge::No);
                 return;
             }
             let cont = p.continuation();
@@ -838,7 +846,18 @@ mod tests {
         e.newline();
         assert_eq!(e.text(), "- one\n- ");
         e.newline();
-        assert_eq!(e.text(), "- one\n");
+        assert_eq!(e.text(), "- one\n\n");
+        assert_eq!(e.selection(), Selection::caret(7));
+        let mut e = ed("> q\n> ", 6);
+        e.newline();
+        assert_eq!(e.text(), "> q\n\n");
+        let mut e = ed("> - a\n> - ", 10);
+        e.newline();
+        assert_eq!(
+            e.text(),
+            "> - a\n>\n> ",
+            "a list in a quote ends, the quote goes on"
+        );
         let mut e = ed("1. a\r\n", 4);
         e.newline();
         assert_eq!(e.text(), "1. a\r\n2. \r\n");
@@ -852,7 +871,7 @@ mod tests {
         e.newline();
         assert_eq!(e.text(), "- a\n- ", "an empty nested item goes up a level");
         e.newline();
-        assert_eq!(e.text(), "- a\n");
+        assert_eq!(e.text(), "- a\n\n");
     }
 
     #[test]
