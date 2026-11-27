@@ -1,0 +1,28 @@
+[package]
+name = "kantor_pls"
+description = "PLS-SEM (partial least squares structural equation modeling): PLS and consistent PLS estimation, reliability and validity, model fit and bootstrap inference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = ["parallel"]
+# Bootstrap subsamples and jackknife runs on every core (rayon). Without it
+# (e.g. wasm32 without threads) they run one after another, with the same
+# results: each subsample has its own random stream.
+parallel = ["dep:rayon"]
+
+[dependencies]
+# Seeded, reproducible resampling: one ChaCha8 stream per subsample, so the
+# results don't depend on the number of threads.
+rand_chacha = "0.9"
+rayon = { version = "1.12", optional = true }
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json.workspace = true

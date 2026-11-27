@@ -1,0 +1,12 @@
+[
+  {"name": "ecsi_pls_path", "data": "ecsi_synth.csv", "model": "ecsi.json", "options": {"algorithm": "pls", "weighting": "path"}, "bootstrap": 2000},
+  {"name": "ecsi_pls_centroid", "data": "ecsi_synth.csv", "model": "ecsi.json", "options": {"algorithm": "pls", "weighting": "centroid"}},
+  {"name": "ecsi_pls_factorial", "data": "ecsi_synth.csv", "model": "ecsi.json", "options": {"algorithm": "pls", "weighting": "factorial"}},
+  {"name": "ecsi_plsc", "data": "ecsi_synth.csv", "model": "ecsi.json", "options": {"algorithm": "plsc", "weighting": "path"}},
+  {"name": "corp_pls_mean", "data": "corp_synth.csv", "model": "corp.json", "options": {"algorithm": "pls", "missing": "mean", "missing_value": -99}, "bootstrap": 2000},
+  {"name": "corp_plsc_listwise", "data": "corp_synth.csv", "model": "corp.json", "options": {"algorithm": "plsc", "missing": "listwise", "missing_value": -99}},
+  {"name": "mediation_plsc_mean", "data": "mediation.csv", "model": "mediation.json", "options": {"algorithm": "plsc", "missing": "mean"}, "bootstrap": 2000},
+  {"name": "mediation_pls_listwise", "data": "mediation.csv", "model": "mediation.json", "options": {"algorithm": "pls", "missing": "listwise"}},
+  {"name": "many_pls", "data": "many.csv", "model": "many.json", "options": {"algorithm": "pls"}},
+  {"name": "many_plsc", "data": "many.csv", "model": "many.json", "options": {"algorithm": "plsc"}}
+]

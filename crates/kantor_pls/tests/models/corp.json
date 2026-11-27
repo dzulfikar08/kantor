@@ -1,0 +1,107 @@
+{
+ "constructs": [
+  {
+   "name": "QUAL",
+   "indicators": [
+    "QUAL_1",
+    "QUAL_2",
+    "QUAL_3",
+    "QUAL_4",
+    "QUAL_5",
+    "QUAL_6",
+    "QUAL_7",
+    "QUAL_8"
+   ],
+   "type": "composite"
+  },
+  {
+   "name": "PERF",
+   "indicators": [
+    "PERF_1",
+    "PERF_2",
+    "PERF_3",
+    "PERF_4",
+    "PERF_5"
+   ],
+   "type": "composite"
+  },
+  {
+   "name": "CSOR",
+   "indicators": [
+    "CSOR_1",
+    "CSOR_2",
+    "CSOR_3",
+    "CSOR_4",
+    "CSOR_5"
+   ],
+   "type": "composite"
+  },
+  {
+   "name": "ATTR",
+   "indicators": [
+    "ATTR_1",
+    "ATTR_2",
+    "ATTR_3"
+   ],
+   "type": "composite"
+  },
+  {
+   "name": "COMP",
+   "indicators": [
+    "COMP_1",
+    "COMP_2",
+    "COMP_3"
+   ]
+  },
+  {
+   "name": "LIKE",
+   "indicators": [
+    "LIKE_1",
+    "LIKE_2",
+    "LIKE_3"
+   ]
+  },
+  {
+   "name": "CUSA",
+   "indicators": [
+    "CUSA_1"
+   ]
+  },
+  {
+   "name": "CUSL",
+   "indicators": [
+    "CUSL_1",
+    "CUSL_2",
+    "CUSL_3"
+   ]
+  }
+ ],
+ "paths": [
+  {
+   "from": [
+    "QUAL",
+    "PERF",
+    "CSOR",
+    "ATTR"
+   ],
+   "to": [
+    "COMP",
+    "LIKE"
+   ]
+  },
+  {
+   "from": [
+    "COMP",
+    "LIKE"
+   ],
+   "to": [
+    "CUSA",
+    "CUSL"
+   ]
+  },
+  [
+   "CUSA",
+   "CUSL"
+  ]
+ ]
+}

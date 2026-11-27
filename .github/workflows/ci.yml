@@ -54,6 +54,15 @@ jobs:
         with:
           cache-on-failure: true
       - run: cargo test --workspace
+      # kantor_pls against SmartPLS 4's own output for 14 textbook models: the
+      # openpls-engine validation supplement (Zenodo, CC BY 4.0) has the
+      # datasets and the values (crates/kantor_pls/tests/smartpls.json).
+      - name: PLS-SEM against SmartPLS reference values
+        if: matrix.arch == 'x86_64'
+        run: |
+          curl -fsSL --retry 3 -o pls-supp.zip https://zenodo.org/api/records/20511533/files/openpls-validation-supplementary.zip/content
+          unzip -q pls-supp.zip -d pls-supp
+          KANTOR_PLS_SMARTPLS=$PWD/pls-supp/supplementary cargo test -p kantor_pls --test goldens -- smartpls
       # The vendored IronCalc is outside the workspace; these cover Kantor's
       # patches there (KANTOR_PATCHES.md §36 regex functions, §37 user functions).
       - name: vendored IronCalc patches

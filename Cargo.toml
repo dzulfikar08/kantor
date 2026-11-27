@@ -58,6 +58,7 @@ kantor_metafile = { path = "crates/kantor_metafile" }
 kantor_numfmt = { path = "crates/kantor_numfmt" }
 kantor_ooxml = { path = "crates/kantor_ooxml" }
 kantor_pdf = { path = "crates/kantor_pdf" }
+kantor_pls = { path = "crates/kantor_pls" }
 kantor_sandbox = { path = "crates/kantor_sandbox" }
 kantor_keystore = { path = "crates/kantor_keystore" }
 kantor_theme = { path = "crates/kantor_theme" }
@@ -121,4 +122,8 @@ ironcalc = { path = "vendor/ironcalc" }
 # Key derivation (100,000 SHA-512 rounds, Argon2) is slow unoptimised: keep
 # opening password-protected files quick in debug builds and tests.
 [profile.dev.package.kantor_crypt]
+opt-level = 2
+# PLS-SEM bootstraps estimate a model thousands of times: keep debug builds
+# and tests quick.
+[profile.dev.package.kantor_pls]
 opt-level = 2
