@@ -21,6 +21,7 @@ mod home;
 mod macro_books;
 mod naming;
 mod notes;
+mod notices;
 mod opening;
 mod palette;
 mod panels;
@@ -150,10 +151,9 @@ pub struct Workspace {
     /// Paparan AI's chat panel, once opened (kept while hidden).
     chat: Option<chat::ChatDock>,
     message: SharedString,
-    /// A short-lived status-bar message shown over any document's (agent
-    /// edits, "copied"); see `Workspace::notice`.
-    notice: Option<SharedString>,
-    notice_id: u64,
+    /// The status bar's own message, shown over any document's (agent
+    /// edits, "copied", cloud saves); see `Workspace::notice`.
+    notices: notices::Notices,
     /// Counts "Saving…" waits before a close; Cancel moves it on so the
     /// running wait doesn't close (see `closing`).
     save_wait: u64,
@@ -198,8 +198,7 @@ impl Workspace {
             ai: None,
             chat: None,
             message: SharedString::default(),
-            notice: None,
-            notice_id: 0,
+            notices: notices::Notices::default(),
             save_wait: 0,
             logo: Arc::new(Image::from_bytes(ImageFormat::Svg, LOGO_SVG.to_vec())),
             focus: cx.focus_handle(),
@@ -1016,6 +1015,17 @@ impl Render for Workspace {
             .id("workspace")
             .key_context(WORKSPACE)
             .track_focus(&self.focus)
+            // An error in the status bar stays until the user does something.
+            .capture_key_down(cx.listener(|ws, _: &KeyDownEvent, _, cx| {
+                if ws.notices.user_action() {
+                    cx.notify();
+                }
+            }))
+            .capture_any_mouse_down(cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                if ws.notices.user_action() {
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::palette_up))

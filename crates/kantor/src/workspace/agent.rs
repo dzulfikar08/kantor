@@ -20,6 +20,7 @@ use crate::agent::path_arg;
 const SANDBOX_NO_ACCESS: &str = "Kantor isn't allowed to use {} yet: the Mac App Store version of Kantor may only use files and folders the user has chosen. Kantor is now asking the user to grant access; try again once they have, or ask them to open the file in Kantor.";
 
 use super::doc::DocView;
+use super::notices::NoticeKind;
 use super::{AppKind, Workspace};
 use crate::agent::{self, docs, sheets, slides};
 
@@ -247,20 +248,33 @@ impl Workspace {
     /// Show `text` in the status bar for a few seconds, whichever document
     /// is in front.
     pub(super) fn notice(&mut self, text: String, cx: &mut Context<Self>) {
-        self.notice_id += 1;
-        let id = self.notice_id;
-        self.notice = Some(text.into());
+        self.notice_as(text, NoticeKind::Info, cx);
+    }
+
+    /// Show `text` in the status bar as `kind` (see
+    /// [`super::notices::Notices`]): an info message for a few seconds,
+    /// progress until the next message, an error until the user's next
+    /// action. Returns its id.
+    pub(super) fn notice_as(
+        &mut self,
+        text: String,
+        kind: NoticeKind,
+        cx: &mut Context<Self>,
+    ) -> u64 {
+        let id = self.notices.post(text.into(), kind);
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(NOTICE_TIME).await;
-            let _ = this.update(cx, |ws, cx| {
-                if ws.notice_id == id {
-                    ws.notice = None;
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        if kind == NoticeKind::Info {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(NOTICE_TIME).await;
+                let _ = this.update(cx, |ws, cx| {
+                    if ws.notices.expire(id) {
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+        id
     }
 
     /// After an agent edit: the notice, naming the document when it isn't
