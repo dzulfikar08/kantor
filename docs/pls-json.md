@@ -181,6 +181,11 @@ Checked against seminr 2.6.0, cSEM 0.7.1 and SmartPLS 4 (the goldens of
   chi² and NFI are the *saturated* model's. d_G uses base-10 logarithms as
   SmartPLS and cSEM do (Dijkstra & Henseler's paper writes ln). The
   estimated model's construct correlations follow cSEM.
+- One reference disagrees with itself: the supplement's case 02 (the
+  corporate reputation extended model) prints SRMR 0.057 and NFI 0.844,
+  while case 09, the same model on the same data with the same settings,
+  prints 0.053 and 0.845 (with d_ULS, d_G and chi²). Kantor matches case 09,
+  and the test skips case 02's fit values.
 - **f²** takes R² without the predictor from the same construct scores, as
   SmartPLS does; seminr re-estimates the model without the path, so its f²
   differs slightly.

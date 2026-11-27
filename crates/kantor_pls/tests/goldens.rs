@@ -504,8 +504,13 @@ fn smartpls_reference_values() {
                 );
             }
         }
-        // Not every case printed every fit measure: index the Value (Null when missing).
-        if let Some(m) = Some(&rf["modelFit"]).filter(|v| v.is_object()) {
+        // Not every case printed every fit measure: index the Value (Null
+        // when missing). Case 02 is case 09's model (same paths, data and
+        // settings), yet its SRMR (0.057) and NFI (0.844) differ from 09's
+        // (0.053, 0.845, with d_ULS, d_G and chi² too), which Kantor
+        // matches: 02's fit values aren't SmartPLS 4's, so they're skipped.
+        let fit_ref = Some(&rf["modelFit"]).filter(|v| v.is_object() && !name.starts_with("02-"));
+        if let Some(m) = fit_ref {
             let fit = &r.fit.saturated;
             c.near("SRMR", fit.srmr, f(&m["srmr"]), T);
             c.near("d_ULS", fit.d_uls, f(&m["dULS"]), T);
