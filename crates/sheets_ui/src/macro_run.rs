@@ -35,10 +35,10 @@ use sheets_script::{
     RunOutcome, Selection, View,
 };
 
+use crate::SheetsView;
 use crate::calc::{Busy, Job};
 use crate::grid_ops::Span;
 use crate::vba_ui::MacroTrust;
-use crate::{GRID_CONTEXT, SheetsView};
 
 /// How long the UI thread waits for a run before showing the busy pane.
 const QUICK: Duration = Duration::from_millis(150);
@@ -56,7 +56,7 @@ const BUTTONS: [&str; 7] = [
 
 /// A button label in the interface language.
 fn button_label(en: &str) -> &'static str {
-    BUTTONS.iter().find(|b| **b == en).map_or("OK", |b| t(*b))
+    BUTTONS.iter().copied().find(|b| *b == en).map_or("OK", t)
 }
 
 /// `Debug.Print` lines kept.
@@ -851,7 +851,6 @@ fn scrim(id: &'static str, card: Stateful<Div>, cx: &App) -> AnyElement {
         .absolute()
         .inset_0()
         .occlude()
-        .key_context(GRID_CONTEXT)
         .flex()
         .items_center()
         .justify_center()

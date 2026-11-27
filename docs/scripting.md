@@ -1,16 +1,16 @@
 # Scripting: macros on one object layer
 
-Kantor keeps the VBA projects of `.xlsm` files but couldn't run them. `crates/kantor_script`
-is the language core for running macros: a host-neutral object layer and a VBA interpreter.
-There is no Excel object model in it yet. A Sheets object model (`Range`, `Cells`,
-`Worksheets`…) comes next, and JavaScript and Python are meant to bind to the same objects
-later.
+Kantor Sheets runs the VBA macros of `.xlsm` files. `crates/kantor_script` is the language
+core: a host-neutral object layer and a VBA interpreter. `crates/sheets_script` is the Sheets
+object model on top of it (`Application`, `Workbook`, `Worksheet`, `Range`…) and the host that
+runs a workbook's macros; `sheets_ui` runs them after Enable Content, and `kantor sheets macros
+run` runs them headless. JavaScript and Python are meant to bind to the same objects later.
 
 ## Layers
 
 ```
  VBA source ─► kantor_script::vba ─┐
- (later) JS ─► rquickjs binding  ──┼─► kantor_script::object ◄── sheets object model (later)
+ (later) JS ─► rquickjs binding  ──┼─► kantor_script::object ◄── sheets_script (Sheets object model)
  (later) Py ─► Python binding    ──┘     Value · Dispatch · Host
 ```
 
@@ -69,32 +69,158 @@ map onto it one to one. Nothing in it is VBA-specific.
   `Class_Terminate`, `Property Get/Let/Set`, a default member (`VB_UserMemId = 0`) and an
   enumerator (`VB_UserMemId = -4`).
 
-## How the Sheets object model plugs in
+## The Sheets object model (`crates/sheets_script`)
 
-The object model is a set of `Dispatch` types in a new crate (or a module of `sheets_engine`)
-over the workbook model, plus a `Host`:
+A crate of its own because it needs both `sheets_engine` and `kantor_script`, and neither
+should know the other. `sheets_ui`, the `kantor sheets macros run` command and the tests use it
+the same way.
 
-1. `Host::globals()` returns an `Application` object. Its `get` answers `Range`, `Cells`,
-   `Rows`, `Columns`, `ActiveSheet`, `ActiveCell`, `Selection`, `ActiveWorkbook`,
-   `Worksheets`, `Sheets`, `WorksheetFunction`, `Application` and `Evaluate` (the `[A1]`
-   syntax arrives as `Evaluate`).
-2. `Range` implements `get`/`put` for `Value`, `Value2`, `Formula`, `Text`, `NumberFormat`,
-   `Offset`, `Resize`, `Cells`, `Row`, `Column`, `End(xlUp)`, `CurrentRegion`… and `""` as an
-   alias of `Value` (with arguments, `""` is `Item`). Multi-cell `Value` is a 2-D
-   `Value::Array` with lower bounds 1 (`Array::from_rows`/`rows`). `enumerate` yields the cells.
-3. `Host::constant` maps `xl*` names to values (or the model calls
-   `Project::register_constant` once). `Dim r As XlDirection` already works: unknown type
-   names starting with `vb`/`xl`/`mso` are treated as Long enumerations.
-4. `Host::msg_box`/`input_box` show Kantor dialogs; `debug_print` feeds an Immediate pane;
-   `now` gives local time; `cancelled` returns the UI's `CancelToken`.
-5. Writes go through Sheets' normal edit path so a macro is one undo step and recalculation
-   runs at the end (or when the script reads a dependent cell). `ScreenUpdating` and
-   `Calculation` become flags on the host.
-6. UDFs: the formula engine calls `Project::call_function(name, args, host)` with ranges as
-   `Range` objects (or values), on the UI thread, with a small step budget.
+```
+ sheets_ui (Run, buttons) ─┐                         ┌─► sheets_engine::Workbook
+ kantor sheets macros run ─┼─► sheets_script ─────────┤    (edits, undo, recalculation)
+ tests                    ─┘   run_macro · objects   └─► kantor_script::vba::Project
+```
 
-Events (`Workbook_Open`, `Worksheet_Change`) are procedures in document modules; the host
-calls `Project::run("ThisWorkbook.Workbook_Open", …)` when it wants them to fire.
+- **A run** (`run::run_macro`) takes the workbook, runs one macro and gives the workbook back
+  with a `RunOutcome`: the result (`MacroError` with the number, description, module, procedure
+  and the line as the Visual Basic Editor shows it, attribute lines left out), where the macro
+  left the active sheet and selection, and whether `ThisWorkbook.Save` was called (the caller
+  saves). The workbook's own undo history gets one entry for the whole run
+  (`Workbook::undo_mark`/`fold_undo`); a multi-step undo recalculates once.
+- **Edits** go through the engine's normal edit operations (`set_input`, `set_range_style_value`,
+  `sort_range_by`, `set_column_filter`, `insert_rows`, `copy_cells`…), so recalculation, undo
+  and save behave as for edits made by hand. While a macro runs, automatic recalculation is
+  deferred (`Workbook::script_begin`); a read after writes brings values up to date first
+  (`script_sync`), as Excel's automatic calculation does; `script_end` resumes.
+- **Objects** hold the run's `Session` (`Rc`): the workbook (lent to the run), the active sheet
+  and each sheet's selection, the clipboard of `Copy`/`Cut`, `Find`'s last search, the pending
+  `Worksheet.Sort`, and the application settings a macro changes. Sheets are kept by `sheetId`,
+  so a `Worksheet` or `Range` object stays right when sheets are added, moved or renamed; a
+  deleted sheet's objects fail with error 424. Document modules map to sheets by the file's
+  code names (`<sheetPr codeName>`, read by `Workbook::sheet_code_names`), or in order for a
+  workbook without them, so `Sheet1.Range(...)` and `Me` in a sheet module work.
+- **Errors** are Excel's: 1004 (with Excel's wording where it has one, "Application-defined or
+  object-defined error" otherwise) for object-model failures, 9 for an unknown sheet or name,
+  13 for type mismatches, 91/424 for missing objects, 438 for unknown members, 445 for what
+  Kantor doesn't do (it names the feature), 18 when stopped.
+- **Dialogs** go through the `MacroUi` trait, which is *lent the workbook* while a `MsgBox` or
+  `InputBox` shows, so a UI can show the cells as the macro left them. `HeadlessUi` answers OK /
+  Yes and takes input box answers from a list.
+
+### Coverage
+
+- **Globals / `Application`**: `Range`, `Cells`, `Rows`, `Columns`, `ActiveSheet`, `ActiveCell`,
+  `Selection`, `ActiveWorkbook`, `ThisWorkbook`, `Workbooks`, `Worksheets`/`Sheets`, `Names`,
+  `ActiveWindow`, `Intersect`, `Union`, `Evaluate` (and `[A1]`), `WorksheetFunction`, `Calculate`,
+  `Goto`, `InputBox` (Type 0/1/2/4/8; `False` when cancelled), `UserName`, `Version` (16.0),
+  `Name`, `OperatingSystem`, `PathSeparator`; `ScreenUpdating`, `DisplayAlerts`, `EnableEvents`,
+  `StatusBar`, `Cursor`, `CutCopyMode` (False clears the clipboard) are kept; `Calculation`
+  switches the workbook's calculation mode. `Application.Sum(...)` returns an error value
+  instead of raising. `Wait`, `OnTime`, `OnKey`, `Run`, `Quit`, `SendKeys`, file dialogs and
+  `Caller` fail with error 445.
+- **`Workbook`**: `Name`, `FullName`, `Path`, `CodeName`, `Worksheets`, `Sheets`, `Names`,
+  `ActiveSheet`, `Saved`, `Save` (saved when the run ends); `SaveAs`, `SaveCopyAs`, `Close`,
+  `RefreshAll`, printing: 445. `Workbooks(1)`/`Workbooks("Book.xlsm")` is this workbook;
+  `Workbooks.Open`/`Add`: 445.
+- **`Worksheets`/`Sheets`** (worksheets; chart sheets aren't in the object model): `Count`,
+  `Item` by number or name (default member), `Add` with `Before`/`After`/`Count` (the new sheet
+  becomes active), `For Each`.
+- **`Worksheet`**: `Name` (get/let), `CodeName`, `Index`, `Range`, `Cells`, `Rows`, `Columns`,
+  `UsedRange`, `Activate`, `Select`, `Delete`, `Copy`/`Move` with `Before`/`After` (to another
+  workbook: 445), `Visible` (`xlSheetVeryHidden` hides), `Next`/`Previous`, `Paste`,
+  `AutoFilter`, `AutoFilterMode` (False removes it), `FilterMode`, `ShowAllData`, `Sort`
+  (`SortFields.Clear/Add`, `SetRange`, `Header`, `Apply`: what recorded macros write),
+  `StandardWidth`/`StandardHeight`, `Evaluate`, `Calculate`. `Protect`/`Unprotect` are
+  accepted and do nothing (Kantor doesn't protect sheets). `Shapes`, `ChartObjects`,
+  `ListObjects`, `PivotTables`, `Comments`: 445.
+- **`Range`**: `Value` (2-D arrays in and out, base 1; dates as `Date` where the cell has a date
+  format), `Value2`, `Formula`, `FormulaR1C1` (converted both ways), `FormulaLocal`, `Text`,
+  `Address` (`RowAbsolute`, `ColumnAbsolute`, `ReferenceStyle`, `External`, `RelativeTo`), `Row`,
+  `Column`, `Rows`, `Columns`, `Count`, `CountLarge`, `Cells`, `Item`, `Offset`, `Resize`,
+  `End(xlUp/xlDown/xlToLeft/xlToRight)`, `CurrentRegion`, `EntireRow`, `EntireColumn`,
+  `Areas`, `MergeArea`, `Clear`, `ClearContents`, `ClearFormats`, `Delete`/`Insert` (`Shift`; whole
+  rows and columns insert and delete them), `Copy [Destination]`, `Cut [Destination]`,
+  `PasteSpecial` (`xlPasteAll`, `xlPasteValues`, `xlPasteFormats`, `xlPasteFormulas`, with number
+  formats, `xlPasteColumnWidths`), `Select`, `Activate`, `Find`/`FindNext`/`FindPrevious` (`What`,
+  `After`, `LookIn`, `LookAt`, `SearchOrder`, `SearchDirection`, `MatchCase`), `Replace`, `Sort`
+  (`Key1..3`, `Order1..3`, `Header` including `xlGuess`), `AutoFilter` (`Field`, `Criteria1`,
+  `Operator` `xlAnd`/`xlOr`/`xlFilterValues`/top 10, `Criteria2`; no arguments toggles it),
+  `RemoveDuplicates`, `AutoFit` (columns by the longest shown text; rows back to automatic),
+  `NumberFormat`, `HorizontalAlignment`, `VerticalAlignment`, `WrapText`, `IndentLevel`,
+  `Orientation`, `MergeCells`/`Merge`/`UnMerge`, `ColumnWidth` (characters), `RowHeight`
+  (points), `Width`/`Height`/`Left`/`Top` (points), `Hidden`, `HasFormula`, `Font` (`Bold`,
+  `Italic`, `Underline`, `Strikethrough`, `Size`, `Name`, `Color`, `ColorIndex`, `FontStyle`),
+  `Interior` (`Color`, `ColorIndex`, `Pattern` `xlNone`), `Borders`/`Borders(edge)`
+  (`LineStyle`, `Weight`, `Color`, `ColorIndex`), `BorderAround`,
+  `SpecialCells(xlCellTypeConstants/Formulas/Blanks/LastCell/Visible[, value types])`,
+  `FillDown`/`FillRight`, `Name` (defines a name), the default member (`Value`, or `Item` with
+  arguments) and `For Each` over cells, rows or columns. Whole rows and columns read, write and
+  format their used part.
+- **`WorksheetFunction.X(...)`**: any function the engine knows, evaluated on the active sheet
+  (`Workbook::evaluate_formula`, KANTOR_PATCHES §37): ranges go in as references, arrays as array
+  constants; an Excel error raises 1004 ("Unable to get the X property of the WorksheetFunction
+  class"); an unknown name is 438.
+- **`Names`**: `Count`, `Item`, `Add Name, RefersTo`, `For Each`; `Name`: `Name`, `RefersTo`,
+  `RefersToRange`, `Value`, `Delete`.
+- **`ActiveWindow`**: `FreezePanes` (at the active cell), `SplitRow`/`SplitColumn`,
+  `DisplayGridlines`, `Zoom`, `View` (page break preview); scrolling is accepted.
+- **Constants**: the `xl*` constants macros use (directions, paste and find options, sort and
+  filter, alignment, borders, colours, calculation, sheet visibility, file formats, error
+  codes), registered with `Project::register_constant` (`consts.rs`).
+
+Not covered: events (`Workbook_Open`, `Worksheet_Change` don't fire), UserForms, charts, shapes
+and pivot tables as objects, comments/notes, hyperlinks, conditional formats and validation from
+macros, `Application.Run`, other workbooks, printing; removing a single border edge with
+`xlNone` is ignored (the engine removes all of a range's borders or none) and diagonal borders
+aren't drawn; `AutoFit` measures characters, not glyphs; `RemoveDuplicates` moves values, not
+formats; module-level variables start fresh on each run (the project is compiled per run).
+
+### Running macros in Sheets
+
+- **Trust.** A workbook with macros opens with them disabled (`MacroTrust::Disabled`): the bar
+  says so and has **Enable Content**, which enables them for this pane until it closes; nothing
+  is remembered. `vba_ui::initial_trust` is where trusted locations or "always trust this file"
+  would decide otherwise. With content disabled, Run is greyed out and a click on a macro
+  button shows the bar again.
+- **Run.** The Macros dialog (Alt+F8) lists the modules and procedures; Run starts the selected
+  public parameterless `Sub` (what Excel's Alt+F8 lists). Buttons and shapes with an assigned
+  macro (`macro="[0]!Macro1"` on the drawing object, or a form control's `controlPr macro` /
+  VML `x:FmlaMacro`, read by `sheets_engine::drawing`) run it on click; Ctrl+click selects them.
+- **Where it runs.** The interpreter is built on `Rc` (not `Send`) and recurses on the native
+  stack, so a run can't be cut into slices on the UI thread. It runs on a worker thread of its
+  own instead (32 MB stack), with the workbook moved there as a big recalculation does, and the
+  project compiled there from the module sources (`MacroProject`, which is `Send`). The grid
+  holds a stand-in meanwhile; the UI thread waits up to 150 ms first, so a quick macro never
+  shows it. A longer run shows the busy pane with **Stop** (and Esc), which sets the
+  interpreter's cancel flag (polled every 1024 statements): the macro stops with error 18 and
+  what it did so far stays, as one undo step.
+- **Dialogs.** `MsgBox` and `InputBox` are modal dialogs (buttons and icons from `Buttons`,
+  the default button, Esc for Cancel). While one shows, the worker hands the workbook back to
+  the UI thread, so the grid shows the cells as the macro left them; the answer takes it back.
+  A run-time error shows "Run-time error '1004':", the description and "in Module1.Macro1,
+  line 12", with **End**.
+- **Output.** `Debug.Print` lines go to the Macros dialog's Output list (the last 500).
+- **UDFs.** With content enabled, the workbook's VBA `Public Function`s work in cell formulas
+  (`=MyTax(A2)`): `udf::VbaFunctions` implements the engine's user functions (§37); each thread
+  that recalculates compiles the project once (thread-local), calls get their arguments as
+  values (ranges as 2-D arrays) with a 5 million statement budget and no workbook objects, and
+  an error shows `#VALUE!`. With content disabled they are `#NAME?`, as in Excel with macros off.
+  The formula text is saved as written.
+
+### Headless: `kantor sheets macros run`
+
+`kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]...` runs a macro and
+saves the workbook (in place unless `--out`). `MsgBox` prints to standard error and answers OK
+(or Yes); `InputBox` takes the `--input` values in order and fails clearly when none is left;
+`Debug.Print` goes to standard error. Running the file's macros trusts it, so its VBA functions
+work in its formulas too. On a run-time error nothing is saved (exit status 1).
+
+### AI tools don't run macros
+
+The MCP tool `sheets_macros` and Paparan AI's `macros` tool read macros; neither runs them, and
+no AI tool can press Enable Content or Run. A macro is code that came with the file: running it
+is the user's decision. The tools' descriptions say so, so the assistant explains a macro or
+redoes its work with formulas and the sheets editing tools instead.
 
 ## JavaScript and Python on the same layer
 
