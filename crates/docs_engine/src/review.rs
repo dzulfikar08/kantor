@@ -283,7 +283,7 @@ pub fn now_utc() -> String {
 }
 
 /// Paragraph-mark revision elements kept in a paragraph's extras.
-fn mark_revs(p: &Paragraph) -> (bool, bool) {
+pub(crate) fn mark_revs(p: &Paragraph) -> (bool, bool) {
     let has = |name: &str| {
         let in_raw = p
             .props

@@ -190,10 +190,34 @@ impl DocsView {
         );
         let mut m = self.review_memo.borrow_mut();
         if m.key != Some(key) {
-            *m = ReviewMemo {
-                key: Some(key),
-                ..ReviewMemo::default()
-            };
+            // Typing in a paragraph with no changes or comments (out of
+            // tables) leaves them all where they were.
+            let typed = m
+                .key
+                .is_some_and(|k| k.0 + 1 == key.0 && (k.1, k.2, k.3) == (key.1, key.2, key.3))
+                && d.last_splice().is_some_and(|sp| {
+                    sp.removed == 1
+                        && sp.inserted == 1
+                        && sp.old.len() == 1
+                        && !sp.side
+                        && sp.start < d.len()
+                        && {
+                            let (old, new) = (&sp.old[0], d.paragraph(sp.start));
+                            old.props == new.props
+                                && old.cell.is_none()
+                                && new.cell.is_none()
+                                && !old.has_review_marks()
+                                && !new.has_review_marks()
+                        }
+                });
+            if typed {
+                m.key = Some(key);
+            } else {
+                *m = ReviewMemo {
+                    key: Some(key),
+                    ..ReviewMemo::default()
+                };
+            }
         }
         Some(m)
     }

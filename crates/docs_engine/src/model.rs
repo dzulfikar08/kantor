@@ -351,6 +351,19 @@ impl Paragraph {
         }
     }
 
+    /// Tracked changes (of its text, formatting or mark), comment marks or
+    /// floating objects in it: editing the text of a paragraph with none
+    /// (out of tables) leaves the document's lists of changes and comments
+    /// as they were.
+    pub fn has_review_marks(&self) -> bool {
+        self.runs.iter().any(|r| r.rev.is_some())
+            || crate::fmt_track::para_change(&self.props).is_some()
+            || crate::review::mark_revs(self) != (false, false)
+            || self.objects().any(|(_, o)| {
+                matches!(o, Object::Float(_)) || crate::review::comment_id(o).is_some()
+            })
+    }
+
     /// Its words, as [`crate::Document::word_count`] counts them.
     pub fn word_count(&self) -> usize {
         self.text
