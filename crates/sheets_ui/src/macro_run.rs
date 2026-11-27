@@ -124,10 +124,12 @@ struct RunDialog {
     choice: usize,
 }
 
-impl RunDialog {
+impl MacroRun {
     /// Whether the macro waits for a UserForm step.
-    pub(crate) fn is_form(&self) -> bool {
-        matches!(self.ask, Ask::Form(_))
+    pub(crate) fn waits_for_form(&self) -> bool {
+        self.dialog
+            .as_ref()
+            .is_some_and(|d| matches!(d.ask, Ask::Form(_)))
     }
 }
 

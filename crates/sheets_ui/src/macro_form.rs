@@ -181,11 +181,7 @@ impl SheetsView {
     /// Whether the macro waits for this form's answer (not a MsgBox shown
     /// over it).
     fn form_waiting(&self) -> bool {
-        self.macros
-            .run
-            .as_ref()
-            .and_then(|r| r.dialog.as_ref())
-            .is_some_and(|d| d.is_form())
+        self.macros.run.as_ref().is_some_and(|r| r.waits_for_form())
     }
 
     /// Sends the pending edits and `action`.

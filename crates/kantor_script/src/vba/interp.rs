@@ -1195,7 +1195,7 @@ impl Interp<'_> {
             Rc::from(key)
         };
         if let Some(g) = module.procs.get(&key)
-            && (g.is_public() || form.is_some())
+            && g.is_public()
         {
             let g = g.clone();
             return self.call_group(&module, &g, args, Some((o.clone(), fields)), access);
@@ -1281,12 +1281,7 @@ impl Interp<'_> {
         } else {
             Rc::from(name.to_lowercase())
         };
-        if let Some(g) = module
-            .procs
-            .get(&key)
-            .filter(|g| g.is_public() || form.is_some())
-            .cloned()
-        {
+        if let Some(g) = module.procs.get(&key).filter(|g| g.is_public()).cloned() {
             let a = args.into_iter().map(|a| ArgIn::value(a.value)).collect();
             return self.call_property_put(&module, &g, a, value, set, Some((o.clone(), fields)));
         }
