@@ -114,6 +114,29 @@ fn edits_relay_out_as_a_full_layout_does() {
         doc.backspace(Selection::caret(at));
         c.relayout(&doc, &format!("joining paragraph {para}"));
     }
+    // Pasting paragraphs, deleting across paragraphs, Enter in a numbered
+    // list (the items after it renumbered), undo and redo of those.
+    let at = doc.clamp(Position::new(20, 2));
+    let pasted = doc.insert_text(Selection::caret(at), "one\ntwo words\nthree", None);
+    c.relayout(&doc, "pasting paragraphs");
+    let sel = Selection {
+        anchor: doc.clamp(Position::new(30, 1)),
+        head: doc.clamp(Position::new(33, 4)),
+    };
+    doc.insert_text(sel, "", None);
+    c.relayout(&doc, "deleting across paragraphs");
+    let item = doc.clamp(Position::new(11, 2));
+    doc.insert_text(Selection::caret(item), "\n", None);
+    c.relayout(&doc, "Enter in a list item");
+    for k in 0..3 {
+        doc.undo();
+        c.relayout(&doc, &format!("undo {k}"));
+    }
+    for k in 0..3 {
+        doc.redo();
+        c.relayout(&doc, &format!("redo {k}"));
+    }
+    let _ = pasted;
     // Tracked changes: insertions and struck-through deletions.
     doc.set_track_changes(true, Selection::default());
     c.relayout(&doc, "track changes on");
