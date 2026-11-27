@@ -838,6 +838,8 @@ pub struct Prior {
     pub dirty: Vec<usize>,
     /// The paragraphs the edit replaced, when known.
     pub old: Option<Vec<docs_engine::Paragraph>>,
+    /// The tables built, with the width (twips) each was built for.
+    pub tables: Vec<(TableBlock, u32)>,
 }
 
 /// The body's layout paragraphs, widths and blocks, each paragraph's list
@@ -846,6 +848,8 @@ pub struct Built {
     pub lps: Vec<docs_layout::Paragraph>,
     pub widths: Vec<f32>,
     pub blocks: Vec<Block>,
+    /// The width (twips) each table in `blocks` was built for, in order.
+    pub table_widths: Vec<u32>,
     pub markers: Vec<Option<String>>,
     pub fresh: Vec<bool>,
 }
@@ -924,7 +928,19 @@ fn build_with_prior(
         _ => doc.list_markers(),
     };
     let mut widths: Vec<f32> = (0..paras.len()).map(|i| tw(content_tw(i))).collect();
+    // Tables built before (by first paragraph, with the width they were
+    // built for), for an edit outside them.
+    let old_tables = prior.as_ref().and_then(|p| {
+        let tables: HashMap<usize, (&TableBlock, u32)> = p
+            .tables
+            .iter()
+            .filter_map(|(tb, w)| Some((first_para(tb)?, (tb, *w))))
+            .collect();
+        Some((tables, (p.start, p.removed, p.inserted)))
+    });
+    let old_tables = old_tables.as_ref().map(|(t, s)| (t, *s));
     let mut blocks = Vec::new();
+    let mut table_widths = Vec::new();
     let mut i = 0;
     // Tables met so far: a table's range starts at its first paragraph
     // (found going on from here, not by searching from the start).
@@ -948,7 +964,29 @@ fn build_with_prior(
         }
         match found {
             Some((id, range)) if range.start == i && !range.is_empty() => {
-                match table_block(doc, paras, id, range.clone(), content_tw(i)) {
+                // A table the edit didn't touch: as built before.
+                let kept = old_tables.and_then(|(tables, (start, removed, inserted))| {
+                    let (a, b) = (range.start, range.end);
+                    let old_start = if b <= start {
+                        a
+                    } else if a >= start + inserted {
+                        a - inserted + removed
+                    } else {
+                        return None;
+                    };
+                    let (tb, w) = tables.get(&old_start)?;
+                    (*w == content_tw(i))
+                        .then(|| shifted_table(tb, a as isize - old_start as isize))
+                });
+                let kept = kept.filter(|tb| {
+                    tb.rows
+                        .iter()
+                        .flat_map(|r| &r.cells)
+                        .map(|c| c.paras.end)
+                        .max()
+                        .is_some_and(|end| end == range.end)
+                });
+                match kept.or_else(|| table_block(doc, paras, id, range.clone(), content_tw(i))) {
                     Some(tb) => {
                         for row in &tb.rows {
                             for cell in &row.cells {
@@ -958,6 +996,7 @@ fn build_with_prior(
                                 }
                             }
                         }
+                        table_widths.push(content_tw(i));
                         blocks.push(Block::Table(tb));
                         i = range.end;
                     }
@@ -1064,9 +1103,30 @@ fn build_with_prior(
         lps: out,
         widths,
         blocks,
+        table_widths,
         markers,
         fresh,
     }
+}
+
+/// A table's first paragraph.
+fn first_para(tb: &TableBlock) -> Option<usize> {
+    tb.rows
+        .iter()
+        .flat_map(|r| &r.cells)
+        .filter(|c| !c.paras.is_empty())
+        .map(|c| c.paras.start)
+        .min()
+}
+
+/// `tb` with its paragraphs `by` further on.
+fn shifted_table(tb: &TableBlock, by: isize) -> TableBlock {
+    let mut tb = tb.clone();
+    for c in tb.rows.iter_mut().flat_map(|r| &mut r.cells) {
+        let at = |k: usize| (k as isize + by).max(0) as usize;
+        c.paras = at(c.paras.start)..at(c.paras.end);
+    }
+    tb
 }
 
 /// Paragraph index range of table `id` in `paras`.

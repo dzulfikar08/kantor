@@ -637,6 +637,8 @@ pub(crate) struct Body {
     pub markers: Vec<Option<String>>,
     pub refs: Vec<NoteRef>,
     pub furn_keys: Vec<FurnKey>,
+    /// The width (twips) each table in `blocks` was built for.
+    pub table_widths: Vec<u32>,
 }
 
 /// What a page's header and footer show and where: two pages with the
@@ -826,6 +828,15 @@ pub(crate) fn lay_out_body(
             removed,
             inserted,
             dirty,
+            tables: b
+                .blocks
+                .iter()
+                .filter_map(|blk| match blk {
+                    Block::Table(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .zip(b.table_widths.iter().copied())
+                .collect(),
             old: doc
                 .last_splice()
                 .filter(|sp| {
@@ -854,6 +865,7 @@ pub(crate) fn lay_out_body(
         mut blocks,
         markers,
         fresh,
+        table_widths,
     } = built;
     drop(t);
     let t = span("docs shape body");
@@ -1258,6 +1270,7 @@ pub(crate) fn lay_out_body(
             markers,
             refs,
             furn_keys,
+            table_widths,
         },
     )
 }
