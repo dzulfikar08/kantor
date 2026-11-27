@@ -307,7 +307,13 @@ impl Dispatch for SheetObj {
                 crate::hyperlinks::sheet_hyperlinks(&self.s, self.id),
                 args,
             ),
-            "comments" => Ok(crate::comments::comments(&self.s, self.id)),
+            "comments" => {
+                let c = crate::comments::comments(&self.s, self.id);
+                match (&c, args.is_empty()) {
+                    (Value::Object(Some(o)), false) => o.get("", args),
+                    _ => Ok(c),
+                }
+            }
             "commentsthreaded" => crate::comments::threaded(),
             "pagesetup" => Ok(crate::page_setup::page_setup(&self.s, self.id)),
             "hpagebreaks" => crate::page_setup::h_page_breaks(&self.s, self.id, args),

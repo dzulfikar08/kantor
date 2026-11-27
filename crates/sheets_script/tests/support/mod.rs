@@ -20,7 +20,7 @@ pub fn project(code: &str) -> MacroProject {
 }
 
 /// Runs `name` from `code`; returns the workbook, the outcome and the
-/// `Debug.Print` lines.
+/// `Debug.Print` lines (trimmed).
 pub fn run_printed(book: Workbook, code: &str, name: &str) -> (Workbook, RunOutcome, Vec<String>) {
     let ui = HeadlessUi::new(Vec::new(), false);
     let printed = ui.printed.clone();
@@ -35,7 +35,13 @@ pub fn run_printed(book: Workbook, code: &str, name: &str) -> (Workbook, RunOutc
             ..Default::default()
         },
     );
-    let printed = printed.borrow().clone();
+    // `Debug.Print 3` prints " 3 " (VBA pads numbers); the tests compare
+    // trimmed lines.
+    let printed = printed
+        .borrow()
+        .iter()
+        .map(|l| l.trim().to_owned())
+        .collect();
     (book, outcome, printed)
 }
 
