@@ -154,6 +154,18 @@ impl Dispatch for SheetObj {
         "Worksheet".into()
     }
 
+    fn document_module(&self) -> Option<String> {
+        if !std::rc::Rc::ptr_eq(&crate::books::this(&self.s), &self.s) {
+            return None;
+        }
+        self.s
+            .code_names
+            .borrow()
+            .iter()
+            .find(|(_, id)| *id == self.id)
+            .map(|(c, _)| c.clone())
+    }
+
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }

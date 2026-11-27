@@ -864,6 +864,10 @@ impl Interp<'_> {
                 self.call_group(&m, &g, Vec::new(), me, Access::Get)
             }
             Binding::Builtin(k) => self.builtin(&k, Vec::new(), f),
+            // `Set ws = Sheet1`, `ThisWorkbook`: the host's object for the document.
+            Binding::Module(m) if m.kind == ModuleKind::Document => {
+                Ok(Value::Object(Some(self.document_object(&m)?)))
+            }
             Binding::Module(_) | Binding::Enum => Err(ScriptError::syntax(format!(
                 "Expected variable or procedure, not '{}'",
                 id.text
@@ -1073,23 +1077,21 @@ impl Interp<'_> {
         let obj = self.eval(base, f)?;
         match obj {
             Value::Object(Some(o)) => {
-                if let Some(inst) = as_instance(&o) {
-                    let via = if inst.module.implements.is_empty() {
-                        None
-                    } else {
-                        self.interface_of(base, f)
-                    };
-                    let a = self.eval_args_in(args, f)?;
-                    return self.instance_member_via(&o, &name.key, a, access, via.as_deref());
+                if as_instance(&o).is_some() {
+                    return self.instance_call(&o, base, name, args, f, access);
                 }
                 let a = self.eval_args(args, f)?;
                 if o.script_member(&name.text) == Some(ScriptMember::Run) {
                     return self.app_run(a);
                 }
-                if access == Access::Call {
+                let r = if access == Access::Call {
                     o.call(&name.text, &a)
                 } else {
                     o.get(&name.text, &a)
+                };
+                match r {
+                    Err(e) if e.number == 438 => self.document_member(&o, name, args, f, access, e),
+                    r => r,
                 }
             }
             Value::Object(None) => Err(ScriptError::runtime(91)),
@@ -1131,11 +1133,95 @@ impl Interp<'_> {
                 "Calling the DLL function {} (\"{}\")",
                 name.text, lib
             ))),
+            // `Sheet1.Range("A1")`: a member of the host's object for the document.
+            _ if m.kind == ModuleKind::Document => {
+                let o = self.document_object(m)?;
+                let a = self.eval_args(args, f)?;
+                if access == Access::Call {
+                    o.call(&name.text, &a)
+                } else {
+                    o.get(&name.text, &a)
+                }
+            }
             _ => Err(ScriptError::syntax(format!(
                 "Method or data member not found: {}.{}",
                 m.name, name.text
             ))),
         }
+    }
+
+    /// The host's object for a document module (`Sheet1`, `ThisWorkbook`).
+    #[inline(never)]
+    fn document_object(&mut self, m: &Module) -> R<ObjectRef> {
+        let g = self
+            .host
+            .globals()
+            .ok_or_else(|| ScriptError::runtime(424))?;
+        match g.get(&m.name, &[])? {
+            Value::Object(Some(o)) => Ok(o),
+            _ => Err(ScriptError::runtime(424)),
+        }
+    }
+
+    /// A member a host object doesn't have (438), when the object is a document whose module
+    /// defines it: `ThisWorkbook.MyMacro`, `Sheet1.Total` (a public variable).
+    #[inline(never)]
+    fn document_member(
+        &mut self,
+        o: &ObjectRef,
+        name: &Ident,
+        args: &[ArgExpr],
+        f: &mut Frame,
+        access: Access,
+        e: ScriptError,
+    ) -> R<Value> {
+        let module = o
+            .document_module()
+            .and_then(|n| self.module_named(&n.to_lowercase()))
+            .filter(|m| m.kind == ModuleKind::Document);
+        match module {
+            Some(m)
+                if m.public_vars.contains(&name.key)
+                    || m.procs.get(&name.key).is_some_and(|g| g.is_public()) =>
+            {
+                let inside = m.idx == f.module.idx;
+                match self.module_member(&m, &name.key, f, inside)? {
+                    Some(Binding::Slot(s)) => {
+                        let v = self.read_slot(&s)?;
+                        let a = self.eval_args(args, f)?;
+                        self.index_value(v, a, access)
+                    }
+                    Some(Binding::Proc(pm, g)) => {
+                        let a = self.eval_args_in(args, f)?;
+                        self.call_group(&pm, &g, a, None, access)
+                    }
+                    _ => Err(e),
+                }
+            }
+            _ => Err(e),
+        }
+    }
+
+    /// `base.name(args)` on a class instance (through its interface when `base` is a variable
+    /// declared as one).
+    #[inline(never)]
+    fn instance_call(
+        &mut self,
+        o: &ObjectRef,
+        base: &Expr,
+        name: &Ident,
+        args: &[ArgExpr],
+        f: &mut Frame,
+        access: Access,
+    ) -> R<Value> {
+        let has_ifaces = as_instance(o).is_some_and(|i| !i.module.implements.is_empty());
+        let via = if has_ifaces {
+            self.interface_of(base, f)
+        } else {
+            None
+        };
+        let a = self.eval_args_in(args, f)?;
+        self.instance_member_via(o, &name.key, a, access, via.as_deref())
     }
 
     /// The interface an expression is declared as (`Dim s As IShape`), when it names a
@@ -1711,6 +1797,10 @@ impl Interp<'_> {
                     },
                     path: Vec::new(),
                 }),
+                // `Sheet1.Name = "Data"`: the host's object for the document.
+                _ if m.kind == ModuleKind::Document => {
+                    Ok(Place::prop(self.document_object(&m)?, &name.text, args))
+                }
                 _ => Err(ScriptError::syntax(format!(
                     "Method or data member not found: {}",
                     name.text
@@ -1961,10 +2051,9 @@ impl Interp<'_> {
         let mut pc = 0usize;
         while pc < proc.ops.len() {
             self.tick()?;
-            let step = match self.host_calls() {
-                Ok(()) => self.exec_op(&proc.ops[pc], pc, f),
-                Err(e) => Err(e),
-            };
+            let step = self
+                .host_calls()
+                .and_then(|()| self.exec_op(&proc.ops[pc], pc, f));
             match step {
                 Ok(Flow::Next) => pc += 1,
                 Ok(Flow::Jump(t)) => pc = t,
@@ -2088,24 +2177,7 @@ impl Interp<'_> {
                 targets,
                 gosub,
                 ..
-            } => {
-                // MS-VBAL §5.4.2.10: 0 or past the list falls through; below 0 or above 255
-                // is error 5.
-                let v = self.eval_value(index, f)?;
-                let n = convert::to_i64(&convert::convert(&v, Scalar::Long)?)?;
-                if !(0..=255).contains(&n) {
-                    return Err(ScriptError::runtime(5));
-                }
-                match targets.get((n as usize).wrapping_sub(1)) {
-                    Some(&t) if n > 0 => {
-                        if *gosub {
-                            f.gosubs.push(pc + 1);
-                        }
-                        Ok(Flow::Jump(t))
-                    }
-                    _ => Ok(Flow::Next),
-                }
-            }
+            } => self.on_jump(index, targets, *gosub, pc, f),
             Op::Return => f
                 .gosubs
                 .pop()
@@ -2113,6 +2185,40 @@ impl Interp<'_> {
                 .ok_or_else(|| ScriptError::runtime(3)),
             Op::Exit => Ok(Flow::Exit),
         }
+    }
+
+    /// `On n GoTo/GoSub` (MS-VBAL §5.4.2.10): 0 or past the list falls through; below 0 or
+    /// above 255 is error 5. Out of line: the statement loop recurses on the native stack.
+    #[inline(never)]
+    fn on_jump(
+        &mut self,
+        index: &Expr,
+        targets: &[usize],
+        gosub: bool,
+        pc: usize,
+        f: &mut Frame,
+    ) -> R<Flow> {
+        let v = self.eval_value(index, f)?;
+        let n = convert::to_i64(&convert::convert(&v, Scalar::Long)?)?;
+        if !(0..=255).contains(&n) {
+            return Err(ScriptError::runtime(5));
+        }
+        match targets.get((n as usize).wrapping_sub(1)) {
+            Some(&t) if n > 0 => {
+                if gosub {
+                    f.gosubs.push(pc + 1);
+                }
+                Ok(Flow::Jump(t))
+            }
+            _ => Ok(Flow::Next),
+        }
+    }
+
+    #[inline(never)]
+    fn raise_stmt(&mut self, name: &Ident, args: &[ArgExpr], f: &mut Frame) -> R<()> {
+        let module = f.module.clone();
+        let me = f.me.as_ref().map(|(o, _)| o.clone());
+        self.raise_event_stmt(name, args, &module, me, f)
     }
 
     /// A condition's truth; Null counts as False.
@@ -2386,11 +2492,7 @@ impl Interp<'_> {
                 kind: ErrorKind::Halt,
                 ..ScriptError::new(0, "End")
             }),
-            StmtKind::RaiseEvent { name, args } => {
-                let module = f.module.clone();
-                let me = f.me.as_ref().map(|(o, _)| o.clone());
-                self.raise_event_stmt(name, args, &module, me, f)
-            }
+            StmtKind::RaiseEvent { name, args } => self.raise_stmt(name, args, f),
             StmtKind::Unsupported(feature) => Err(ScriptError::unsupported(feature)),
             StmtKind::Invalid(msg) => Err(ScriptError::syntax(msg.clone())),
             _ => Ok(()),

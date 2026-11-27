@@ -870,15 +870,7 @@ fn run_on_worker(
 ) {
     let (mut project, broken) = macros.compile();
     let (book, outcome) = match sheets_script::broken_for(&broken, &macros, &name) {
-        Some(e) => (
-            book,
-            RunOutcome {
-                result: Err(e),
-                view,
-                save_requested: false,
-                changed: false,
-            },
-        ),
+        Some(e) => (book, RunOutcome::failed(e, view)),
         None => {
             let ui = ChannelUi { tx: tx.clone() };
             sheets_script::run_macro(

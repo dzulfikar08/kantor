@@ -23,6 +23,9 @@ use super::interp::{ArgIn, Interp, Place, R};
 use super::objects::{Instance, Scope};
 use crate::object::*;
 
+/// A sink as of now: its module and, for an instance, `Me` and its variables.
+type LiveSink = (Rc<Module>, Option<(ObjectRef, Rc<Scope>)>);
+
 /// A module whose `WithEvents` variables receive events.
 pub(crate) struct Sink {
     pub module: Rc<Module>,
@@ -72,7 +75,7 @@ impl Interp<'_> {
         args: &[(Value, Option<Place>)],
     ) -> R<()> {
         // Handlers may create instances (new sinks): go over the ones there now.
-        let sinks: Vec<(Rc<Module>, Option<(ObjectRef, Rc<Scope>)>)> = self
+        let sinks: Vec<LiveSink> = self
             .st
             .sinks
             .iter()
@@ -133,7 +136,7 @@ impl Interp<'_> {
         me: Option<ObjectRef>,
         f: &mut super::interp::Frame,
     ) -> R<()> {
-        if !module.events.iter().any(|e| *e == name.key) {
+        if !module.events.contains(&name.key) {
             return Err(ScriptError::syntax(format!(
                 "Event not found: {}",
                 name.text
@@ -220,6 +223,11 @@ impl Interp<'_> {
         if calls.is_empty() {
             return Ok(());
         }
+        self.run_host_calls(calls)
+    }
+
+    #[inline(never)]
+    fn run_host_calls(&mut self, calls: Vec<HostCall>) -> R<()> {
         for call in calls {
             let r = match call {
                 HostCall::Proc { name, args } => match self.find_proc(&name) {

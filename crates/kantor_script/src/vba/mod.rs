@@ -337,6 +337,24 @@ impl Project {
         })
     }
 
+    /// The procedures that handle events of `WithEvents` variables: `(module, variable,
+    /// event)` for each `<variable>_<event>` procedure of a module declaring the variable
+    /// `WithEvents` (lower case). A host checks it to skip events nobody handles.
+    pub fn with_events_handlers(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for m in &self.modules {
+            for var in &m.with_events {
+                let prefix = format!("{var}_");
+                for key in m.procs.keys() {
+                    if let Some(event) = key.strip_prefix(prefix.as_str()) {
+                        out.push((m.key.to_string(), var.to_string(), event.to_string()));
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Whether any `WithEvents` variable currently exists (so host events may have a
     /// handler).
     pub fn has_event_sinks(&self) -> bool {

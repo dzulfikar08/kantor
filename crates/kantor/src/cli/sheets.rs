@@ -29,6 +29,7 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20      kantor sheets check FILE [--json] [--sheet S]\n\
     \x20      kantor sheets macros FILE [--module NAME] [--json]\n\
     \x20      kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]...\n\
+    \x20                [--events] [--allow-path PATH]...\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] TOOL ARGS\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] --ops OPS.json\n\
     \x20      kantor sheets schema\n\
@@ -102,6 +103,11 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20                     the macros; same as -o)\n\
     \x20     --input V       macros run: an answer for the next InputBox\n\
     \x20                     (repeat for several)\n\
+    \x20     --events        macros run: fire Workbook_Open first (and the save\n\
+    \x20                     events when saving), as Excel does with macros on\n\
+    \x20     --allow-path P  macros run: a file or folder the macro may open or\n\
+    \x20                     save (Workbooks.Open, SaveAs); any other path is\n\
+    \x20                     refused (repeat for several)\n\
     \x20     --sheet S       list, check: one sheet (name or number from 1)\n\
     \x20     --range R       list: the cells to show (A1:H200, Data!A1:H200)\n\
     \x20     --formulas      list: formulas in place of their values\n\
@@ -134,6 +140,8 @@ struct Opts {
     module: Option<String>,
     macro_name: Option<String>,
     inputs: Vec<String>,
+    events: bool,
+    allow_paths: Vec<PathBuf>,
     rest: Vec<String>,
 }
 
@@ -153,6 +161,8 @@ fn parse(args: &[OsString]) -> Result<Opts, Usage> {
             "-o" | "--output" | "--out" => o.output = Some(PathBuf::from(value(&mut it, a)?)),
             "--macro" => o.macro_name = Some(value(&mut it, a)?),
             "--input" => o.inputs.push(value(&mut it, a)?),
+            "--events" => o.events = true,
+            "--allow-path" => o.allow_paths.push(PathBuf::from(value(&mut it, a)?)),
             "-f" | "--force" => o.force = true,
             "--check" => o.check = true,
             "--json" => o.json = true,
@@ -398,15 +408,92 @@ fn run_macro(o: &Opts) -> Outcome {
         sheet,
         ..Default::default()
     };
-    let ui = sheets_script::HeadlessUi::new(o.inputs.clone(), true);
+    let mut ui = sheets_script::HeadlessUi::new(o.inputs.clone(), true);
+    let mut allowed = Vec::new();
+    for p in &o.allow_paths {
+        let abs =
+            std::path::absolute(p).with_context(|| format!("--allow-path {}", p.display()))?;
+        allowed.push(abs);
+    }
+    ui.allowed_paths = allowed.clone();
     let options = sheets_script::RunOptions::default();
-    let (mut book, outcome) = sheets_script::run_headless(book, &macros, name, view, ui, &options);
+    let mut engine = sheets_script::MacroEngine::new(macros.clone());
+    engine.set_paths(allowed, false);
+    let mut book = book;
+    let mut view = view;
+    let mut extra = Vec::new();
+    if o.events {
+        let (b, outcome) = engine.fire(
+            book,
+            &sheets_script::Event::Open,
+            view,
+            Box::new(ui.clone()),
+            &options,
+            None,
+        );
+        book = b;
+        if let Err(e) = &outcome.result {
+            bail!("Workbook_Open: {e}; the workbook was not saved");
+        }
+        view = outcome.view;
+        extra.extend(outcome.books);
+    }
+    let (b, outcome) = engine.run(book, name, view, Box::new(ui.clone()), &options);
+    book = b;
     if let Err(e) = &outcome.result {
         bail!("{name}: {e}; the workbook was not saved");
     }
+    let view = outcome.view;
+    extra.extend(outcome.books);
+    let unsaved = extra
+        .iter()
+        .filter(|b| matches!(b, sheets_script::BookOut::New { book } if book.is_dirty()))
+        .count();
+    if unsaved > 0 {
+        eprintln!(
+            "kantor sheets macros run: note: {unsaved} workbook(s) the macro opened or added were changed and not saved (the macro didn't save them)"
+        );
+    }
+    if !engine.timers().is_empty() {
+        eprintln!(
+            "kantor sheets macros run: note: {} Application.OnTime schedule(s) didn't run (the command ends with the macro)",
+            engine.timers().len()
+        );
+    }
+    if o.events {
+        let (b, outcome) = engine.fire(
+            book,
+            &sheets_script::Event::BeforeSave { save_as_ui: false },
+            view,
+            Box::new(ui.clone()),
+            &options,
+            None,
+        );
+        book = b;
+        if let Err(e) = &outcome.result {
+            bail!("Workbook_BeforeSave: {e}; the workbook was not saved");
+        }
+        if outcome.cancel {
+            eprintln!("kantor sheets macros run: Workbook_BeforeSave cancelled the save");
+            return Ok(Ok(()));
+        }
+    }
     book.set_user_functions(None);
-    book.save_as(&out)
-        .with_context(|| format!("can't save {}", out.display()))?;
+    let saved = book.save_as(&out);
+    if o.events {
+        let (b, _) = engine.fire(
+            book,
+            &sheets_script::Event::AfterSave {
+                success: saved.is_ok(),
+            },
+            view,
+            Box::new(ui.clone()),
+            &options,
+            None,
+        );
+        book = b;
+    }
+    saved.with_context(|| format!("can't save {}", out.display()))?;
     for note in book.save_notes() {
         eprintln!("kantor sheets macros run: note: {note}");
     }

@@ -532,6 +532,12 @@ pub trait Dispatch {
         None
     }
 
+    /// The code name of the document this object is (`Sheet1`, `ThisWorkbook`): the public
+    /// members of that document module are members of the object too.
+    fn document_module(&self) -> Option<String> {
+        None
+    }
+
     /// A member the script runtime answers itself instead of the object (Excel's
     /// `Application.Run`, which calls a procedure of the running project).
     fn script_member(&self, _name: &str) -> Option<ScriptMember> {

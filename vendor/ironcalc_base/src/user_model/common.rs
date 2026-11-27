@@ -440,6 +440,26 @@ impl<'a> UserModel<'a> {
         std::mem::take(&mut self.kantor_changed)
     }
 
+    /// KANTOR PATCH (changes, §37 events): what the top `lists` diff lists of the undo stack
+    /// (`undone`: of the redo stack, what the last undos took back) change. For macro events
+    /// (`Worksheet_Change` with the cells an edit, undo or redo changed).
+    pub fn kantor_history_changes(
+        &self,
+        undone: bool,
+        lists: usize,
+    ) -> crate::kantor_changes::KantorChanges {
+        let stack = if undone {
+            &self.history.redo_stack
+        } else {
+            &self.history.undo_stack
+        };
+        let mut out = crate::kantor_changes::KantorChanges::default();
+        for list in stack.iter().rev().take(lists) {
+            out.add_list(list);
+        }
+        out
+    }
+
     /// KANTOR PATCH (changes): stop putting changes on the queue upstream
     /// keeps for syncing a remote copy (`flush_send_queue` returns nothing
     /// from now on). Kantor never sends it: the queue was a second copy of

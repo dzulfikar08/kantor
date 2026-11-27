@@ -10,7 +10,9 @@ use std::io::Read;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
-pub use ironcalc_base::kantor_udf::{KantorUserFunctions as UserFunctions, KantorValue};
+pub use ironcalc_base::kantor_udf::{
+    KantorArg, KantorRangeRef, KantorUserFunctions as UserFunctions, KantorValue,
+};
 
 use crate::{CalcMode, CellRange, MAX_COLS, MAX_ROWS, Workbook};
 
@@ -21,11 +23,78 @@ fn check(range: CellRange) -> Result<()> {
     Ok(())
 }
 
+/// What edits changed ([`Workbook::edited_since`]): rectangles of cells by
+/// sheet index, sheets changed as a whole (rows inserted, sorted), and
+/// whether the workbook's structure changed (sheets, names).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EditedCells {
+    pub cells: Vec<(u32, CellRange)>,
+    pub sheets: Vec<u32>,
+    pub structure: bool,
+}
+
+impl EditedCells {
+    pub fn is_empty(&self) -> bool {
+        self.cells.is_empty() && self.sheets.is_empty()
+    }
+}
+
 impl Workbook {
     /// A point in the undo history: [`Workbook::fold_undo`] makes everything
     /// after it one step.
     pub fn undo_mark(&self) -> usize {
         self.history.undo.len()
+    }
+
+    /// How many steps can be undone and redone: comparing them before and
+    /// after an action tells an edit (or redo) from an undo.
+    pub fn history_lens(&self) -> (usize, usize) {
+        (self.history.undo.len(), self.history.redo.len())
+    }
+
+    /// The cells whose values the undo steps after `mark` changed (the
+    /// edits made since [`Workbook::undo_mark`] returned `mark`, or a redo).
+    pub fn edited_since(&self, mark: usize) -> EditedCells {
+        let lists: u32 = self.history.undo.iter().skip(mark).map(|e| e.1).sum();
+        self.edited(false, lists as usize)
+    }
+
+    /// The cells whose values the last `steps` undos changed back.
+    pub fn undone_last(&self, steps: usize) -> EditedCells {
+        let n = self.history.redo.len();
+        let lists: u32 = self
+            .history
+            .redo
+            .iter()
+            .skip(n.saturating_sub(steps))
+            .map(|e| e.1)
+            .sum();
+        self.edited(true, lists as usize)
+    }
+
+    fn edited(&self, undone: bool, lists: usize) -> EditedCells {
+        let mut out = EditedCells::default();
+        if lists == 0 {
+            return out;
+        }
+        let c = self.model.kantor_history_changes(undone, lists);
+        out.structure = c.all;
+        out.sheets = c.sheets.clone();
+        for (sheet, r1, c1, r2, c2) in c.cells {
+            if r1 < 1 || c1 < 1 {
+                continue;
+            }
+            out.cells.push((
+                sheet,
+                CellRange {
+                    top: r1 as u32 - 1,
+                    left: c1 as u32 - 1,
+                    bottom: (r2.max(r1) as u32 - 1).min(MAX_ROWS - 1),
+                    right: (c2.max(c1) as u32 - 1).min(MAX_COLS - 1),
+                },
+            ));
+        }
+        out
     }
 
     /// Fold every undo entry recorded since `mark` into one, so a macro run
