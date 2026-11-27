@@ -352,7 +352,7 @@ impl SheetsView {
         };
         let sent = match &self.macros.thread {
             Some(thread) => thread.send(work),
-            None => Err(work),
+            None => Err(Box::new(work)),
         };
         if let Err(work) = sent {
             self.put_back(work.book, cx);
@@ -655,7 +655,7 @@ impl SheetsView {
         };
         let sent = match &self.macros.thread {
             Some(thread) => thread.send(work),
-            None => Err(work),
+            None => Err(Box::new(work)),
         };
         if let Err(work) = sent {
             *book = work.book;
