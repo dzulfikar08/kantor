@@ -1058,6 +1058,16 @@ pub(crate) fn lay_out_body(
         let (at, j) = taken?;
         (pi >= at).then(|| (pi - at + j, true))
     };
+    if docs_layout::perf::enabled() && prev.is_some() {
+        eprintln!(
+            "[perf] docs reuse: known {:?}, from block {:?} of {}, pages taken {:?}, unmoved {unmoved}, of {}",
+            known_same,
+            reuse.as_ref().map(|r| r.from_block),
+            gapped.len(),
+            taken,
+            paged.pages.len()
+        );
+    }
     let t = span("docs place notes");
     let mut notes = place_notes(
         doc,
