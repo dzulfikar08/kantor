@@ -418,7 +418,7 @@ impl SheetsView {
             _ => d,
         };
         let caption = SharedString::from(c.caption.clone());
-        let el = match c.kind {
+        match c.kind {
             ControlKind::Label => aligned(
                 base.flex()
                     .when(c.back_opaque, |d| d.bg(color(c.back_color)))
@@ -787,8 +787,7 @@ impl SheetsView {
             ControlKind::Page | ControlKind::Other(_) => {
                 base.border_1().border_color(t_.border).into_any_element()
             }
-        };
-        el
+        }
     }
 
     fn render_form_combo(
