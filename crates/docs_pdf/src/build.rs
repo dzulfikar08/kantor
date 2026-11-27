@@ -930,13 +930,13 @@ fn build_with_prior(
     let mut widths: Vec<f32> = (0..paras.len()).map(|i| tw(content_tw(i))).collect();
     // Tables built before (by first paragraph, with the width they were
     // built for), for an edit outside them.
-    let old_tables = prior.as_ref().and_then(|p| {
+    let old_tables = prior.as_ref().map(|p| {
         let tables: HashMap<usize, (&TableBlock, u32)> = p
             .tables
             .iter()
             .filter_map(|(tb, w)| Some((first_para(tb)?, (tb, *w))))
             .collect();
-        Some((tables, (p.start, p.removed, p.inserted)))
+        (tables, (p.start, p.removed, p.inserted))
     });
     let old_tables = old_tables.as_ref().map(|(t, s)| (t, *s));
     let mut blocks = Vec::new();

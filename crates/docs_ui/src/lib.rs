@@ -386,6 +386,7 @@ impl PageBoxes {
         Self { tops, sizes, max_w }
     }
 
+    #[cfg(test)]
     fn of(paged: &PagedDocument) -> Self {
         Self::with_estimate(paged, None)
     }

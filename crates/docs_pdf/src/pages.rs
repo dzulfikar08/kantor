@@ -1054,7 +1054,7 @@ pub(crate) fn lay_out_body(
             return Some((pi, false));
         }
         let (at, j) = taken?;
-        (pi >= at).then_some((pi - at + j, true))
+        (pi >= at).then(|| (pi - at + j, true))
     };
     let t = span("docs place notes");
     let mut notes = place_notes(
