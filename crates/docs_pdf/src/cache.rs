@@ -77,9 +77,9 @@ struct Last {
     /// identity: a one-paragraph edit doesn't move it).
     paras: usize,
     len: usize,
-    /// Each body paragraph's column width and layout before pagination.
-    widths: Vec<f32>,
-    shaped: Vec<Arc<ParaLayout>>,
+    /// The body as paginated: each paragraph's column width and layout
+    /// before pagination, the layout paragraphs, blocks and sections.
+    body: Body,
     /// Some header or footer shows text of the body (`STYLEREF`).
     style_refs: Vec<docs_engine::StyleRefs>,
 }
@@ -102,6 +102,9 @@ pub struct LayoutCache {
     last: Option<Last>,
     /// How the last relayout went.
     pub outcome: Outcome,
+    /// After a full relayout: from which page on the pages were the last
+    /// layout's, and which page of it that was.
+    pub reused: Option<(usize, usize)>,
 }
 
 impl LayoutCache {
@@ -137,21 +140,37 @@ impl LayoutCache {
         engine: &mut Engine,
         prev: Option<Layout>,
     ) -> Layout {
-        if let Some(prev) = prev {
+        let mut prev = prev;
+        if let Some(prev) = prev.as_mut() {
             let _t = docs_layout::perf::span("docs quick relayout");
-            if let Some((laid, para)) = self.quick(doc, engine, prev) {
+            let strikes = !prev.strikes.is_empty();
+            if let Some(para) = self.quick(doc, engine, prev) {
                 self.outcome = Outcome::Quick { para };
-                return laid;
+                let last = self
+                    .last
+                    .as_mut()
+                    .expect("quick updates need the last layout");
+                if strikes {
+                    // The struck-through paragraphs are the body's layout
+                    // paragraphs (one shared list): updated there.
+                    prev.strikes = last.body.lps.clone();
+                }
+                return std::mem::replace(prev, empty_layout());
             }
         }
         self.outcome = Outcome::Full;
-        let (laid, body) = self.full(doc, engine, None);
+        // The last layout's pages that come out the same are kept.
+        let last = self.last.take();
+        let reuse = prev.as_ref().zip(last.as_ref().map(|l| &l.body));
+        let (laid, body) = self.full(doc, engine, None, reuse);
+        self.reused = laid.paged.reused();
+        drop(prev);
+        drop(last);
         self.last = (body.shaped.len() == doc.len()).then(|| Last {
             revision: doc.revision(),
             paras: doc.paragraphs().as_ptr() as usize,
             len: doc.len(),
-            widths: body.widths,
-            shaped: body.shaped,
+            body,
             style_refs: style_refs(doc),
         });
         laid
@@ -162,7 +181,7 @@ impl LayoutCache {
     /// [`lay_out_parallel`] lays out the rest). The pages after aren't
     /// there yet, and the next [`Self::relayout`] lays out everything.
     pub fn relayout_prefix(&mut self, doc: &Document, engine: &mut Engine, limit: usize) -> Layout {
-        let (laid, _) = self.full(doc, engine, Some(limit));
+        let (laid, _) = self.full(doc, engine, Some(limit), None);
         self.last = None;
         self.outcome = Outcome::Prefix;
         laid
@@ -182,8 +201,7 @@ impl LayoutCache {
             revision: bg.revision,
             paras: doc.paragraphs().as_ptr() as usize,
             len: doc.len(),
-            widths: bg.body.widths,
-            shaped: bg.body.shaped,
+            body: bg.body,
             style_refs: bg.style_refs,
         });
         self.outcome = Outcome::Full;
@@ -197,21 +215,17 @@ impl LayoutCache {
         doc: &Document,
         engine: &mut Engine,
         limit: Option<usize>,
+        prev: Option<(&Layout, &Body)>,
     ) -> (Layout, Body) {
         let fresh = RefCell::new(HashMap::with_capacity(self.paras.len()));
-        let laid = lay_out_shared(doc, &self.paras, &fresh, engine, limit);
+        let laid = lay_out_shared(doc, &self.paras, &fresh, engine, limit, prev);
         self.paras = fresh.into_inner();
         laid
     }
 
     /// The quick update (see the module docs), or `None` when it doesn't
     /// apply.
-    fn quick(
-        &mut self,
-        doc: &Document,
-        engine: &mut Engine,
-        mut prev: Layout,
-    ) -> Option<(Layout, usize)> {
+    fn quick(&mut self, doc: &Document, engine: &mut Engine, prev: &mut Layout) -> Option<usize> {
         let last = self.last.as_mut()?;
         let sp = doc.last_splice()?;
         if sp.revision != last.revision + 1
@@ -227,9 +241,10 @@ impl LayoutCache {
             return None;
         }
         let i = sp.start;
-        if i >= last.shaped.len()
-            || prev.paged.layouts.len() != last.shaped.len()
-            || !Arc::ptr_eq(&prev.paged.layouts[i], &last.shaped[i])
+        let shaped = &last.body.shaped;
+        if i >= shaped.len()
+            || prev.paged.layouts.len() != shaped.len()
+            || !Arc::ptr_eq(&prev.paged.layouts[i], &shaped[i])
         {
             return None;
         }
@@ -245,8 +260,8 @@ impl LayoutCache {
         {
             return None;
         }
-        let width = last.widths[i];
-        let marker = last.shaped[i].marker.as_ref().map(|m| m.2.as_str());
+        let width = last.body.widths[i];
+        let marker = shaped[i].marker.as_ref().map(|m| m.2.as_str());
         let marks = Marks::default();
         let old_lp = build::layout_paragraph(doc, old_p, marker, width, &marks);
         let mut new_lp = build::layout_paragraph(doc, new_p, marker, width, &marks);
@@ -261,25 +276,29 @@ impl LayoutCache {
             Some(l) => l.clone(),
             None => Arc::new(engine.layout_paragraph(&new_lp, width)),
         };
-        if !same_lines(&last.shaped[i], &shaped) {
+        if !same_lines(&last.body.shaped[i], &shaped) {
             return None;
         }
         // Struck-through text (tracked deletions) is drawn from the layout
-        // paragraphs, kept when some text is struck through.
+        // paragraphs, kept when some text is struck through: the body's
+        // list (the caller shares it again).
         if !prev.strikes.is_empty() {
-            let lps = Arc::make_mut(&mut prev.strikes);
-            let was = lps.get(i)?;
+            if last.body.lps.len() <= i {
+                return None;
+            }
+            prev.strikes = Arc::default();
+            let lps = Arc::make_mut(&mut last.body.lps);
             // Spacing comes from the neighbours (contextual spacing).
-            new_lp.space_before_pt = was.space_before_pt;
-            new_lp.space_after_pt = was.space_after_pt;
+            new_lp.space_before_pt = lps[i].space_before_pt;
+            new_lp.space_after_pt = lps[i].space_after_pt;
             lps[i] = new_lp;
         } else if !new_lp.strikes.is_empty() {
             return None;
         }
         prev.paged.layouts[i] = shaped.clone();
-        last.shaped[i] = shaped;
+        last.body.shaped[i] = shaped;
         last.revision = sp.revision;
-        Some((prev, i))
+        Some(i)
     }
 }
 
@@ -316,7 +335,7 @@ impl Background {
 pub fn lay_out_parallel(doc: &Document, fonts: &FontContext) -> Background {
     let mut engine = Engine::with_fonts(fonts.clone());
     let fresh = RefCell::new(HashMap::new());
-    let (laid, body) = lay_out_shared(doc, &HashMap::new(), &fresh, &mut engine, None);
+    let (laid, body) = lay_out_shared(doc, &HashMap::new(), &fresh, &mut engine, None, None);
     Background {
         laid,
         body,
@@ -337,6 +356,7 @@ fn lay_out_shared(
     fresh: &RefCell<Shaped>,
     engine: &mut Engine,
     limit: Option<usize>,
+    prev: Option<(&Layout, &Body)>,
 ) -> (Layout, Body) {
     let engine = RefCell::new(engine);
     let mut one = |p: &docs_layout::Paragraph, width: f32| {
@@ -361,7 +381,18 @@ fn lay_out_shared(
         &mut one,
         limit,
         Some(&mut batch as &mut crate::pages::BatchFn<'_>),
+        prev,
     )
+}
+
+/// A layout of nothing (what's left where one was taken out).
+fn empty_layout() -> Layout {
+    Layout {
+        paged: docs_layout::PagedDocument::paginate(&[], Vec::new(), docs_layout::PageSetup::a4()),
+        furniture: Vec::new(),
+        floats: Vec::new(),
+        strikes: Arc::default(),
+    }
 }
 
 /// The layouts of body paragraphs `lps` at `widths`: keys hashed on

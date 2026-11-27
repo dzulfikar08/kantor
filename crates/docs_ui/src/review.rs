@@ -34,6 +34,8 @@ pub(crate) struct ReviewMemo {
     anchors: Option<std::rc::Rc<Vec<(String, docs_engine::Anchor)>>>,
     /// Some change shows as a balloon (formatting, field code edits).
     balloons: Option<bool>,
+    /// [`DocsView::change_count`].
+    count: Option<usize>,
 }
 
 /// Width of the markup column, screen px.
@@ -431,7 +433,18 @@ impl DocsView {
         let count = |d: &docs_engine::Document| d.changes().len() + d.other_changes();
         match &self.part {
             Some(s) => count(&s.main) + s.main.part_changes() + count(&self.doc),
-            None => count(&self.doc) + self.doc.part_changes(),
+            None => {
+                // Asked on every frame (the toolbar's Review button).
+                if let Some(n) = self.memo().and_then(|m| m.count) {
+                    return n;
+                }
+                let n =
+                    self.doc_changes().len() + self.doc.other_changes() + self.doc.part_changes();
+                if let Some(mut m) = self.memo() {
+                    m.count = Some(n);
+                }
+                n
+            }
         }
     }
 

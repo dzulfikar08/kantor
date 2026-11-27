@@ -1388,6 +1388,43 @@ pub struct PagedDocument {
     /// For each paragraph and each of its lines: the page, the y that maps
     /// the layout's coordinates to the page, and the x of the layout origin.
     line_pages: Vec<Vec<(usize, f32, f32)>>,
+    /// Per page: where it starts in a paragraph and the flow's state
+    /// there, when a later pagination could take the rest from this one
+    /// (see [`Reuse`]).
+    starts: Vec<Option<PageStart>>,
+    /// The pages from `.0` on are those of an earlier pagination from its
+    /// page `.1` on ([`Reuse`]).
+    reused: Option<(usize, usize)>,
+}
+
+/// A page that starts by going on with a paragraph, and the flow's state
+/// there: what decides how the rest of the document is paginated.
+#[derive(Clone, Debug, PartialEq)]
+struct PageStart {
+    block: usize,
+    para: usize,
+    line: usize,
+    section: usize,
+    number: u32,
+    setup: PageSetup,
+    floats_placed: Option<usize>,
+}
+
+/// An earlier pagination of the same document before an edit, to take
+/// pages from: once the new pagination starts a page where the old one
+/// started one (the same line of the same paragraph, in the same state),
+/// the rest is the old pages with their paragraphs renumbered. Blocks from
+/// `from_block` on (new numbering) must be the old ones from
+/// `from_block - block_shift` on, their paragraphs shifted by
+/// `para_shift`, and laid out the same.
+pub struct Reuse<'a> {
+    pub old: &'a PagedDocument,
+    pub from_block: usize,
+    pub block_shift: isize,
+    pub para_shift: isize,
+    /// Page numbers may differ from the old ones there (nothing depends on
+    /// whether a page is odd or even); the old pages are renumbered.
+    pub renumber: bool,
 }
 
 /// `index` hit on line `k` of `layout`, kept on that line. A hit past the
@@ -1605,6 +1642,18 @@ struct Flow<'a> {
     orig: Vec<Arc<ParaLayout>>,
     /// Where balancing may start again from (block boundaries).
     snaps: Vec<Snap>,
+    /// The block being placed.
+    block: usize,
+    /// The paragraph and line the page about to start goes on with.
+    cont: Option<(usize, usize)>,
+    /// Per page: see [`PagedDocument::starts`].
+    starts: Vec<Option<PageStart>>,
+    /// An earlier pagination to take pages from, its page starts by
+    /// (block, paragraph, line).
+    reuse: Option<(&'a Reuse<'a>, HashMap<(usize, usize, usize), usize>)>,
+    /// The page start where the old pages take over: old page, new
+    /// paragraph and line.
+    done: Option<(usize, usize, usize)>,
 }
 
 /// The flow's state at the start of a block, to lay the rest of a
@@ -1829,7 +1878,160 @@ impl<'a> Flow<'a> {
             .get(self.pages.len() - 1)
             .cloned()
             .unwrap_or_default();
+        // A page going on with a paragraph, nothing carried over: a later
+        // pagination may take the pages from here on from this one.
+        let start = self
+            .cont
+            .take()
+            .filter(|_| {
+                self.carry.is_empty()
+                    && self.excl.is_empty()
+                    && self.cols.len() <= 1
+                    && self.limit.is_none()
+                    && self.pre.is_empty()
+            })
+            .map(|(para, line)| PageStart {
+                block: self.block,
+                para,
+                line,
+                section: self.section,
+                number: self.number - 1,
+                setup: self.setup,
+                floats_placed: self.floats_placed,
+            });
+        self.starts.push(start.clone());
         self.continue_notes();
+        if let Some(start) = start {
+            self.try_reuse(&start);
+        }
+    }
+
+    /// The rest of the document is the old pagination's ([`Reuse`]) from
+    /// its page `j` on: the page just started is that one, going on with
+    /// line `line` of paragraph `para`.
+    fn take_rest(self, j: usize, para: usize, line: usize) -> PagedDocument {
+        let Some((reuse, _)) = self.reuse else {
+            unreachable!("only reusing pages ends a flow early");
+        };
+        let old = reuse.old;
+        let d = reuse.para_shift;
+        let shift = |p: usize| (p as isize + d).max(0) as usize;
+        let mut pages = self.pages;
+        let mut starts = self.starts;
+        let mut line_pages = self.line_pages;
+        let mut layouts = self.layouts;
+        let at = pages.len() - 1;
+        let delta = i64::from(pages[at].number) - i64::from(old.pages[j].number);
+        pages.truncate(at);
+        starts.truncate(at);
+        // Page numbers move by `delta` until a section restarts them.
+        let mut moving = delta != 0;
+        for (k, op) in old.pages.iter().enumerate().skip(j) {
+            if moving
+                && k > j
+                && op.section != old.pages[k - 1].section
+                && self
+                    .sections
+                    .get(op.section)
+                    .is_some_and(|s| s.restart.is_some())
+            {
+                moving = false;
+            }
+            let number = |n: u32| {
+                if moving {
+                    (i64::from(n) + delta).max(0) as u32
+                } else {
+                    n
+                }
+            };
+            let mut p = op.clone();
+            p.number = number(p.number);
+            for l in &mut p.lines {
+                l.para = shift(l.para);
+            }
+            for n in &mut p.notes {
+                n.0 = shift(n.0);
+            }
+            for f in &mut p.floats {
+                f.para = shift(f.para);
+            }
+            for n in p
+                .note_parts
+                .iter_mut()
+                .chain(p.note_columns.iter_mut().flat_map(|c| c.parts.iter_mut()))
+            {
+                n.para = shift(n.para);
+            }
+            for w in &mut p.fixed {
+                w.key.0 = shift(w.key.0);
+            }
+            pages.push(p);
+            starts.push(old.starts.get(k).cloned().flatten().map(|s| PageStart {
+                block: (s.block as isize + reuse.block_shift).max(0) as usize,
+                para: shift(s.para),
+                number: number(s.number),
+                floats_placed: s.floats_placed.map(shift),
+                ..s
+            }));
+        }
+        // Old page `j` is this page.
+        let page = |p: usize| p + at - j;
+        let from_old = |q: usize| usize::try_from(q as isize - d).ok();
+        if let Some(oq) = from_old(para) {
+            line_pages[para].truncate(line);
+            let rest = old.line_pages.get(oq).into_iter().flatten().skip(line);
+            line_pages[para].extend(rest.map(|&(p, dy, dx)| (page(p), dy, dx)));
+        }
+        for q in para + 1..line_pages.len() {
+            let Some(oq) = from_old(q) else { continue };
+            if let Some(lines) = old.line_pages.get(oq) {
+                line_pages[q] = lines.iter().map(|&(p, dy, dx)| (page(p), dy, dx)).collect();
+            }
+            if let Some(l) = old.layouts.get(oq) {
+                layouts[q] = l.clone();
+            }
+        }
+        PagedDocument {
+            setup: pages.first().map_or(old.setup, |p| p.setup),
+            layouts,
+            pages,
+            line_pages,
+            starts,
+            reused: Some((at, j)),
+        }
+    }
+
+    /// The old pagination ([`Reuse`]) started a page in the same place and
+    /// state as `start`: take the rest from it ([`Self::done`]).
+    fn try_reuse(&mut self, start: &PageStart) {
+        let Some((reuse, by_place)) = &self.reuse else {
+            return;
+        };
+        if self.block < reuse.from_block {
+            return;
+        }
+        let shift = |i: usize, by: isize| usize::try_from(i as isize - by).ok();
+        let (Some(block), Some(para)) = (
+            shift(self.block, reuse.block_shift),
+            shift(start.para, reuse.para_shift),
+        ) else {
+            return;
+        };
+        let Some(&j) = by_place.get(&(block, para, start.line)) else {
+            return;
+        };
+        let Some(Some(old)) = reuse.old.starts.get(j) else {
+            return;
+        };
+        let floats = start.floats_placed.map(|p| shift(p, reuse.para_shift));
+        if old.section != start.section
+            || old.setup != start.setup
+            || floats != old.floats_placed.map(Some)
+            || (old.number != start.number && !reuse.renumber)
+        {
+            return;
+        }
+        self.done = Some((j, start.para, start.line));
     }
 
     /// The split of a footnote, if it may break across pages.
@@ -2536,6 +2738,7 @@ impl<'a> Flow<'a> {
         }
         let para = &self.paras[pi];
         let layout = self.layouts[pi].clone();
+        self.cont = Some((pi, 0));
         if para.page_break_before && !self.at_top() {
             self.new_page();
         } else if para.keep_next && !self.at_top() && self.ncols() == 1 && self.limit.is_none() {
@@ -2544,6 +2747,10 @@ impl<'a> Flow<'a> {
             if self.y + need > self.bottom() && need < room * 0.8 {
                 self.new_page();
             }
+        }
+        self.cont = None;
+        if self.done.is_some() {
+            return;
         }
         let heights: Vec<f32> = layout
             .layout
@@ -2609,10 +2816,15 @@ impl<'a> Flow<'a> {
                 self.y += h;
             }
             i += take;
+            self.cont = Some((pi, i));
             match forced.get(i.wrapping_sub(1)).copied().flatten() {
                 Some(c) if take > 0 => self.take_break(c),
                 _ if i < n => self.next_column(),
                 _ => {}
+            }
+            self.cont = None;
+            if self.done.is_some() {
+                return;
             }
         }
         self.y += para.space_after_pt * PT;
@@ -2955,6 +3167,10 @@ impl<'a> Flow<'a> {
     /// again (`snap`).
     fn run(&mut self, blocks: &[Block], range: Range<usize>, snap: bool) {
         for bi in range {
+            if self.done.is_some() {
+                return;
+            }
+            self.block = bi;
             if snap && self.limit.is_none() {
                 self.snapshot(blocks, bi);
             }
@@ -3010,6 +3226,7 @@ impl<'a> Flow<'a> {
 
     fn restore(&mut self, s: &Snap) {
         self.pages.truncate(s.pages);
+        self.starts.truncate(s.pages);
         if let Some(last) = self.pages.last_mut() {
             *last = s.last.clone();
         }
@@ -3113,6 +3330,18 @@ impl PagedDocument {
         blocks: &[Block],
         sections: &[SectionFlow],
     ) -> Self {
+        Self::paginate_reusing(paras, layouts, blocks, sections, None)
+    }
+
+    /// [`Self::paginate_sections`] taking what it can from an earlier
+    /// pagination ([`Reuse`]).
+    pub fn paginate_reusing(
+        paras: &[Paragraph],
+        layouts: Vec<Arc<ParaLayout>>,
+        blocks: &[Block],
+        sections: &[SectionFlow],
+        reuse: Option<&Reuse<'_>>,
+    ) -> Self {
         let fallback = [SectionFlow {
             first_block: 0,
             setup: PageSetup::a4(),
@@ -3129,23 +3358,38 @@ impl PagedDocument {
             sections
         };
         let has_floats = paras.iter().any(|p| !p.floats.is_empty());
-        let first = Self::flow(paras, layouts.clone(), blocks, sections, &[], has_floats);
+        let first = Self::flow(
+            paras,
+            layouts.clone(),
+            blocks,
+            sections,
+            &[],
+            has_floats,
+            reuse,
+        );
         // Wrapping objects fixed to their page also push away the text
         // above their anchor: lay out again knowing where they are.
         let fixed: Vec<Vec<WrapArea>> = first.pages.iter().map(|p| p.fixed.clone()).collect();
         if fixed.iter().any(|f| !f.is_empty()) {
-            return Self::flow(paras, layouts, blocks, sections, &fixed, has_floats);
+            return Self::flow(paras, layouts, blocks, sections, &fixed, has_floats, None);
         }
         first
     }
 
-    fn flow(
-        paras: &[Paragraph],
+    /// The pages from `.0` on are the earlier pagination's from its page
+    /// `.1` on (see [`Reuse`]).
+    pub fn reused(&self) -> Option<(usize, usize)> {
+        self.reused
+    }
+
+    fn flow<'a>(
+        paras: &'a [Paragraph],
         layouts: Vec<Arc<ParaLayout>>,
         blocks: &[Block],
-        sections: &[SectionFlow],
-        pre: &[Vec<WrapArea>],
+        sections: &'a [SectionFlow],
+        pre: &'a [Vec<WrapArea>],
         has_floats: bool,
+        reuse: Option<&'a Reuse<'a>>,
     ) -> Self {
         let n = layouts.len();
         let columns = sections.iter().any(|s| s.columns.len() > 1);
@@ -3174,6 +3418,20 @@ impl PagedDocument {
             notes_base: 0.0,
             limit: None,
             snaps: Vec::new(),
+            block: 0,
+            cont: None,
+            starts: Vec::new(),
+            reuse: reuse.map(|r| {
+                let by_place = r
+                    .old
+                    .starts
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(j, s)| s.as_ref().map(|s| ((s.block, s.para, s.line), j)))
+                    .collect();
+                (r, by_place)
+            }),
+            done: None,
         };
         flow.new_page();
         let first = |si: usize| {
@@ -3184,6 +3442,9 @@ impl PagedDocument {
             }
         };
         for si in 0..sections.len() {
+            if flow.done.is_some() {
+                break;
+            }
             if si > 0 {
                 flow.start_section(si);
             }
@@ -3201,9 +3462,12 @@ impl PagedDocument {
                         && next.setup.height == flow.setup.height
                 });
             flow.run(blocks, start..end, balance);
-            if balance {
+            if balance && flow.done.is_none() {
                 flow.balance(blocks, end);
             }
+        }
+        if let Some((j, para, line)) = flow.done {
+            return flow.take_rest(j, para, line);
         }
         // A footnote still going on gets the pages it needs.
         let mut guard = 0;
@@ -3216,6 +3480,7 @@ impl PagedDocument {
             pages,
             line_pages,
             layouts,
+            starts,
             ..
         } = flow;
         Self {
@@ -3223,6 +3488,8 @@ impl PagedDocument {
             layouts,
             pages,
             line_pages,
+            starts,
+            reused: None,
         }
     }
 
@@ -3239,6 +3506,8 @@ impl PagedDocument {
                 .iter()
                 .map(|v| v.iter().map(|&(p, dy, dx)| (p, dy - from, dx)).collect())
                 .collect(),
+            starts: Vec::new(),
+            reused: None,
         };
         let mut pg = self.pages.get(page).cloned().unwrap_or_default();
         pg.lines

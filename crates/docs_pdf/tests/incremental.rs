@@ -129,6 +129,28 @@ fn edits_relay_out_as_a_full_layout_does() {
     assert!(c.quick >= 100, "only {} quick updates", c.quick);
 }
 
+/// A paragraph growing by a line moves the pages after it only up to a
+/// page break: the pages after that are the last layout's.
+#[test]
+fn pages_after_a_page_break_are_kept() {
+    let mut doc = long_document();
+    let end = doc.paragraph(20).text.len();
+    doc.insert_text(Selection::caret(Position::new(20, end)), "\u{000C}", None);
+    let mut c = Check::new(&doc);
+    let pages = c.laid.as_ref().unwrap().paged.pages.len();
+    let mut at = doc.clamp(Position::new(2, 4));
+    let mut kept = 0;
+    for k in 0..60 {
+        at = doc.insert_text(Selection::caret(at), "word ", None).head;
+        c.relayout(&doc, &format!("typing {k}"));
+        if c.cache.reused.is_some() {
+            kept += 1;
+        }
+    }
+    assert!(c.laid.as_ref().unwrap().paged.pages.len() >= pages);
+    assert!(kept > 0, "no full relayout kept pages");
+}
+
 /// An edit the cache can't see as one paragraph's (another document in
 /// the same view, a style change) lays everything out again.
 #[test]
