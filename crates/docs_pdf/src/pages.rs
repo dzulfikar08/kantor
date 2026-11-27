@@ -612,6 +612,8 @@ pub(crate) struct Body {
     pub lps: Arc<Vec<docs_layout::Paragraph>>,
     pub blocks: Vec<Block>,
     pub flows: Vec<SectionFlow>,
+    /// The headers' and footers' `STYLEREF` fields (one per story).
+    pub style_refs: Vec<docs_engine::StyleRefs>,
 }
 
 /// Where a new pagination of the body can take pages from the last one
@@ -898,16 +900,20 @@ pub(crate) fn lay_out_body(
     } else {
         Arc::default()
     };
+    // Each header's and footer's STYLEREF fields (once: the long body is
+    // searched for each).
+    let style_refs: Vec<docs_engine::StyleRefs> = doc
+        .stories()
+        .iter()
+        .map(|st| docs_engine::StyleRefs::new(doc, st.doc.paragraphs()))
+        .collect();
     // Headers and footers of taken pages stay the same when nothing before
     // them moved (same page numbers and count) and none shows body text.
     let same_furniture = reused.filter(|&(at, j, laid, _)| {
         at == j
             && laid.paged.pages.len() == paged.pages.len()
             && laid.furniture.len() == laid.paged.pages.len()
-            && doc
-                .stories()
-                .iter()
-                .all(|st| docs_engine::StyleRefs::new(doc, st.doc.paragraphs()).is_empty())
+            && style_refs.iter().all(docs_engine::StyleRefs::is_empty)
     });
 
     // Each page's header and footer, numbers filled in.
@@ -938,7 +944,6 @@ pub(crate) fn lay_out_body(
     let t2 = span("docs page labels");
     let labels = page_labels(doc, &sections, &paged);
     drop(t2);
-    let mut style_refs: HashMap<usize, docs_engine::StyleRefs> = HashMap::new();
     let mut furniture = Vec::with_capacity(paged.pages.len());
     for (pi, page) in paged.pages.iter().enumerate() {
         if let Some((at, _, laid, _)) = same_furniture
@@ -970,11 +975,9 @@ pub(crate) fn lay_out_body(
                 .unwrap_or(1)
                 .to_string();
             let refs = style_refs
-                .entry(i)
-                .or_insert_with(|| {
-                    docs_engine::StyleRefs::new(doc, doc.stories()[i].doc.paragraphs())
-                })
-                .results(doc, on_page[pi]);
+                .get(i)
+                .map(|r| r.results(doc, on_page[pi]))
+                .unwrap_or_default();
             let l = cache
                 .entry((
                     i,
@@ -1037,6 +1040,7 @@ pub(crate) fn lay_out_body(
             lps,
             blocks: gapped,
             flows: gap_flows,
+            style_refs,
         },
     )
 }

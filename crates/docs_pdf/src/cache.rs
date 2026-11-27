@@ -80,8 +80,6 @@ struct Last {
     /// The body as paginated: each paragraph's column width and layout
     /// before pagination, the layout paragraphs, blocks and sections.
     body: Body,
-    /// Some header or footer shows text of the body (`STYLEREF`).
-    style_refs: Vec<docs_engine::StyleRefs>,
 }
 
 /// How the last [`LayoutCache::relayout`] went (for `KANTOR_PERF`).
@@ -171,7 +169,6 @@ impl LayoutCache {
             paras: doc.paragraphs().as_ptr() as usize,
             len: doc.len(),
             body,
-            style_refs: style_refs(doc),
         });
         laid
     }
@@ -202,7 +199,6 @@ impl LayoutCache {
             paras: doc.paragraphs().as_ptr() as usize,
             len: doc.len(),
             body: bg.body,
-            style_refs: bg.style_refs,
         });
         self.outcome = Outcome::Full;
         Some(bg.laid)
@@ -254,6 +250,7 @@ impl LayoutCache {
             || !plain(old_p)
             || !plain(new_p)
             || last
+                .body
                 .style_refs
                 .iter()
                 .any(|r| r.shows(doc, old_p) || r.shows(doc, new_p))
@@ -302,15 +299,6 @@ impl LayoutCache {
     }
 }
 
-/// The headers' and footers' `STYLEREF` fields (they show body text).
-fn style_refs(doc: &Document) -> Vec<docs_engine::StyleRefs> {
-    doc.stories()
-        .iter()
-        .map(|s| docs_engine::StyleRefs::new(doc, s.doc.paragraphs()))
-        .filter(|r| !r.is_empty())
-        .collect()
-}
-
 /// A full layout made away from the view (see [`lay_out_parallel`]), for
 /// [`LayoutCache::install`].
 pub struct Background {
@@ -318,7 +306,6 @@ pub struct Background {
     body: Body,
     paras: HashMap<u64, Arc<ParaLayout>>,
     revision: u64,
-    style_refs: Vec<docs_engine::StyleRefs>,
 }
 
 impl Background {
@@ -341,7 +328,6 @@ pub fn lay_out_parallel(doc: &Document, fonts: &FontContext) -> Background {
         body,
         paras: fresh.into_inner(),
         revision: doc.revision(),
-        style_refs: style_refs(doc),
     }
 }
 
