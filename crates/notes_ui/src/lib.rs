@@ -973,9 +973,9 @@ impl NotesView {
             }
             return true;
         }
-        if dest.starts_with('#') {
+        if let Some(anchor) = dest.strip_prefix('#') {
             // A heading in this note.
-            let want = dest[1..].replace('-', " ").to_lowercase();
+            let want = anchor.replace('-', " ").to_lowercase();
             let hit = self
                 .editor
                 .parsed()

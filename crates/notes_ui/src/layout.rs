@@ -14,6 +14,9 @@
 //! A table that isn't revealed is laid out as one grid on its first line;
 //! its other lines take no height.
 
+// Lists of one source range are normal here (a line shaped whole).
+#![allow(clippy::single_range_in_vec_init)]
+
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
