@@ -436,7 +436,7 @@ impl Workspace {
                     .read(cx)
                     .agent_read(cx, |book, _| sheets::read_range(book, sheet, args));
             }
-            "sheets_list" | "sheets_check" => {
+            "sheets_list" | "sheets_check" | "sheets_macros" => {
                 return e.read(cx).agent_read(cx, |book, _| {
                     crate::agent::sheets_author::read_tool(book, tool, args)
                 });

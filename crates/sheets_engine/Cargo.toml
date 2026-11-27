@@ -17,6 +17,8 @@ tempfile.workspace = true
 ironcalc.workspace = true
 ironcalc_base.workspace = true
 kantor_numfmt.workspace = true
+# Reading the VBA project of a workbook with macros (`Workbook::vba_project`).
+kantor_vba.workspace = true
 kantor_ooxml.workspace = true
 kantor_metafile.workspace = true
 calamine.workspace = true

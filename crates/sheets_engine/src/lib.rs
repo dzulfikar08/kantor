@@ -281,6 +281,8 @@ pub use format::{
 pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use hide::Unhidden;
 pub use icons::IconPath;
+/// VBA projects (`Workbook::vba_project`).
+pub use kantor_vba as vba;
 pub use look::CellLook;
 pub use notes::NoteClip;
 pub use numfmt::Display;
@@ -1079,6 +1081,17 @@ impl Workbook {
             .as_ref()
             .and_then(|s| s.bytes().ok())
             .is_some_and(|b| preserve::has_macros(&b))
+    }
+
+    /// The workbook's VBA project, read from the file it was opened from or
+    /// last saved to (the project a save as `.xlsm` keeps). `None`: no
+    /// macros; `Some(Err)`: a project Kantor can't read (opening and saving
+    /// the workbook don't depend on it: the project is kept byte for byte).
+    /// Parsed on each call: callers keep what they need.
+    pub fn vba_project(&self) -> Option<Result<kantor_vba::VbaProject, String>> {
+        let bytes = self.origin_bytes()?;
+        let project = preserve::vba_project_bytes(&bytes)?;
+        Some(kantor_vba::VbaProject::read(&project).map_err(|e| e.to_string()))
     }
 
     /// What the last save could not carry over from the original `.xlsx`

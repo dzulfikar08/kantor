@@ -1219,6 +1219,13 @@ pub(crate) fn has_macros(bytes: &[u8]) -> bool {
     vba_project(bytes).ok().flatten().is_some()
 }
 
+/// The bytes of the VBA project part (`xl/vbaProject.bin`) in `bytes` (an
+/// `.xlsx`/`.xlsm` package), if it has one.
+pub(crate) fn vba_project_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+    let (_, part, orig) = vba_project(bytes).ok().flatten()?;
+    orig.get(&part).ok().flatten()
+}
+
 /// The original's VBA project: its relationship (from the workbook) and
 /// its part name.
 fn vba_project(bytes: &[u8]) -> Result<Option<(Rel, String, Original<'_>)>, String> {

@@ -198,6 +198,7 @@ impl SheetsView {
                 self.load_selected_into_formula(window, cx);
                 let path = self.path(cx);
                 self.web_after_open(path, cx);
+                self.macros_after_open(cx);
             }
             Err(err) => {
                 log::error!("{err:#}");
