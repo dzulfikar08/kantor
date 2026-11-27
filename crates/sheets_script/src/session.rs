@@ -4,6 +4,7 @@
 
 use std::cell::{Cell, RefCell, RefMut};
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use kantor_script::{ScriptError, Value};
 use sheets_engine::{CellRange, Workbook};
@@ -116,6 +117,18 @@ pub struct Session {
     pub user_name: RefCell<String>,
     /// Where dialogs and `Debug.Print` go.
     pub ui: RefCell<Box<dyn crate::run::MacroUi>>,
+    /// The workbooks of the run (`Workbooks`, `ActiveWorkbook`), shared by
+    /// every workbook's session; `None` before the run sets it up.
+    pub app: RefCell<Option<Rc<crate::books::App>>>,
+    /// What macro events have seen of this workbook (see `events`).
+    pub events: RefCell<crate::events::Watch>,
+    /// Stops the run (`Application.Wait` checks it while it waits).
+    pub cancel: RefCell<kantor_script::CancelToken>,
+    /// The undo mark when the run started (`Application.Undo` takes back
+    /// the user's last action only before the macro changed anything).
+    pub run_mark: Cell<usize>,
+    /// `ThisWorkbook.Close` was called: `Some(SaveChanges)`.
+    pub close_requested: Cell<Option<Option<bool>>>,
 }
 
 impl Session {
@@ -123,12 +136,15 @@ impl Session {
         let sheet_id = book.sheet_id(view.sheet.min(book.sheet_names().len() as u32 - 1));
         let title = book.title();
         let (full, folder) = match book.path() {
-            Some(p) => (
-                p.display().to_string(),
-                p.parent()
-                    .map(|d| d.display().to_string())
-                    .unwrap_or_default(),
-            ),
+            Some(p) => {
+                let p = std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf());
+                (
+                    p.display().to_string(),
+                    p.parent()
+                        .map(|d| d.display().to_string())
+                        .unwrap_or_default(),
+                )
+            }
             None => (title.clone(), String::new()),
         };
         let mut code_names = Vec::new();
@@ -159,7 +175,60 @@ impl Session {
             folder: RefCell::new(folder),
             user_name: RefCell::new(user),
             ui: RefCell::new(ui),
+            app: RefCell::new(None),
+            events: RefCell::new(crate::events::Watch::default()),
+            cancel: RefCell::new(kantor_script::CancelToken::new()),
+            run_mark: Cell::new(0),
+            close_requested: Cell::new(None),
         }
+    }
+
+    /// Starts a new run on the same session: objects a macro kept in module
+    /// variables (`Set ws = Sheet1`, a `WithEvents` `Application`) stay
+    /// valid from run to run. The application settings are kept, as Excel
+    /// keeps `EnableEvents`; the workbook, view, code names, clipboard and
+    /// dialogs are the new run's.
+    pub fn reload(&self, book: Workbook, view: View, ui: Box<dyn crate::run::MacroUi>) {
+        let fresh = Session::new(book, view, ui);
+        let book = fresh.book.borrow_mut().take();
+        *self.book.borrow_mut() = book;
+        self.dirty.set(false);
+        self.active.set(fresh.active.get());
+        *self.selections.borrow_mut() = fresh.selections.take();
+        self.clip.set(None);
+        *self.find.borrow_mut() = None;
+        self.sorts.borrow_mut().clear();
+        // What the object model kept for the last run on this session.
+        crate::charts::end_run(self);
+        crate::pivots::end_run(self);
+        crate::tables::end_run(self);
+        *self.code_names.borrow_mut() = fresh.code_names.take();
+        self.save_requested.set(false);
+        self.close_requested.set(None);
+        *self.file_name.borrow_mut() = fresh.file_name.take();
+        *self.full_name.borrow_mut() = fresh.full_name.take();
+        *self.folder.borrow_mut() = fresh.folder.take();
+        let Session { ui, .. } = fresh;
+        *self.ui.borrow_mut() = ui.into_inner();
+    }
+
+    /// The workbook without bringing values up to date (for checks that
+    /// don't read values: the undo history, sheet ids).
+    pub fn peek(&self) -> Result<RefMut<'_, Workbook>, ScriptError> {
+        self.borrow()
+    }
+
+    /// Updates the file name, path and folder after a Save As.
+    pub fn set_file(&self, path: &std::path::Path) {
+        *self.file_name.borrow_mut() = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        *self.full_name.borrow_mut() = path.display().to_string();
+        *self.folder.borrow_mut() = path
+            .parent()
+            .map(|d| d.display().to_string())
+            .unwrap_or_default();
     }
 
     /// The workbook for an edit (marks values stale until the next read).

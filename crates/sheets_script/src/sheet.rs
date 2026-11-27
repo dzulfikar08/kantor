@@ -73,6 +73,9 @@ pub fn resolve(s: &Rc<Session>, sheet: u32, text: &str) -> Result<Rc<RangeObj>, 
             "Method 'Range' of object '_Global' failed ({text})"
         ))
     };
+    if let Some(r) = crate::tables::structured_range(s, text) {
+        return Ok(r);
+    }
     let mut areas = Vec::new();
     let mut on = None;
     for part in split_top_commas(text) {
@@ -152,6 +155,18 @@ fn defined_name(s: &Rc<Session>, sheet: u32, name: &str) -> Option<Rc<RangeObj>>
 impl Dispatch for SheetObj {
     fn type_name(&self) -> String {
         "Worksheet".into()
+    }
+
+    fn document_module(&self) -> Option<String> {
+        if !std::rc::Rc::ptr_eq(&crate::books::this(&self.s), &self.s) {
+            return None;
+        }
+        self.s
+            .code_names
+            .borrow()
+            .iter()
+            .find(|(_, id)| *id == self.id)
+            .map(|(c, _)| c.clone())
     }
 
     fn as_any(&self) -> Option<&dyn Any> {
@@ -294,8 +309,29 @@ impl Dispatch for SheetObj {
                 Ok(Value::Double(self.s.read()?.default_row_points(idx)))
             }
             "tab" => Ok(Value::NOTHING),
-            "shapes" | "chartobjects" | "listobjects" | "pivottables" | "comments"
-            | "hyperlinks" | "buttons" => Err(ScriptError::unsupported(&format!(
+            "shapes" => crate::shapes::shapes(&self.s, self.id, args),
+            "pictures" => crate::shapes::pictures(&self.s, self.id, args),
+            "chartobjects" => crate::charts::chart_objects(&self.s, self.id, args),
+            "pivottables" => crate::pivots::pivot_tables(&self.s, self.id, args),
+            "pivottablewizard" => crate::pivots::pivot_table_wizard(),
+            "listobjects" => crate::tables::sheet_list_objects(&self.s, self.id, args),
+            "hyperlinks" => crate::hyperlinks::with_args(
+                crate::hyperlinks::sheet_hyperlinks(&self.s, self.id),
+                args,
+            ),
+            "comments" => {
+                let c = crate::comments::comments(&self.s, self.id);
+                match (&c, args.is_empty()) {
+                    (Value::Object(Some(o)), false) => o.get("", args),
+                    _ => Ok(c),
+                }
+            }
+            "commentsthreaded" => crate::comments::threaded(),
+            "pagesetup" => Ok(crate::page_setup::page_setup(&self.s, self.id)),
+            "hpagebreaks" => crate::page_setup::h_page_breaks(&self.s, self.id, args),
+            "vpagebreaks" => crate::page_setup::v_page_breaks(&self.s, self.id, args),
+            "resetallpagebreaks" => crate::page_setup::reset_all_page_breaks(&self.s, self.id),
+            "buttons" => Err(ScriptError::unsupported(&format!(
                 "Worksheet.{name} from a macro"
             ))),
             // Methods.
@@ -370,9 +406,8 @@ impl Dispatch for SheetObj {
                 }
                 Ok(Value::Empty)
             }
-            "printout" | "printpreview" | "exportasfixedformat" => Err(ScriptError::unsupported(
-                "Printing or exporting from a macro",
-            )),
+            "exportasfixedformat" => crate::page_setup::export_pdf_sheet(&self.s, self.id, args),
+            "printout" | "printpreview" => crate::page_setup::print_out(),
             "evaluate" => crate::app::evaluate(&self.s, self.id, need(args, 0, "Name")?),
             _ => Err(ScriptError::no_member("Worksheet", name)),
         }

@@ -17,13 +17,18 @@
 //! keep their values between runs until [`Project::reset`] or an `End` statement, as in VBA.
 //! Global names the project doesn't define come from the [`Host`].
 //!
+//! UserForms: [`Project::add_form`] gives a form module its designer; `UserForm1.Show` then
+//! shows it through [`Host::form_event`] and runs its event handlers (see [`crate::forms`]).
+//!
 //! The rules follow the VBA language specification (MS-VBAL); comments cite its sections.
 
 pub mod ast;
 pub mod builtins;
 pub mod compile;
 pub mod convert;
+mod events;
 pub mod format;
+mod forms;
 mod interp;
 pub mod lexer;
 pub mod objects;
@@ -116,6 +121,27 @@ impl Project {
         Ok(())
     }
 
+    /// The problems of a module's source, as an editor shows them before a
+    /// run (see [`parser::check_module`]): the error that keeps it from
+    /// compiling (structure, an undeclared event…), lines that don't parse
+    /// (they fail when they run), statements Kantor doesn't run. Lines
+    /// count in `source`.
+    pub fn check(kind: ModuleKind, source: &str) -> Vec<parser::Diagnostic> {
+        let (def, mut out) = parser::check_module(source);
+        if let Some(def) = def
+            && let Err(e) = compile::compile_module(0, "Module", kind, def)
+        {
+            out.push(parser::Diagnostic {
+                line: e.location.as_ref().map_or(0, |l| l.line),
+                message: e.description,
+                fatal: true,
+                unsupported: false,
+            });
+            out.sort_by_key(|d| d.line);
+        }
+        out
+    }
+
     pub fn module_names(&self) -> Vec<String> {
         self.modules.iter().map(|m| m.name.clone()).collect()
     }
@@ -142,6 +168,14 @@ impl Project {
             }
         }
         out
+    }
+
+    /// The designer of form module `design.name` (its controls): what `UserForm1.Show` shows.
+    /// A form module without one shows an empty form.
+    pub fn add_form(&mut self, design: crate::forms::FormDesign) {
+        self.state
+            .forms
+            .insert(design.name.to_lowercase(), Rc::new(design));
     }
 
     /// Makes a constant visible to every module (the object model's `xlUp`, `xlValues`…).
@@ -208,8 +242,18 @@ impl Project {
         args: &[Value],
         host: &mut dyn Host,
     ) -> Result<Value, ScriptError> {
-        self.state.steps = 0;
         let args = args.iter().cloned().map(ArgIn::value).collect();
+        self.with_interp(host, |it| it.call_proc(&module, &proc, args, None, None))
+    }
+
+    /// Runs `f` on an interpreter over the project, then what the host still asks for (the
+    /// events the last statement fired); `End` resets the project.
+    fn with_interp(
+        &mut self,
+        host: &mut dyn Host,
+        f: impl FnOnce(&mut Interp<'_>) -> Result<Value, ScriptError>,
+    ) -> Result<Value, ScriptError> {
+        self.state.steps = 0;
         let (result, halted) = {
             let mut it = Interp {
                 modules: &self.modules,
@@ -217,7 +261,13 @@ impl Project {
                 host,
                 depth: 0,
             };
-            let r = it.call_proc(&module, &proc, args, None, None);
+            let mut r = f(&mut it).and_then(|v| it.host_calls().map(|()| v));
+            // Forms shown modeless stay up once the macro is done; their events run now.
+            if r.is_ok()
+                && let Err(e) = it.run_modeless()
+            {
+                r = Err(e);
+            }
             it.flush_print();
             match r {
                 Err(e) if e.kind == ErrorKind::Halt => (Ok(Value::Empty), true),
@@ -241,6 +291,113 @@ impl Project {
     ) -> Result<Value, ScriptError> {
         let (m, p) = self.find(name, false)?;
         self.invoke(m, p, args, host)
+    }
+
+    /// Runs procedure `name` (any procedure of a standard or document module, private ones
+    /// too: `"Sheet1.Worksheet_BeforeDoubleClick"`, `"'Book.xlsm'!Macro1"`), passing `args`
+    /// by reference: what the procedure assigns to a `ByRef` parameter comes back in `args`
+    /// (an event handler's `Cancel`).
+    pub fn run_by_ref(
+        &mut self,
+        name: &str,
+        args: &mut [Value],
+        host: &mut dyn Host,
+    ) -> Result<Value, ScriptError> {
+        let slots: Vec<objects::Slot> = args
+            .iter()
+            .map(|v| objects::new_slot(v.clone(), ast::Ty::Variant))
+            .collect();
+        let result = self.with_interp(host, |it| {
+            let Some((m, p)) = it.find_proc(name) else {
+                return Err(ScriptError::new(35, format!("Macro not found: {name}")));
+            };
+            let a = slots
+                .iter()
+                .map(|s| ArgIn {
+                    name: None,
+                    value: s.borrow().value.clone(),
+                    place: Some(interp::Place::slot(s.clone())),
+                })
+                .collect();
+            it.call_proc(&m, &p, a, None, None)
+        });
+        for (v, s) in args.iter_mut().zip(&slots) {
+            *v = s.borrow().value.clone();
+        }
+        result
+    }
+
+    /// Raises event `event` of a host object of type `source_type` (`"Application"`) to the
+    /// project's `WithEvents` variables holding such an object: each one's
+    /// `<variable>_<event>` runs. `args` are passed by reference, as in [`Project::run_by_ref`].
+    pub fn raise_event(
+        &mut self,
+        source_type: &str,
+        event: &str,
+        args: &mut [Value],
+        host: &mut dyn Host,
+    ) -> Result<(), ScriptError> {
+        if self.state.sinks.is_empty() {
+            return Ok(());
+        }
+        let slots: Vec<objects::Slot> = args
+            .iter()
+            .map(|v| objects::new_slot(v.clone(), ast::Ty::Variant))
+            .collect();
+        let result = self.with_interp(host, |it| {
+            let a: Vec<(Value, Option<interp::Place>)> = slots
+                .iter()
+                .map(|s| (Value::Empty, Some(interp::Place::slot(s.clone()))))
+                .collect();
+            it.raise_to_sinks(
+                &|o: &crate::object::ObjectRef| o.type_name().eq_ignore_ascii_case(source_type),
+                event,
+                &a,
+            )
+            .map(|()| Value::Empty)
+        });
+        for (v, s) in args.iter_mut().zip(&slots) {
+            *v = s.borrow().value.clone();
+        }
+        result.map(|_| ())
+    }
+
+    /// Whether a procedure `name` exists as [`Project::run_by_ref`] finds it.
+    pub fn has_procedure(&self, name: &str) -> bool {
+        let name = name.to_lowercase();
+        let (module, proc_name) = match name.rsplit_once('.') {
+            Some((m, p)) => (Some(m), p),
+            None => (None, name.as_str()),
+        };
+        self.modules.iter().any(|m| {
+            matches!(m.kind, ModuleKind::Standard | ModuleKind::Document)
+                && module.is_none_or(|k| &*m.key == k)
+                && m.procs.contains_key(proc_name)
+        })
+    }
+
+    /// The procedures that handle events of `WithEvents` variables: `(module, variable,
+    /// event)` for each `<variable>_<event>` procedure of a module declaring the variable
+    /// `WithEvents` (lower case). A host checks it to skip events nobody handles.
+    pub fn with_events_handlers(&self) -> Vec<(String, String, String)> {
+        let mut out = Vec::new();
+        for m in &self.modules {
+            for var in &m.with_events {
+                let prefix = format!("{var}_");
+                for key in m.procs.keys() {
+                    if let Some(event) = key.strip_prefix(prefix.as_str()) {
+                        out.push((m.key.to_string(), var.to_string(), event.to_string()));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Whether any `WithEvents` variable currently exists (so host events may have a
+    /// handler).
+    pub fn has_event_sinks(&self) -> bool {
+        !self.state.sinks.is_empty()
     }
 
     /// Calls a public Function of a standard module, as a worksheet formula calls a UDF.

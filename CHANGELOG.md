@@ -24,6 +24,28 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
   heading) build through Kantor's own document and deck builders; `kantor convert note.md note.docx|pdf|pptx` does
   the same without a window, and the MCP server reads and edits open notes (`notes_read`, `notes_write`,
   `notes_replace`).
+- **Macro Editor** in Sheets (Alt+F11, *Macro Editor* in the palette, *Edit* in the Macros dialog): the workbook's
+  modules on the left (ThisWorkbook, sheets, modules, class modules, UserForm code, JavaScript), code with colours,
+  line numbers, undo and Find on the right. Insert, rename and remove modules; **F5** runs the Sub the cursor is in;
+  code that doesn't compile is listed with its line and doesn't run. Saving a `.xlsx` with new VBA offers `.xlsm` as
+  Excel does. Code you type yourself runs without Enable Content; a file that arrived with macros still asks first.
+- VBA **events**: `Workbook_Open`, `BeforeSave`, `BeforeClose`, `Worksheet_Change`, `SelectionChange`,
+  `BeforeDoubleClick`, `BeforeRightClick`, `Activate`/`Deactivate` and more, `WithEvents`/`RaiseEvent`,
+  `Application.OnTime` and `Application.Run`. Module variables keep their values between runs, as in Excel.
+- **UserForms**: forms saved by Excel show as real dialogs (text boxes, combo and list boxes, check boxes, option
+  buttons, frames, buttons, labels) with their event code, modal or modeless.
+- More of Excel's objects for macros: charts, shapes and pictures, pivot tables, tables (`ListObjects`), comments,
+  hyperlinks, data validation, conditional formats, page setup and page breaks, `ExportAsFixedFormat` to PDF,
+  `Workbooks.Open`/`Add`/`SaveAs`/`Close`, `AutoFit` measured with the cells' fonts, single border edges with
+  `xlNone`. A macro that reads or writes a file outside the workbook's folder asks first.
+- **JavaScript macros** on the same objects (`ActiveSheet.range("A1").value = 5`), kept inside the workbook (also in
+  a plain `.xlsx`), listed and run like VBA macros, with the same Enable Content, Stop and one-step undo.
+  `kantor sheets macros add FILE report.js` adds one. (Python scripts are kept and listed, but don't run yet.)
+
+### Fixed
+
+- A macro writing one formula over several cells (`Range("B14:D14").Formula = "=SUM(B2:B13)"`) moves its relative
+  references per cell, as Excel does.
 
 ## [0.27.0] - 2026-11-27
 

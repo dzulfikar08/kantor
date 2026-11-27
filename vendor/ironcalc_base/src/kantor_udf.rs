@@ -33,10 +33,43 @@ pub enum KantorValue {
     Array(Vec<Vec<KantorValue>>),
 }
 
+/// A cell or range by sheet and position: where a range argument came from,
+/// or the cell whose formula calls a user function. Rows and columns are
+/// 1-based.
+#[derive(Clone, Debug, PartialEq)]
+pub struct KantorRangeRef {
+    /// The sheet's index.
+    pub sheet: u32,
+    pub sheet_name: String,
+    pub row: i32,
+    pub column: i32,
+    pub rows: i32,
+    pub columns: i32,
+}
+
+/// An argument of a user function: its value and, for a reference, the
+/// range it names (VBA passes a `Range` object).
+#[derive(Clone, Debug, PartialEq)]
+pub struct KantorArg {
+    pub value: KantorValue,
+    pub range: Option<KantorRangeRef>,
+}
+
 /// Functions the host defines. `call` returns `None` when it has no
 /// function `name` (the formula shows `#NAME?`).
 pub trait KantorUserFunctions: Send + Sync {
     fn call(&self, name: &str, args: Vec<KantorValue>) -> Option<KantorValue>;
+
+    /// [`Self::call`] with where reference arguments came from and the
+    /// calling cell (`Application.Caller`). The engine calls this one.
+    fn call_with(
+        &self,
+        name: &str,
+        args: Vec<KantorArg>,
+        _caller: &KantorRangeRef,
+    ) -> Option<KantorValue> {
+        self.call(name, args.into_iter().map(|a| a.value).collect())
+    }
 }
 
 /// Cells read from one range argument at most.
@@ -64,10 +97,49 @@ impl Model<'_> {
         let mut values = Vec::with_capacity(args.len());
         for arg in args {
             let result = self.evaluate_node_in_context(arg, cell);
-            values.push(self.kantor_value_of(result));
+            let range = match &result {
+                CalcResult::Range { left, right } if left.sheet == right.sheet => Some(
+                    self.kantor_range_ref(
+                        left.sheet,
+                        left.row.min(right.row),
+                        left.column.min(right.column),
+                        (left.row - right.row).abs() + 1,
+                        (left.column - right.column).abs() + 1,
+                    ),
+                ),
+                _ => None,
+            };
+            values.push(KantorArg {
+                value: self.kantor_value_of(result),
+                range,
+            });
         }
-        let result = functions.call(name, values)?;
+        let caller = self.kantor_range_ref(cell.sheet, cell.row, cell.column, 1, 1);
+        let result = functions.call_with(name, values, &caller)?;
         Some(self.kantor_calc_result(result, cell))
+    }
+
+    fn kantor_range_ref(
+        &self,
+        sheet: u32,
+        row: i32,
+        column: i32,
+        rows: i32,
+        columns: i32,
+    ) -> KantorRangeRef {
+        KantorRangeRef {
+            sheet,
+            sheet_name: self
+                .workbook
+                .worksheets
+                .get(sheet as usize)
+                .map(|w| w.get_name())
+                .unwrap_or_default(),
+            row,
+            column,
+            rows,
+            columns,
+        }
     }
 
     fn kantor_value_of(&mut self, result: CalcResult) -> KantorValue {

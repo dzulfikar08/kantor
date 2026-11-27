@@ -19,24 +19,53 @@
 //!   Sheets are kept by `sheetId`, so a `Worksheet` object stays right when
 //!   sheets are added, moved or renamed.
 //! - Dialogs go through [`MacroUi`], which is lent the workbook while one
-//!   shows (so the grid can show the cells as the macro left them).
+//!   shows (so the grid can show the cells as the macro left them); so do
+//!   UserForms ([`MacroUi::form_event`]).
 //! - [`udf::VbaFunctions`]: the workbook's VBA functions in cell formulas.
+//! - [`scripts`]: JavaScript and Python macros stored in the workbook, run
+//!   on the same objects.
+//! - [`MacroEngine`]: a workbook's live project (module variables last
+//!   between runs), its events ([`Event`]) and other workbooks (`books`).
 
 pub mod addr;
 pub mod app;
+pub mod books;
+pub mod characters;
+pub mod charts;
+pub mod code;
+pub mod comments;
+pub mod cond_formats;
 pub mod consts;
+pub mod engine;
+pub mod events;
+pub mod fit;
 pub mod format;
+pub mod hyperlinks;
+pub mod page_setup;
+pub mod paths;
+pub mod pivots;
+pub mod protection;
 pub mod range;
 pub mod run;
+pub mod scripts;
 pub mod session;
+pub mod shapes;
 pub mod sheet;
+pub mod tables;
+pub mod timers;
 pub mod udf;
+mod udf_range;
+pub mod validation;
 pub mod values;
 
+pub use books::BookOut;
+pub use engine::{MacroEngine, Timer};
+pub use events::{Event, EventIndex, EventKind};
+pub use kantor_script::forms::Answer;
 pub use run::{
-    HeadlessUi, InputBoxRequest, InputKind, MacroError, MacroInfo, MacroProject, MacroUi,
-    MsgBoxRequest, MsgButtons, MsgIcon, RunOptions, RunOutcome, broken_for, macro_list,
-    run_headless, run_macro, set_utc_offset_minutes,
+    FormAnswer, HeadlessUi, InputBoxRequest, InputKind, MacroError, MacroInfo, MacroProject,
+    MacroUi, MsgBoxRequest, MsgButtons, MsgIcon, OtherBook, RunOptions, RunOutcome, broken_for,
+    local_now, macro_list, run_headless, run_macro, set_utc_offset_minutes,
 };
 pub use session::{Selection, View};
 pub use udf::{VbaFunctions, enable_functions};

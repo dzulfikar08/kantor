@@ -22,6 +22,8 @@ fn common(s: &Rc<Session>, lower: &str, args: &[Arg]) -> Option<Result<Value, Sc
         "range" => range_on(s, active, args),
         "cells" | "rows" | "columns" => SheetObj::new(s, active).get(lower, args),
         "activesheet" => Ok(obj(SheetObj::new(s, active))),
+        "activechart" => Ok(crate::charts::active_chart(s)),
+        "charts" => crate::charts::charts(s, args),
         "activecell" => {
             let (r, c) = s.selection(active).active;
             Ok(obj(RangeObj::new(
@@ -31,7 +33,8 @@ fn common(s: &Rc<Session>, lower: &str, args: &[Arg]) -> Option<Result<Value, Sc
             )))
         }
         "selection" => Ok(obj(RangeObj::new(s, active, s.selection(active).range))),
-        "activeworkbook" | "thisworkbook" => Ok(obj(Rc::new(WorkbookObj::new(s)))),
+        "activeworkbook" => Ok(obj(Rc::new(WorkbookObj::new(&crate::books::active(s))))),
+        "thisworkbook" => Ok(obj(Rc::new(WorkbookObj::new(&crate::books::this(s))))),
         "workbooks" if args.is_empty() => Ok(obj(Rc::new(WorkbooksObj { s: s.clone() }))),
         "workbooks" => WorkbooksObj { s: s.clone() }.get("", args),
         "worksheets" | "sheets" if args.is_empty() => Ok(obj(Rc::new(SheetsObj { s: s.clone() }))),
@@ -119,8 +122,9 @@ fn common(s: &Rc<Session>, lower: &str, args: &[Arg]) -> Option<Result<Value, Sc
         }
         _ => {
             // Document modules by name: `Sheet1.Range(...)`, `ThisWorkbook`.
-            if let Some(id) = s.code_name_sheet(lower) {
-                return Some(Ok(obj(SheetObj::new(s, id))));
+            let this = crate::books::this(s);
+            if let Some(id) = this.code_name_sheet(lower) {
+                return Some(Ok(obj(SheetObj::new(&this, id))));
             }
             return None;
         }
@@ -144,12 +148,24 @@ impl Dispatch for Globals {
 
     fn get(&self, name: &str, args: &[Arg]) -> Result<Value, ScriptError> {
         let lower = name.to_ascii_lowercase();
-        common(&self.s, &lower, args).unwrap_or_else(|| Err(ScriptError::no_member("Global", name)))
+        let s = crate::books::active(&self.s);
+        match common(&s, &lower, args) {
+            Some(r) => r,
+            // `OnTime`, `Wait`… are globals too.
+            None if global_app_member(&lower) => Application::new(&self.s).get(name, args),
+            None => Err(ScriptError::no_member("Global", name)),
+        }
+    }
+
+    fn script_member(&self, name: &str) -> Option<kantor_script::ScriptMember> {
+        name.eq_ignore_ascii_case("run")
+            .then_some(kantor_script::ScriptMember::Run)
     }
 
     fn put(&self, name: &str, args: &[Arg], value: Value) -> Result<(), ScriptError> {
         let lower = name.to_ascii_lowercase();
-        match common(&self.s, &lower, args) {
+        let s = crate::books::active(&self.s);
+        match common(&s, &lower, args) {
             Some(Ok(Value::Object(Some(o)))) => o.put("", &[], value),
             Some(Ok(_)) => Err(ScriptError::runtime(450)),
             Some(Err(e)) => Err(e),
@@ -173,10 +189,23 @@ impl Dispatch for Application {
         "Application".into()
     }
 
+    fn script_member(&self, name: &str) -> Option<kantor_script::ScriptMember> {
+        name.eq_ignore_ascii_case("run")
+            .then_some(kantor_script::ScriptMember::Run)
+    }
+
     fn get(&self, name: &str, args: &[Arg]) -> Result<Value, ScriptError> {
         let lower = name.to_ascii_lowercase();
-        if let Some(r) = common(&self.s, &lower, args) {
+        if let Some(r) = common(&crate::books::active(&self.s), &lower, args) {
             return r;
+        }
+        if let Some(r) = crate::timers::application_member(&self.s, &lower, args) {
+            return r;
+        }
+        match lower.as_str() {
+            "inchestopoints" => return crate::page_setup::inches_to_points(args),
+            "centimeterstopoints" => return crate::page_setup::centimeters_to_points(args),
+            _ => {}
         }
         let st = self.s.settings.borrow();
         Ok(match lower.as_str() {
@@ -216,12 +245,11 @@ impl Dispatch for Application {
                 drop(st);
                 return input_box(&self.s, args);
             }
-            "wait" | "ontime" | "onkey" => {
+            "onkey" => {
                 return Err(ScriptError::unsupported(&format!(
-                    "Application.{name} (timers and keys)"
+                    "Application.{name} (keys)"
                 )));
             }
-            "run" => return Err(ScriptError::unsupported("Application.Run")),
             "quit" => return Err(ScriptError::unsupported("Application.Quit")),
             "getopenfilename" | "getsaveasfilename" | "filedialog" | "dialogs" => {
                 return Err(ScriptError::unsupported("File dialogs from a macro"));
@@ -312,7 +340,7 @@ impl Dispatch for Application {
                 }
                 Ok(())
             }
-            _ => match common(&self.s, &lower, args) {
+            _ => match common(&crate::books::active(&self.s), &lower, args) {
                 Some(Ok(Value::Object(Some(o)))) => o.put("", &[], value),
                 Some(Ok(_)) => Err(ScriptError::runtime(450)),
                 Some(Err(e)) => Err(e),
@@ -320,6 +348,11 @@ impl Dispatch for Application {
             },
         }
     }
+}
+
+/// `Application` members that work unqualified (`OnTime ...`, `Wait ...`).
+fn global_app_member(lower: &str) -> bool {
+    matches!(lower, "ontime" | "wait" | "undo")
 }
 
 /// Whether the engine has a function `name`.
@@ -442,6 +475,10 @@ impl Dispatch for WorkbookObj {
         "Workbook".into()
     }
 
+    fn document_module(&self) -> Option<String> {
+        Rc::ptr_eq(&crate::books::this(&self.s), &self.s).then(|| "ThisWorkbook".to_owned())
+    }
+
     fn get(&self, name: &str, args: &[Arg]) -> Result<Value, ScriptError> {
         let lower = name.to_ascii_lowercase();
         match lower.as_str() {
@@ -455,21 +492,21 @@ impl Dispatch for WorkbookObj {
             "parent" => Ok(obj(Rc::new(Application::new(&self.s)))),
             "saved" => Ok(Value::Boolean(!self.s.read()?.is_dirty())),
             "readonly" | "hasvbproject" => Ok(Value::Boolean(lower == "hasvbproject")),
-            "save" => {
-                self.s.save_requested.set(true);
+            "save" | "saveas" | "savecopyas" | "close" | "activate" => {
+                crate::books::workbook_member(&self.s, &lower, args)
+                    .unwrap_or_else(|| Err(ScriptError::runtime(438)))
+            }
+            "protect" | "unprotect" => Ok(Value::Empty),
+            "refreshall" => {
+                crate::pivots::refresh_all(&self.s)?;
                 Ok(Value::Empty)
             }
-            "activate" | "protect" | "unprotect" => Ok(Value::Empty),
-            "saveas" | "savecopyas" => Err(ScriptError::unsupported(
-                "Saving under another name from a macro",
-            )),
-            "close" => Err(ScriptError::unsupported(
-                "Closing the workbook from a macro",
-            )),
-            "refreshall" => Err(ScriptError::unsupported("RefreshAll from a macro")),
-            "printout" | "exportasfixedformat" => Err(ScriptError::unsupported(
-                "Printing or exporting from a macro",
-            )),
+            "pivotcaches" if args.is_empty() => Ok(crate::pivots::pivot_caches(&self.s)),
+            "pivotcaches" => crate::pivots::pivot_caches_with(&self.s, args),
+            "charts" => crate::charts::charts(&self.s, args),
+            "iconsets" => crate::cond_formats::icon_sets(args),
+            "exportasfixedformat" => crate::page_setup::export_pdf_book(&self.s, args),
+            "printout" | "printpreview" => crate::page_setup::print_out(),
             "windows" => Ok(obj(Rc::new(WindowObj { s: self.s.clone() }))),
             _ => Err(ScriptError::no_member("Workbook", name)),
         }
@@ -485,47 +522,7 @@ impl Dispatch for WorkbookObj {
     }
 }
 
-pub struct WorkbooksObj {
-    s: Rc<Session>,
-}
-
-impl Dispatch for WorkbooksObj {
-    fn type_name(&self) -> String {
-        "Workbooks".into()
-    }
-
-    fn get(&self, name: &str, args: &[Arg]) -> Result<Value, ScriptError> {
-        match name.to_ascii_lowercase().as_str() {
-            "count" => Ok(Value::Long(1)),
-            "" | "item" => {
-                let key = scalar(need(args, 0, "Index")?)?;
-                let ok = match &key {
-                    Value::String(n) => {
-                        let me = self.s.file_name.borrow();
-                        n.eq_ignore_ascii_case(&me)
-                            || std::path::Path::new(n.as_str())
-                                .file_stem()
-                                .zip(std::path::Path::new(me.as_str()).file_stem())
-                                .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
-                    }
-                    v => to_i64(v)? == 1,
-                };
-                if !ok {
-                    return Err(ScriptError::runtime(9));
-                }
-                Ok(obj(Rc::new(WorkbookObj::new(&self.s))))
-            }
-            "open" | "add" | "opentext" | "openxml" => Err(ScriptError::unsupported(
-                "Opening or creating other workbooks from a macro",
-            )),
-            _ => Err(ScriptError::no_member("Workbooks", name)),
-        }
-    }
-
-    fn enumerate(&self) -> Result<Vec<Value>, ScriptError> {
-        Ok(vec![obj(Rc::new(WorkbookObj::new(&self.s)))])
-    }
-}
+pub use crate::books::WorkbooksObj;
 
 /// `ActiveWindow`: freezing panes, gridlines and zoom; scrolling is
 /// accepted and does nothing.

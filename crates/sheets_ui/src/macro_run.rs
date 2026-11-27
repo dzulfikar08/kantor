@@ -4,10 +4,10 @@
 //!
 //! **Where a macro runs.** The interpreter (`kantor_script`) is built on
 //! `Rc` and isn't `Send`, and it recurses on the native stack, so a run
-//! can't be cut into slices on the UI thread. It runs on a worker thread
-//! of its own instead, with the workbook (which is `Send`) moved there,
-//! as a big recalculation does (`calc`): the project is compiled there
-//! from the module sources. Meanwhile the grid holds a stand-in; a run
+//! can't be cut into slices on the UI thread. It runs on the workbook's
+//! macro thread (`macro_thread`), which keeps the project alive between
+//! runs, with the workbook (which is `Send`) moved there for the run, as a
+//! big recalculation does (`calc`). Meanwhile the grid holds a stand-in; a run
 //! that ends within [`QUICK`] never shows it (the UI thread waits that
 //! long), a longer one shows the busy pane with a Stop button (and Esc),
 //! which sets the interpreter's cancel flag (checked every 1024
@@ -15,7 +15,9 @@
 //! it shows, so the grid shows the cells as the macro left them; the
 //! answer takes it back to the worker. The whole run is one undo step.
 //!
-//! `Debug.Print` lines go to the Macros dialog's output list.
+//! `Debug.Print` lines go to the Macros dialog's output list. UserForms
+//! are dialogs too, asked again after each step of the user's
+//! (`macro_form`).
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -25,19 +27,21 @@ use gpui_kit::component::input::{self, Input, InputEvent, InputState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_script::forms::{FormInput, FormView};
 use kantor_script::{CancelToken, ScriptError};
 use kantor_ui::i18n::{t, tf, tk};
 use kantor_ui::tokens::Elevation;
 use kantor_ui::{metrics::*, tokens};
 use sheets_engine::Workbook;
 use sheets_script::{
-    InputBoxRequest, MacroError, MacroProject, MacroUi, MsgBoxRequest, MsgIcon, RunOptions,
-    RunOutcome, Selection, View,
+    BookOut, Event, InputBoxRequest, MacroError, MacroProject, MacroUi, MsgBoxRequest, MsgIcon,
+    OtherBook, RunOptions, Selection, View,
 };
 
 use crate::SheetsView;
-use crate::calc::{Busy, Job};
+use crate::calc::{Busy, Handoff, Job, SheetsEvent};
 use crate::grid_ops::Span;
+use crate::macro_thread::{MacroTask, Work};
 use crate::vba_ui::MacroTrust;
 
 /// How long the UI thread waits for a run before showing the busy pane.
@@ -63,7 +67,7 @@ fn button_label(en: &str) -> &'static str {
 const OUTPUT_LINES: usize = 500;
 
 /// What the worker asks of the UI thread.
-enum ToUi {
+pub(crate) enum ToUi {
     /// Show a dialog; the workbook is lent until the answer.
     Ask {
         book: Workbook,
@@ -72,20 +76,51 @@ enum ToUi {
         reply: mpsc::Sender<(Workbook, Answer)>,
     },
     Print(String),
+    /// The other workbooks open in the window (`Workbooks`).
+    Books(mpsc::Sender<Vec<OtherBook>>),
+    /// Lend the workbook of pane `id` (`Workbooks("Data.xlsx")`).
+    Lend {
+        id: u64,
+        reply: mpsc::Sender<Option<Workbook>>,
+    },
+    /// A UserForm closed.
+    FormClosed(String),
     Done {
         book: Workbook,
-        outcome: RunOutcome,
+        outcome: sheets_script::RunOutcome,
+        /// The earliest `Application.OnTime` schedule left.
+        next_timer: Option<f64>,
+        /// The macro that ran (`None`: an event, or nothing was due).
+        ran: Option<String>,
     },
 }
 
-enum Ask {
-    Msg(MsgBoxRequest),
-    Input(InputBoxRequest),
+/// What happens after an event's handlers, unless one set `Cancel`.
+pub(crate) enum After {
+    Nothing,
+    /// Edit this cell (`BeforeDoubleClick`).
+    Edit((u32, u32)),
+    /// Save (`BeforeSave`; `as_ui`: Save As).
+    Save {
+        as_ui: bool,
+    },
+    /// Go on closing (`BeforeClose`).
+    Close,
+    /// Recalculate (after `Workbook_Open`, at Enable Content), even when
+    /// the handler failed.
+    Recalculate,
 }
 
-enum Answer {
+pub(crate) enum Ask {
+    Msg(MsgBoxRequest),
+    Input(InputBoxRequest),
+    Form(Box<FormView>),
+}
+
+pub(crate) enum Answer {
     Msg(Result<i32, ScriptError>),
     Input(Result<Option<String>, ScriptError>),
+    Form(Result<FormInput, ScriptError>),
 }
 
 /// A run in progress.
@@ -95,6 +130,12 @@ pub(crate) struct MacroRun {
     rx: mpsc::Receiver<ToUi>,
     /// The dialog showing (the workbook is in the grid meanwhile).
     dialog: Option<RunDialog>,
+    after: After,
+    /// The UserForm shown (also under a MsgBox its code shows).
+    pub(crate) form: Option<crate::macro_form::FormUi>,
+    /// The workbook's name and file as the run started: the busy pane's
+    /// tab shows them (the grid holds a stand-in).
+    doc: (String, Option<std::path::PathBuf>),
 }
 
 impl Drop for MacroRun {
@@ -115,10 +156,19 @@ struct RunDialog {
     choice: usize,
 }
 
+impl MacroRun {
+    /// Whether the macro waits for a UserForm step.
+    pub(crate) fn waits_for_form(&self) -> bool {
+        self.dialog
+            .as_ref()
+            .is_some_and(|d| matches!(d.ask, Ask::Form(_)))
+    }
+}
+
 /// The worker's side of the UI: requests over a channel, waiting for the
 /// answers.
-struct ChannelUi {
-    tx: mpsc::Sender<ToUi>,
+pub(crate) struct ChannelUi {
+    pub(crate) tx: mpsc::Sender<ToUi>,
 }
 
 impl ChannelUi {
@@ -179,6 +229,67 @@ impl MacroUi for ChannelUi {
     fn debug_print(&mut self, line: &str) {
         let _ = self.tx.send(ToUi::Print(line.to_owned()));
     }
+
+    fn other_books(&mut self) -> Vec<OtherBook> {
+        let (reply, answer) = mpsc::channel();
+        if self.tx.send(ToUi::Books(reply)).is_err() {
+            return Vec::new();
+        }
+        answer.recv().unwrap_or_default()
+    }
+
+    fn lend_book(&mut self, id: u64) -> Option<Workbook> {
+        let (reply, answer) = mpsc::channel();
+        self.tx.send(ToUi::Lend { id, reply }).ok()?;
+        answer.recv().ok().flatten()
+    }
+
+    fn allow_path(
+        &mut self,
+        book: Workbook,
+        view: View,
+        path: &std::path::Path,
+        write: bool,
+    ) -> (Workbook, Option<bool>) {
+        let shown = path.display().to_string();
+        let prompt = if write {
+            tf(
+                "The macro wants to save {}, outside the workbook's folder. Allow it?",
+                &[&shown],
+            )
+        } else {
+            tf(
+                "The macro wants to open {}, outside the workbook's folder. Allow it?",
+                &[&shown],
+            )
+        };
+        let req = MsgBoxRequest {
+            prompt,
+            // vbYesNo + vbExclamation + vbDefaultButton2
+            buttons: 4 + 48 + 256,
+            title: "Kantor".to_owned(),
+        };
+        match self.ask(book, view, Ask::Msg(req)) {
+            (book, Some(Answer::Msg(Ok(6)))) => (book, Some(true)),
+            (book, _) => (book, Some(false)),
+        }
+    }
+
+    fn form_event(
+        &mut self,
+        book: Workbook,
+        view: View,
+        form: &FormView,
+    ) -> (Workbook, Result<FormInput, ScriptError>) {
+        match self.ask(book, view, Ask::Form(Box::new(form.clone()))) {
+            (book, Some(Answer::Form(a))) => (book, a),
+            (book, _) => (book, Err(stopped())),
+        }
+    }
+
+    fn form_closed(&mut self, name: &str) {
+        let _ = self.tx.send(ToUi::FormClosed(name.to_owned()));
+    }
 }
 
 impl SheetsView {
@@ -224,20 +335,48 @@ impl SheetsView {
             self.macros_disabled_notice(cx);
             return;
         }
-        if self.busy.is_some() || self.macros.run.is_some() {
+        if self.start_work(
+            MacroTask::Run(name.clone()),
+            name.clone(),
+            After::Nothing,
+            window,
+            cx,
+        ) {
+            self.macros.last_run = Some(name);
+        }
+    }
+
+    /// Hands `task` to the macro thread with the workbook; the grid holds a
+    /// stand-in until it's back. `false`: nothing started (busy, no thread).
+    pub(crate) fn start_work(
+        &mut self,
+        task: MacroTask,
+        label: String,
+        after: After,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if self.macros.trust != MacroTrust::Enabled || self.macros.thread.is_none() {
+            return false;
+        }
+        if self.busy.is_some() || self.macros.run.is_some() || self.macros.lent {
             self.status = t("Please wait until the workbook is ready").into();
             cx.notify();
-            return;
+            return false;
         }
         if self.editing.is_some() {
             self.commit_edit(None, window, cx);
         }
-        let Some(macros) = self.macros.project.clone() else {
-            return;
-        };
+        // An edit whose `Change` hasn't fired yet (its check is deferred)
+        // fires after this run: the run's end counts everything as seen.
+        let edit = self.unseen_edit_events(cx);
+        self.macros
+            .pending
+            .splice(0..0, edit.into_iter().map(|(e, _)| (e, None)));
         let Ok(stand_in) = Workbook::new_empty() else {
-            return;
+            return false;
         };
+        let doc = (self.doc_name(cx), self.path(cx));
         let view = self.macro_view(cx);
         let book = self.table.update(cx, |table, _| {
             std::mem::replace(&mut table.delegate_mut().book, stand_in)
@@ -248,24 +387,31 @@ impl SheetsView {
             step_limit: None,
             cancel: cancel.clone(),
         };
-        let worker_name = name.clone();
-        let spawned = std::thread::Builder::new()
-            .name("kantor-macro".into())
-            // The interpreter recurses on the native stack.
-            .stack_size(32 << 20)
-            .spawn(move || run_on_worker(book, macros, worker_name, view, options, tx));
-        if let Err(e) = spawned {
-            log::error!("starting a macro: {e}");
+        let work = Work {
+            book,
+            task,
+            view,
+            options,
+            tx,
+        };
+        let sent = match &self.macros.thread {
+            Some(thread) => thread.send(work),
+            None => Err(Box::new(work)),
+        };
+        if let Err(work) = sent {
+            self.put_back(work.book, cx);
             self.status = t("The macro couldn't start").into();
             cx.notify();
-            return;
+            return false;
         }
-        self.macros.last_run = Some(name.clone());
         self.macros.run = Some(MacroRun {
-            name,
+            name: label,
             cancel,
             rx,
             dialog: None,
+            after,
+            form: None,
+            doc,
         });
         // A quick run ends before the busy pane would show.
         let first = self
@@ -277,10 +423,11 @@ impl SheetsView {
             self.macro_message(msg, window, cx);
         }
         self.poll_macro(window, cx);
+        true
     }
 
     /// Handle what the worker sent; keep waiting while it runs.
-    fn poll_macro(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn poll_macro(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         loop {
             let Some(run) = self.macros.run.as_ref() else {
                 self.busy = None;
@@ -315,6 +462,7 @@ impl SheetsView {
             return;
         };
         let name = run.name.clone();
+        let (doc_name, doc_path) = run.doc.clone();
         let task = cx.spawn_in(window, async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -337,8 +485,8 @@ impl SheetsView {
         self.busy = Some(Busy {
             what: Job::Macro(name),
             started: Instant::now(),
-            name: self.doc_name(cx),
-            path: self.path(cx),
+            name: doc_name,
+            path: doc_path,
             dirty: true,
             _task: task,
         });
@@ -357,7 +505,7 @@ impl SheetsView {
         }
     }
 
-    fn macro_message(&mut self, msg: ToUi, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn macro_message(&mut self, msg: ToUi, window: &mut Window, cx: &mut Context<Self>) {
         match msg {
             ToUi::Print(line) => {
                 let out = &mut self.macros.output;
@@ -366,6 +514,7 @@ impl SheetsView {
                     out.drain(..out.len() - OUTPUT_LINES);
                 }
             }
+            ToUi::FormClosed(name) => self.form_gone(&name),
             ToUi::Ask {
                 book,
                 view,
@@ -376,6 +525,21 @@ impl SheetsView {
                 self.put_back(book, cx);
                 self.apply_macro_view(view, window, cx);
                 let focus = cx.focus_handle();
+                if let Ask::Form(form) = &ask {
+                    let form = (**form).clone();
+                    if let Some(run) = self.macros.run.as_mut() {
+                        run.dialog = Some(RunDialog {
+                            ask,
+                            reply,
+                            input: None,
+                            focus,
+                            choice: 0,
+                        });
+                    }
+                    self.form_arrived(form, window, cx);
+                    cx.notify();
+                    return;
+                }
                 let input = match &ask {
                     Ask::Input(req) => {
                         let state = cx.new(|cx| InputState::new(window, cx));
@@ -387,14 +551,14 @@ impl SheetsView {
                         let sub = cx.subscribe_in(&state, window, Self::on_macro_input);
                         Some((state, sub))
                     }
-                    Ask::Msg(_) => {
+                    Ask::Msg(_) | Ask::Form(_) => {
                         window.focus(&focus, cx);
                         None
                     }
                 };
                 let choice = match &ask {
                     Ask::Msg(req) => req.default_button().min(req.choices().len() - 1),
-                    Ask::Input(_) => 0,
+                    Ask::Input(_) | Ask::Form(_) => 0,
                 };
                 if let Some(run) = self.macros.run.as_mut() {
                     run.dialog = Some(RunDialog {
@@ -407,35 +571,96 @@ impl SheetsView {
                 }
                 cx.notify();
             }
-            ToUi::Done { book, outcome } => {
-                self.macros.run = None;
+            ToUi::Books(reply) => cx.emit(SheetsEvent::ListBooks(Handoff::new(reply))),
+            ToUi::Lend { id, reply } => cx.emit(SheetsEvent::LendBook {
+                id,
+                reply: Handoff::new(reply),
+            }),
+            ToUi::Done {
+                book,
+                outcome,
+                next_timer,
+                ran,
+            } => {
+                let after = match self.macros.run.take() {
+                    Some(mut run) => std::mem::replace(&mut run.after, After::Nothing),
+                    None => After::Nothing,
+                };
                 self.busy = None;
                 self.put_back(book, cx);
-                self.apply_macro_view(outcome.view, window, cx);
-                self.focus_grid(window, cx);
-                match outcome.result {
-                    Ok(()) => {
-                        self.status = tf("Ran {}", &[&self.macro_title()]).into();
-                        if outcome.save_requested {
-                            self.save_doc(window, cx);
-                        }
-                    }
-                    Err(e) => {
-                        self.status = format!("{e}").into();
-                        let focus = cx.focus_handle();
-                        window.focus(&focus, cx);
-                        self.macros.error_focus = Some(focus);
-                        self.macros.error = Some(e);
-                    }
-                }
-                self.update_title(window, cx);
-                cx.notify();
+                self.finish_outcome(outcome, after, ran, window, cx);
+                self.schedule_macro_timer(next_timer, window, cx);
             }
         }
     }
 
-    fn macro_title(&self) -> String {
-        self.macros.last_run.clone().unwrap_or_default()
+    /// What a finished run leaves to do: the view where it left it, other
+    /// workbooks, a requested save or close, the error dialog, and what the
+    /// event was for (unless a handler cancelled it).
+    pub(crate) fn finish_outcome(
+        &mut self,
+        outcome: sheets_script::RunOutcome,
+        after: After,
+        ran: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.apply_macro_view(outcome.view, window, cx);
+        self.focus_grid(window, cx);
+        self.macro_events_seen(cx);
+        for b in outcome.books {
+            match b {
+                BookOut::Returned { id, book } => cx.emit(SheetsEvent::ReturnBook {
+                    id,
+                    book: Handoff::new(book),
+                    close: false,
+                }),
+                BookOut::Closed { id, book } => cx.emit(SheetsEvent::ReturnBook {
+                    id,
+                    book: Handoff::new(book),
+                    close: true,
+                }),
+                BookOut::New { book } => cx.emit(SheetsEvent::OpenBook(Handoff::new(book))),
+            }
+        }
+        self.macro_editor_after_run(&outcome.result, window, cx);
+        match outcome.result {
+            Ok(()) => {
+                if let Some(name) = &ran {
+                    self.status = tf("Ran {}", &[name]).into();
+                }
+                if matches!(after, After::Recalculate) {
+                    self.calculate_doc(window, cx);
+                }
+                if outcome.save_requested {
+                    self.save_doc(window, cx);
+                }
+                if let Some(save) = outcome.close_requested {
+                    self.macro_closes_workbook(save, window, cx);
+                } else if outcome.cancel {
+                    if matches!(after, After::Close) {
+                        cx.emit(SheetsEvent::CloseCancelled);
+                    }
+                } else {
+                    self.continue_after(after, window, cx);
+                }
+            }
+            Err(e) => {
+                if matches!(after, After::Close) {
+                    cx.emit(SheetsEvent::CloseCancelled);
+                }
+                if matches!(after, After::Recalculate) {
+                    self.calculate_doc(window, cx);
+                }
+                self.status = format!("{e}").into();
+                let focus = cx.focus_handle();
+                window.focus(&focus, cx);
+                self.macros.error_focus = Some(focus);
+                self.macros.error = Some(e);
+            }
+        }
+        self.update_title(window, cx);
+        cx.notify();
     }
 
     /// The workbook back in the grid.
@@ -448,6 +673,104 @@ impl SheetsView {
             table.refresh(cx);
             cx.notify();
         });
+    }
+
+    /// Fires `event` with the workbook in `book` (the grid's, while the
+    /// grid is busy building a menu), waiting up to [`QUICK`]: `Some(cancel)`
+    /// when the handlers ended, with the workbook back in `book`; `None` when
+    /// they go on (the grid keeps a stand-in until they end).
+    pub(crate) fn fire_in_place(
+        &mut self,
+        book: &mut Workbook,
+        event: Event,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<bool> {
+        let range = match &event {
+            Event::BeforeRightClick { range, .. } => *range,
+            _ => sheets_engine::CellRange::from_corners(self.selected, self.selected),
+        };
+        let sheet = match &event {
+            Event::BeforeRightClick { sheet, .. } => *sheet,
+            _ => 0,
+        };
+        // A right click outside the selection selects the clicked cell
+        // (the grid does so after the menu is built): the run starts there.
+        let active = if range.contains(self.selected.0, self.selected.1) {
+            self.selected
+        } else {
+            (range.top, range.left)
+        };
+        let view = View {
+            sheet,
+            selection: Selection { range, active },
+        };
+        let stand_in = Workbook::new_empty().ok()?;
+        let doc = (
+            self.name(book),
+            book.source_path().map(std::path::Path::to_path_buf),
+        );
+        let (tx, rx) = mpsc::channel();
+        let cancel = CancelToken::new();
+        let work = Work {
+            book: std::mem::replace(book, stand_in),
+            task: MacroTask::Fire {
+                event,
+                fold_from: None,
+            },
+            view,
+            options: RunOptions {
+                step_limit: None,
+                cancel: cancel.clone(),
+            },
+            tx,
+        };
+        let sent = match &self.macros.thread {
+            Some(thread) => thread.send(work),
+            None => Err(Box::new(work)),
+        };
+        if let Err(work) = sent {
+            *book = work.book;
+            return Some(false);
+        }
+        let first = rx.recv_timeout(QUICK).ok();
+        self.macros.run = Some(MacroRun {
+            name: "BeforeRightClick".to_owned(),
+            cancel,
+            rx,
+            dialog: None,
+            after: After::Nothing,
+            form: None,
+            doc,
+        });
+        match first {
+            Some(ToUi::Done {
+                book: b,
+                outcome,
+                next_timer,
+                ran,
+            }) => {
+                *book = b;
+                self.macros.run = None;
+                let cancel = outcome.cancel;
+                cx.defer_in(window, move |this, window, cx| {
+                    this.finish_outcome(outcome, After::Nothing, ran, window, cx);
+                    this.schedule_macro_timer(next_timer, window, cx);
+                });
+                Some(cancel)
+            }
+            Some(msg) => {
+                cx.defer_in(window, move |this, window, cx| {
+                    this.macro_message(msg, window, cx);
+                    this.poll_macro(window, cx);
+                });
+                None
+            }
+            None => {
+                cx.defer_in(window, |this, window, cx| this.poll_macro(window, cx));
+                None
+            }
+        }
     }
 
     /// Answer the dialog showing: the workbook goes back to the worker.
@@ -467,7 +790,27 @@ impl SheetsView {
             self.macros.run = None;
             return;
         }
+        // A quick answer (the next step of a form, the macro's next
+        // dialog) comes before the busy pane would show.
+        let next = self
+            .macros
+            .run
+            .as_ref()
+            .and_then(|r| r.rx.recv_timeout(QUICK).ok());
+        if let Some(msg) = next {
+            self.macro_message(msg, window, cx);
+        }
         self.poll_macro(window, cx);
+    }
+
+    /// A step on the UserForm showing.
+    pub(crate) fn answer_form(
+        &mut self,
+        input: FormInput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.answer_macro(Answer::Form(Ok(input)), window, cx);
     }
 
     fn press_msg(&mut self, ix: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
@@ -538,7 +881,7 @@ impl SheetsView {
             .read(cx)
             .delegate()
             .book
-            .drawing_macro(key)
+            .drawing_macro_now(key)
             .and_then(|m| sheets_script::assigned_macro(&m));
         let Some(name) = assigned else {
             return;
@@ -576,11 +919,17 @@ impl SheetsView {
         if let Some(e) = &self.macros.error {
             return Some(self.render_macro_error(e, cx));
         }
-        let d = self.macros.run.as_ref()?.dialog.as_ref()?;
+        let run = self.macros.run.as_ref()?;
+        let form = run.form.as_ref().map(|f| self.render_form(f, cx));
+        let Some(d) = run.dialog.as_ref() else {
+            // Between two steps of a form: keep showing it.
+            return form;
+        };
         let t_ = tokens(cx);
         let (title, prompt, icon) = match &d.ask {
             Ask::Msg(req) => (req.title.clone(), req.prompt.clone(), req.icon()),
             Ask::Input(req) => (req.title.clone(), req.prompt.clone(), MsgIcon::None),
+            Ask::Form(_) => return form,
         };
         let icon = match icon {
             MsgIcon::None => None,
@@ -605,6 +954,7 @@ impl SheetsView {
                     .into_any_element()
                 })
                 .collect(),
+            Ask::Form(_) => Vec::new(),
             Ask::Input(_) => vec![
                 dialog_button(("macro-input-button", 0usize), t("Cancel"), false, cx)
                     .on_click(cx.listener(|this, _, w, cx| {
@@ -701,7 +1051,17 @@ impl SheetsView {
                     .child(text),
             )
             .child(h_flex().justify_end().gap(SPACE_4).children(buttons));
-        Some(scrim("macro-dialog-scrim", card, cx))
+        let dialog = scrim("macro-dialog-scrim", card, cx);
+        // A MsgBox a form's code shows goes over the form.
+        Some(match form {
+            Some(form) => div()
+                .absolute()
+                .inset_0()
+                .child(form)
+                .child(dialog)
+                .into_any_element(),
+            None => dialog,
+        })
     }
 
     fn render_macro_error(&self, e: &MacroError, cx: &mut Context<Self>) -> AnyElement {
@@ -713,6 +1073,7 @@ impl SheetsView {
             }
             _ => tf("Run-time error '{}':", &[&e.number]),
         };
+        let repeat = e.description == heading;
         let place = match (e.module.is_empty(), e.line) {
             (true, _) => String::new(),
             (false, 0) => tf("in {}", &[&error_proc(e)]),
@@ -763,12 +1124,15 @@ impl SheetsView {
                                     .text_color(t_.fg)
                                     .child(SharedString::from(heading)),
                             )
-                            .child(
-                                div()
-                                    .text_color(t_.fg)
-                                    .whitespace_normal()
-                                    .child(SharedString::from(e.description.clone())),
-                            )
+                            // An interrupt's heading is its description.
+                            .when(!repeat, |d| {
+                                d.child(
+                                    div()
+                                        .text_color(t_.fg)
+                                        .whitespace_normal()
+                                        .child(SharedString::from(e.description.clone())),
+                                )
+                            })
                             .when(!place.is_empty(), |d| {
                                 d.child(
                                     div()
@@ -857,40 +1221,4 @@ fn scrim(id: &'static str, card: Stateful<Div>, cx: &App) -> AnyElement {
         .bg(t_.scrim)
         .child(card)
         .into_any_element()
-}
-
-/// The worker: compile, run, hand the workbook back.
-fn run_on_worker(
-    book: Workbook,
-    macros: MacroProject,
-    name: String,
-    view: View,
-    options: RunOptions,
-    tx: mpsc::Sender<ToUi>,
-) {
-    let (mut project, broken) = macros.compile();
-    let (book, outcome) = match sheets_script::broken_for(&broken, &macros, &name) {
-        Some(e) => (
-            book,
-            RunOutcome {
-                result: Err(e),
-                view,
-                save_requested: false,
-                changed: false,
-            },
-        ),
-        None => {
-            let ui = ChannelUi { tx: tx.clone() };
-            sheets_script::run_macro(
-                book,
-                &macros,
-                &mut project,
-                &name,
-                view,
-                Box::new(ui),
-                &options,
-            )
-        }
-    };
-    let _ = tx.send(ToUi::Done { book, outcome });
 }

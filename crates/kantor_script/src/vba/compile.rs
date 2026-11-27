@@ -24,7 +24,7 @@ pub enum ModuleKind {
     /// A document module (`ThisWorkbook`, `Sheet1`): procedures are reached by qualification;
     /// `Me` is the host object of the same name.
     Document,
-    /// A UserForm's code; forms can't be shown, so running it fails with a clear error.
+    /// A UserForm's code: a class whose instances are forms (`UserForm1.Show`).
     Form,
 }
 
@@ -101,6 +101,14 @@ pub enum Op {
     OnError(ErrMode),
     Resume(ResumeTo),
     GoSub(usize),
+    /// `On index GoTo/GoSub labels`: jumps to `targets[index - 1]`, or falls through when
+    /// `index` is 0 or past the list.
+    OnJump {
+        index: Expr,
+        labels: Vec<Rc<str>>,
+        targets: Vec<usize>,
+        gosub: bool,
+    },
     Return,
     /// Leaves the procedure.
     Exit,
@@ -177,6 +185,12 @@ pub struct Module {
     pub declares: HashMap<Rc<str>, String>,
     pub default_member: Option<Rc<str>>,
     pub enumerator: Option<Rc<str>>,
+    /// `Implements` clauses (lower-case class names).
+    pub implements: Vec<Rc<str>>,
+    /// `Event` declarations (lower-case names).
+    pub events: Vec<Rc<str>>,
+    /// Module-level variables declared `WithEvents` (lower-case names).
+    pub with_events: Vec<Rc<str>>,
     /// An empty procedure: the context for module-level expressions.
     pub init: Rc<Proc>,
 }
@@ -239,6 +253,9 @@ pub fn compile_module(
         declares: HashMap::new(),
         default_member: None,
         enumerator: None,
+        implements: Vec::new(),
+        events: Vec::new(),
+        with_events: Vec::new(),
         init: Rc::new(empty_proc()),
     };
     for item in def.items {
@@ -246,6 +263,9 @@ pub fn compile_module(
             ModuleItem::Var { public, decl } => {
                 if public {
                     m.public_vars.insert(decl.name.key.clone());
+                }
+                if decl.with_events {
+                    m.with_events.push(decl.name.key.clone());
                 }
                 m.vars.push(decl);
             }
@@ -257,6 +277,8 @@ pub fn compile_module(
             ModuleItem::Declare { name, lib } => {
                 m.declares.insert(name.key, lib);
             }
+            ModuleItem::Event(name) => m.events.push(name.key),
+            ModuleItem::Implements(name) => m.implements.push(Rc::from(name.to_lowercase())),
             ModuleItem::Proc(def) => {
                 let key = def.name.key.clone();
                 if def.default_member {
@@ -565,6 +587,21 @@ impl Builder {
             StmtKind::Return => {
                 self.emit(Op::Return, line);
             }
+            StmtKind::OnJump {
+                index,
+                labels,
+                gosub,
+            } => {
+                self.emit(
+                    Op::OnJump {
+                        index,
+                        labels,
+                        targets: Vec::new(),
+                        gosub,
+                    },
+                    line,
+                );
+            }
             StmtKind::OnError(mode) => {
                 let op = match mode {
                     OnError::ResumeNext => ErrMode::ResumeNext,
@@ -628,6 +665,29 @@ pub fn compile_proc(def: ProcDef) -> Proc {
         match b.labels.get(&label).copied() {
             Some(target) => b.patch(at, target),
             None => b.ops[at] = Op::Exec(StmtKind::Invalid(format!("Label not defined: {label}"))),
+        }
+    }
+    for i in 0..b.ops.len() {
+        let missing = match &mut b.ops[i] {
+            Op::OnJump {
+                labels, targets, ..
+            } => {
+                let mut missing = None;
+                for l in labels.iter() {
+                    match b.labels.get(l) {
+                        Some(&t) => targets.push(t),
+                        None => {
+                            missing = Some(l.clone());
+                            break;
+                        }
+                    }
+                }
+                missing
+            }
+            _ => None,
+        };
+        if let Some(label) = missing {
+            b.ops[i] = Op::Exec(StmtKind::Invalid(format!("Label not defined: {label}")));
         }
     }
     Proc {

@@ -531,6 +531,42 @@ pub trait Dispatch {
     fn as_any(&self) -> Option<&dyn Any> {
         None
     }
+
+    /// The code name of the document this object is (`Sheet1`, `ThisWorkbook`): the public
+    /// members of that document module are members of the object too.
+    fn document_module(&self) -> Option<String> {
+        None
+    }
+
+    /// A member the script runtime answers itself instead of the object (Excel's
+    /// `Application.Run`, which calls a procedure of the running project).
+    fn script_member(&self, _name: &str) -> Option<ScriptMember> {
+        None
+    }
+}
+
+/// Members of host objects that the language runtime implements ([`Dispatch::script_member`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScriptMember {
+    /// `Run(Macro, Arg1, Arg2…)`: call a procedure of the project by name (`"Macro1"`,
+    /// `"Module1.Macro1"`, `"'Book.xlsm'!Macro1"`) and return its result.
+    Run,
+}
+
+/// Something the host asks the script runtime to run between two statements: the event
+/// handlers for what the script just did (a cell it changed fires `Worksheet_Change`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum HostCall {
+    /// A procedure by name (`"Sheet1.Worksheet_Change"`), arguments by value. Skipped when the
+    /// project has no such procedure.
+    Proc { name: String, args: Vec<Value> },
+    /// An event of a host object, for the `WithEvents` variables holding an object of type
+    /// `source_type` (`"Application"`): each one's `<variable>_<event>` procedure runs.
+    Event {
+        source_type: String,
+        event: String,
+        args: Vec<Value>,
+    },
 }
 
 /// Where a script runs: global names, UI and output, time and cancellation.
@@ -547,6 +583,12 @@ pub trait Host {
     /// A named constant from the host's object model (`xlUp`, `xlValues`).
     fn constant(&mut self, _name: &str) -> Option<Value> {
         None
+    }
+
+    /// Every constant of the host's object model, for languages that define them all up front
+    /// (Python). The default has none.
+    fn constants(&mut self) -> Vec<(String, Value)> {
+        Vec::new()
     }
 
     /// `CreateObject(class)` / `New class` for classes the language runtime doesn't provide.
@@ -572,14 +614,48 @@ pub trait Host {
     /// One line of `Debug.Print` / `console.log` output.
     fn debug_print(&mut self, _line: &str) {}
 
+    /// Shows a UserForm, or updates the one showing, and waits for the user's next step (see
+    /// [`crate::forms`]). Called again after each step until the form closes. The default has
+    /// no window to show one in.
+    fn form_event(
+        &mut self,
+        view: &crate::forms::FormView,
+    ) -> Result<crate::forms::FormInput, ScriptError> {
+        Err(ScriptError::new(
+            445,
+            format!(
+                "The macro shows the UserForm {}, and there is no window to show it in",
+                view.design.name
+            ),
+        ))
+    }
+
+    /// The form [`Host::form_event`] was showing is hidden or unloaded.
+    fn form_closed(&mut self, _name: &str) {}
+
     /// The local date and time as an OLE date. The default is UTC.
     fn now(&mut self) -> f64 {
         crate::date::now_utc()
     }
 
+    /// For languages that tell properties from methods (JavaScript, Python): whether member
+    /// `member` of an object of type `type_name` (`Range`, `Worksheet`) is a method, called with
+    /// parentheses (`r.Clear()`, `r.Offset(1, 0)`), rather than a property read when it is named.
+    /// A binding also treats as a method any member that fails without arguments with error 449
+    /// or 450 (`ws.Range("A1")`); see [`crate::binding::member`].
+    fn is_method(&mut self, _type_name: &str, _member: &str) -> bool {
+        false
+    }
+
     /// Polled while a script runs; returning true stops it with error 18 (user interrupt).
     fn cancelled(&mut self) -> bool {
         false
+    }
+
+    /// Asked between statements: procedures to run now (event handlers for changes the
+    /// script made). Keep it cheap: it is called before every statement.
+    fn take_calls(&mut self) -> Vec<HostCall> {
+        Vec::new()
     }
 }
 

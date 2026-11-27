@@ -16,6 +16,7 @@ fn project(code: &str) -> MacroProject {
             ModuleKind::Standard,
             &code.replace('\n', "\r\n"),
         )],
+        ..Default::default()
     }
 }
 
@@ -563,7 +564,14 @@ End Sub
             ..Default::default()
         },
     );
-    assert_eq!(err(&outcome).number, 18);
+    let e = err(&outcome);
+    assert_eq!(e.number, 18);
+    // Where it stopped, as for any other error.
+    assert_eq!(
+        (e.module.as_str(), e.procedure.as_str()),
+        ("Module1", "Forever")
+    );
+    assert!((3..=5).contains(&e.line), "line {}", e.line);
     assert!(cell(&book, 0, "A1").parse::<i64>().unwrap() > 100);
 }
 
@@ -601,4 +609,20 @@ End Function
     sheets_script::enable_functions(&mut book, None);
     book.recalculate();
     assert_eq!(cell(&book, 0, "D2"), "#NAME?");
+}
+
+#[test]
+fn an_interrupt_reads_once() {
+    let e = MacroError {
+        number: 18,
+        description: "Code execution has been interrupted".into(),
+        kind: kantor_script::ErrorKind::Interrupted,
+        module: "Module1".into(),
+        procedure: "Spin".into(),
+        line: 4,
+    };
+    assert_eq!(
+        e.to_string(),
+        "Code execution has been interrupted (in Module1.Spin, line 4)"
+    );
 }

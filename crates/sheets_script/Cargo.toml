@@ -12,8 +12,12 @@ workspace = true
 
 [dependencies]
 kantor_script.workspace = true
+kantor_script_js.workspace = true
 sheets_engine.workspace = true
 log.workspace = true
+sheets_pdf.workspace = true
+sheets_scene.workspace = true
 
 [dev-dependencies]
 zip.workspace = true
+tempfile.workspace = true

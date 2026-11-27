@@ -1,4 +1,5 @@
-//! A workbook's macros (its VBA project) as JSON and text: `kantor sheets
+//! A workbook's macros (its VBA project, and its JavaScript and Python
+//! scripts) as JSON and text: `kantor sheets
 //! macros`, the MCP tool `sheets_macros` and Paparan AI's `macros`. Kantor
 //! tools don't run macros (only the user does, in Sheets after Enable
 //! Content or with `kantor sheets macros run`): this is for reading them, so
@@ -8,6 +9,7 @@
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 use sheets_engine::Workbook;
+use sheets_engine::scripts::{Script, ScriptLanguage};
 use sheets_engine::vba::{Module, ReferenceKind, VbaProject};
 
 /// What the JSON says about running them.
@@ -63,93 +65,193 @@ fn module_json(m: &Module, code: bool) -> Value {
     v
 }
 
-/// The project as JSON (see [`MacrosOpts`]). Line numbers count from 1 in
-/// each module's `code` (attribute lines left out, as the Visual Basic
-/// Editor shows it).
+/// The workbook's JavaScript and Python scripts (stored in the workbook).
+fn scripts(book: &Workbook) -> Result<Vec<Script>> {
+    book.scripts()
+        .map_err(|e| anyhow!("the workbook's scripts can't be read: {e}"))
+}
+
+fn script_json(s: &Script, code: bool) -> Value {
+    let keyword = match s.language {
+        ScriptLanguage::JavaScript => "function",
+        ScriptLanguage::Python => "def",
+    };
+    let procedures: Vec<Value> = sheets_script::scripts::functions(s)
+        .iter()
+        .map(|f| {
+            json!({
+                "name": f.name,
+                "kind": keyword,
+                "private": f.name.starts_with('_'),
+                "arguments": f.params > 0,
+                "macro": f.is_macro(),
+                "line": f.line + 1,
+                "end_line": f.end_line + 1,
+            })
+        })
+        .collect();
+    let mut v = json!({
+        "name": s.name,
+        "kind": s.language.key(),
+        "language": s.language.label(),
+        "lines": s.source.lines().count(),
+        "procedures": procedures,
+    });
+    if code {
+        v["code"] = json!(s.source);
+    }
+    v
+}
+
+/// The project as JSON (see [`MacrosOpts`]): the VBA modules, then the
+/// JavaScript and Python scripts (`kind` `javascript` / `python`). Line
+/// numbers count from 1 in each module's `code` (attribute lines left out,
+/// as the Visual Basic Editor shows it).
 pub fn json(book: &Workbook, opts: &MacrosOpts) -> Result<Value> {
-    let Some(p) = project(book)? else {
+    let p = project(book)?;
+    let scripts = scripts(book)?;
+    if p.is_none() && scripts.is_empty() {
         if let Some(m) = &opts.module {
             return Err(anyhow!("the workbook has no macros (no module {m})"));
         }
         return Ok(json!({"has_macros": false, "modules": []}));
-    };
-    if let Some(name) = &opts.module
-        && p.module(name).is_none()
-    {
-        let names: Vec<&str> = p.modules().iter().map(|m| m.name.as_str()).collect();
-        return Err(anyhow!(
-            "there is no module {name} (modules: {})",
-            names.join(", ")
-        ));
     }
-    let modules: Vec<Value> = p
-        .modules()
+    if let Some(name) = &opts.module {
+        let known = p.as_ref().is_some_and(|p| p.module(name).is_some())
+            || scripts.iter().any(|s| s.name.eq_ignore_ascii_case(name));
+        if !known {
+            let names: Vec<&str> = p
+                .iter()
+                .flat_map(|p| p.modules().iter().map(|m| m.name.as_str()))
+                .chain(scripts.iter().map(|s| s.name.as_str()))
+                .collect();
+            return Err(anyhow!(
+                "there is no module {name} (modules: {})",
+                names.join(", ")
+            ));
+        }
+    }
+    let wanted = |n: &str| {
+        opts.module
+            .as_deref()
+            .is_none_or(|m| n.eq_ignore_ascii_case(m))
+    };
+    let code = opts.code || opts.module.is_some();
+    let mut modules: Vec<Value> = p
         .iter()
-        .filter(|m| {
-            opts.module
-                .as_deref()
-                .is_none_or(|n| m.name.eq_ignore_ascii_case(n))
-        })
-        .map(|m| module_json(m, opts.code || opts.module.is_some()))
+        .flat_map(|p| p.modules().iter())
+        .filter(|m| wanted(&m.name))
+        .map(|m| module_json(m, code))
         .collect();
-    let references: Vec<Value> = p
-        .references
-        .iter()
-        .map(|r| {
-            json!({
-                "name": r.name,
-                "kind": match r.kind {
-                    ReferenceKind::Registered => "library",
-                    ReferenceKind::Project => "project",
-                    ReferenceKind::Control => "control",
-                },
-                "libid": r.libid,
-            })
-        })
-        .collect();
-    Ok(json!({
+    modules.extend(
+        scripts
+            .iter()
+            .filter(|s| wanted(&s.name))
+            .map(|s| script_json(s, code)),
+    );
+    let mut v = json!({
         "has_macros": true,
-        "project": p.name,
-        "codepage": p.codepage,
-        "references": references,
         "modules": modules,
         "note": NOTE,
-    }))
+    });
+    if let Some(p) = &p {
+        let references: Vec<Value> = p
+            .references
+            .iter()
+            .map(|r| {
+                json!({
+                    "name": r.name,
+                    "kind": match r.kind {
+                        ReferenceKind::Registered => "library",
+                        ReferenceKind::Project => "project",
+                        ReferenceKind::Control => "control",
+                    },
+                    "libid": r.libid,
+                })
+            })
+            .collect();
+        v["project"] = json!(p.name);
+        v["codepage"] = json!(p.codepage);
+        v["references"] = json!(references);
+    }
+    Ok(v)
 }
 
-/// The listing as text: modules and their procedures.
+/// The listing as text: modules and their procedures, then the scripts and
+/// their functions.
 pub fn text(book: &Workbook) -> Result<String> {
-    let Some(p) = project(book)? else {
+    let p = project(book)?;
+    let scripts = scripts(book)?;
+    if p.is_none() && scripts.is_empty() {
         return Ok("no macros\n".into());
-    };
-    let mut out = format!("VBA project {} (code page {})\n", p.name, p.codepage);
-    for m in p.modules() {
-        let lines = m.code.lines().count();
-        out.push_str(&format!("\n{} ({}", m.name, m.kind.label()));
-        if lines == 0 {
-            out.push_str(", no code)\n");
-        } else {
-            out.push_str(&format!(", {lines} lines)\n"));
-        }
-        if let Some(e) = &m.error {
-            out.push_str(&format!("  can't read its code: {e}\n"));
-        }
-        for p in m.procedures() {
-            let mut head = format!(
-                "{}{} {}{}",
-                if p.private { "Private " } else { "" },
-                p.kind.keyword(),
-                p.name,
-                if p.has_arguments { "(…)" } else { "()" }
-            );
-            if p.is_macro() && m.kind != sheets_engine::vba::ModuleKind::Class {
-                head.push_str("  [macro]");
+    }
+    let mut out = String::new();
+    if let Some(p) = &p {
+        out.push_str(&format!(
+            "VBA project {} (code page {})\n",
+            p.name, p.codepage
+        ));
+        for m in p.modules() {
+            let lines = m.code.lines().count();
+            out.push_str(&format!("\n{} ({}", m.name, m.kind.label()));
+            if lines == 0 {
+                out.push_str(", no code)\n");
+            } else {
+                out.push_str(&format!(", {lines} lines)\n"));
             }
+            if let Some(e) = &m.error {
+                out.push_str(&format!("  can't read its code: {e}\n"));
+            }
+            for p in m.procedures() {
+                let mut head = format!(
+                    "{}{} {}{}",
+                    if p.private { "Private " } else { "" },
+                    p.kind.keyword(),
+                    p.name,
+                    if p.has_arguments { "(…)" } else { "()" }
+                );
+                if p.is_macro() && m.kind != sheets_engine::vba::ModuleKind::Class {
+                    head.push_str("  [macro]");
+                }
+                out.push_str(&format!(
+                    "  {head:<48} lines {}-{}\n",
+                    p.line + 1,
+                    p.end_line + 1
+                ));
+            }
+        }
+    }
+    if !scripts.is_empty() {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str("Scripts (stored in the workbook)\n");
+        for s in &scripts {
             out.push_str(&format!(
-                "  {head:<48} lines {}-{}\n",
-                p.line + 1,
-                p.end_line + 1
+                "\n{} ({}, {} lines)\n",
+                s.name,
+                s.language.label(),
+                s.source.lines().count()
             ));
+            let keyword = match s.language {
+                ScriptLanguage::JavaScript => "function",
+                ScriptLanguage::Python => "def",
+            };
+            for f in sheets_script::scripts::functions(s) {
+                let mut head = format!(
+                    "{keyword} {}{}",
+                    f.name,
+                    if f.params > 0 { "(…)" } else { "()" }
+                );
+                if f.is_macro() {
+                    head.push_str("  [macro]");
+                }
+                out.push_str(&format!(
+                    "  {head:<48} lines {}-{}\n",
+                    f.line + 1,
+                    f.end_line + 1
+                ));
+            }
         }
     }
     out.push_str("\nkantor sheets macros FILE --module NAME prints a module's code.\n");
@@ -285,5 +387,42 @@ mod tests {
             json(&plain, &MacrosOpts::default()).unwrap()["has_macros"],
             false
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn lists_scripts() {
+        let mut book = Workbook::new_empty().unwrap();
+        book.set_scripts(vec![
+            Script::new(
+                "Report",
+                ScriptLanguage::JavaScript,
+                "function go() {\n  Range('A1').value = 1;\n}\nfunction twice(x) { return x * 2; }\n",
+            ),
+            Script::new("Tools", ScriptLanguage::Python, "def tidy():\n    pass\n"),
+        ]);
+        let v = json(&book, &MacrosOpts::default()).unwrap();
+        assert_eq!(v["has_macros"], true);
+        assert!(v.get("project").is_none());
+        let m = &v["modules"][0];
+        assert_eq!(m["name"], "Report");
+        assert_eq!(m["kind"], "javascript");
+        assert_eq!(m["procedures"][0]["name"], "go");
+        assert_eq!(m["procedures"][0]["macro"], true);
+        assert_eq!(m["procedures"][0]["end_line"], 3);
+        assert_eq!(m["procedures"][1]["arguments"], true);
+        assert_eq!(v["modules"][1]["kind"], "python");
+        let one = json(
+            &book,
+            &MacrosOpts {
+                module: Some("tools".into()),
+                code: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(one["modules"][0]["code"], "def tidy():\n    pass\n");
+        let t = text(&book).unwrap();
+        assert!(t.contains("Report (JavaScript, 4 lines)"), "{t}");
+        assert!(t.contains("function go()  [macro]"), "{t}");
+        assert!(t.contains("def tidy()  [macro]"), "{t}");
     }
 }

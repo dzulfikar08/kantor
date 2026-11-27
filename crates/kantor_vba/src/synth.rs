@@ -10,6 +10,46 @@ use std::io::{Cursor, Write};
 use crate::dir::{self, push, utf16_bytes};
 use crate::{Error, ModuleKind, Result, codepage, compression};
 
+/// The CLSID projects written here carry (`ID=` in `PROJECT`).
+pub const PROJECT_ID: &str = "{5F3C1A2B-7D4E-4C8B-9A6F-0E1D2C3B4A59}";
+
+/// The `dir` records of one module (MS-OVBA 2.3.4.2.3.2), its source at
+/// `offset` in its stream (named like the module).
+pub(crate) fn module_records(
+    d: &mut Vec<u8>,
+    mbcs: &[u8],
+    name: &str,
+    kind: ModuleKind,
+    offset: u32,
+) {
+    push(d, dir::MODULE_NAME, mbcs);
+    push(d, dir::MODULE_NAME_UNICODE, &utf16_bytes(name));
+    push(d, dir::MODULE_STREAM_NAME, mbcs);
+    push(d, dir::MODULE_STREAM_NAME_UNICODE, &utf16_bytes(name));
+    push(d, dir::MODULE_DOC_STRING, b"");
+    push(d, dir::MODULE_DOC_STRING_UNICODE, b"");
+    push(d, dir::MODULE_OFFSET, &offset.to_le_bytes());
+    push(d, dir::MODULE_HELP_CONTEXT, &0u32.to_le_bytes());
+    push(d, dir::MODULE_COOKIE, &0xFFFFu16.to_le_bytes());
+    let ty = if kind == ModuleKind::Standard {
+        dir::MODULE_TYPE_PROCEDURAL
+    } else {
+        dir::MODULE_TYPE_OTHER
+    };
+    push(d, ty, b"");
+    push(d, dir::MODULE_TERMINATOR, b"");
+}
+
+/// A `PROJECT` stream line naming a module (`Module=Module1`).
+pub(crate) fn project_line(name: &str, kind: ModuleKind) -> String {
+    match kind {
+        ModuleKind::Standard => format!("Module={name}"),
+        ModuleKind::Class => format!("Class={name}"),
+        ModuleKind::Document => format!("Document={name}/&H00000000"),
+        ModuleKind::Form => format!("BaseClass={name}"),
+    }
+}
+
 /// A project to write.
 #[derive(Clone, Debug)]
 pub struct Builder {
@@ -17,6 +57,7 @@ pub struct Builder {
     codepage: u16,
     caches: bool,
     modules: Vec<(String, ModuleKind, String)>,
+    forms: Vec<crate::forms::FormDesign>,
 }
 
 impl Builder {
@@ -27,6 +68,7 @@ impl Builder {
             codepage,
             caches: false,
             modules: Vec::new(),
+            forms: Vec::new(),
         }
     }
 
@@ -39,6 +81,16 @@ impl Builder {
     /// `VB_Base`…) go first unless `code` starts with `Attribute VB_Name`.
     pub fn module(mut self, name: &str, kind: ModuleKind, code: &str) -> Self {
         self.modules.push((name.to_owned(), kind, code.to_owned()));
+        self
+    }
+
+    /// A UserForm with its designer: a `Form` module called `design.name`
+    /// with `code`, and the form's storage written by
+    /// [`crate::forms::write_streams`].
+    pub fn form(mut self, design: &crate::forms::FormDesign, code: &str) -> Self {
+        self.modules
+            .push((design.name.clone(), ModuleKind::Form, code.to_owned()));
+        self.forms.push(design.clone());
         self
     }
 
@@ -63,6 +115,17 @@ impl Builder {
                     "Attribute VB_Creatable = False",
                     "Attribute VB_PredeclaredId = False",
                     "Attribute VB_Exposed = False",
+                ],
+                // The workbook's module (ThisWorkbook) is based on Excel's
+                // Workbook class, the others on its Worksheet class.
+                ModuleKind::Document if name.eq_ignore_ascii_case("ThisWorkbook") => &[
+                    "Attribute VB_Base = \"0{00020819-0000-0000-C000-000000000046}\"",
+                    "Attribute VB_GlobalNameSpace = False",
+                    "Attribute VB_Creatable = False",
+                    "Attribute VB_PredeclaredId = True",
+                    "Attribute VB_Exposed = True",
+                    "Attribute VB_TemplateDerived = False",
+                    "Attribute VB_Customizable = True",
                 ],
                 ModuleKind::Document => &[
                     "Attribute VB_Base = \"0{00020820-0000-0000-C000-000000000046}\"",
@@ -139,7 +202,7 @@ impl Builder {
         );
         push(&mut d, dir::COOKIE, &0xFFFFu16.to_le_bytes());
 
-        let mut project = String::from("ID=\"{5F3C1A2B-7D4E-4C8B-9A6F-0E1D2C3B4A59}\"\r\n");
+        let mut project = format!("ID=\"{PROJECT_ID}\"\r\n");
         let mut wm = Vec::new();
         let mut workspace = String::new();
         let mut has_form = false;
@@ -157,45 +220,33 @@ impl Builder {
                 s.write_all(&stream)?;
             }
 
-            push(&mut d, dir::MODULE_NAME, &mbcs(name)?);
-            push(&mut d, dir::MODULE_NAME_UNICODE, &utf16_bytes(name));
-            push(&mut d, dir::MODULE_STREAM_NAME, &mbcs(name)?);
-            push(&mut d, dir::MODULE_STREAM_NAME_UNICODE, &utf16_bytes(name));
-            push(&mut d, dir::MODULE_DOC_STRING, b"");
-            push(&mut d, dir::MODULE_DOC_STRING_UNICODE, b"");
-            push(
-                &mut d,
-                dir::MODULE_OFFSET,
-                &(cache.len() as u32).to_le_bytes(),
-            );
-            push(&mut d, dir::MODULE_HELP_CONTEXT, &0u32.to_le_bytes());
-            push(&mut d, dir::MODULE_COOKIE, &0xFFFFu16.to_le_bytes());
-            let ty = if *kind == ModuleKind::Standard {
-                dir::MODULE_TYPE_PROCEDURAL
-            } else {
-                dir::MODULE_TYPE_OTHER
-            };
-            push(&mut d, ty, b"");
-            push(&mut d, dir::MODULE_TERMINATOR, b"");
+            module_records(&mut d, &mbcs(name)?, name, *kind, cache.len() as u32);
 
-            project.push_str(&match kind {
-                ModuleKind::Standard => format!("Module={name}\r\n"),
-                ModuleKind::Class => format!("Class={name}\r\n"),
-                ModuleKind::Document => format!("Document={name}/&H00000000\r\n"),
-                ModuleKind::Form => format!("BaseClass={name}\r\n"),
-            });
+            project.push_str(&project_line(name, *kind));
+            project.push_str("\r\n");
             if *kind == ModuleKind::Form {
                 has_form = true;
-                // The designer: a storage named after the form (ignored on read).
+                // The designer: a storage named after the form.
                 cfb.create_storage(format!("/{name}"))?;
-                let mut s = cfb.create_stream(format!("/{name}/\u{3}VBFrame"))?;
-                s.write_all(
-                    format!("VERSION 5.00\r\nBegin {{C62A69F0-16DC-11CE-9E98-00AA00574A4F}} {name}\r\nEnd\r\n")
-                        .as_bytes(),
-                )?;
-                drop(s);
-                cfb.create_stream(format!("/{name}/f"))?;
-                cfb.create_stream(format!("/{name}/o"))?;
+                let design = self
+                    .forms
+                    .iter()
+                    .find(|d| d.name == *name)
+                    .cloned()
+                    .unwrap_or_else(|| crate::forms::FormDesign::new(name));
+                for (path, data) in crate::forms::write_streams(&design) {
+                    if let Some((dir, _)) = path.rsplit_once('/') {
+                        let mut at = format!("/{name}");
+                        for part in dir.split('/') {
+                            at = format!("{at}/{part}");
+                            if !cfb.is_storage(&at) {
+                                cfb.create_storage(&at)?;
+                            }
+                        }
+                    }
+                    let mut s = cfb.create_stream(format!("/{name}/{path}"))?;
+                    s.write_all(&data)?;
+                }
             }
             wm.extend_from_slice(&mbcs(name)?);
             wm.push(0);
@@ -211,10 +262,15 @@ impl Builder {
             project.push_str("Package={AC9F2F90-E877-11CE-9F68-00AA00574A4F}\r\n");
         }
         project.push_str(&format!(
-            "Name=\"{}\"\r\nHelpContextID=\"0\"\r\nVersionCompatible32=\"393222000\"\r\n\r\n\
+            "Name=\"{}\"\r\nHelpContextID=\"0\"\r\nVersionCompatible32=\"393222000\"\r\n\
+             CMG=\"{}\"\r\nDPB=\"{}\"\r\nGC=\"{}\"\r\n\r\n\
              [Host Extender Info]\r\n&H00000001={{3832D640-CF90-11CF-8E43-00A0C911005A}};VBE;&H00000000\r\n\r\n\
              [Workspace]\r\n{workspace}",
-            self.name
+            self.name,
+            // Not protected, no password, visible (MS-OVBA 2.3.1.15–17).
+            crate::crypt::encrypt(PROJECT_ID, 0x2C, &[0; 4]),
+            crate::crypt::encrypt(PROJECT_ID, 0x47, &[0]),
+            crate::crypt::encrypt(PROJECT_ID, 0x9A, &[0xFF]),
         ));
 
         let mut vba_project = crate::EMPTY_VBA_PROJECT_STREAM.to_vec();

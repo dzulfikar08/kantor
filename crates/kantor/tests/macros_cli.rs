@@ -230,3 +230,52 @@ fn dialogs_errors_and_unknown_macros() {
     assert_eq!(o.status.code(), Some(1));
     assert!(stderr(&o).contains("Module1.Greet"), "{}", stderr(&o));
 }
+
+#[test]
+fn events_run_workbook_open_first_and_paths_need_allow_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let data_dir = dir.path().join("data");
+    std::fs::create_dir(&data_dir).unwrap();
+    let mut data = Workbook::new_empty().unwrap();
+    data.set_input(0, 0, 0, "7").unwrap();
+    data.save_as(data_dir.join("Data.xlsx")).unwrap();
+    let this = "Public Greeting As String\r\n\r\nPrivate Sub Workbook_Open()\r\n    Greeting = \"opened\"\r\nEnd Sub\r\n\r\nPrivate Sub Workbook_BeforeSave(ByVal SaveAsUI As Boolean, Cancel As Boolean)\r\n    Sheet1.Range(\"C1\").Value = \"saving\"\r\nEnd Sub\r\n";
+    let code = "Sub Go()\r\n    Range(\"A1\").Value = ThisWorkbook.Greeting\r\n    Dim wb As Workbook\r\n    Set wb = Workbooks.Open(ThisWorkbook.Path & Application.PathSeparator & \"data\" & Application.PathSeparator & \"Data.xlsx\")\r\n    ThisWorkbook.Sheets(1).Range(\"B1\").Value = wb.Sheets(1).Range(\"A1\").Value * 6\r\n    wb.Close False\r\nEnd Sub\r\n";
+    let vba = Builder::new(1252)
+        .module("ThisWorkbook", ModuleKind::Document, this)
+        .module("Sheet1", ModuleKind::Document, "")
+        .module("Module1", ModuleKind::Standard, code)
+        .build()
+        .unwrap();
+    xlsm(dir.path(), "ev", &[], &vba);
+    // Without --allow-path the other file is refused, nothing is written.
+    let o = kantor(
+        dir.path(),
+        &[
+            "macros", "run", "ev.xlsm", "--macro", "Go", "--events", "-o", "x.xlsm",
+        ],
+    );
+    assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
+    assert!(stderr(&o).contains("didn't let"), "{}", stderr(&o));
+    assert!(!dir.path().join("x.xlsm").exists());
+    let o = kantor(
+        dir.path(),
+        &[
+            "macros",
+            "run",
+            "ev.xlsm",
+            "--macro",
+            "Go",
+            "--events",
+            "--allow-path",
+            "data",
+            "-o",
+            "y.xlsm",
+        ],
+    );
+    assert!(o.status.success(), "{}", stderr(&o));
+    let out = dir.path().join("y.xlsm");
+    assert_eq!(shown(&out, 0, 0), "opened");
+    assert_eq!(shown(&out, 0, 1), "42");
+    assert_eq!(shown(&out, 0, 2), "saving");
+}
