@@ -33,7 +33,7 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20      kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]...\n\
     \x20                [--events] [--allow-path PATH]...\n\
     \x20                [--form-answers ANSWERS.json]\n\
-    \x20      kantor sheets macros add FILE SCRIPT.js|SCRIPT.py [--module NAME] [--out OUT]\n\
+    \x20      kantor sheets macros add FILE SCRIPT.js|.py|MODULE.bas|.cls [--module NAME] [--out OUT]\n\
     \x20      kantor sheets macros remove FILE --module NAME [--out OUT]\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] TOOL ARGS\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] --ops OPS.json\n\
@@ -74,6 +74,8 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20          NAME (the file name unless --module), replacing one of that\n\
     \x20          name, and save (in place unless --out). Scripts are kept in\n\
     \x20          .xlsx and .xlsm alike; Excel keeps them and doesn't run them.\n\
+    \x20          A VBA .bas or .cls module goes into the VBA project (an\n\
+    \x20          .xlsm output; Excel compiles it from source when it opens).\n\
     \x20 macros remove  take script --module NAME out and save.\n\
     \x20 macros run  run macro NAME (Macro1, Module1.Macro1, or a script's\n\
     \x20          function without parameters, Report.go) of FILE and\n\
@@ -458,12 +460,18 @@ fn add_script(o: &Opts) -> Outcome {
         ));
     };
     let path = Path::new(script);
-    let Some(language) = path
+    let ext = path
         .extension()
         .and_then(|e| e.to_str())
-        .and_then(ScriptLanguage::from_extension)
-    else {
-        return Ok(Err("the script must be a .js or .py file".into()));
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if ext == "bas" || ext == "cls" {
+        return add_vba_module(o, file, path, ext == "cls");
+    }
+    let Some(language) = ScriptLanguage::from_extension(&ext) else {
+        return Ok(Err(
+            "the script must be a .js or .py file (or a VBA .bas or .cls module)".into(),
+        ));
     };
     let name = match &o.module {
         Some(n) => n.clone(),
@@ -503,6 +511,82 @@ fn add_script(o: &Opts) -> Outcome {
     book.save_as(&out)
         .with_context(|| format!("can't save {}", out.display()))?;
     println!("{file}: {name} ({}) -> {}", language.label(), out.display());
+    Ok(Ok(()))
+}
+
+/// `kantor sheets macros add FILE MODULE.bas|.cls [--module NAME]`: put a
+/// VBA module (as the Visual Basic Editor exports it) into the workbook's
+/// project, as the Macro Editor does, and save it as `.xlsm`.
+fn add_vba_module(o: &Opts, file: &str, path: &Path, class: bool) -> Outcome {
+    use sheets_script::code::{self, CodeKind, CodeModule};
+    let out = match script_output(o, file)? {
+        Ok(p) => p,
+        Err(u) => return Ok(Err(u)),
+    };
+    if !out
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("xlsm"))
+    {
+        return Ok(Err(
+            "a VBA module needs a macro-enabled workbook: give an .xlsm file or --out OUT.xlsm"
+                .into(),
+        ));
+    }
+    let text = std::fs::read(path).with_context(|| format!("can't read {}", path.display()))?;
+    // Exported modules are in the Windows code page; UTF-8 files read as is.
+    let text = match String::from_utf8(text) {
+        Ok(s) => s,
+        Err(e) => e.into_bytes().iter().map(|b| *b as char).collect(),
+    };
+    // The exported header: `VERSION 1.0 CLASS … END` and `Attribute` lines.
+    let mut name_attr = None;
+    let mut lines = Vec::new();
+    let mut in_header = text.trim_start().starts_with("VERSION ");
+    for line in text.lines() {
+        let t = line.trim();
+        if in_header {
+            if t.eq_ignore_ascii_case("END") {
+                in_header = false;
+            }
+            continue;
+        }
+        if t.len() > 10 && t[..10].eq_ignore_ascii_case("Attribute ") {
+            if let Some(v) = t.split_once('=').filter(|(k, _)| k.contains("VB_Name")) {
+                name_attr = Some(v.1.trim().trim_matches('"').to_owned());
+            }
+            continue;
+        }
+        lines.push(line);
+    }
+    let name = o.module.clone().or(name_attr).unwrap_or_else(|| {
+        path.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    let mut book = open(file)?;
+    let mut modules = code::code_modules(&book).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let existing = modules
+        .iter()
+        .position(|m| m.name.eq_ignore_ascii_case(&name));
+    if let Some(problem) = code::name_problem(&modules, &name, existing) {
+        bail!("{name:?}: {problem}");
+    }
+    let mut code = lines.join("\n");
+    code.push('\n');
+    let kind = if class {
+        CodeKind::Class
+    } else {
+        CodeKind::Standard
+    };
+    match existing {
+        Some(i) if modules[i].kind == kind => modules[i].code = code,
+        Some(_) => bail!("the workbook already has a module {name} of another kind"),
+        None => modules.push(CodeModule::new(&name, kind, &code)),
+    }
+    code::apply(&mut book, &modules).map_err(|e| anyhow::anyhow!("{e}"))?;
+    book.save_as(&out)
+        .with_context(|| format!("can't save {}", out.display()))?;
+    println!("{file}: {name} (VBA) -> {}", out.display());
     Ok(Ok(()))
 }
 

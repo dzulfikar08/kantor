@@ -585,9 +585,7 @@ impl VbaProject {
         let cp = self.codepage;
         let mbcs = |s: &str| -> Result<Vec<u8>> {
             codepage::encode(cp, s).ok_or_else(|| {
-                Error::new(format!(
-                    "the code has characters code page {cp} can't hold"
-                ))
+                Error::new(format!("the code has characters code page {cp} can't hold"))
             })
         };
         let existing = |name: &str| {
@@ -622,9 +620,9 @@ impl VbaProject {
             match existing(&spec.name) {
                 Some(i) => {
                     let m = &self.modules[i];
-                    let (a, b) = m
-                        .span
-                        .ok_or_else(|| Error::new(format!("module {} has no dir records", m.name)))?;
+                    let (a, b) = m.span.ok_or_else(|| {
+                        Error::new(format!("module {} has no dir records", m.name))
+                    })?;
                     let mut records = self.dir[a..b].to_vec();
                     if m.error.is_none() {
                         let path = format!("{vba}/{}", m.stream_name);
@@ -664,7 +662,11 @@ impl VbaProject {
         }
         dir.extend_from_slice(&dir::TERMINATOR.to_le_bytes());
         dir.extend_from_slice(&0u32.to_le_bytes());
-        write_stream(&mut cfb, &format!("{vba}/dir"), &compression::compress(&dir))?;
+        write_stream(
+            &mut cfb,
+            &format!("{vba}/dir"),
+            &compression::compress(&dir),
+        )?;
         write_stream(
             &mut cfb,
             &format!("{vba}/_VBA_PROJECT"),
@@ -776,7 +778,8 @@ fn same_code(a: &str, b: &str) -> bool {
 /// in `[Workspace]`, at its end).
 fn project_text(text: &str, removed: &[&str], added: &[(&str, ModuleKind)]) -> String {
     let is_removed = |name: &str| removed.iter().any(|r| r.eq_ignore_ascii_case(name.trim()));
-    let module_key = |key: &str| matches!(key.trim(), "Module" | "Class" | "Document" | "BaseClass");
+    let module_key =
+        |key: &str| matches!(key.trim(), "Module" | "Class" | "Document" | "BaseClass");
     let mut out: Vec<String> = Vec::new();
     let mut section = String::new();
     let mut insert_at: Option<usize> = None;

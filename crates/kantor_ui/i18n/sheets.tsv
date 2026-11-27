@@ -1188,7 +1188,7 @@ Save Without Macros	Simpan Tanpa Makro
 Macros	Makro
 Macros…	Makro…
 View Macros	Lihat Makro
-This workbook has no macros	Buku kerja ini tidak memiliki makro
+This workbook has no macros. Alt+F11 opens the Macro Editor to write one.	Buku kerja ini tidak memiliki makro. Alt+F11 membuka Editor Makro untuk menulisnya.
 Kantor can't read this workbook's macros: {}	Kantor tidak dapat membaca makro buku kerja ini: {}
 This module has no code.	Modul ini tidak berisi kode.
 Module	Modul
@@ -1353,3 +1353,27 @@ Macros are disabled. Enable Content on the bar to run them. Paparan AI can expla
 Output (Debug.Print)	Keluaran (Debug.Print)
 {} controls, {} × {} pt	{} kontrol, {} × {} pt
 The form's layout can't be shown:	Tata letak formulir tidak dapat ditampilkan:
+# Macro Editor (vba_editor)
+Macro Editor	Editor Makro
+Insert Module	Sisipkan Modul
+Insert Class Module	Sisipkan Modul Kelas
+Insert JavaScript	Sisipkan JavaScript
+Run (F5)	Jalankan (F5)
+Workbook and Sheets	Buku Kerja dan Lembar
+Modules	Modul
+Class Modules	Modul Kelas
+Forms	Formulir
+Scripts	Skrip
+Insert a module to write a macro.	Sisipkan modul untuk menulis makro.
+The code can't be saved in the workbook: {}	Kode tidak dapat disimpan di buku kerja: {}
+Macros you write here run in this window	Makro yang Anda tulis di sini berjalan di jendela ini
+Another module has that name	Modul lain sudah memakai nama itu
+A module name starts with a letter and has only letters, digits and _ (up to 31)	Nama modul diawali huruf dan hanya berisi huruf, angka, dan _ (maksimal 31)
+Line {}: {}. Fix it to run this module.	Baris {}: {}. Perbaiki agar modul ini bisa dijalankan.
+{} can't run by itself: only a Sub without arguments (a macro) can.	{} tidak bisa dijalankan sendiri: hanya Sub tanpa argumen (makro) yang bisa.
+This module has no macro to run.	Modul ini tidak memiliki makro untuk dijalankan.
+Put the cursor inside the macro to run, then press F5.	Letakkan kursor di dalam makro yang akan dijalankan, lalu tekan F5.
+Run-time error '{}': {}	Kesalahan run-time '{}': {}
+Line {}: {}	Baris {}: {}
+Line {}: Kantor doesn't run this yet: {}	Baris {}: Kantor belum menjalankan ini: {}
+Remove {} and its code?	Hapus {} beserta kodenya?

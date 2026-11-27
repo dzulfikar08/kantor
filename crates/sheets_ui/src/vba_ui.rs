@@ -211,6 +211,8 @@ impl SheetsView {
             trust: initial_trust(path.as_deref(), has),
             ..Default::default()
         };
+        // The editor showed the workbook this pane had before.
+        self.macro_editor = None;
         if self.macros.trust == MacroTrust::Enabled {
             self.macros.trust = MacroTrust::Disabled;
             if self.enable_content_now(cx) {
@@ -241,7 +243,7 @@ impl SheetsView {
         }
     }
 
-    fn enable_content_now(&mut self, cx: &mut Context<Self>) -> bool {
+    pub(crate) fn enable_content_now(&mut self, cx: &mut Context<Self>) -> bool {
         let read = sheets_script::MacroProject::of_book(&self.table.read(cx).delegate().book);
         let project = match read {
             Some(Ok(p)) => p,
@@ -339,7 +341,9 @@ impl SheetsView {
             Err(e) => (Vec::new(), Some(e)),
         };
         if project.is_none() && scripts.is_empty() && scripts_error.is_none() {
-            self.status = t("This workbook has no macros").into();
+            self.status =
+                t("This workbook has no macros. Alt+F11 opens the Macro Editor to write one.")
+                    .into();
             cx.notify();
             return;
         }
@@ -649,6 +653,8 @@ impl SheetsView {
         });
         let close = view.clone();
         let run_view = view.clone();
+        let edit_view = view.clone();
+        let edit_module = d.modules.get(d.module).map(|m| m.name.clone());
         let card = card
             .children(output)
             .child(dialog::note(note, false, cx))
@@ -663,6 +669,18 @@ impl SheetsView {
                             .small()
                             .on_click(move |_, window, cx| {
                                 let _ = close.update(cx, |this, cx| this.close_macros(window, cx));
+                            }),
+                    )
+                    .child(
+                        Button::new("macros-edit")
+                            .label(t("Edit"))
+                            .small()
+                            .on_click(move |_, window, cx| {
+                                let module = edit_module.clone();
+                                let _ = edit_view.update(cx, |this, cx| {
+                                    this.close_macros(window, cx);
+                                    this.open_macro_editor(module.as_deref(), window, cx);
+                                });
                             }),
                     )
                     .child(

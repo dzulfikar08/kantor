@@ -716,15 +716,24 @@ fn view_items(mut menu: PopupMenu, view: &WeakEntity<SheetsView>, pbp: bool) -> 
             let _ = view.update(cx, |v, cx| v.grid_command(command, window, cx));
         }));
     }
-    // Excel's View ▸ Macros: the workbook's VBA code (shown, not run).
+    // Excel's View ▸ Macros (Alt+F8) and the Visual Basic Editor (Alt+F11).
     let view = view.clone();
-    menu.separator().item(
-        PopupMenuItem::new(format!("{}  (Alt+F8)", i18n::t("Macros…")))
-            .icon(Lucide::FileCode)
-            .on_click(move |_, window, cx| {
-                let _ = view.update(cx, |v, cx| v.macros_doc(window, cx));
-            }),
-    )
+    let editor_view = view.clone();
+    menu.separator()
+        .item(
+            PopupMenuItem::new(format!("{}  (Alt+F8)", i18n::t("Macros…")))
+                .icon(Lucide::FileCode)
+                .on_click(move |_, window, cx| {
+                    let _ = view.update(cx, |v, cx| v.macros_doc(window, cx));
+                }),
+        )
+        .item(
+            PopupMenuItem::new(format!("{}  (Alt+F11)", i18n::t("Macro Editor")))
+                .icon(Lucide::FileCode)
+                .on_click(move |_, window, cx| {
+                    let _ = editor_view.update(cx, |v, cx| v.open_macro_editor(None, window, cx));
+                }),
+        )
 }
 
 /// The Table menu: Format as Table, Table Design, Convert to Range.

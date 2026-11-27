@@ -113,11 +113,13 @@ mod plain_cell;
 pub use notes_ui::NoteCommand;
 pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
+mod code_highlight;
 mod macro_events;
 mod macro_form;
 mod macro_run;
 mod macro_thread;
 mod toolbar;
+mod vba_editor;
 mod vba_ui;
 mod web_ui;
 mod zoom;
@@ -287,6 +289,7 @@ fn opened_status(book: &Workbook) -> String {
 
 /// Register Sheets key bindings. Both Ctrl and Super work (Mac-style Cmd = Super).
 pub fn init(cx: &mut App) {
+    vba_editor::bind_keys(cx);
     // Pivot captions and the like in new content follow the interface language.
     sheets_engine::set_content_translator(kantor_ui::i18n::t);
     // Typed dates follow the system's language as Excel follows the
@@ -1634,6 +1637,8 @@ pub struct SheetsView {
     macros: vba_ui::MacroState,
     /// The Macros dialog ([`vba_ui`]).
     macros_dialog: Option<vba_ui::MacrosDialog>,
+    /// The Macro Editor beside the grid ([`vba_editor`]).
+    macro_editor: Option<vba_editor::MacroEditor>,
     /// The zoom slider and the Zoom dialog ([`zoom`]).
     zoom: zoom::ZoomState,
     _subscriptions: Vec<Subscription>,
@@ -1731,6 +1736,7 @@ impl SheetsView {
             web: web_ui::WebState::default(),
             macros: vba_ui::MacroState::default(),
             macros_dialog: None,
+            macro_editor: None,
             zoom: Default::default(),
             _subscriptions: subscriptions,
         };
@@ -2769,6 +2775,8 @@ impl SheetsView {
         if self.blocked(cx) {
             return;
         }
+        // Code typed in the Macro Editor is part of what gets saved.
+        self.commit_macro_code(window, cx);
         // `Workbook_BeforeSave` first; it saves afterwards unless cancelled.
         if self.macro_before_save(false, window, cx) {
             return;
@@ -2793,6 +2801,7 @@ impl SheetsView {
     }
 
     fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_macro_code(window, cx);
         if self.macro_before_save(true, window, cx) {
             return;
         }
@@ -2819,6 +2828,7 @@ impl SheetsView {
     }
 
     fn save_now_for_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        self.commit_macro_code(window, cx);
         if !self.is_dirty(cx) && self.busy.is_none() {
             return Task::ready(true);
         }
@@ -3116,6 +3126,11 @@ impl Render for SheetsView {
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
             .on_action(cx.listener(|this, _: &ShowMacros, w, cx| this.macros_doc(w, cx)))
+            .on_action(
+                cx.listener(|this, _: &vba_editor::ToggleMacroEditor, w, cx| {
+                    this.toggle_macro_editor(w, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &fb::OpenFind, w, cx| this.open_find(false, w, cx)))
             .on_action(cx.listener(|this, _: &fb::OpenReplace, w, cx| this.open_find(true, w, cx)))
             .on_action(cx.listener(|this, _: &fb::FindNext, w, cx| this.find_next_doc(true, w, cx)))
@@ -3224,6 +3239,7 @@ impl Render for SheetsView {
                     let table_panel = self.render_table_panel(cx);
                     let chart_panel = self.render_chart_panel(cx);
                     let shape_panel = self.render_shape_panel(cx);
+                    let macro_editor = self.render_macro_editor(cx);
                     h_flex()
                         .flex_1()
                         .min_h_0()
@@ -3288,6 +3304,7 @@ impl Render for SheetsView {
                         .children(table_panel)
                         .children(chart_panel)
                         .children(shape_panel)
+                        .children(macro_editor)
                 })
             })
             // Sheet tabs

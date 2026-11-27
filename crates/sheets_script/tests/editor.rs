@@ -78,7 +78,12 @@ fn new_workbook_new_module_saved_as_xlsm_runs_after_reopening() {
     assert_eq!(p.module("Module1").unwrap().kind, ModuleKind::Standard);
     assert_eq!(book.sheet_code_names().len(), 2);
     let macros = MacroProject::of_book(&book).unwrap().unwrap();
-    assert!(macros.macros().iter().any(|m| m.full_name() == "Module1.Basics"));
+    assert!(
+        macros
+            .macros()
+            .iter()
+            .any(|m| m.full_name() == "Module1.Basics")
+    );
     for r in 0..3 {
         book.set_input(0, r, 0, "").unwrap();
     }
@@ -104,7 +109,8 @@ fn a_sheet_module_handles_events_after_saving() {
     let mut modules = code::code_modules(&book).unwrap();
     let sheet = modules.iter_mut().find(|m| m.name == "Sheet1").unwrap();
     assert_eq!(sheet.sheet.as_deref(), Some("Sheet1"));
-    sheet.code = "Public Sub Hello()\n    Me.Range(\"C1\").Value = \"from sheet\"\nEnd Sub\n".into();
+    sheet.code =
+        "Public Sub Hello()\n    Me.Range(\"C1\").Value = \"from sheet\"\nEnd Sub\n".into();
     code::apply(&mut book, &modules).unwrap();
     let (book, _dir) = reopen(book, "events.xlsm");
     let (book, outcome) = run(book, "Sheet1.Hello");
@@ -126,7 +132,11 @@ fn xlsx_keeps_scripts_but_not_vba() {
     let (book, _dir) = reopen(book, "plain.xlsx");
     assert!(!book.has_macros());
     let after = code::code_modules(&book).unwrap();
-    assert!(after.iter().any(|m| m.name == "Report" && m.kind == CodeKind::JavaScript));
+    assert!(
+        after
+            .iter()
+            .any(|m| m.name == "Report" && m.kind == CodeKind::JavaScript)
+    );
     assert!(!after.iter().any(|m| m.name == "Module1"));
     let (book, outcome) = run(book, "Report.go");
     ok(&outcome);
@@ -149,14 +159,23 @@ fn removing_every_module_but_the_documents_keeps_a_project() {
     let kinds: Vec<CodeKind> = modules.iter().map(|m| m.kind).collect();
     assert_eq!(
         kinds,
-        [CodeKind::Document, CodeKind::Document, CodeKind::Standard, CodeKind::Class]
+        [
+            CodeKind::Document,
+            CodeKind::Document,
+            CodeKind::Standard,
+            CodeKind::Class
+        ]
     );
     modules.retain(|m| m.kind == CodeKind::Document);
     assert!(code::apply(&mut book, &modules).unwrap());
     let p = book.vba_project().unwrap().unwrap();
     assert_eq!(p.modules().len(), 2);
     // A compile error shows at its line.
-    let broken = CodeModule::new("Module9", CodeKind::Standard, "Sub A()\n    If 1 Then\nEnd Sub\n");
+    let broken = CodeModule::new(
+        "Module9",
+        CodeKind::Standard,
+        "Sub A()\n    If 1 Then\nEnd Sub\n",
+    );
     let d = code::diagnostics(&broken);
     assert!(d.iter().any(|d| d.fatal), "{d:?}");
 }

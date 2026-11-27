@@ -1311,7 +1311,11 @@ fn with_macros(
                     Some((rel, part, orig)) => {
                         (rel.kind.clone(), part.clone(), workbook_code_name(orig)?)
                     }
-                    None => (VBA_PROJECT_REL.to_owned(), "xl/vbaProject.bin".to_owned(), None),
+                    None => (
+                        VBA_PROJECT_REL.to_owned(),
+                        "xl/vbaProject.bin".to_owned(),
+                        None,
+                    ),
                 };
                 let code_name = edit.workbook_code_name.clone().or(code_name);
                 add_vba_data(&mut pkg, &kind, &part, data.as_ref().clone(), code_name)?;
@@ -1391,9 +1395,15 @@ fn set_sheet_code_names(pkg: &mut Package, names: &[(String, String)]) -> Result
                 // CT_Worksheet: sheetPr comes first.
                 let at = match root.children().find(|c| c.is_element()) {
                     Some(first) => first.range().start,
-                    None => root.range().start + start_tag_end(&xml[root.range().start..]).ok_or("bad worksheet")?,
+                    None => {
+                        root.range().start
+                            + start_tag_end(&xml[root.range().start..]).ok_or("bad worksheet")?
+                    }
                 };
-                Some((at..at, format!("<sheetPr codeName=\"{}\"/>", esc_attr(code))))
+                Some((
+                    at..at,
+                    format!("<sheetPr codeName=\"{}\"/>", esc_attr(code)),
+                ))
             }
         };
         if let Some(edit) = edit {
@@ -1414,7 +1424,6 @@ fn add_vba_data(
     data: Vec<u8>,
     code_name: Option<String>,
 ) -> Result<(), String> {
-
     let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
     let wb = root_rels
         .iter()

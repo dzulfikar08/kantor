@@ -1008,7 +1008,10 @@ fn check_reports_lines_for_an_editor() {
     // Fine code: nothing.
     assert!(Project::check(ModuleKind::Standard, "Sub A()\n    MsgBox 1\nEnd Sub\n").is_empty());
     // Broken structure: one fatal error at its line.
-    let d = Project::check(ModuleKind::Standard, "Sub A()\n    If x Then\n        y = 1\nEnd Sub\n");
+    let d = Project::check(
+        ModuleKind::Standard,
+        "Sub A()\n    If x Then\n        y = 1\nEnd Sub\n",
+    );
     assert_eq!(d.iter().filter(|d| d.fatal).count(), 1, "{d:?}");
     assert!(d[0].line >= 2, "{d:?}");
     // A line that doesn't parse: not fatal, at its line.

@@ -15,7 +15,13 @@ pub const PROJECT_ID: &str = "{5F3C1A2B-7D4E-4C8B-9A6F-0E1D2C3B4A59}";
 
 /// The `dir` records of one module (MS-OVBA 2.3.4.2.3.2), its source at
 /// `offset` in its stream (named like the module).
-pub(crate) fn module_records(d: &mut Vec<u8>, mbcs: &[u8], name: &str, kind: ModuleKind, offset: u32) {
+pub(crate) fn module_records(
+    d: &mut Vec<u8>,
+    mbcs: &[u8],
+    name: &str,
+    kind: ModuleKind,
+    offset: u32,
+) {
     push(d, dir::MODULE_NAME, mbcs);
     push(d, dir::MODULE_NAME_UNICODE, &utf16_bytes(name));
     push(d, dir::MODULE_STREAM_NAME, mbcs);

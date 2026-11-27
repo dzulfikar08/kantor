@@ -215,20 +215,33 @@ fn modules_added_edited_removed_in_an_excel_project() {
     let m1 = q.module("Module1").unwrap();
     assert_eq!(m1.code, specs[0].code);
     // Its procedure attributes are kept.
-    assert!(m1.source.contains("TestMacro.VB_Description"), "{}", m1.source);
+    assert!(
+        m1.source.contains("TestMacro.VB_Description"),
+        "{}",
+        m1.source
+    );
     let m2 = q.module("Module2").unwrap();
     assert_eq!(m2.kind, ModuleKind::Standard);
-    assert_eq!(m2.code, "Sub Hello()\n    Range(\"A1\").Value = \"Hi\"\nEnd Sub\n");
+    assert_eq!(
+        m2.code,
+        "Sub Hello()\n    Range(\"A1\").Value = \"Hi\"\nEnd Sub\n"
+    );
     assert_eq!(m2.attribute("VB_Name").as_deref(), Some("Module2"));
     let c = q.module("Counter").unwrap();
     assert_eq!(c.kind, ModuleKind::Class);
     assert_eq!(c.procedures()[0].name, "Bump");
     for name in ["ThisWorkbook", "Sheet1", "Sheet2", "Sheet3"] {
-        assert_eq!(p.module(name).unwrap().source, q.module(name).unwrap().source);
+        assert_eq!(
+            p.module(name).unwrap().source,
+            q.module(name).unwrap().source
+        );
         assert_eq!(q.module(name).unwrap().kind, ModuleKind::Document);
     }
     assert_eq!(q.references.len(), p.references.len());
-    assert_no_caches(&out, &["Module1", "Module2", "Counter", "ThisWorkbook", "Sheet1"]);
+    assert_no_caches(
+        &out,
+        &["Module1", "Module2", "Counter", "ThisWorkbook", "Sheet1"],
+    );
     let text = project_text(&out);
     assert!(text.contains("Module=Module2\r\n"), "{text}");
     assert!(text.contains("Class=Counter\r\n"), "{text}");
@@ -255,7 +268,11 @@ fn modules_added_edited_removed_in_an_excel_project() {
     assert!(r.module("Counter").is_none());
     assert_eq!(r.module("Tally").unwrap().kind, ModuleKind::Class);
     assert_eq!(r.module("Tally").unwrap().code, c.code);
-    assert!(!vba_streams(&out2).iter().any(|n| n == "Module2" || n == "Counter"));
+    assert!(
+        !vba_streams(&out2)
+            .iter()
+            .any(|n| n == "Module2" || n == "Counter")
+    );
     let text = project_text(&out2);
     assert!(!text.contains("Module2"), "{text}");
     assert!(!text.contains("Counter"), "{text}");
@@ -318,7 +335,10 @@ fn a_new_project_from_scratch() {
     let p = VbaProject::read(&bin).unwrap();
     assert_eq!(names_in(&p), ["ThisWorkbook", "Sheet1", "Module1"]);
     assert_eq!(
-        p.module("ThisWorkbook").unwrap().attribute("VB_Base").as_deref(),
+        p.module("ThisWorkbook")
+            .unwrap()
+            .attribute("VB_Base")
+            .as_deref(),
         Some("0{00020819-0000-0000-C000-000000000046}")
     );
     assert_eq!(

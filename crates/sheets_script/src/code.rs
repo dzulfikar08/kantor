@@ -13,9 +13,9 @@
 //! module gets code.
 
 use kantor_script::vba::{ModuleKind as ScriptKind, Project};
-use sheets_engine::vba::{ModuleKind, ModuleSpec, VbaProject};
 use sheets_engine::Workbook;
 use sheets_engine::scripts::{Script, ScriptLanguage};
+use sheets_engine::vba::{ModuleKind, ModuleSpec, VbaProject};
 
 pub use kantor_script::vba::parser::Diagnostic;
 

@@ -623,6 +623,7 @@ impl SheetsView {
                 BookOut::New { book } => cx.emit(SheetsEvent::OpenBook(Handoff::new(book))),
             }
         }
+        self.macro_editor_after_run(&outcome.result, window, cx);
         match outcome.result {
             Ok(()) => {
                 if let Some(name) = &ran {

@@ -1079,6 +1079,14 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.macros_doc(w, cx)),
     },
     Command {
+        title: tk("Macro Editor"),
+        detail: tk("Sheets · Visual Basic editor: write, paste and run VBA and JavaScript macros"),
+        keys: "Alt+F11",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.open_macro_editor(None, w, cx))
+        },
+    },
+    Command {
         title: tk("Page Break Preview"),
         detail: tk("Sheets · show where the pages break; drag the breaks and the print area"),
         keys: "",
