@@ -24,6 +24,7 @@ impl Workspace {
             AppKind::Sheets => (t.sheets, true),
             AppKind::Slides => (t.slides, true),
             AppKind::Pdf => (t.danger, true),
+            AppKind::Notes => (t.info, true),
         };
         let entity = cx.entity().downgrade();
         v_flex()
@@ -88,6 +89,7 @@ impl Workspace {
             i18n::t("Present .pptx decks"),
             cx,
         );
+        let notes = self.render_card("home-notes", AppKind::Notes, i18n::t("Take .md notes"), cx);
         let hints: Vec<Div> = [
             ("Ctrl N", i18n::t("New spreadsheet")),
             ("Ctrl Shift N", i18n::t("New document")),
@@ -131,7 +133,8 @@ impl Workspace {
                         .gap(SPACE_6)
                         .child(docs)
                         .child(sheets)
-                        .child(slides),
+                        .child(slides)
+                        .child(notes),
                 ),
             )
             .child(

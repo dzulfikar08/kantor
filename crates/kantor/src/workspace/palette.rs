@@ -44,7 +44,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Open File…"),
-        detail: ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .odt, .odp, .xls, .ppt",
+        detail: ".xlsx, .docx, .pptx, .pdf, .md, .csv, .ods, .odt, .odp, .xls, .ppt",
         keys: "Ctrl O",
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
@@ -1951,6 +1951,9 @@ pub(super) const COMMANDS: &[Command] = &[
         keys: "Ctrl =",
         run: |ws, window, cx| {
             ws.with_pdf(window, cx, |v, _, cx| v.zoom_step(true, None, cx));
+            ws.with_notes(window, cx, |v, _, cx| {
+                v.zoom_by(kantor_ui::metrics::ZOOM_STEP, cx)
+            });
             ws.with_docs(window, cx, |v, _, cx| {
                 v.zoom_by(kantor_ui::metrics::ZOOM_STEP, cx)
             });
@@ -1963,6 +1966,9 @@ pub(super) const COMMANDS: &[Command] = &[
         keys: "Ctrl -",
         run: |ws, window, cx| {
             ws.with_pdf(window, cx, |v, _, cx| v.zoom_step(false, None, cx));
+            ws.with_notes(window, cx, |v, _, cx| {
+                v.zoom_by(1.0 / kantor_ui::metrics::ZOOM_STEP, cx)
+            });
             ws.with_docs(window, cx, |v, _, cx| {
                 v.zoom_by(1.0 / kantor_ui::metrics::ZOOM_STEP, cx)
             });
@@ -1995,6 +2001,7 @@ pub(super) const COMMANDS: &[Command] = &[
         keys: "Ctrl 0",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, _, cx| v.set_zoom(1.0, cx));
+            ws.with_notes(window, cx, |v, _, cx| v.set_zoom(1.0, cx));
             ws.with_pdf(window, cx, |v, _, cx| {
                 v.set_zoom(pdf_ui::Zoom::Percent(1.0), None, cx)
             });
@@ -2252,6 +2259,68 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Slides",
         keys: "Ctrl Alt N",
         run: |ws, window, cx| ws.new_presentation(&NewPresentation, window, cx),
+    },
+    Command {
+        title: tk("New Note"),
+        detail: "Notes",
+        keys: "",
+        run: |ws, window, cx| ws.new_note(&NewNote, window, cx),
+    },
+    Command {
+        title: tk("Reading View"),
+        detail: tk("Notes · the note formatted, not editable"),
+        keys: "Ctrl E",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| {
+                let m = if v.mode() == notes_ui::Mode::Reading {
+                    notes_ui::Mode::Live
+                } else {
+                    notes_ui::Mode::Reading
+                };
+                v.set_mode(m, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Source Mode"),
+        detail: tk("Notes · every line as typed"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| {
+                let m = if v.mode() == notes_ui::Mode::Source {
+                    notes_ui::Mode::Live
+                } else {
+                    notes_ui::Mode::Source
+                };
+                v.set_mode(m, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Save as Word Document…"),
+        detail: tk("Notes · a .docx made from the note"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| v.export(notes_ui::Export::Word, cx))
+        },
+    },
+    Command {
+        title: tk("Save Note as PDF…"),
+        detail: tk("Notes · a PDF made from the note"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| v.export(notes_ui::Export::Pdf, cx))
+        },
+    },
+    Command {
+        title: tk("Make Slides from Note…"),
+        detail: tk("Notes · a .pptx deck, one slide per heading"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| {
+                v.export(notes_ui::Export::Slides, cx)
+            })
+        },
     },
     Command {
         title: tk("New Slide"),

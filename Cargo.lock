@@ -4179,6 +4179,8 @@ dependencies = [
  "kantor_ui",
  "kantor_update",
  "log",
+ "notes_engine",
+ "notes_ui",
  "pdf_engine",
  "pdf_ui",
  "ring",
@@ -5056,6 +5058,19 @@ version = "0.26.2"
 dependencies = [
  "pulldown-cmark",
  "unicode-segmentation",
+]
+
+[[package]]
+name = "notes_ui"
+version = "0.26.2"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "gpui-pre-wgpu",
+ "imagesize 0.14.0",
+ "kantor_core",
+ "kantor_ui",
+ "notes_engine",
 ]
 
 [[package]]

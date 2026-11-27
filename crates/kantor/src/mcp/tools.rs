@@ -79,7 +79,7 @@ const SPECS: &[Spec] = &[
         "new_document",
         "New document",
         "Create a new, untitled document in a new tab and bring it to front.",
-        || json!({"kind": {"type": "string", "enum": ["sheets", "docs", "slides"]}}),
+        || json!({"kind": {"type": "string", "enum": ["sheets", "docs", "slides", "notes"]}}),
         &["kind"],
         false,
     ),
@@ -112,6 +112,43 @@ const SPECS: &[Spec] = &[
         || json!({"document": document()}),
         &[],
         true,
+    ),
+    // ── Notes ──────────────────────────────────────────────────────────────
+    (
+        "notes_read",
+        "Read a note",
+        "Read a Markdown note (kind notes): its whole text as in the file, its headings with line numbers (from 1), its name and path.",
+        || json!({"document": document()}),
+        &[],
+        true,
+    ),
+    (
+        "notes_write",
+        "Rewrite a note",
+        "Replace a note's whole text with `text` (Markdown). Only the part that differs changes; the note keeps its line endings. One undo step; the user saves.",
+        || {
+            json!({
+                "document": document(),
+                "text": {"type": "string", "description": "The note's new Markdown text."},
+            })
+        },
+        &["text"],
+        false,
+    ),
+    (
+        "notes_replace",
+        "Replace text in a note",
+        "Replace `find` (exact text, case-sensitive) with `replace` in a note: every occurrence, or only the first with all=false. One undo step; returns how many were replaced.",
+        || {
+            json!({
+                "document": document(),
+                "find": {"type": "string"},
+                "replace": {"type": "string"},
+                "all": {"type": "boolean", "default": true},
+            })
+        },
+        &["find", "replace"],
+        false,
     ),
     // ── Sheets ─────────────────────────────────────────────────────────────
     (

@@ -21,6 +21,7 @@ actions!(
         NewSpreadsheet,
         NewDocument,
         NewPresentation,
+        NewNote,
         OpenFile,
         OpenFromCloud,
         CloudAccounts,
