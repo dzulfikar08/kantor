@@ -1078,8 +1078,13 @@ pub(crate) fn lay_out_body(
         .map(|st| docs_engine::StyleRefs::new(doc, st.doc.paragraphs()))
         .collect();
 
-    // Each page's header and footer, numbers filled in.
-    let total = paged.pages.len();
+    // Each page's header and footer, numbers filled in (laying out the
+    // start of a document: the number of pages it should have).
+    let total = if cut < doc.len() {
+        estimate_pages(doc, cut, paged.pages.len())
+    } else {
+        paged.pages.len()
+    };
     let total_text = total.to_string();
     let mut in_section: HashMap<usize, usize> = HashMap::new();
     for page in &paged.pages {
@@ -1292,6 +1297,16 @@ fn changed_note_paras(
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// About how many pages `doc` has when its first `cut` paragraphs take
+/// `pages` pages (by their share of its text).
+pub fn estimate_pages(doc: &Document, cut: usize, pages: usize) -> usize {
+    let paras = doc.paragraphs();
+    let len = |ps: &[docs_engine::Paragraph]| ps.iter().map(|p| p.text.len() + 40).sum::<usize>();
+    let laid = len(&paras[..cut.min(paras.len())]).max(1);
+    let all = len(paras);
+    (pages * all).div_ceil(laid).max(pages)
 }
 
 /// Every page's number as its section shows it (format, and the chapter

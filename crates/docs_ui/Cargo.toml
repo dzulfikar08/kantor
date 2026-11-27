@@ -18,6 +18,8 @@ docs_pdf.workspace = true
 gpui-kit.workspace = true
 # Turned floating pictures (the version GPUI uses).
 image.workspace = true
+# Freed memory given back after big transient copies (saves, layouts).
+kantor_mem.workspace = true
 # Turned text (text boxes here, shapes in Slides): glyph runs as Slides
 # scenes hold them, glyph outlines and their fill (the versions GPUI uses).
 slides_scene.workspace = true

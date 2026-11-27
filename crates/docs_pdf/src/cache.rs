@@ -107,6 +107,9 @@ pub struct LayoutCache {
     /// After a full relayout: from which page on the pages were the last
     /// layout's, and which page of it that was.
     pub reused: Option<(usize, usize)>,
+    /// After [`Self::relayout_prefix`]: about how many pages the whole
+    /// document has.
+    pub estimate: Option<usize>,
 }
 
 impl LayoutCache {
@@ -161,6 +164,7 @@ impl LayoutCache {
             }
         }
         self.outcome = Outcome::Full;
+        self.estimate = None;
         // The last layout's pages that come out the same are kept, and
         // after a known edit what it didn't change is taken over.
         let mut last = self.last.take();
@@ -201,6 +205,11 @@ impl LayoutCache {
         let (laid, _) = self.full(doc, engine, Some(limit), None);
         self.last = None;
         self.outcome = Outcome::Prefix;
+        self.estimate = Some(crate::pages::estimate_pages(
+            doc,
+            limit,
+            laid.paged.pages.len(),
+        ));
         laid
     }
 
@@ -208,6 +217,7 @@ impl LayoutCache {
     /// `doc` hasn't changed since (later edits go on from it), else `None`
     /// (its paragraph layouts are kept: the next relayout reuses them).
     pub fn install(&mut self, doc: &Document, bg: Background) -> Option<Layout> {
+        self.estimate = None;
         if doc.revision() != bg.revision || doc.len() != bg.body.shaped.len() {
             self.paras.extend(bg.paras);
             self.last = None;
