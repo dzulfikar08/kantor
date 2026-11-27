@@ -2897,7 +2897,11 @@ impl Render for DocsView {
         // Pictures, floating objects and comments come from the whole
         // document (a part being edited put back for a moment).
         let swapped = self.whole_in();
-        let images = self.visible_images(window, cx);
+        let images = {
+            let _s = docs_layout::perf::span("docs render: pictures");
+            self.visible_images(window, cx)
+        };
+        let floats_span = docs_layout::perf::span("docs render: floats");
         let mut turned = std::mem::take(&mut self.turned_texts);
         let float_paint = floats::float_paint(
             &self.doc,
@@ -2911,9 +2915,14 @@ impl Render for DocsView {
             window.drop_image(img).ok();
         }
         let float_images = self.visible_float_images(&float_paint, window, cx);
+        drop(floats_span);
         let float_sel = self.float_sel_rect();
         let layout_button = self.render_layout_button(cx);
-        let hf_images = self.visible_hf_images(window, cx);
+        let hf_images = {
+            let _s = docs_layout::perf::span("docs render: header pictures");
+            self.visible_hf_images(window, cx)
+        };
+        let review_span = docs_layout::perf::span("docs render: review");
         let cards = self.comment_cards();
         let (sa, sb) = self.body_sel().ordered();
         let comment_ranges = if self.markup_visible() {
@@ -2949,9 +2958,11 @@ impl Render for DocsView {
             .collect();
         let card_elements = self.render_cards(&cards, cx);
         let change_bars = self.change_bars();
+        drop(review_span);
         if swapped {
             self.whole_out();
         }
+        let _rest = docs_layout::perf::span("docs render: rest");
         if kantor_ui::spelling::enabled(cx) != self.spell.is_on()
             || (self.spell.is_on() && self.spell.flags.len() != self.doc.len())
         {

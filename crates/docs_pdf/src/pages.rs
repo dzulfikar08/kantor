@@ -481,7 +481,10 @@ fn with_endnotes(
     let last = sections.len().saturating_sub(1);
     // Section whose end each endnote goes to.
     let target = |r: &NoteRef| {
-        if doc.note_props(NoteKind::Endnote, r.section).section_end {
+        if doc
+            .note_props_in(sections, NoteKind::Endnote, r.section)
+            .section_end
+        {
             r.section.min(last)
         } else {
             last
@@ -565,14 +568,22 @@ pub fn section_columns(s: &Section) -> Vec<(f32, f32)> {
 
 /// Footnote numbers restarted on each page (sections set to "each page"),
 /// from where the references landed.
-fn renumber_per_page(doc: &Document, refs: &[NoteRef], paged: &PagedDocument) -> Vec<NoteRef> {
+fn renumber_per_page(
+    doc: &Document,
+    sections: &[Section],
+    refs: &[NoteRef],
+    paged: &PagedDocument,
+) -> Vec<NoteRef> {
     let mut out = refs.to_vec();
     let mut count: HashMap<usize, u32> = HashMap::new();
+    let mut props_of: HashMap<usize, docs_engine::NoteProps> = HashMap::new();
     for r in &mut out {
         if r.kind != NoteKind::Footnote || r.label.is_empty() {
             continue;
         }
-        let props = doc.note_props(r.kind, r.section);
+        let props = *props_of
+            .entry(r.section)
+            .or_insert_with(|| doc.note_props_in(sections, r.kind, r.section));
         if props.restart != NoteRestart::EachPage {
             continue;
         }
@@ -829,12 +840,14 @@ pub(crate) fn lay_out_body(
     drop(t);
     // Footnotes numbered per page: renumber where they landed and lay out
     // again (the numbers' widths can move text).
-    let per_page = refs.iter().any(|r| {
-        r.kind == NoteKind::Footnote
-            && doc.note_props(r.kind, r.section).restart == NoteRestart::EachPage
+    // (Each section's settings once: they're read from its properties.)
+    let per_page = (0..sections.len()).any(|si| {
+        refs.iter()
+            .any(|r| r.kind == NoteKind::Footnote && r.section == si)
+            && doc.note_props_in(&sections, NoteKind::Footnote, si).restart == NoteRestart::EachPage
     });
     if per_page {
-        let renumbered = renumber_per_page(doc, &refs, &paged);
+        let renumbered = renumber_per_page(doc, &sections, &refs, &paged);
         if renumbered != refs {
             refs = renumbered;
             (lps, widths, blocks) =
