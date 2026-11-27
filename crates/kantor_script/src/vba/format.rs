@@ -454,7 +454,7 @@ fn render_section(x: f64, section: &str) -> String {
         }
     }
     let (int, frac) = round_decimal(x, frac_ph.len());
-    let int: Vec<u8> = if int == [b'0'] { Vec::new() } else { int };
+    let int: Vec<u8> = if int == *b"0" { Vec::new() } else { int };
     // Fraction digits: drop trailing zeros the `#` placeholders don't need.
     let keep = frac_ph
         .iter()
@@ -899,7 +899,7 @@ pub fn format_fixed(x: f64, digits: i32, leading_zero: bool, parens: bool, group
         s.push('.');
         s.extend(frac.iter().map(|b| *b as char));
     }
-    let zero = int == [b'0'] && frac.iter().all(|b| *b == b'0');
+    let zero = int == *b"0" && frac.iter().all(|b| *b == b'0');
     if x < 0.0 && !zero {
         if parens {
             format!("({s})")
@@ -942,7 +942,7 @@ mod tests {
         assert_eq!(f(-1234.5, "Currency"), "($1,234.50)");
         assert_eq!(f(0.1234, "Percent"), "12.34%");
         assert_eq!(f(1234.5, "Standard"), "1,234.50");
-        assert_eq!(f(3.14159, "Fixed"), "3.14");
+        assert_eq!(f(1.23456, "Fixed"), "1.23");
         assert_eq!(f(1.0, "Yes/No"), "Yes");
         assert_eq!(f("abc", "0.00"), "abc");
         assert_eq!(f(123456789.0, "000-00-0000"), "123-45-6789");

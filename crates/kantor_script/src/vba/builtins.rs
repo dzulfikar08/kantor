@@ -400,13 +400,14 @@ impl Interp<'_> {
         // VBA's generator (24-bit LCG): x = (x * &H43FD43FD + &HC39EC3) Mod 2^24, starting at
         // &H50000, so the first Rnd is 0.7055475 as in Office.
         let mut seed = self.st.rnd_seed;
-        match n {
-            Some(x) if x == 0.0 => return seed as f32 / 16_777_216.0,
-            Some(x) if x < 0.0 => {
-                let bits = u64::from((x as f32).to_bits());
-                seed = ((bits + (bits >> 24)) & 0xFF_FFFF) as u32;
-            }
-            _ => {}
+        if n == Some(0.0) {
+            return seed as f32 / 16_777_216.0;
+        }
+        if let Some(x) = n
+            && x < 0.0
+        {
+            let bits = u64::from((x as f32).to_bits());
+            seed = ((bits + (bits >> 24)) & 0xFF_FFFF) as u32;
         }
         seed = ((u64::from(seed) * 0x43FD_43FD + 0xC3_9EC3) & 0xFF_FFFF) as u32;
         self.st.rnd_seed = seed;

@@ -15,11 +15,14 @@ use crate::object::*;
 
 pub(crate) type R<T> = Result<T, ScriptError>;
 
+/// A module's evaluated constants and enum members, with their visibility.
+type ConstMap = Rc<RefCell<HashMap<Rc<str>, (Value, bool)>>>;
+
 /// Project-wide run-time state that outlives one `run` (module variables keep their values
 /// between macro runs until the project is reset, as in VBA).
 pub(crate) struct State {
     pub scopes: Vec<Option<Rc<Scope>>>,
-    pub consts: Vec<Option<Rc<RefCell<HashMap<Rc<str>, (Value, bool)>>>>>,
+    pub consts: Vec<Option<ConstMap>>,
     pub statics: HashMap<(usize, Rc<str>, u8), Rc<Scope>>,
     pub err: Rc<ErrObject>,
     pub rnd_seed: u32,
@@ -217,6 +220,8 @@ pub(crate) enum Named {
     Class(Rc<Module>),
     Collection,
     Dictionary,
+    /// A user `Enum` or a library enumeration (`VbMsgBoxResult`, `XlDirection`): a Long.
+    Enum,
     Other,
 }
 
@@ -356,7 +361,7 @@ impl Interp<'_> {
     }
 
     /// The constants and enum members of a module, evaluated on first use.
-    fn module_consts(&mut self, m: &Rc<Module>) -> R<Rc<RefCell<HashMap<Rc<str>, (Value, bool)>>>> {
+    fn module_consts(&mut self, m: &Rc<Module>) -> R<ConstMap> {
         if self.st.consts.len() <= m.idx {
             self.st.consts.resize(m.idx + 1, None);
         }
@@ -408,6 +413,14 @@ impl Interp<'_> {
                 return Named::Class(m.clone());
             }
         }
+        if self
+            .modules
+            .iter()
+            .any(|m| m.enums.iter().any(|e| &*e.name.key == short))
+            || ["vb", "xl", "mso"].iter().any(|p| short.starts_with(p))
+        {
+            return Named::Enum;
+        }
         Named::Other
     }
 
@@ -431,6 +444,7 @@ impl Interp<'_> {
             Ty::Array(_) => Value::array(Array::unallocated()),
             Ty::Named(n) => match self.resolve_named(n) {
                 Named::Udt(m, t) => self.new_record(&m, &t)?,
+                Named::Enum => Value::Long(0),
                 _ => Value::Object(None),
             },
         })
@@ -532,7 +546,7 @@ impl Interp<'_> {
             return match ty {
                 Ty::Variant | Ty::Object => Ok(value),
                 Ty::Named(n) => match self.resolve_named(n) {
-                    Named::Udt(..) => Err(ScriptError::runtime(13)),
+                    Named::Udt(..) | Named::Enum => Err(ScriptError::runtime(13)),
                     _ => Ok(value),
                 },
                 _ => Err(ScriptError::runtime(13)),
@@ -547,6 +561,7 @@ impl Interp<'_> {
                     Value::Record(r) if r.type_name.eq_ignore_ascii_case(&t.name.text) => Ok(value),
                     _ => Err(ScriptError::runtime(13)),
                 },
+                Named::Enum => convert::convert(&value, Scalar::Long),
                 _ => {
                     if value.is_object() {
                         Ok(value)
@@ -1246,7 +1261,7 @@ impl Interp<'_> {
             Named::Class(m) => self.instantiate(&m),
             Named::Collection => Ok(Value::object(Rc::new(Collection::new()))),
             Named::Dictionary => Ok(Value::object(Rc::new(Dictionary::new()))),
-            Named::Udt(..) => Err(ScriptError::syntax("Invalid use of New keyword")),
+            Named::Udt(..) | Named::Enum => Err(ScriptError::syntax("Invalid use of New keyword")),
             Named::Other => match self.host.create_object(name) {
                 Some(r) => Ok(Value::Object(Some(r?))),
                 None => Err(ScriptError {
@@ -1660,12 +1675,8 @@ impl Interp<'_> {
         }
         let mut frame = Frame::new(m.clone(), p.clone(), me);
         self.depth += 1;
-        let r = self.enter(&mut frame, args, let_value);
+        let (writebacks, result) = self.enter(&mut frame, args, let_value);
         self.depth -= 1;
-        let (writebacks, result) = match r {
-            Ok(w) => (w, Ok(())),
-            Err((w, e)) => (w, Err(e)),
-        };
         let value = match frame.result.take() {
             Some(s) => std::mem::take(&mut s.borrow_mut().value),
             None => Value::Empty,
@@ -1680,24 +1691,20 @@ impl Interp<'_> {
         Ok(value)
     }
 
-    #[allow(clippy::type_complexity)]
+    /// Binds arguments, creates locals and runs the body. Returns the `ByRef` write-backs
+    /// even when it fails, so the caller still sees what changed.
     fn enter(
         &mut self,
         f: &mut Frame,
         args: Vec<ArgIn>,
         let_value: Option<Value>,
-    ) -> Result<Vec<(Slot, Place)>, (Vec<(Slot, Place)>, ScriptError)> {
+    ) -> (Vec<(Slot, Place)>, R<()>) {
         let mut writebacks = Vec::new();
-        if let Err(e) = self.bind_params(f, args, let_value, &mut writebacks) {
-            return Err((writebacks, e));
-        }
-        if let Err(e) = self.init_locals(f) {
-            return Err((writebacks, e));
-        }
-        match self.run_frame(f) {
-            Ok(()) => Ok(writebacks),
-            Err(e) => Err((writebacks, e)),
-        }
+        let r = self
+            .bind_params(f, args, let_value, &mut writebacks)
+            .and_then(|()| self.init_locals(f))
+            .and_then(|()| self.run_frame(f));
+        (writebacks, r)
     }
 
     fn bind_params(
@@ -1781,7 +1788,7 @@ impl Interp<'_> {
     fn coerce_arg(&mut self, v: Value, ty: &Ty, is_object: bool) -> R<Value> {
         if is_object {
             if matches!(ty, Ty::Variant | Ty::Object)
-                || matches!(ty, Ty::Named(n) if !matches!(self.resolve_named(n), Named::Udt(..)))
+                || matches!(ty, Ty::Named(n) if !matches!(self.resolve_named(n), Named::Udt(..) | Named::Enum))
             {
                 return Ok(v);
             }
