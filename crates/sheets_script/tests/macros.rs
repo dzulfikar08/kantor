@@ -16,6 +16,7 @@ fn project(code: &str) -> MacroProject {
             ModuleKind::Standard,
             &code.replace('\n', "\r\n"),
         )],
+        ..Default::default()
     }
 }
 

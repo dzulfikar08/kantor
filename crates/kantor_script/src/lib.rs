@@ -7,11 +7,14 @@
 //!   VBA-specific: a JavaScript or Python binding can wrap the same objects.
 //! - [`vba`]: a VBA interpreter (lexer, parser, tree-walking runtime, the VBA standard library,
 //!   `Collection` and `Scripting.Dictionary`). Input is module source text.
+//! - [`forms`]: UserForms as a host shows them: the state of a shown form ([`forms::FormView`])
+//!   and what the user did ([`forms::FormInput`]), exchanged through [`Host::form_event`].
 //! - [`date`]: OLE Automation dates (days since 1899-12-30), shared by every language binding.
 //!
 //! See `docs/scripting.md` for the design and how the Sheets object model plugs in.
 
 pub mod date;
+pub mod forms;
 pub mod object;
 pub mod vba;
 

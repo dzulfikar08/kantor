@@ -470,6 +470,8 @@ impl Dispatch for ErrObject {
 pub struct Instance {
     pub module: Rc<Module>,
     pub fields: Rc<Scope>,
+    /// A form module's instance: the form's controls and state.
+    pub(crate) form: Option<Rc<super::forms::FormRt>>,
 }
 
 impl Instance {

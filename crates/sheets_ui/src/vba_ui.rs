@@ -1,7 +1,7 @@
 //! Workbooks with macros (a VBA project): a bar when one opens, and the
 //! Macros dialog (Excel's View ▸ Macros, Alt+F8) listing the project's
-//! modules and procedures, with a module's code shown read-only, Run, and
-//! the macros' `Debug.Print` output.
+//! modules and procedures, with a module's code shown read-only (and a
+//! UserForm's layout), Run, and the macros' `Debug.Print` output.
 //!
 //! Macros start disabled ([`MacroTrust`], per pane), as Excel opens a file
 //! from the internet: the bar's Enable Content enables them for this pane
@@ -92,6 +92,8 @@ pub(crate) struct MacrosDialog {
     /// The picked module's lines (tabs as spaces).
     lines: Rc<Vec<SharedString>>,
     scroll: UniformListScrollHandle,
+    /// The picked module's form layout, when it is a UserForm.
+    form: Option<Result<sheets_engine::vba::forms::FormDesign, String>>,
 }
 
 /// Rows of code shown at once.
@@ -278,6 +280,7 @@ impl SheetsView {
             procedure: first,
             lines,
             scroll: UniformListScrollHandle::new(),
+            form: None,
         });
         self.pick_macro(module, first, window, cx);
     }
@@ -305,6 +308,9 @@ impl SheetsView {
         {
             if d.module != module || d.lines.is_empty() {
                 d.lines = code_lines(m);
+                d.form = (m.kind == ModuleKind::Form)
+                    .then(|| p.form(&m.name).map(|r| r.map_err(|e| e.to_string())))
+                    .flatten();
             }
             d.module = module;
             d.procedure = procedure;
@@ -475,6 +481,22 @@ impl SheetsView {
                     .into_any_element()
                 };
                 card = card.child(h_flex().gap(SPACE_4).items_start().child(list).child(code));
+                // A UserForm: its layout, read-only.
+                match &d.form {
+                    Some(Ok(design)) => {
+                        card = card.child(
+                            div()
+                                .id("macros-form-preview")
+                                .max_h(px(320.))
+                                .overflow_y_scroll()
+                                .child(crate::macro_form::form_preview(design, 820., cx)),
+                        );
+                    }
+                    Some(Err(e)) => {
+                        card = card.child(crate::macro_form::preview_unavailable(e, cx));
+                    }
+                    None => {}
+                }
             }
         }
         // The selected procedure, when it is a macro Run can start.

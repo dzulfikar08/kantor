@@ -4,6 +4,7 @@
 
 use std::rc::Rc;
 
+use kantor_script::forms::{Answer, FormDesign, FormInput, FormView};
 use kantor_script::vba::{ModuleKind as ScriptKind, ProcInfo, ProcKind, Project};
 use kantor_script::{CancelToken, ErrorKind, Host, ObjectRef, ScriptError, Value};
 use sheets_engine::Workbook;
@@ -28,6 +29,9 @@ pub struct ModuleSource {
 #[derive(Clone, Debug, Default)]
 pub struct MacroProject {
     pub modules: Vec<ModuleSource>,
+    /// The UserForms' designers (forms whose designer can't be read show
+    /// empty).
+    pub forms: Vec<FormDesign>,
 }
 
 impl MacroProject {
@@ -40,7 +44,10 @@ impl MacroProject {
             .filter(|m| m.error.is_none())
             .map(|m| ModuleSource::new(&m.name, m.kind, &m.source))
             .collect();
-        MacroProject { modules }
+        MacroProject {
+            modules,
+            forms: p.forms(),
+        }
     }
 
     /// The workbook's macros, `None` when it has none.
@@ -67,6 +74,9 @@ impl MacroProject {
         }
         for (name, value) in crate::consts::ALL {
             project.register_constant(name, Value::Long(*value as i32));
+        }
+        for f in &self.forms {
+            project.add_form(f.clone());
         }
         (project, broken)
     }
@@ -353,6 +363,30 @@ pub trait MacroUi {
     ) -> (Workbook, Option<bool>) {
         (book, None)
     }
+
+    /// Shows (or updates) UserForm `form` and waits for the user's next
+    /// step (see [`kantor_script::forms`]); lent the workbook meanwhile, as
+    /// for a message box. The default has no window to show it in.
+    fn form_event(
+        &mut self,
+        book: Workbook,
+        _view: View,
+        form: &FormView,
+    ) -> (Workbook, Result<FormInput, ScriptError>) {
+        let name = &form.design.name;
+        (
+            book,
+            Err(ScriptError::new(
+                445,
+                format!(
+                    "The macro shows the UserForm {name}, and there is no window to show it in"
+                ),
+            )),
+        )
+    }
+
+    /// The form [`MacroUi::form_event`] was showing is closed.
+    fn form_closed(&mut self, _name: &str) {}
 }
 
 /// Another workbook open in the window.
@@ -373,6 +407,17 @@ impl Session {
             .take_book()
             .ok_or_else(|| crate::values::err1004("The workbook is not available"))?;
         let (book, answer) = self.ui.borrow_mut().msg_box(book, view, req);
+        self.put_book(book);
+        answer
+    }
+
+    /// Shows a UserForm through the UI, lending it the workbook.
+    pub fn form_event(&self, form: &FormView) -> Result<FormInput, ScriptError> {
+        let view = self.view();
+        let book = self
+            .take_book()
+            .ok_or_else(|| crate::values::err1004("The workbook is not available"))?;
+        let (book, answer) = self.ui.borrow_mut().form_event(book, view, form);
         self.put_book(book);
         answer
     }
@@ -432,6 +477,14 @@ impl Host for SheetsHost {
 
     fn debug_print(&mut self, line: &str) {
         self.s.ui.borrow_mut().debug_print(line);
+    }
+
+    fn form_event(&mut self, view: &FormView) -> Result<FormInput, ScriptError> {
+        self.s.form_event(view)
+    }
+
+    fn form_closed(&mut self, name: &str) {
+        self.s.ui.borrow_mut().form_closed(name);
     }
 
     fn now(&mut self) -> f64 {
@@ -580,13 +633,30 @@ pub(crate) fn fallback_code_names(s: &Rc<Session>, macros: &MacroProject) {
     }
 }
 
+/// One step on a UserForm when nobody can fill it in: values to put in
+/// controls (by name), then a control to click (`"close"`: the close box).
+#[derive(Clone, Debug, PartialEq)]
+pub struct FormAnswer {
+    pub set: Vec<(String, Answer)>,
+    pub click: Option<String>,
+}
+
 /// A UI with nobody to ask (the command line, tests): message boxes print
 /// to stderr and answer OK or Yes; input boxes take the given answers in
-/// order and fail when there are none left.
+/// order and fail when there are none left; UserForms take the steps in
+/// [`HeadlessUi::forms`] and fail when there are none left.
 #[derive(Clone)]
 pub struct HeadlessUi {
     /// Answers for input boxes, shared by clones (one per run).
     pub inputs: Rc<std::cell::RefCell<std::collections::VecDeque<String>>>,
+    /// Steps for each form (by name, lowercase), in order; shared by clones.
+    pub forms: Rc<
+        std::cell::RefCell<
+            std::collections::HashMap<String, std::collections::VecDeque<FormAnswer>>,
+        >,
+    >,
+    /// The forms shown (each step's view), in order.
+    pub form_views: Rc<std::cell::RefCell<Vec<FormView>>>,
     /// Message boxes shown, in order.
     pub shown: Rc<std::cell::RefCell<Vec<String>>>,
     /// `Debug.Print` lines.
@@ -602,11 +672,23 @@ impl HeadlessUi {
     pub fn new(inputs: Vec<String>, echo: bool) -> HeadlessUi {
         HeadlessUi {
             inputs: Rc::new(std::cell::RefCell::new(inputs.into())),
+            forms: Rc::default(),
+            form_views: Rc::default(),
             shown: Rc::default(),
             printed: Rc::default(),
             echo,
             allowed_paths: Vec::new(),
         }
+    }
+
+    /// Adds steps for form `name`.
+    pub fn with_form_answers(mut self, name: &str, steps: Vec<FormAnswer>) -> HeadlessUi {
+        self.forms
+            .borrow_mut()
+            .entry(name.to_lowercase())
+            .or_default()
+            .extend(steps);
+        self
     }
 }
 
@@ -665,6 +747,38 @@ impl MacroUi for HeadlessUi {
     ) -> (Workbook, Option<bool>) {
         let ok = self.allowed_paths.iter().any(|a| path.starts_with(a));
         (book, Some(ok))
+    }
+
+    fn form_event(
+        &mut self,
+        book: Workbook,
+        _view: View,
+        form: &FormView,
+    ) -> (Workbook, Result<FormInput, ScriptError>) {
+        self.form_views.borrow_mut().push(form.clone());
+        let name = &form.design.name;
+        let step = self
+            .forms
+            .borrow_mut()
+            .get_mut(&name.to_lowercase())
+            .and_then(|q| q.pop_front());
+        let answer = match step {
+            Some(step) => {
+                if self.echo {
+                    eprintln!("[UserForm] {name}: {step:?}");
+                }
+                kantor_script::forms::scripted_input(form, &step.set, step.click.as_deref())
+                    .map_err(|e| ScriptError::new(5, e))
+            }
+            None => Err(ScriptError::new(
+                445,
+                format!(
+                    "The macro shows the UserForm {name} and there is no window to show it in \
+                     (give its answers with --form-answers)"
+                ),
+            )),
+        };
+        (book, answer)
     }
 }
 

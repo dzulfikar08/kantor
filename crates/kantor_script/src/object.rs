@@ -608,6 +608,25 @@ pub trait Host {
     /// One line of `Debug.Print` / `console.log` output.
     fn debug_print(&mut self, _line: &str) {}
 
+    /// Shows a UserForm, or updates the one showing, and waits for the user's next step (see
+    /// [`crate::forms`]). Called again after each step until the form closes. The default has
+    /// no window to show one in.
+    fn form_event(
+        &mut self,
+        view: &crate::forms::FormView,
+    ) -> Result<crate::forms::FormInput, ScriptError> {
+        Err(ScriptError::new(
+            445,
+            format!(
+                "The macro shows the UserForm {}, and there is no window to show it in",
+                view.design.name
+            ),
+        ))
+    }
+
+    /// The form [`Host::form_event`] was showing is hidden or unloaded.
+    fn form_closed(&mut self, _name: &str) {}
+
     /// The local date and time as an OLE date. The default is UTC.
     fn now(&mut self) -> f64 {
         crate::date::now_utc()

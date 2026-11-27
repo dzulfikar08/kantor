@@ -15,7 +15,9 @@
 //! it shows, so the grid shows the cells as the macro left them; the
 //! answer takes it back to the worker. The whole run is one undo step.
 //!
-//! `Debug.Print` lines go to the Macros dialog's output list.
+//! `Debug.Print` lines go to the Macros dialog's output list. UserForms
+//! are dialogs too, asked again after each step of the user's
+//! (`macro_form`).
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -25,6 +27,7 @@ use gpui_kit::component::input::{self, Input, InputEvent, InputState};
 use gpui_kit::component::{Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
+use kantor_script::forms::{FormInput, FormView};
 use kantor_script::{CancelToken, ScriptError};
 use kantor_ui::i18n::{t, tf, tk};
 use kantor_ui::tokens::Elevation;
@@ -80,6 +83,8 @@ pub(crate) enum ToUi {
         id: u64,
         reply: mpsc::Sender<Option<Workbook>>,
     },
+    /// A UserForm closed.
+    FormClosed(String),
     Done {
         book: Workbook,
         outcome: sheets_script::RunOutcome,
@@ -109,11 +114,13 @@ pub(crate) enum After {
 pub(crate) enum Ask {
     Msg(MsgBoxRequest),
     Input(InputBoxRequest),
+    Form(Box<FormView>),
 }
 
 pub(crate) enum Answer {
     Msg(Result<i32, ScriptError>),
     Input(Result<Option<String>, ScriptError>),
+    Form(Result<FormInput, ScriptError>),
 }
 
 /// A run in progress.
@@ -124,6 +131,8 @@ pub(crate) struct MacroRun {
     /// The dialog showing (the workbook is in the grid meanwhile).
     dialog: Option<RunDialog>,
     after: After,
+    /// The UserForm shown (also under a MsgBox its code shows).
+    pub(crate) form: Option<crate::macro_form::FormUi>,
 }
 
 impl Drop for MacroRun {
@@ -142,6 +151,15 @@ struct RunDialog {
     focus: FocusHandle,
     /// The button that Enter presses (message boxes).
     choice: usize,
+}
+
+impl MacroRun {
+    /// Whether the macro waits for a UserForm step.
+    pub(crate) fn waits_for_form(&self) -> bool {
+        self.dialog
+            .as_ref()
+            .is_some_and(|d| matches!(d.ask, Ask::Form(_)))
+    }
 }
 
 /// The worker's side of the UI: requests over a channel, waiting for the
@@ -252,6 +270,22 @@ impl MacroUi for ChannelUi {
             (book, Some(Answer::Msg(Ok(6)))) => (book, Some(true)),
             (book, _) => (book, Some(false)),
         }
+    }
+
+    fn form_event(
+        &mut self,
+        book: Workbook,
+        view: View,
+        form: &FormView,
+    ) -> (Workbook, Result<FormInput, ScriptError>) {
+        match self.ask(book, view, Ask::Form(Box::new(form.clone()))) {
+            (book, Some(Answer::Form(a))) => (book, a),
+            (book, _) => (book, Err(stopped())),
+        }
+    }
+
+    fn form_closed(&mut self, name: &str) {
+        let _ = self.tx.send(ToUi::FormClosed(name.to_owned()));
     }
 }
 
@@ -366,6 +400,7 @@ impl SheetsView {
             rx,
             dialog: None,
             after,
+            form: None,
         });
         // A quick run ends before the busy pane would show.
         let first = self
@@ -467,6 +502,7 @@ impl SheetsView {
                     out.drain(..out.len() - OUTPUT_LINES);
                 }
             }
+            ToUi::FormClosed(name) => self.form_gone(&name),
             ToUi::Ask {
                 book,
                 view,
@@ -477,6 +513,21 @@ impl SheetsView {
                 self.put_back(book, cx);
                 self.apply_macro_view(view, window, cx);
                 let focus = cx.focus_handle();
+                if let Ask::Form(form) = &ask {
+                    let form = (**form).clone();
+                    if let Some(run) = self.macros.run.as_mut() {
+                        run.dialog = Some(RunDialog {
+                            ask,
+                            reply,
+                            input: None,
+                            focus,
+                            choice: 0,
+                        });
+                    }
+                    self.form_arrived(form, window, cx);
+                    cx.notify();
+                    return;
+                }
                 let input = match &ask {
                     Ask::Input(req) => {
                         let state = cx.new(|cx| InputState::new(window, cx));
@@ -488,14 +539,14 @@ impl SheetsView {
                         let sub = cx.subscribe_in(&state, window, Self::on_macro_input);
                         Some((state, sub))
                     }
-                    Ask::Msg(_) => {
+                    Ask::Msg(_) | Ask::Form(_) => {
                         window.focus(&focus, cx);
                         None
                     }
                 };
                 let choice = match &ask {
                     Ask::Msg(req) => req.default_button().min(req.choices().len() - 1),
-                    Ask::Input(_) => 0,
+                    Ask::Input(_) | Ask::Form(_) => 0,
                 };
                 if let Some(run) = self.macros.run.as_mut() {
                     run.dialog = Some(RunDialog {
@@ -668,6 +719,7 @@ impl SheetsView {
             rx,
             dialog: None,
             after: After::Nothing,
+            form: None,
         });
         match first {
             Some(ToUi::Done {
@@ -716,7 +768,27 @@ impl SheetsView {
             self.macros.run = None;
             return;
         }
+        // A quick answer (the next step of a form, the macro's next
+        // dialog) comes before the busy pane would show.
+        let next = self
+            .macros
+            .run
+            .as_ref()
+            .and_then(|r| r.rx.recv_timeout(QUICK).ok());
+        if let Some(msg) = next {
+            self.macro_message(msg, window, cx);
+        }
         self.poll_macro(window, cx);
+    }
+
+    /// A step on the UserForm showing.
+    pub(crate) fn answer_form(
+        &mut self,
+        input: FormInput,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.answer_macro(Answer::Form(Ok(input)), window, cx);
     }
 
     fn press_msg(&mut self, ix: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
@@ -825,11 +897,17 @@ impl SheetsView {
         if let Some(e) = &self.macros.error {
             return Some(self.render_macro_error(e, cx));
         }
-        let d = self.macros.run.as_ref()?.dialog.as_ref()?;
+        let run = self.macros.run.as_ref()?;
+        let form = run.form.as_ref().map(|f| self.render_form(f, cx));
+        let Some(d) = run.dialog.as_ref() else {
+            // Between two steps of a form: keep showing it.
+            return form;
+        };
         let t_ = tokens(cx);
         let (title, prompt, icon) = match &d.ask {
             Ask::Msg(req) => (req.title.clone(), req.prompt.clone(), req.icon()),
             Ask::Input(req) => (req.title.clone(), req.prompt.clone(), MsgIcon::None),
+            Ask::Form(_) => return form,
         };
         let icon = match icon {
             MsgIcon::None => None,
@@ -854,6 +932,7 @@ impl SheetsView {
                     .into_any_element()
                 })
                 .collect(),
+            Ask::Form(_) => Vec::new(),
             Ask::Input(_) => vec![
                 dialog_button(("macro-input-button", 0usize), t("Cancel"), false, cx)
                     .on_click(cx.listener(|this, _, w, cx| {
@@ -950,7 +1029,17 @@ impl SheetsView {
                     .child(text),
             )
             .child(h_flex().justify_end().gap(SPACE_4).children(buttons));
-        Some(scrim("macro-dialog-scrim", card, cx))
+        let dialog = scrim("macro-dialog-scrim", card, cx);
+        // A MsgBox a form's code shows goes over the form.
+        Some(match form {
+            Some(form) => div()
+                .absolute()
+                .inset_0()
+                .child(form)
+                .child(dialog)
+                .into_any_element(),
+            None => dialog,
+        })
     }
 
     fn render_macro_error(&self, e: &MacroError, cx: &mut Context<Self>) -> AnyElement {

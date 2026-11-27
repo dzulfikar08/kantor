@@ -16,6 +16,7 @@ fn modules(list: &[(&str, ModuleKind, &str)]) -> MacroProject {
             .iter()
             .map(|(name, kind, src)| ModuleSource::new(name, *kind, &src.replace('\n', "\r\n")))
             .collect(),
+        ..Default::default()
     }
 }
 

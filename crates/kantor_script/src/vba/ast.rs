@@ -355,6 +355,10 @@ pub enum StmtKind {
     Assert(Expr),
     Stop,
     End,
+    /// `Load form`.
+    Load(Expr),
+    /// `Unload form`.
+    Unload(Expr),
     /// A statement Kantor parses but doesn't run; executing it raises an error naming it.
     Unsupported(String),
     /// A line that didn't parse; executing it raises a syntax error.

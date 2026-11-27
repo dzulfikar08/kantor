@@ -10,6 +10,7 @@ use super::ast::*;
 use super::builtins;
 use super::compile::*;
 use super::convert::{self, Arith, Scalar};
+use super::forms::{form_of_instance, form_of_object};
 use super::objects::*;
 use crate::object::*;
 
@@ -33,6 +34,12 @@ pub(crate) struct State {
     pub constants: HashMap<String, Value>,
     /// Modules and instances with `WithEvents` variables (see `events`).
     pub sinks: Vec<super::events::Sink>,
+    /// UserForm designs by form module (lowercase name).
+    pub forms: HashMap<String, Rc<crate::forms::FormDesign>>,
+    /// Each form module's default instance (`UserForm1.Show`), by module index.
+    pub default_forms: HashMap<usize, ObjectRef>,
+    /// Forms shown modeless, run once the macro ends.
+    pub modeless: Vec<ObjectRef>,
 }
 
 impl State {
@@ -49,6 +56,9 @@ impl State {
             max_depth: 100,
             constants: HashMap::new(),
             sinks: Vec::new(),
+            forms: HashMap::new(),
+            default_forms: HashMap::new(),
+            modeless: Vec::new(),
         }
     }
 
@@ -60,6 +70,9 @@ impl State {
         self.err.clear();
         self.print_line.clear();
         self.sinks.clear();
+        // `End` (and a reset) unloads every form.
+        self.default_forms.clear();
+        self.modeless.clear();
     }
 }
 
@@ -215,6 +228,9 @@ pub(crate) enum Binding {
     Enum,
     Declare(String),
     Host(ObjectRef),
+    /// A control or property of the form whose module the code is in (`TextBox1`, `Caption`,
+    /// `Hide`): a member of `Me`.
+    FormMember(ObjectRef),
     Unknown,
 }
 
@@ -342,7 +358,7 @@ impl Interp<'_> {
         self.modules.iter().find(|m| &*m.key == key).cloned()
     }
 
-    fn module_frame(&self, m: &Rc<Module>) -> Frame {
+    pub(crate) fn module_frame(&self, m: &Rc<Module>) -> Frame {
         Frame::new(m.clone(), m.init.clone(), None)
     }
 
@@ -500,7 +516,7 @@ impl Interp<'_> {
         Ok(Value::array(Array::new(bounds, fill)?))
     }
 
-    fn make_var(&mut self, d: &VarDecl, f: &mut Frame) -> R<Slot> {
+    pub(crate) fn make_var(&mut self, d: &VarDecl, f: &mut Frame) -> R<Slot> {
         let (ty, value, fixed) = match &d.array {
             None => (d.ty.clone(), self.default_value(&d.ty)?, false),
             Some(b) if b.is_empty() => (
@@ -606,6 +622,16 @@ impl Interp<'_> {
         };
         if fixed {
             return Err(ScriptError::syntax("Can't assign to array"));
+        }
+        // `Cancel = True` on a `Cancel As MSForms.ReturnBoolean`: Let to a typed object
+        // variable assigns its default member (MS-VBAL §5.4.3.8).
+        if !set && !value.is_object() && matches!(ty, Ty::Object | Ty::Named(_)) {
+            let current = s.borrow().value.clone();
+            if let Value::Object(Some(o)) = current
+                && !matches!(&ty, Ty::Named(n) if matches!(self.resolve_named(n), Named::Udt(..) | Named::Enum))
+            {
+                return self.obj_put(&o, "", Vec::new(), value, false);
+            }
         }
         let value = self.coerce(value, &ty, set)?;
         let old = std::mem::replace(&mut s.borrow_mut().value, value);
@@ -717,6 +743,14 @@ impl Interp<'_> {
         let current = f.module.clone();
         if let Some(b) = self.module_member(&current, key, f, true)? {
             return Ok(b);
+        }
+        if current.kind == ModuleKind::Form
+            && let Some((o, _)) = &f.me
+            && let Some(rt) = form_of_instance(o)
+            && (rt.control_index(key).is_some()
+                || (rt.has_member(key) && !builtins::is_builtin(key)))
+        {
+            return Ok(Binding::FormMember(o.clone()));
         }
         let modules = self.modules;
         for m in modules {
@@ -868,6 +902,10 @@ impl Interp<'_> {
             Binding::Module(m) if m.kind == ModuleKind::Document => {
                 Ok(Value::Object(Some(self.document_object(&m)?)))
             }
+            Binding::Module(m) if m.kind == ModuleKind::Form => {
+                Ok(Value::object(self.default_form(&m)?))
+            }
+            Binding::FormMember(o) => self.instance_member(&o, &id.key, Vec::new(), Access::Get),
             Binding::Module(_) | Binding::Enum => Err(ScriptError::syntax(format!(
                 "Expected variable or procedure, not '{}'",
                 id.text
@@ -999,6 +1037,7 @@ impl Interp<'_> {
                     "Calling the DLL function {} (\"{}\")",
                     id.text, lib
                 ))),
+                Binding::FormMember(o) => self.form_member_call(&o, id, args, f, access),
                 Binding::Module(_) | Binding::Enum => Err(ScriptError::syntax(format!(
                     "Expected procedure, not '{}'",
                     id.text
@@ -1089,6 +1128,7 @@ impl Interp<'_> {
                 } else {
                     o.get(&name.text, &a)
                 };
+                self.form_after(&o)?;
                 match r {
                     Err(e) if e.number == 438 => self.document_member(&o, name, args, f, access, e),
                     r => r,
@@ -1114,7 +1154,13 @@ impl Interp<'_> {
         f: &mut Frame,
         access: Access,
     ) -> R<Value> {
-        if matches!(m.kind, ModuleKind::Class | ModuleKind::Form) {
+        if m.kind == ModuleKind::Form {
+            // `UserForm1.Show`: the form's default instance.
+            let o = self.default_form(m)?;
+            let a = self.eval_args_in(args, f)?;
+            return self.instance_member(&o, &name.key, a, access);
+        }
+        if m.kind == ModuleKind::Class {
             return Err(ScriptError::runtime(424));
         }
         let inside = m.idx == f.module.idx;
@@ -1290,10 +1336,12 @@ impl Interp<'_> {
                 }
             }
         }
+        let form = inst.form.clone();
         let key: Rc<str> = if key.is_empty() {
-            match &module.default_member {
-                Some(d) => d.clone(),
-                None => return Err(ScriptError::no_member(&module.name, "")),
+            match (&module.default_member, &form) {
+                (Some(d), _) => d.clone(),
+                (None, Some(rt)) => return self.form_member(o, rt, "", args, access),
+                (None, None) => return Err(ScriptError::no_member(&module.name, "")),
             }
         } else {
             Rc::from(key)
@@ -1318,6 +1366,9 @@ impl Interp<'_> {
                 return self.index_value(v, a, access);
             }
         }
+        if let Some(rt) = form {
+            return self.form_member(o, &rt, &key, args, access);
+        }
         Err(ScriptError::no_member(&module.name, &key))
     }
 
@@ -1340,11 +1391,13 @@ impl Interp<'_> {
                 .collect();
             return self.instance_member(o, &name.to_lowercase(), a, access);
         }
-        if access == Access::Call {
+        let r = if access == Access::Call {
             o.call(name, &args)
         } else {
             o.get(name, &args)
-        }
+        };
+        self.form_after(o)?;
+        r
     }
 
     /// Writes a property of any object (VBA instances included).
@@ -1357,18 +1410,25 @@ impl Interp<'_> {
         set: bool,
     ) -> R<()> {
         let Some(inst) = as_instance(o) else {
-            return if set {
+            let r = if set {
                 o.put_ref(name, &args, value)
             } else {
                 o.put(name, &args, value)
             };
+            if form_of_object(o).is_some() {
+                r?;
+                return self.form_after(o);
+            }
+            return r;
         };
         let module = inst.module.clone();
         let fields = inst.fields.clone();
+        let form = inst.form.clone();
         let key: Rc<str> = if name.is_empty() {
-            match &module.default_member {
-                Some(d) => d.clone(),
-                None => return Err(ScriptError::no_member(&module.name, "")),
+            match (&module.default_member, &form) {
+                (Some(d), _) => d.clone(),
+                (None, Some(rt)) => return self.form_put(rt, "", args, value),
+                (None, None) => return Err(ScriptError::no_member(&module.name, "")),
             }
         } else {
             Rc::from(name.to_lowercase())
@@ -1403,6 +1463,9 @@ impl Interp<'_> {
                 let ix = self.indices(&args)?;
                 return self.write_place(&Place::slot(s).with(Step::Index(ix)), value, set);
             }
+        }
+        if let Some(rt) = form {
+            return self.form_put(&rt, &key, args, value);
         }
         Err(ScriptError::no_member(&module.name, &key))
     }
@@ -1464,7 +1527,9 @@ impl Interp<'_> {
 
     fn instantiate(&mut self, m: &Rc<Module>) -> R<Value> {
         if m.kind == ModuleKind::Form {
-            return Err(ScriptError::unsupported(&format!("UserForms ({})", m.name)));
+            let (o, rt) = self.new_form(m);
+            self.form_initialize(&o, &rt)?;
+            return Ok(Value::Object(Some(o)));
         }
         let fields = Rc::new(Scope::default());
         let mut frame = self.module_frame(m);
@@ -1475,6 +1540,7 @@ impl Interp<'_> {
         let obj: ObjectRef = Rc::new(Instance {
             module: m.clone(),
             fields: fields.clone(),
+            form: None,
         });
         self.register_instance_sink(m, &obj, &fields);
         if let Some(p) = m.procs.get("class_initialize").and_then(|g| g.sub.clone()) {
@@ -1741,6 +1807,7 @@ impl Interp<'_> {
                     path: Vec::new(),
                 })
             }
+            Binding::FormMember(o) => Ok(Place::prop(o, &id.key, args)),
             Binding::Builtin(k) if &*k == "err" => Ok(Place::prop(self.st.err.clone(), "", args)),
             Binding::Builtin(k) if matches!(&*k, "date" | "time" | "now") => {
                 Err(ScriptError::unsupported("Setting the system date or time"))
@@ -1786,6 +1853,10 @@ impl Interp<'_> {
         if let Expr::Name(id) = base
             && let Binding::Module(m) = self.lookup(id, f)?
         {
+            if m.kind == ModuleKind::Form {
+                let o = self.default_form(&m)?;
+                return Ok(Place::prop(o, &name.text, args));
+            }
             let inside = m.idx == f.module.idx;
             return match self.module_member(&m, &name.key, f, inside)? {
                 Some(Binding::Slot(s)) => self.indexed_place(Place::slot(s), args),
@@ -1848,9 +1919,6 @@ impl Interp<'_> {
     ) -> R<Value> {
         if self.depth >= self.st.max_depth {
             return Err(ScriptError::runtime(28));
-        }
-        if m.kind == ModuleKind::Form {
-            return Err(ScriptError::unsupported(&format!("UserForms ({})", m.name)));
         }
         let mut frame = Frame::new(m.clone(), p.clone(), me);
         self.depth += 1;
@@ -2493,10 +2561,48 @@ impl Interp<'_> {
                 ..ScriptError::new(0, "End")
             }),
             StmtKind::RaiseEvent { name, args } => self.raise_stmt(name, args, f),
+            StmtKind::Load(e) => self.load_stmt(e, f, true),
+            StmtKind::Unload(e) => self.load_stmt(e, f, false),
             StmtKind::Unsupported(feature) => Err(ScriptError::unsupported(feature)),
             StmtKind::Invalid(msg) => Err(ScriptError::syntax(msg.clone())),
             _ => Ok(()),
         }
+    }
+
+    // Kept out of the statement loop and `eval_call`: they are on the stack of every nested
+    // call, and a bigger frame there means less recursion before the stack runs out.
+
+    #[inline(never)]
+    fn load_stmt(&mut self, e: &Expr, f: &mut Frame, load: bool) -> R<()> {
+        if load {
+            let v = self.eval(e, f)?;
+            return self.exec_load(v);
+        }
+        // `Unload UserForm1` when its default instance isn't loaded does nothing.
+        if let Expr::Name(id) = e
+            && let Binding::Module(m) = self.lookup(id, f)?
+            && m.kind == ModuleKind::Form
+        {
+            let Some(o) = self.st.default_forms.get(&m.idx).cloned() else {
+                return Ok(());
+            };
+            return self.exec_unload(Value::object(o));
+        }
+        let v = self.eval(e, f)?;
+        self.exec_unload(v)
+    }
+
+    #[inline(never)]
+    fn form_member_call(
+        &mut self,
+        o: &ObjectRef,
+        id: &Ident,
+        args: &[ArgExpr],
+        f: &mut Frame,
+        access: Access,
+    ) -> R<Value> {
+        let a = self.eval_args_in(args, f)?;
+        self.instance_member(o, &id.key, a, access)
     }
 
     fn redim(&mut self, item: &ReDimItem, preserve: bool, f: &mut Frame) -> R<()> {

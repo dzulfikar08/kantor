@@ -17,6 +17,7 @@ pub struct Builder {
     codepage: u16,
     caches: bool,
     modules: Vec<(String, ModuleKind, String)>,
+    forms: Vec<crate::forms::FormDesign>,
 }
 
 impl Builder {
@@ -27,6 +28,7 @@ impl Builder {
             codepage,
             caches: false,
             modules: Vec::new(),
+            forms: Vec::new(),
         }
     }
 
@@ -39,6 +41,16 @@ impl Builder {
     /// `VB_Base`…) go first unless `code` starts with `Attribute VB_Name`.
     pub fn module(mut self, name: &str, kind: ModuleKind, code: &str) -> Self {
         self.modules.push((name.to_owned(), kind, code.to_owned()));
+        self
+    }
+
+    /// A UserForm with its designer: a `Form` module called `design.name`
+    /// with `code`, and the form's storage written by
+    /// [`crate::forms::write_streams`].
+    pub fn form(mut self, design: &crate::forms::FormDesign, code: &str) -> Self {
+        self.modules
+            .push((design.name.clone(), ModuleKind::Form, code.to_owned()));
+        self.forms.push(design.clone());
         self
     }
 
@@ -186,16 +198,27 @@ impl Builder {
             });
             if *kind == ModuleKind::Form {
                 has_form = true;
-                // The designer: a storage named after the form (ignored on read).
+                // The designer: a storage named after the form.
                 cfb.create_storage(format!("/{name}"))?;
-                let mut s = cfb.create_stream(format!("/{name}/\u{3}VBFrame"))?;
-                s.write_all(
-                    format!("VERSION 5.00\r\nBegin {{C62A69F0-16DC-11CE-9E98-00AA00574A4F}} {name}\r\nEnd\r\n")
-                        .as_bytes(),
-                )?;
-                drop(s);
-                cfb.create_stream(format!("/{name}/f"))?;
-                cfb.create_stream(format!("/{name}/o"))?;
+                let design = self
+                    .forms
+                    .iter()
+                    .find(|d| d.name == *name)
+                    .cloned()
+                    .unwrap_or_else(|| crate::forms::FormDesign::new(name));
+                for (path, data) in crate::forms::write_streams(&design) {
+                    if let Some((dir, _)) = path.rsplit_once('/') {
+                        let mut at = format!("/{name}");
+                        for part in dir.split('/') {
+                            at = format!("{at}/{part}");
+                            if !cfb.is_storage(&at) {
+                                cfb.create_storage(&at)?;
+                            }
+                        }
+                    }
+                    let mut s = cfb.create_stream(format!("/{name}/{path}"))?;
+                    s.write_all(&data)?;
+                }
             }
             wm.extend_from_slice(&mbcs(name)?);
             wm.push(0);

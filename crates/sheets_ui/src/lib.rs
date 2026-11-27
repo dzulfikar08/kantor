@@ -114,6 +114,7 @@ pub use notes_ui::NoteCommand;
 pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
 mod macro_events;
+mod macro_form;
 mod macro_run;
 mod macro_thread;
 mod toolbar;

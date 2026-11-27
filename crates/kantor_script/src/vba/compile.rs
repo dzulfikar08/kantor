@@ -24,7 +24,7 @@ pub enum ModuleKind {
     /// A document module (`ThisWorkbook`, `Sheet1`): procedures are reached by qualification;
     /// `Me` is the host object of the same name.
     Document,
-    /// A UserForm's code; forms can't be shown, so running it fails with a clear error.
+    /// A UserForm's code: a class whose instances are forms (`UserForm1.Show`).
     Form,
 }
 

@@ -19,7 +19,8 @@
 //!   Sheets are kept by `sheetId`, so a `Worksheet` object stays right when
 //!   sheets are added, moved or renamed.
 //! - Dialogs go through [`MacroUi`], which is lent the workbook while one
-//!   shows (so the grid can show the cells as the macro left them).
+//!   shows (so the grid can show the cells as the macro left them); so do
+//!   UserForms ([`MacroUi::form_event`]).
 //! - [`udf::VbaFunctions`]: the workbook's VBA functions in cell formulas.
 //! - [`MacroEngine`]: a workbook's live project (module variables last
 //!   between runs), its events ([`Event`]) and other workbooks (`books`).
@@ -43,10 +44,11 @@ pub mod values;
 pub use books::BookOut;
 pub use engine::{MacroEngine, Timer};
 pub use events::{Event, EventIndex, EventKind};
+pub use kantor_script::forms::Answer;
 pub use run::{
-    HeadlessUi, InputBoxRequest, InputKind, MacroError, MacroInfo, MacroProject, MacroUi,
-    MsgBoxRequest, MsgButtons, MsgIcon, OtherBook, RunOptions, RunOutcome, broken_for, local_now,
-    macro_list, run_headless, run_macro, set_utc_offset_minutes,
+    FormAnswer, HeadlessUi, InputBoxRequest, InputKind, MacroError, MacroInfo, MacroProject,
+    MacroUi, MsgBoxRequest, MsgButtons, MsgIcon, OtherBook, RunOptions, RunOutcome, broken_for,
+    local_now, macro_list, run_headless, run_macro, set_utc_offset_minutes,
 };
 pub use session::{Selection, View};
 pub use udf::{VbaFunctions, enable_functions};
