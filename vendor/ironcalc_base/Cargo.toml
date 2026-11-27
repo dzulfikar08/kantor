@@ -41,6 +41,10 @@ path = "examples/formulas_and_errors.rs"
 name = "hello_world"
 path = "examples/hello_world.rs"
 
+# KANTOR PATCH (section 36): the regex functions.
+[dependencies.fancy-regex]
+version = "0.20"
+
 [dependencies.bitcode]
 version = "0.6.9"
 

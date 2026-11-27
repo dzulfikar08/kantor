@@ -1175,9 +1175,10 @@ fn get_function_args_signature(kind: &Function, arg_count: usize) -> Vec<Signatu
         Function::Right => args_signature_scalars(arg_count, 2, 1),
         Function::Search => args_signature_scalars(arg_count, 2, 1),
         Function::Substitute => args_signature_scalars(arg_count, 3, 1),
-        Function::Regexextract => args_signature_scalars(arg_count, 2, 1),
-        Function::Regexreplace => args_signature_scalars(arg_count, 3, 0),
-        Function::Regextest => args_signature_scalars(arg_count, 2, 0),
+        // KANTOR PATCH (section 36): Excel's optional arguments.
+        Function::Regexextract => args_signature_scalars(arg_count, 2, 2),
+        Function::Regexreplace => args_signature_scalars(arg_count, 3, 2),
+        Function::Regextest => args_signature_scalars(arg_count, 2, 1),
         Function::T => args_signature_scalars(arg_count, 1, 0),
         Function::Text => args_signature_scalars(arg_count, 2, 0),
         Function::Textafter => args_signature_textafter(arg_count),
@@ -1871,15 +1872,17 @@ fn static_analysis_on_function(kind: &Function, args: &[Node]) -> StaticResult {
         Function::Right => scalar_arguments(args),
         Function::Search => scalar_arguments(args),
         Function::Substitute => scalar_arguments(args),
+        // KANTOR PATCH (section 36): the regex functions work element-wise
+        // over ranges; REGEXEXTRACT's return modes 1 and 2 give a row.
         Function::Regexextract => {
-            if args.len() == 3 {
+            if args.len() >= 3 {
                 StaticResult::Unknown
             } else {
-                not_implemented(args)
+                scalar_arguments(args)
             }
         }
-        Function::Regexreplace => not_implemented(args),
-        Function::Regextest => not_implemented(args),
+        Function::Regexreplace => scalar_arguments(args),
+        Function::Regextest => scalar_arguments(args),
         Function::T => not_implemented(args),
         Function::Text => scalar_arguments(args),
         Function::Textafter => not_implemented(args),
