@@ -121,6 +121,27 @@ impl Project {
         Ok(())
     }
 
+    /// The problems of a module's source, as an editor shows them before a
+    /// run (see [`parser::check_module`]): the error that keeps it from
+    /// compiling (structure, an undeclared event…), lines that don't parse
+    /// (they fail when they run), statements Kantor doesn't run. Lines
+    /// count in `source`.
+    pub fn check(kind: ModuleKind, source: &str) -> Vec<parser::Diagnostic> {
+        let (def, mut out) = parser::check_module(source);
+        if let Some(def) = def
+            && let Err(e) = compile::compile_module(0, "Module", kind, def)
+        {
+            out.push(parser::Diagnostic {
+                line: e.location.as_ref().map_or(0, |l| l.line),
+                message: e.description,
+                fatal: true,
+                unsupported: false,
+            });
+            out.sort_by_key(|d| d.line);
+        }
+        out
+    }
+
     pub fn module_names(&self) -> Vec<String> {
         self.modules.iter().map(|m| m.name.clone()).collect()
     }

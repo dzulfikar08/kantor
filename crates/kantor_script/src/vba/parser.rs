@@ -22,6 +22,51 @@ pub fn parse_module(src: &str) -> R<ModuleDef> {
     p.module()
 }
 
+/// A problem [`check_module`] found: its line (1-based), what's wrong, and
+/// whether the module can't compile (`fatal`; otherwise the line fails only
+/// when it runs).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub line: u32,
+    pub message: String,
+    pub fatal: bool,
+    /// A statement Kantor parses but doesn't run (file I/O…).
+    pub unsupported: bool,
+}
+
+/// Every problem of a module's source an editor should show: the error
+/// that stops the module compiling, lines that don't parse, and statements
+/// Kantor doesn't run.
+pub fn check_module(src: &str) -> (Option<ModuleDef>, Vec<Diagnostic>) {
+    let fatal = |e: ScriptError| Diagnostic {
+        line: e.location.as_ref().map_or(0, |l| l.line),
+        message: e.description,
+        fatal: true,
+        unsupported: false,
+    };
+    let src = match preprocess(src) {
+        Ok(s) => s,
+        Err(e) => return (None, vec![fatal(e)]),
+    };
+    let toks = match tokenize(&src) {
+        Ok(t) => t,
+        Err(e) => return (None, vec![fatal(e)]),
+    };
+    let mut p = Parser::new(toks);
+    let def = p.module();
+    let mut out = std::mem::take(&mut p.diagnostics);
+    let def = match def {
+        Ok(d) => Some(d),
+        Err(e) => {
+            out.push(fatal(e));
+            None
+        }
+    };
+    out.sort_by_key(|d| d.line);
+    out.dedup();
+    (def, out)
+}
+
 /// Parses one expression (used by `#If` and tests).
 pub fn parse_expression(src: &str) -> R<Expr> {
     let mut p = Parser::new(tokenize(src)?);
@@ -47,6 +92,9 @@ pub(crate) struct Parser {
     default_member: bool,
     enumerator: bool,
     deftypes: Vec<(char, char, Ty)>,
+    /// Lines that didn't parse and statements Kantor doesn't run, for
+    /// [`check_module`].
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl Parser {
@@ -59,6 +107,7 @@ impl Parser {
             default_member: false,
             enumerator: false,
             deftypes: Vec::new(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -787,6 +836,12 @@ impl Parser {
         match result {
             Ok(s) => Ok(s),
             Err(e) if !self.is_structural(start) => {
+                self.diagnostics.push(Diagnostic {
+                    line,
+                    message: e.description.clone(),
+                    fatal: false,
+                    unsupported: false,
+                });
                 self.pos = start;
                 self.skip_to_eos();
                 Ok(Stmt {
@@ -807,6 +862,12 @@ impl Parser {
     }
 
     fn unsupported(&mut self, feature: &str) -> R<StmtKind> {
+        self.diagnostics.push(Diagnostic {
+            line: self.line(),
+            message: feature.to_string(),
+            fatal: false,
+            unsupported: true,
+        });
         self.skip_to_eos();
         Ok(StmtKind::Unsupported(feature.to_string()))
     }

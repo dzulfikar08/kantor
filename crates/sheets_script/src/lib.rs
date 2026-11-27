@@ -32,6 +32,7 @@ pub mod app;
 pub mod books;
 pub mod characters;
 pub mod charts;
+pub mod code;
 pub mod comments;
 pub mod cond_formats;
 pub mod consts;

@@ -33,6 +33,7 @@ use std::io::{Cursor, Read, Seek, Write};
 
 pub mod codepage;
 pub mod compression;
+pub mod crypt;
 #[doc(hidden)]
 pub mod dir;
 pub mod forms;
@@ -128,6 +129,9 @@ pub struct Module {
     /// Where its MODULEOFFSET value is in the decompressed `dir`.
     offset_at: Option<usize>,
     text_offset: u32,
+    /// Its records in the decompressed `dir`: from MODULENAME to the end
+    /// of its terminator.
+    span: Option<(usize, usize)>,
 }
 
 impl Module {
@@ -185,6 +189,11 @@ pub struct VbaProject {
     pub sys_kind: u32,
     pub references: Vec<Reference>,
     modules: Vec<Module>,
+    /// Where PROJECTMODULES' count is in `dir`.
+    count_at: Option<usize>,
+    /// Where the module records start in `dir` (the terminator when there
+    /// are none).
+    modules_start: usize,
 }
 
 /// The version-independent `_VBA_PROJECT` stream: no compiled cache
@@ -218,6 +227,8 @@ struct Raw {
     read_only: bool,
     offset_at: Option<usize>,
     text_offset: u32,
+    start: usize,
+    end: Option<usize>,
 }
 
 impl VbaProject {
@@ -248,6 +259,9 @@ impl VbaProject {
         let mut current: Option<Raw> = None;
         let mut previous = 0u16;
         let mut extended_name = false;
+        let mut count_at = None;
+        let mut modules_start = None;
+        let mut last_end = 0usize;
         // A length-prefixed string at the start of `data`.
         let sized = |data: &[u8]| -> Vec<u8> {
             let n = dir::u32_at(data).unwrap_or(0) as usize;
@@ -287,12 +301,16 @@ impl VbaProject {
                     let n = std::mem::take(&mut ref_name);
                     references.push((n.0, n.1, ReferenceKind::Control, sized(data)));
                 }
+                (dir::MODULES, None) => count_at = Some(r.start),
                 (dir::MODULE_NAME, _) => {
-                    if let Some(m) = current.take() {
+                    if let Some(mut m) = current.take() {
+                        m.end.get_or_insert(r.start - 6);
                         raws.push(m);
                     }
+                    modules_start.get_or_insert(r.start - 6);
                     current = Some(Raw {
                         name: data.to_vec(),
+                        start: r.start - 6,
                         ..Raw::default()
                     });
                 }
@@ -310,12 +328,25 @@ impl VbaProject {
                 (dir::MODULE_TYPE_OTHER, Some(m)) => m.procedural = false,
                 (dir::MODULE_PRIVATE, Some(m)) => m.private = true,
                 (dir::MODULE_READ_ONLY, Some(m)) => m.read_only = true,
-                (dir::MODULE_TERMINATOR, Some(_)) => raws.extend(current.take()),
+                (dir::MODULE_TERMINATOR, Some(m)) => {
+                    m.end = Some(r.start + r.len);
+                    raws.extend(current.take());
+                }
+                (dir::TERMINATOR, _) => {
+                    modules_start.get_or_insert(r.start - 6);
+                }
                 _ => {}
+            }
+            if r.id != dir::TERMINATOR {
+                last_end = r.start + r.len;
             }
             previous = r.id;
         }
-        raws.extend(current.take());
+        if let Some(mut m) = current.take() {
+            m.end.get_or_insert(last_end);
+            raws.push(m);
+        }
+        let modules_start = modules_start.unwrap_or(last_end);
 
         let text = |b: &[u8]| codepage::decode(code_page, b);
         // Module kinds from the PROJECT stream.
@@ -371,6 +402,7 @@ impl VbaProject {
                 error: None,
                 offset_at: raw.offset_at,
                 text_offset: raw.text_offset,
+                span: raw.end.map(|end| (raw.start, end)),
             };
             match module_source(&mut cfb, root, &module.stream_name, raw.text_offset) {
                 Ok(bytes) => {
@@ -400,6 +432,8 @@ impl VbaProject {
                 })
                 .collect(),
             modules,
+            count_at,
+            modules_start,
         })
     }
 
@@ -521,6 +555,275 @@ impl VbaProject {
         cfb.flush()?;
         Ok(cfb.into_inner().into_inner())
     }
+}
+
+impl VbaProject {
+    /// The project with exactly `modules`, in that order: a module of the
+    /// project with the same name (any case) keeps its kind, its `dir`
+    /// records, its attributes (see [`VbaProject::with_module_code`]) and,
+    /// for a form, its designer, and takes the new code; a new name is
+    /// added as a module of its kind with the default attributes (UserForms
+    /// can't be added: they need a designer); a module left out is removed
+    /// (its stream, a form's designer storage, its `PROJECT` lines). Every
+    /// compiled cache is dropped, so the host compiles the project from
+    /// source. A module whose source couldn't be read is kept as it is.
+    pub fn with_modules(&self, modules: &[ModuleSpec]) -> Result<Vec<u8>> {
+        for (i, m) in modules.iter().enumerate() {
+            if !valid_module_name(&m.name) {
+                return Err(Error::new(format!("{:?} can't name a module", m.name)));
+            }
+            if modules[..i]
+                .iter()
+                .any(|o| o.name.eq_ignore_ascii_case(&m.name))
+            {
+                return Err(Error::new(format!("two modules are called {}", m.name)));
+            }
+        }
+        let count_at = self
+            .count_at
+            .ok_or_else(|| Error::new("the project's dir stream has no module count"))?;
+        let cp = self.codepage;
+        let mbcs = |s: &str| -> Result<Vec<u8>> {
+            codepage::encode(cp, s).ok_or_else(|| {
+                Error::new(format!(
+                    "the code has characters code page {cp} can't hold"
+                ))
+            })
+        };
+        let existing = |name: &str| {
+            self.modules
+                .iter()
+                .position(|m| m.name.eq_ignore_ascii_case(name))
+        };
+        let mut cfb = cfb::CompoundFile::open(Cursor::new(self.bytes.clone()))?;
+        let vba = format!("{}/VBA", self.root);
+
+        // Removed modules first: a new one may take a removed one's stream name.
+        let removed: Vec<&Module> = self
+            .modules
+            .iter()
+            .filter(|m| !modules.iter().any(|s| s.name.eq_ignore_ascii_case(&m.name)))
+            .collect();
+        for m in &removed {
+            let path = format!("{vba}/{}", m.stream_name);
+            if cfb.is_stream(&path) {
+                cfb.remove_stream(&path)?;
+            }
+            let designer = format!("{}/{}", self.root, m.name);
+            if m.kind == ModuleKind::Form && cfb.is_storage(&designer) {
+                cfb.remove_storage_all(&designer)?;
+            }
+        }
+
+        let mut dir = self.dir[..self.modules_start].to_vec();
+        dir[count_at..count_at + 2].copy_from_slice(&(modules.len() as u16).to_le_bytes());
+        let mut added: Vec<&ModuleSpec> = Vec::new();
+        for spec in modules {
+            match existing(&spec.name) {
+                Some(i) => {
+                    let m = &self.modules[i];
+                    let (a, b) = m
+                        .span
+                        .ok_or_else(|| Error::new(format!("module {} has no dir records", m.name)))?;
+                    let mut records = self.dir[a..b].to_vec();
+                    if m.error.is_none() {
+                        let path = format!("{vba}/{}", m.stream_name);
+                        let compressed = if same_code(&m.code, &spec.code) {
+                            let stream = read_stream(&mut cfb, &path)?;
+                            stream
+                                .get(m.text_offset as usize..)
+                                .unwrap_or_default()
+                                .to_vec()
+                        } else {
+                            compression::compress(&mbcs(&merge_attributes(m, &spec.code))?)
+                        };
+                        write_stream(&mut cfb, &path, &compressed)?;
+                        if let Some(at) = m.offset_at.filter(|at| (a..b).contains(at)) {
+                            records[at - a..at - a + 4].copy_from_slice(&0u32.to_le_bytes());
+                        }
+                    }
+                    dir.extend_from_slice(&records);
+                }
+                None => {
+                    if spec.kind == ModuleKind::Form {
+                        return Err(Error::new(format!(
+                            "UserForm {} can't be added without a designer",
+                            spec.name
+                        )));
+                    }
+                    let source = synth::Builder::source(&spec.name, spec.kind, &spec.code);
+                    write_stream(
+                        &mut cfb,
+                        &format!("{vba}/{}", spec.name),
+                        &compression::compress(&mbcs(&source)?),
+                    )?;
+                    synth::module_records(&mut dir, &mbcs(&spec.name)?, &spec.name, spec.kind, 0);
+                    added.push(spec);
+                }
+            }
+        }
+        dir.extend_from_slice(&dir::TERMINATOR.to_le_bytes());
+        dir.extend_from_slice(&0u32.to_le_bytes());
+        write_stream(&mut cfb, &format!("{vba}/dir"), &compression::compress(&dir))?;
+        write_stream(
+            &mut cfb,
+            &format!("{vba}/_VBA_PROJECT"),
+            &EMPTY_VBA_PROJECT_STREAM,
+        )?;
+        let srp: Vec<String> = cfb
+            .read_storage(&vba)?
+            .filter(|e| e.is_stream() && e.name().to_ascii_uppercase().starts_with("__SRP_"))
+            .map(|e| e.name().to_owned())
+            .collect();
+        for s in srp {
+            cfb.remove_stream(format!("{vba}/{s}"))?;
+        }
+
+        // PROJECT: the module lines and the editor's workspace lines.
+        let project_path = format!("{}/PROJECT", self.root);
+        if let Ok(project) = read_stream(&mut cfb, &project_path) {
+            let text = codepage::decode(cp, &project);
+            let removed_names: Vec<&str> = removed.iter().map(|m| m.name.as_str()).collect();
+            let added: Vec<(&str, ModuleKind)> =
+                added.iter().map(|s| (s.name.as_str(), s.kind)).collect();
+            let new = project_text(&text, &removed_names, &added);
+            write_stream(&mut cfb, &project_path, &mbcs(&new)?)?;
+        }
+        // PROJECTwm: every module's name in the code page and in UTF-16.
+        let wm_path = format!("{}/PROJECTwm", self.root);
+        if cfb.is_stream(&wm_path) {
+            let mut wm = Vec::new();
+            for spec in modules {
+                let name = match existing(&spec.name) {
+                    Some(i) => self.modules[i].name.as_str(),
+                    None => spec.name.as_str(),
+                };
+                wm.extend_from_slice(&mbcs(name)?);
+                wm.push(0);
+                wm.extend_from_slice(&dir::utf16_bytes(name));
+                wm.extend_from_slice(&[0, 0]);
+            }
+            wm.extend_from_slice(&[0, 0]);
+            write_stream(&mut cfb, &wm_path, &wm)?;
+        }
+        cfb.flush()?;
+        Ok(cfb.into_inner().into_inner())
+    }
+}
+
+/// A module to write with [`VbaProject::with_modules`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModuleSpec {
+    pub name: String,
+    pub kind: ModuleKind,
+    /// The code as the editor shows it (no attribute lines needed).
+    pub code: String,
+}
+
+impl ModuleSpec {
+    pub fn new(name: &str, kind: ModuleKind, code: &str) -> ModuleSpec {
+        ModuleSpec {
+            name: name.to_owned(),
+            kind,
+            code: code.to_owned(),
+        }
+    }
+}
+
+/// A new project holding `modules` (code page 1252, Excel's on Western
+/// systems), laid out as Excel writes one, without compiled caches.
+pub fn new_project(modules: &[ModuleSpec]) -> Result<Vec<u8>> {
+    let mut b = synth::Builder::new(1252);
+    for (i, m) in modules.iter().enumerate() {
+        if !valid_module_name(&m.name) {
+            return Err(Error::new(format!("{:?} can't name a module", m.name)));
+        }
+        if modules[..i]
+            .iter()
+            .any(|o| o.name.eq_ignore_ascii_case(&m.name))
+        {
+            return Err(Error::new(format!("two modules are called {}", m.name)));
+        }
+        if m.kind == ModuleKind::Form {
+            return Err(Error::new(format!(
+                "UserForm {} can't be added without a designer",
+                m.name
+            )));
+        }
+        b = b.module(&m.name, m.kind, &m.code);
+    }
+    b.build()
+}
+
+/// Whether `name` can name a VBA module: a letter, then letters, digits or
+/// underscores, at most 31 characters (the Visual Basic Editor's rule).
+pub fn valid_module_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && name.len() <= 31
+}
+
+/// Whether two codes are the same text (line ends and trailing blank
+/// lines aside).
+fn same_code(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.replace("\r\n", "\n").trim_end_matches('\n').to_owned();
+    norm(a) == norm(b)
+}
+
+/// The `PROJECT` stream's text with the lines of `removed` modules taken
+/// out and lines for `added` ones put in (after the other module lines;
+/// in `[Workspace]`, at its end).
+fn project_text(text: &str, removed: &[&str], added: &[(&str, ModuleKind)]) -> String {
+    let is_removed = |name: &str| removed.iter().any(|r| r.eq_ignore_ascii_case(name.trim()));
+    let module_key = |key: &str| matches!(key.trim(), "Module" | "Class" | "Document" | "BaseClass");
+    let mut out: Vec<String> = Vec::new();
+    let mut section = String::new();
+    let mut insert_at: Option<usize> = None;
+    let mut workspace_end: Option<usize> = None;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            section = trimmed.to_ascii_lowercase();
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            if section.is_empty() {
+                if module_key(key) {
+                    let name = value.split('/').next().unwrap_or(value);
+                    if is_removed(name) {
+                        continue;
+                    }
+                    out.push(line.to_owned());
+                    insert_at = Some(out.len());
+                    continue;
+                }
+                if key.trim() == "ID" && insert_at.is_none() {
+                    out.push(line.to_owned());
+                    insert_at = Some(out.len());
+                    continue;
+                }
+            } else if section == "[workspace]" && is_removed(key) {
+                continue;
+            }
+        }
+        out.push(line.to_owned());
+        if section == "[workspace]" && !trimmed.is_empty() {
+            workspace_end = Some(out.len());
+        }
+    }
+    // Workspace lines first: they sit after the module lines.
+    if let Some(at) = workspace_end {
+        for (n, (name, _)) in added.iter().enumerate() {
+            out.insert(at + n, format!("{name}=0, 0, 0, 0, C"));
+        }
+    }
+    let at = insert_at.unwrap_or(0);
+    for (n, (name, kind)) in added.iter().enumerate() {
+        out.insert(at + n, synth::project_line(name, *kind));
+    }
+    let mut s = out.join("\r\n");
+    s.push_str("\r\n");
+    s
 }
 
 fn write_stream<F: Read + Write + Seek>(

@@ -279,6 +279,21 @@ pub(crate) struct Context<'a> {
     /// The JavaScript and Python scripts to write in place of the
     /// original's (`None`: the original's, as they are).
     pub scripts: Option<&'a [crate::scripts::Script]>,
+    /// The VBA project as edited in Kantor (`None`: the original's).
+    pub vba: Option<&'a VbaSave>,
+}
+
+/// A VBA project edited in Kantor, to save in place of the original's.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct VbaSave {
+    /// `vbaProject.bin`; `None`: the project was removed.
+    pub bytes: Option<std::sync::Arc<Vec<u8>>>,
+    /// The workbook's code name (`<workbookPr codeName>`), when the project
+    /// has a module for it.
+    pub workbook_code_name: Option<String>,
+    /// `(sheet name, code name)`: code names to give worksheets that have
+    /// none, so their document modules belong to them.
+    pub sheet_code_names: Vec<(String, String)>,
 }
 
 /// A chart sheet to save (see `crate::chart_sheet`).
@@ -607,7 +622,8 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
     // The original's macros, put back in the end (a save as `.xlsm`).
     let vba_source = if ctx.keep_macros { original } else { None };
     let done = |bytes: Vec<u8>, mut notes: Vec<String>, added: Vec<AddedPivot>| {
-        let bytes = match with_macros(&bytes, vba_source, ctx.macro_enabled) {
+        let edited = if ctx.keep_macros { ctx.vba } else { None };
+        let bytes = match with_macros(&bytes, vba_source, ctx.macro_enabled, edited) {
             Ok(Some(with)) => {
                 notes.retain(|n| !n.contains("vbaProject"));
                 with
@@ -1269,21 +1285,43 @@ fn vba_project(bytes: &[u8]) -> Result<Option<(Rel, String, Original<'_>)>, Stri
 /// didn't run them in; with `enabled`, a macro-enabled workbook even without
 /// one. The project's digital signature is not kept: the workbook changed.
 /// `Ok(None)`: nothing to change.
+///
+/// `edited`, a project edited in Kantor, goes in place of the original's
+/// when the workbook is macro-enabled (`enabled`, or an original with
+/// macros): an autosave of a plain `.xlsx` leaves it out.
 fn with_macros(
     bytes: &[u8],
     original: Option<&[u8]>,
     enabled: bool,
+    edited: Option<&VbaSave>,
 ) -> Result<Option<Vec<u8>>, String> {
     let vba = match original {
         Some(o) => vba_project(o)?,
         None => None,
     };
-    if vba.is_none() && !enabled {
+    let edited = edited.filter(|_| enabled || vba.is_some());
+    if vba.is_none() && !enabled && edited.is_none() {
         return Ok(None);
     }
     let mut pkg = Package::read(bytes)?;
-    if let Some((rel, vba_part, orig)) = vba {
-        add_vba(&mut pkg, &rel, &vba_part, &orig)?;
+    match (edited, vba) {
+        (Some(edit), vba) => {
+            if let Some(data) = &edit.bytes {
+                let (kind, part, code_name) = match &vba {
+                    Some((rel, part, orig)) => {
+                        (rel.kind.clone(), part.clone(), workbook_code_name(orig)?)
+                    }
+                    None => (VBA_PROJECT_REL.to_owned(), "xl/vbaProject.bin".to_owned(), None),
+                };
+                let code_name = edit.workbook_code_name.clone().or(code_name);
+                add_vba_data(&mut pkg, &kind, &part, data.as_ref().clone(), code_name)?;
+                set_sheet_code_names(&mut pkg, &edit.sheet_code_names)?;
+            }
+            // A removed project: nothing to add (a macro-enabled
+            // original's package stays macro-enabled, as its name says).
+        }
+        (None, Some((rel, vba_part, orig))) => add_vba(&mut pkg, &rel, &vba_part, &orig)?,
+        (None, None) => {}
     }
     let types = pkg
         .text(CONTENT_TYPES)?
@@ -1298,21 +1336,84 @@ fn with_macros(
     Ok(Some(pkg.write()?))
 }
 
-/// Put the VBA project `vba_part` of `orig` (linked by `rel`) into `pkg`,
-/// with the workbook's code name.
-fn add_vba(pkg: &mut Package, rel: &Rel, vba_part: &str, orig: &Original) -> Result<(), String> {
-    let data = orig
-        .get(vba_part)?
-        .ok_or("the VBA project part is missing")?;
-    // The workbook's code name, which the project's ThisWorkbook module goes by.
-    let code_name = orig.text(&rel_source_workbook(orig)?)?.and_then(|xml| {
+const VBA_PROJECT_REL: &str = "http://schemas.microsoft.com/office/2006/relationships/vbaProject";
+
+/// The workbook's code name in `orig`, which the project's ThisWorkbook
+/// module goes by.
+fn workbook_code_name(orig: &Original) -> Result<Option<String>, String> {
+    Ok(orig.text(&rel_source_workbook(orig)?)?.and_then(|xml| {
         let doc = Document::parse(&xml).ok()?;
         let pr = doc
             .root_element()
             .children()
             .find(|c| is_main(*c, "workbookPr"))?;
         pr.attribute("codeName").map(str::to_owned)
-    });
+    }))
+}
+
+/// Put the VBA project `vba_part` of `orig` (linked by `rel`) into `pkg`,
+/// with the workbook's code name.
+fn add_vba(pkg: &mut Package, rel: &Rel, vba_part: &str, orig: &Original) -> Result<(), String> {
+    let data = orig
+        .get(vba_part)?
+        .ok_or("the VBA project part is missing")?;
+    let code_name = workbook_code_name(orig)?;
+    add_vba_data(pkg, &rel.kind, vba_part, data, code_name)
+}
+
+/// Give the worksheets of `pkg` named in `names` (`(sheet name, code
+/// name)`) their code names, where they have none.
+fn set_sheet_code_names(pkg: &mut Package, names: &[(String, String)]) -> Result<(), String> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
+    let (_, _, _, sheets) =
+        workbook_sheets(&root_rels, &|p: &str| Ok(pkg.text(p)?.map(str::to_owned)))?;
+    for s in sheets.iter().filter(|s| matches!(s.kind, SheetKind::Work)) {
+        let Some((_, code)) = names.iter().find(|(n, _)| *n == s.name) else {
+            continue;
+        };
+        let Some(xml) = pkg.text(&s.part)?.map(str::to_owned) else {
+            continue;
+        };
+        let doc = Document::parse(&xml).map_err(|e| format!("{}: {e}", s.part))?;
+        let root = doc.root_element();
+        let edit = match root.children().find(|c| is_main(*c, "sheetPr")) {
+            Some(pr) if pr.attribute("codeName").is_some() => None,
+            Some(pr) => {
+                let at = pr.range().start + "<sheetPr".len();
+                xml[pr.range().start..]
+                    .starts_with("<sheetPr")
+                    .then(|| (at..at, format!(" codeName=\"{}\"", esc_attr(code))))
+            }
+            None => {
+                // CT_Worksheet: sheetPr comes first.
+                let at = match root.children().find(|c| c.is_element()) {
+                    Some(first) => first.range().start,
+                    None => root.range().start + start_tag_end(&xml[root.range().start..]).ok_or("bad worksheet")?,
+                };
+                Some((at..at, format!("<sheetPr codeName=\"{}\"/>", esc_attr(code))))
+            }
+        };
+        if let Some(edit) = edit {
+            let new = apply_edits(&xml, vec![edit]);
+            drop(doc);
+            pkg.set(&s.part, new.into_bytes());
+        }
+    }
+    Ok(())
+}
+
+/// Put VBA project `data` into `pkg` as part `vba_part` (relationship type
+/// `rel_kind`), with the workbook's code name.
+fn add_vba_data(
+    pkg: &mut Package,
+    rel_kind: &str,
+    vba_part: &str,
+    data: Vec<u8>,
+    code_name: Option<String>,
+) -> Result<(), String> {
 
     let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
     let wb = root_rels
@@ -1328,7 +1429,7 @@ fn add_vba(pkg: &mut Package, rel: &Rel, vba_part: &str, orig: &Original) -> Res
     let id = IdAlloc::new(&wb_rels).next();
     wb_rels.push(Rel {
         id,
-        kind: rel.kind.clone(),
+        kind: rel_kind.to_owned(),
         target: relative(&wb, vba_part),
         external: false,
     });
@@ -7875,6 +7976,7 @@ mod tests {
             keep_macros: false,
             macro_enabled: false,
             scripts: None,
+            vba: None,
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());
