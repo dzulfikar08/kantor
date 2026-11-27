@@ -935,6 +935,30 @@ theme's), `alignment.indent` (0-250 steps) and `alignment.text_rotation`
 
 Tests: Kantor's `crates/sheets_engine/tests/author.rs`.
 
+## 37. User functions and formulas evaluated without a cell
+
+Why: a workbook's VBA `Public Function`s are used in cell formulas
+(`=MyTax(A2)`); with macros enabled Excel evaluates them, with macros off
+they show `#NAME?`. Kantor's macros (`crates/sheets_script`) also evaluate
+`WorksheetFunction.Sum(...)` and `Evaluate("...")` with the engine's
+functions, without writing a cell. (Numbered 37: another branch may add 36.)
+
+What: the new file `kantor_udf.rs`: the trait `KantorUserFunctions` (`call(name,
+args) -> Option<KantorValue>`, `None` for a name it doesn't define), set with
+`Model::kantor_set_user_functions` / `UserModel::kantor_set_user_functions`
+(a new `Model` field `kantor_udfs`, `None` in both constructors). In
+`model.rs`, a `NamedFunctionKind` call that is neither bound by LET nor a LAMBDA
+defined name asks the user functions before giving `#NAME?`; its arguments are
+evaluated in the cell's context, ranges read cell by cell (so they are
+dependencies like any read; ranges over 65 536 cells are clipped to the used
+area). The formula text is untouched, so files save as they were.
+`Model::kantor_evaluate_formula` parses and evaluates a formula in a cell's
+context without storing it (stored values only, like conditional formatting's
+`cf_evaluate`), a range result coming back as its values;
+`Model::kantor_cell_value` reads one cell's value with errors by name.
+
+Tests: `test/test_kantor_udf.rs`; Kantor's `crates/sheets_script/tests`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

@@ -67,6 +67,7 @@ mod test_kantor_lookup_cache;
 mod test_kantor_pivot; // KANTOR PATCH (pivot)
 mod test_kantor_tables; // KANTOR PATCH (tables)
 mod test_kantor_ref_names; // KANTOR PATCH (§33)
+mod test_kantor_udf; // KANTOR PATCH (§37)
 mod test_math;
 mod test_merged_cells;
 mod test_metadata;

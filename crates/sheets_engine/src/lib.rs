@@ -121,6 +121,7 @@ pub mod check;
 pub mod format;
 pub mod formula;
 pub mod grid;
+pub mod script;
 pub mod tsv;
 pub mod web;
 
@@ -1145,12 +1146,27 @@ impl Workbook {
         if !self.can_undo() {
             return Ok(false);
         }
-        for _ in 0..self.history.undo_steps() {
+        let steps = self.history.undo_steps();
+        // A step made of many edits (a macro run) recalculates once.
+        let pause = steps > 1 && self.calc.mode == CalcMode::Automatic;
+        if pause {
+            self.model.pause_evaluation();
+        }
+        let mut result = Ok(());
+        for _ in 0..steps {
             if !self.model.can_undo() {
                 break;
             }
-            self.model.undo().map_err(|e| anyhow!("undo: {e}"))?;
+            if let Err(e) = self.model.undo() {
+                result = Err(anyhow!("undo: {e}"));
+                break;
+            }
         }
+        if pause {
+            self.model.resume_evaluation();
+            self.model.kantor_evaluate_changes();
+        }
+        result?;
         self.history.undone();
         self.sync_pivot_grids(true);
         Ok(true)
@@ -1161,12 +1177,26 @@ impl Workbook {
         if !self.can_redo() {
             return Ok(false);
         }
-        for _ in 0..self.history.redo_steps() {
+        let steps = self.history.redo_steps();
+        let pause = steps > 1 && self.calc.mode == CalcMode::Automatic;
+        if pause {
+            self.model.pause_evaluation();
+        }
+        let mut result = Ok(());
+        for _ in 0..steps {
             if !self.model.can_redo() {
                 break;
             }
-            self.model.redo().map_err(|e| anyhow!("redo: {e}"))?;
+            if let Err(e) = self.model.redo() {
+                result = Err(anyhow!("redo: {e}"));
+                break;
+            }
         }
+        if pause {
+            self.model.resume_evaluation();
+            self.model.kantor_evaluate_changes();
+        }
+        result?;
         self.history.redone();
         self.sync_pivot_grids(true);
         Ok(true)

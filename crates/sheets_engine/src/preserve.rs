@@ -2504,6 +2504,8 @@ pub(crate) struct DrawingSource {
     pub targets: HashMap<String, (String, String)>,
     /// Chart and picture parts the drawing links to, by name.
     pub parts: HashMap<String, Vec<u8>>,
+    /// Macros of the sheet's form controls, by shape id (`cNvPr id`).
+    pub controls: HashMap<u32, String>,
 }
 
 /// What [`drawing_sources`] reads from a package.
@@ -2674,12 +2676,121 @@ fn sheet_drawing(orig: &Original<'_>, s: &SheetEntry) -> Option<DrawingSource> {
         }
         targets.insert(r.id.clone(), (r.short_kind().to_owned(), t));
     }
+    let controls = control_macros(orig, s, &sheet_rels);
     Some(DrawingSource {
         sheet_id: s.sheet_id,
         xml,
         targets,
         parts,
+        controls,
     })
+}
+
+/// The macros of a sheet's form controls (buttons), by shape id: the
+/// sheet's `<control shapeId><controlPr macro>`, else the legacy VML
+/// shape's `<x:FmlaMacro>`. Only read when the sheet has controls.
+fn control_macros(orig: &Original<'_>, s: &SheetEntry, rels: &[Rel]) -> HashMap<u32, String> {
+    let mut out = HashMap::new();
+    if !rels.iter().any(|r| r.short_kind() == "ctrlProp") {
+        return out;
+    }
+    if let Ok(Some(sheet)) = orig.text(&s.part) {
+        let mut rest = sheet.as_str();
+        while let Some(at) = find_tag(rest, "control") {
+            rest = &rest[at..];
+            let end = rest.find("</control>").unwrap_or(rest.len());
+            let block = &rest[..end];
+            let start_tag = &block[..block.find('>').unwrap_or(block.len())];
+            if let Some(id) = tag_attr(start_tag, "shapeId").and_then(|v| v.parse().ok())
+                && let Some(pr) = find_tag(block, "controlPr")
+            {
+                let pr = &block[pr..];
+                let pr = &pr[..pr.find('>').unwrap_or(pr.len())];
+                if let Some(m) = tag_attr(pr, "macro").filter(|m| !m.is_empty()) {
+                    out.insert(id, unescape_xml(&m));
+                }
+            }
+            rest = &rest[end.max(1)..];
+        }
+    }
+    let vml = rels
+        .iter()
+        .filter(|r| r.short_kind() == "vmlDrawing" && !r.external)
+        .filter_map(|r| resolve(&s.part, &r.target));
+    for part in vml {
+        let Ok(Some(text)) = orig.text(&part) else {
+            continue;
+        };
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("<v:shape ") {
+            rest = &rest[at..];
+            let end = rest.find("</v:shape>").unwrap_or(rest.len());
+            let block = &rest[..end];
+            let start_tag = &block[..block.find('>').unwrap_or(block.len())];
+            let id = tag_attr(start_tag, "o:spid")
+                .or_else(|| tag_attr(start_tag, "id"))
+                .and_then(|v| v.rsplit(['s', 'S']).next()?.parse::<u32>().ok());
+            if let Some(id) = id
+                && let Some(m) = block.find("<x:FmlaMacro>")
+            {
+                let m = &block[m + "<x:FmlaMacro>".len()..];
+                if let Some(e) = m.find("</x:FmlaMacro>") {
+                    let name = unescape_xml(m[..e].trim());
+                    if !name.is_empty() {
+                        out.entry(id).or_insert(name);
+                    }
+                }
+            }
+            rest = &rest[end.max(1)..];
+        }
+    }
+    out
+}
+
+/// Where the next start tag `name` (any prefix) is in `xml`.
+fn find_tag(xml: &str, name: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(i) = xml[from..].find('<') {
+        let at = from + i;
+        let tag = &xml[at + 1..];
+        let local = tag
+            .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .next()
+            .unwrap_or_default();
+        let local = local.rsplit(':').next().unwrap_or_default();
+        if local == name {
+            return Some(at);
+        }
+        from = at + 1;
+    }
+    None
+}
+
+/// The value of attribute `name` in start tag `tag`.
+fn tag_attr(tag: &str, name: &str) -> Option<String> {
+    let mut rest = tag;
+    while let Some(i) = rest.find(name) {
+        let ok = rest[..i].ends_with(char::is_whitespace);
+        let after = rest[i + name.len()..].trim_start();
+        if ok && let Some(v) = after.strip_prefix('=') {
+            let v = v.trim_start();
+            let q = v.chars().next()?;
+            if q == '"' || q == '\'' {
+                let end = v[1..].find(q)?;
+                return Some(v[1..1 + end].to_owned());
+            }
+        }
+        rest = &rest[i + name.len()..];
+    }
+    None
+}
+
+fn unescape_xml(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 /// The bytes of part `name` of package `bytes`.
