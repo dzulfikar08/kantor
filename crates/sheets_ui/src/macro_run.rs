@@ -179,6 +179,29 @@ impl MacroUi for ChannelUi {
     fn debug_print(&mut self, line: &str) {
         let _ = self.tx.send(ToUi::Print(line.to_owned()));
     }
+
+    /// A file outside the workbook's folder: the user decides (Yes/No).
+    fn allow_file(
+        &mut self,
+        book: Workbook,
+        view: View,
+        path: &std::path::Path,
+        write: bool,
+    ) -> (Workbook, bool) {
+        let verb = if write { "save" } else { "read" };
+        let req = MsgBoxRequest {
+            prompt: format!(
+                "This macro wants to {verb} a file outside the workbook's folder:\n\n{}\n\nAllow it?",
+                path.display()
+            ),
+            // vbYesNo + vbExclamation + vbDefaultButton2
+            buttons: 4 + 48 + 256,
+            title: "Kantor Sheets".to_owned(),
+        };
+        let (book, answer) = self.msg_box(book, view, &req);
+        // vbYes
+        (book, matches!(answer, Ok(6)))
+    }
 }
 
 impl SheetsView {

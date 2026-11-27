@@ -26,6 +26,7 @@ pub mod addr;
 pub mod app;
 pub mod consts;
 pub mod format;
+pub mod paths;
 pub mod range;
 pub mod run;
 pub mod session;

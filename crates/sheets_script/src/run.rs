@@ -324,6 +324,20 @@ pub trait MacroUi {
 
     /// One line of `Debug.Print` output.
     fn debug_print(&mut self, _line: &str) {}
+
+    /// A macro wants to read (`write` false: `Shapes.AddPicture`) or write
+    /// (`ExportAsFixedFormat`, `Chart.Export`) a file outside the
+    /// workbook's folder: `true` allows it. Refused unless the UI asks the
+    /// user (see `crate::paths`).
+    fn allow_file(
+        &mut self,
+        book: Workbook,
+        _view: View,
+        _path: &std::path::Path,
+        _write: bool,
+    ) -> (Workbook, bool) {
+        (book, false)
+    }
 }
 
 impl Session {
