@@ -399,7 +399,9 @@ the macro's own.
   file dialogs and `Caller` outside a UDF fail with error 445.
 - **`Workbook`**: `Name`, `FullName`, `Path`, `CodeName`, `Worksheets`, `Sheets`, `Names`,
   `ActiveSheet`, `Saved`, `Save`, `SaveAs`, `SaveCopyAs`, `Close`, `Activate` (see Other
-  workbooks); `RefreshAll`, printing: 445. `Workbooks`: see Other workbooks.
+  workbooks); printing: 445. `RefreshAll` refreshes every pivot table (not web formulas or
+  external connections); `PivotCaches`, `Charts` (chart sheets), `IconSets`,
+  `ExportAsFixedFormat` (below). `Workbooks`: see Other workbooks.
 - **`Worksheets`/`Sheets`** (worksheets; chart sheets aren't in the object model): `Count`,
   `Item` by number or name (default member), `Add` with `Before`/`After`/`Count` (the new sheet
   becomes active), `For Each`.
@@ -408,9 +410,12 @@ the macro's own.
   workbook: 445), `Visible` (`xlSheetVeryHidden` hides), `Next`/`Previous`, `Paste`,
   `AutoFilter`, `AutoFilterMode` (False removes it), `FilterMode`, `ShowAllData`, `Sort`
   (`SortFields.Clear/Add`, `SetRange`, `Header`, `Apply`: what recorded macros write),
-  `StandardWidth`/`StandardHeight`, `Evaluate`, `Calculate`. `Protect`/`Unprotect` are
-  accepted and do nothing (Kantor doesn't protect sheets). `Shapes`, `ChartObjects`,
-  `ListObjects`, `PivotTables`, `Comments`: 445.
+  `StandardWidth`/`StandardHeight`, `Evaluate`, `Calculate`, `Shapes`, `Pictures`,
+  `ChartObjects`, `PivotTables`, `ListObjects`, `Hyperlinks`, `Comments`, `PageSetup`,
+  `HPageBreaks`/`VPageBreaks`, `ResetAllPageBreaks`, `ExportAsFixedFormat` (objects below).
+  `Protect`/`Unprotect` are accepted and do nothing: the engine has no sheet protection (it
+  only carries a file's `<sheetProtection>` through a save); `CommentsThreaded`, `PrintOut`,
+  `PrintPreview`: 445.
 - **`Range`**: `Value` (2-D arrays in and out, base 1; dates as `Date` where the cell has a date
   format), `Value2`, `Formula`, `FormulaR1C1` (converted both ways), `FormulaLocal`, `Text`,
   `Address` (`RowAbsolute`, `ColumnAbsolute`, `ReferenceStyle`, `External`, `RelativeTo`), `Row`,
@@ -423,13 +428,21 @@ the macro's own.
   `After`, `LookIn`, `LookAt`, `SearchOrder`, `SearchDirection`, `MatchCase`), `Replace`, `Sort`
   (`Key1..3`, `Order1..3`, `Header` including `xlGuess`), `AutoFilter` (`Field`, `Criteria1`,
   `Operator` `xlAnd`/`xlOr`/`xlFilterValues`/top 10, `Criteria2`; no arguments toggles it),
-  `RemoveDuplicates`, `AutoFit` (columns by the longest shown text; rows back to automatic),
+  `RemoveDuplicates` (kept rows move up with their formats, by `copy_cells`), `AutoFit`
+  (columns measured with the cells' fonts through `sheets_pdf`'s shaper, headless too, so the
+  result can differ from the app's GPUI measurement by a few pixels; rows fitted the same way),
   `NumberFormat`, `HorizontalAlignment`, `VerticalAlignment`, `WrapText`, `IndentLevel`,
   `Orientation`, `MergeCells`/`Merge`/`UnMerge`, `ColumnWidth` (characters), `RowHeight`
   (points), `Width`/`Height`/`Left`/`Top` (points), `Hidden`, `HasFormula`, `Font` (`Bold`,
   `Italic`, `Underline`, `Strikethrough`, `Size`, `Name`, `Color`, `ColorIndex`, `FontStyle`),
-  `Interior` (`Color`, `ColorIndex`, `Pattern` `xlNone`), `Borders`/`Borders(edge)`
-  (`LineStyle`, `Weight`, `Color`, `ColorIndex`), `BorderAround`,
+  `Interior` (`Color`, `ColorIndex`, `Pattern` `xlSolid`/`xlNone`; other patterns: 445, the
+  engine's fill is solid only), `Borders`/`Borders(edge)` (`LineStyle`, `Weight`, `Color`,
+  `ColorIndex`; `xlNone` on one edge removes just that edge, also on the facing side of the
+  neighbouring cell; `xlDiagonalDown`/`xlDiagonalUp` are set and saved, but the grid and PDF
+  don't draw them yet), `BorderAround`, `Locked`/`FormulaHidden` (the cell style's protection,
+  saved), `PageBreak`, `ExportAsFixedFormat` (that range), `Comment`, `AddComment`, `NoteText`,
+  `ClearComments`, `Hyperlinks`, `ClearHyperlinks`, `Validation`, `FormatConditions`,
+  `Characters`, `ListObject`,
   `SpecialCells(xlCellTypeConstants/Formulas/Blanks/LastCell/Visible[, value types])`,
   `FillDown`/`FillRight`, `Name` (defines a name), the default member (`Value`, or `Item` with
   arguments) and `For Each` over cells, rows or columns. Whole rows and columns read, write and
@@ -440,18 +453,95 @@ the macro's own.
   class"); an unknown name is 438.
 - **`Names`**: `Count`, `Item`, `Add Name, RefersTo`, `For Each`; `Name`: `Name`, `RefersTo`,
   `RefersToRange`, `Value`, `Delete`.
+- **Shapes** (`shapes.rs`, engine `script_shapes.rs`): `Shapes` `Count`, `Item`/default (index or
+  name), `For Each`, `AddShape` (the `msoShape*` presets 1–108), `AddTextbox` (horizontal),
+  `AddLine`, `AddPicture` (always embedded; `-1` sizes are the picture's own), `AddChart2`/
+  `AddChart`, `Range(...)` (`Delete`, `Select`, one-shape pass-through), `SelectAll`. `Shape`:
+  `Name`, `Type`, `AutoShapeType`, `Left`/`Top`/`Width`/`Height` (points), `IncrementLeft/Top`,
+  `Visible`, `ID`, `AlternativeText`, `OnAction` (stored as `[0]!Macro`; a click runs it at
+  once), `Placement`, `TopLeftCell`/`BottomRightCell`, `ZOrderPosition`, `HasChart`/`Chart`,
+  `TextFrame.Characters([Start, Length]).Text`, `TextFrame2.TextRange.Text`, `Fill.ForeColor.RGB`,
+  `Fill.Visible`/`Transparency`, `Line.ForeColor.RGB`/`Weight`/`Visible`, `Delete`.
+  `Pictures`: `Count`, `Item`, `Insert`, `Delete`, `For Each`. 445: `ZOrder`, `Duplicate`,
+  `Copy`, `Flip`, `Group`, scaling, `Characters.Font` in shapes, theme/scheme colours, fill and
+  line on pictures and charts.
+- **Charts** (`charts.rs`, engine `script_charts.rs`): `ChartObjects` (`Count`, `Item`, `Add`,
+  `Delete`, `For Each`), `ChartObject` (`Name` read, position and size, `Placement`,
+  `TopLeftCell`/`BottomRightCell`, `Chart`, `Delete`), `Chart`: `ChartType` (column, bar, line,
+  pie, area, scatter and their stacked and 3-D forms; 100% stacked, doughnut, radar, bubble,
+  stock, surface: 445; `xlLineMarkers` makes a line chart without markers), `SetSourceData`
+  (`PlotBy`), `HasTitle`/`ChartTitle.Text`, `HasLegend`/`Legend.Position`, `SeriesCollection`
+  (`Count`, `Item`, `NewSeries`, `For Each`; `Series.Name`/`Values`/`XValues`/`Formula`/`Delete`),
+  `Axes(xlCategory|xlValue)` (`HasTitle`, `AxisTitle.Text`, `MinimumScale`/`MaximumScale`/
+  `MajorUnit` and `…IsAuto`, `ReversePlotOrder`, `ScaleType`, `TickLabels.NumberFormat`),
+  `Export` (PNG, the PDF export's chart drawing rasterised at 96 dpi), `Location`,
+  `ActiveChart`; `Workbook.Charts` (chart sheets: `Count`, `Item`, `Add`, `Delete`, `For Each`).
+  `Series.Values = Range(...)` stores the values, not a link (the interpreter passes a Range's
+  default value on `Let`); an address string or `SetSourceData` keeps the link. 445: chart and
+  plot area formatting, data labels, points, gridlines, secondary axes, renaming a chart object.
+- **PivotTables** (`pivots.rs`, engine `script_pivots.rs`): `PivotCaches.Create(xlDatabase,
+  SourceData).CreatePivotTable(TableDestination, TableName)`, `PivotTables.Add`; `PivotTable`:
+  `Name`, `RefreshTable`, `PivotCache.Refresh`, `TableRange1`/`TableRange2`, `DataBodyRange`,
+  `RowRange`, `ColumnRange`, `PageRange`, `PivotFields`/`RowFields`/`ColumnFields`/
+  `PageFields`/`DataFields`, `ClearAllFilters`, `ClearTable`, `AddDataField`, `AddFields`,
+  `RowAxisLayout`, `RowGrand`/`ColumnGrand`, `TableStyle2`; `PivotField`: `Orientation`
+  (moves the field), `Position`, `CurrentPage`, `PivotItems(...).Visible`, `Function`,
+  `NumberFormat` (formats the workbook already has), `Caption` (value fields),
+  `ClearAllFilters`. Edits go through the PivotTable Fields list's own layout edit. 445:
+  `GetPivotData`, `ShowPages`, `CalculatedFields`, `PivotTableWizard`, captions of row/column
+  fields and items.
+- **ListObjects** (`tables.rs`, engine `script_tables.rs`): `ListObjects.Add` (range source),
+  `Name`, `Range`, `DataBodyRange`, `HeaderRowRange`, `TotalsRowRange`, `ShowTotals`,
+  `ShowHeaders`, `ShowAutoFilter`, `TableStyle`, stripes and first/last column, `Resize`,
+  `Unlist`, `Delete`, `ListRows` (`Add`, `Item`, `Delete`), `ListColumns` (`Add`, `Item` by name,
+  `Name`, `DataBodyRange`, `TotalsCalculation`, `Delete`), `AutoFilter`, `Sort`, and structured
+  references in `Range("T[Col]")`. `ListRows.Add`/`ListColumns.Add` in the middle of a table
+  insert whole sheet rows or columns.
+- **Hyperlinks** (`hyperlinks.rs`, engine `script_links.rs`): `Hyperlinks.Add(Anchor, Address,
+  SubAddress, ScreenTip, TextToDisplay)`, `Count`, `Item`, `Delete`, `For Each` on sheets and
+  ranges; `Hyperlink.Address`/`SubAddress`/`ScreenTip`/`TextToDisplay`/`Range`/`Delete`. A
+  link on several cells goes on the first (Kantor keeps links per cell); `Follow`: 445.
+- **Notes** (`comments.rs`): Excel's `Comment` is a Kantor note: `AddComment`, `Comment.Text`
+  (with `Start`/`Overwrite`), `Author`, `Visible`, `Delete`, `Next`/`Previous`, `Parent`,
+  `ClearComments`, `NoteText`, `Worksheet.Comments`. Threaded comments
+  (`AddCommentThreaded`, `CommentThreaded`): 445, the engine only carries them through a save.
+- **Validation** (`validation.rs`): `Add`, `Modify`, `Delete`, `Type`, `Operator`,
+  `AlertStyle`, `Formula1`/`Formula2`, `IgnoreBlank`, `InCellDropdown`, input and error titles
+  and messages, `ShowInput`/`ShowError`, `IMEMode`, `Value`. `Add` on a range that has a rule
+  raises 1004, as in Excel.
+- **Conditional formats** (`cond_formats.rs`): `FormatConditions.Add` (cell value, expression,
+  text, blanks, time period…), `AddColorScale`, `AddDatabar`, `AddIconSetCondition`, `AddTop10`,
+  `AddAboveAverage`, `AddUniqueValues`, `Delete`, `Count`, `Item`, `For Each`;
+  `FormatCondition`: `Interior`, `Font`, `Borders`, `NumberFormat`, `StopIfTrue`, `Priority`,
+  `SetFirstPriority`, `Formula1/2`, `ModifyAppliesToRange`, `Delete`; color scale criteria,
+  data bar points and colours, icon criteria. Error-value rules: 445.
+- **`Characters(Start, Length)`**: `Text`, `Count`, `Insert`, `Delete`; `Font` applies to the
+  whole cell when the characters cover all of it. Rich text runs inside a cell: 445 (the
+  engine keeps one font per cell).
+- **`PageSetup`** (`page_setup.rs`): orientation, paper size, `PrintArea`,
+  `PrintTitleRows`/`Columns`, `Zoom`/`FitToPagesWide`/`Tall`, margins, centring, gridlines,
+  headings, headers and footers (also `FirstPage`/`EvenPage`), `FirstPageNumber`, `Order`,
+  `BlackAndWhite`, `PrintComments`; `Draft`, `PrintQuality`, `PrintErrors` are accepted and
+  ignored. Manual page breaks: `HPageBreaks`/`VPageBreaks.Add`, `Location`, `Delete`.
+  `Application.InchesToPoints`/`CentimetersToPoints`.
+- **`ExportAsFixedFormat xlTypePDF`** on a sheet, the workbook (visible sheets) or a range,
+  through `sheets_pdf`, with `From`/`To`; without `Filename`, the workbook's name with `.pdf`
+  in its folder. XPS: 445. `PrintOut`/`PrintPreview` raise 445 on purpose: a macro shouldn't
+  print to a real printer unattended.
+- **Files a macro reads or writes** (`AddPicture`, `ExportAsFixedFormat`, `Chart.Export`) go
+  through `paths::checked`: inside the workbook's folder (or below it) they're allowed;
+  anything else goes through the same check as `Workbooks.Open` (see Paths): asked once in the
+  app (Yes/No), and headless only paths given with `--allow-path`. A workbook that was never
+  saved has no folder, so every path is checked.
 - **`ActiveWindow`**: `FreezePanes` (at the active cell), `SplitRow`/`SplitColumn`,
   `DisplayGridlines`, `Zoom`, `View` (page break preview); scrolling is accepted.
 - **Constants**: the `xl*` constants macros use (directions, paste and find options, sort and
   filter, alignment, borders, colours, calculation, sheet visibility, file formats, error
   codes), registered with `Project::register_constant` (`consts.rs`).
 
-Not covered: charts, shapes
-and pivot tables as objects, comments/notes, hyperlinks, conditional formats and validation from
-macros, printing; removing a single border edge with
-`xlNone` is ignored (the engine removes all of a range's borders or none) and diagonal borders
-aren't drawn; `AutoFit` measures characters, not glyphs; `RemoveDuplicates` moves values, not
-formats.
+Not covered: printing to a printer, sheet protection, threaded comments, rich text runs in
+cells, pattern fills other than solid; diagonal borders are kept but not drawn; `AutoFit`
+measures characters, not glyphs; `RemoveDuplicates` moves values, not formats.
 
 ### Running macros in Sheets
 

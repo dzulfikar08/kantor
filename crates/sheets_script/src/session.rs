@@ -198,6 +198,10 @@ impl Session {
         self.clip.set(None);
         *self.find.borrow_mut() = None;
         self.sorts.borrow_mut().clear();
+        // What the object model kept for the last run on this session.
+        crate::charts::end_run(self);
+        crate::pivots::end_run(self);
+        crate::tables::end_run(self);
         *self.code_names.borrow_mut() = fresh.code_names.take();
         self.save_requested.set(false);
         self.close_requested.set(None);
