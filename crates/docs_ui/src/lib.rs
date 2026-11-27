@@ -1473,8 +1473,7 @@ impl DocsView {
             .laid
             .caret(self.sel.head.para, self.sel.head.offset)
             .map_or(1, |c| c.page + 1);
-        let main = self.main_doc();
-        let total = (main.word_count(), main.char_count());
+        let total = self.counts();
         let (start, end) = self.sel.ordered();
         let selected = (start != end).then(|| self.doc.stats_in(start, end));
         let counts = count_text(total, selected);
@@ -2888,12 +2887,14 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
 impl Render for DocsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let _render = docs_layout::perf::span("docs render");
+        let start = docs_layout::perf::span("docs render: start");
         self.perf_bench_step(window);
         let t = tokens(cx);
         if self.reveal_caret.get() && self.viewport.get().size.height > px(0.) {
             self.reveal_caret.set(false);
             self.scroll_to_caret();
         }
+        drop(start);
         // Pictures, floating objects and comments come from the whole
         // document (a part being edited put back for a moment).
         let swapped = self.whole_in();
@@ -2916,8 +2917,10 @@ impl Render for DocsView {
         }
         let float_images = self.visible_float_images(&float_paint, window, cx);
         drop(floats_span);
+        let button_span = docs_layout::perf::span("docs render: layout button");
         let float_sel = self.float_sel_rect();
         let layout_button = self.render_layout_button(cx);
+        drop(button_span);
         let hf_images = {
             let _s = docs_layout::perf::span("docs render: header pictures");
             self.visible_hf_images(window, cx)
