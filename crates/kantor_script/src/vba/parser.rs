@@ -663,15 +663,17 @@ impl Parser {
     fn block(&mut self, terms: &[&[&str]]) -> R<Vec<Stmt>> {
         let mut out = Vec::new();
         loop {
-            self.skip_separators();
-            if self.at(&Tok::Eof) {
-                return Err(self.err(format!("Expected '{}'", title(terms[terms.len() - 1]))));
-            }
+            // `Next j, i` closed this loop too: stop before the line break so the enclosing
+            // For statement still ends at the end of that line.
             if self.pending_next > 0 {
                 if terms.iter().any(|t| *t == ["next"]) {
                     return Ok(out);
                 }
                 return Err(self.err("Next without For"));
+            }
+            self.skip_separators();
+            if self.at(&Tok::Eof) {
+                return Err(self.err(format!("Expected '{}'", title(terms[terms.len() - 1]))));
             }
             if self.at_terms(terms) {
                 return Ok(out);
