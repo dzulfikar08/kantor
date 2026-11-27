@@ -32,9 +32,9 @@ mark pagedown
 keys 15 Next 300
 settle
 mark enter
-key Return
+keys 5 Return 500
 settle
-key BackSpace
+keys 5 BackSpace 500
 settle
 mark save
 key ctrl+s
