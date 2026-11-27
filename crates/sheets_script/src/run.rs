@@ -66,8 +66,19 @@ impl MacroProject {
                 broken.push(self.error(e));
             }
         }
-        for (name, value) in crate::consts::ALL {
-            project.register_constant(name, Value::Long(*value as i32));
+        for (name, value) in crate::consts::ALL
+            .iter()
+            .chain(crate::charts::CHART_CONSTANTS)
+            .chain(crate::cond_formats::CONSTANTS)
+            .chain(crate::hyperlinks::CONSTANTS)
+            .chain(crate::page_setup::CONSTANTS)
+            .chain(crate::pivots::CONSTANTS)
+            .chain(crate::tables::CONSTANTS)
+            .chain(crate::validation::CONSTANTS.iter())
+            .copied()
+            .chain(crate::shapes::constants())
+        {
+            project.register_constant(name, Value::Long(value as i32));
         }
         (project, broken)
     }

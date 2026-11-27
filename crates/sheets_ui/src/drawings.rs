@@ -763,7 +763,7 @@ fn prepaint(
             continue;
         }
         placed.push(Placed {
-            on_action: grid.book.drawing_macro(d.key).is_some(),
+            on_action: grid.book.drawing_macro_now(d.key).is_some(),
             drawing: d.clone(),
             rect,
             shown,

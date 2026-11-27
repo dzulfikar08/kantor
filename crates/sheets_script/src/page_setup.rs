@@ -1018,3 +1018,46 @@ fn export(
         .map_err(|e| err1004(format!("Document not saved ({}: {e})", path.display())))?;
     Ok(Value::Empty)
 }
+
+/// The constants of this module by their VBA names (registered with the
+/// interpreter).
+pub const CONSTANTS: &[(&str, i64)] = &[
+    ("xlPaperLetter", 1),
+    ("xlPaperLetterSmall", 2),
+    ("xlPaperTabloid", 3),
+    ("xlPaperLedger", 4),
+    ("xlPaperLegal", 5),
+    ("xlPaperStatement", 6),
+    ("xlPaperExecutive", 7),
+    ("xlPaperA3", 8),
+    ("xlPaperA4", 9),
+    ("xlPaperA4Small", 10),
+    ("xlPaperA5", 11),
+    ("xlPaperB4", 12),
+    ("xlPaperB5", 13),
+    ("xlPaperFolio", 14),
+    ("xlPaperQuarto", 15),
+    ("xlPaper10x14", 16),
+    ("xlPaper11x17", 17),
+    ("xlPaperNote", 18),
+    ("xlPaperEnvelope10", 20),
+    ("xlPaperUser", 256),
+    ("xlDownThenOver", 1),
+    ("xlOverThenDown", 2),
+    ("xlPrintNoComments", -4142),
+    ("xlPrintSheetEnd", 1),
+    ("xlPrintInPlace", 16),
+    ("xlPrintErrorsDisplayed", 0),
+    ("xlPrintErrorsBlank", 1),
+    ("xlPrintErrorsDash", 2),
+    ("xlPrintErrorsNA", 3),
+    ("xlTypePDF", 0),
+    ("xlTypeXPS", 1),
+    ("xlQualityStandard", 0),
+    ("xlQualityMinimum", 1),
+    ("xlPageBreakAutomatic", -4105),
+    ("xlPageBreakManual", -4135),
+    ("xlPageBreakNone", -4142),
+    ("xlPageBreakFull", 1),
+    ("xlPageBreakPartial", 2),
+];

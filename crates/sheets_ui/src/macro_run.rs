@@ -561,7 +561,7 @@ impl SheetsView {
             .read(cx)
             .delegate()
             .book
-            .drawing_macro(key)
+            .drawing_macro_now(key)
             .and_then(|m| sheets_script::assigned_macro(&m));
         let Some(name) = assigned else {
             return;

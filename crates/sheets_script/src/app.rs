@@ -22,6 +22,8 @@ fn common(s: &Rc<Session>, lower: &str, args: &[Arg]) -> Option<Result<Value, Sc
         "range" => range_on(s, active, args),
         "cells" | "rows" | "columns" => SheetObj::new(s, active).get(lower, args),
         "activesheet" => Ok(obj(SheetObj::new(s, active))),
+        "activechart" => Ok(crate::charts::active_chart(s)),
+        "charts" => crate::charts::charts(s, args),
         "activecell" => {
             let (r, c) = s.selection(active).active;
             Ok(obj(RangeObj::new(
@@ -177,6 +179,11 @@ impl Dispatch for Application {
         let lower = name.to_ascii_lowercase();
         if let Some(r) = common(&self.s, &lower, args) {
             return r;
+        }
+        match lower.as_str() {
+            "inchestopoints" => return crate::page_setup::inches_to_points(args),
+            "centimeterstopoints" => return crate::page_setup::centimeters_to_points(args),
+            _ => {}
         }
         let st = self.s.settings.borrow();
         Ok(match lower.as_str() {
@@ -466,10 +473,16 @@ impl Dispatch for WorkbookObj {
             "close" => Err(ScriptError::unsupported(
                 "Closing the workbook from a macro",
             )),
-            "refreshall" => Err(ScriptError::unsupported("RefreshAll from a macro")),
-            "printout" | "exportasfixedformat" => Err(ScriptError::unsupported(
-                "Printing or exporting from a macro",
-            )),
+            "refreshall" => {
+                crate::pivots::refresh_all(&self.s)?;
+                Ok(Value::Empty)
+            }
+            "pivotcaches" if args.is_empty() => Ok(crate::pivots::pivot_caches(&self.s)),
+            "pivotcaches" => crate::pivots::pivot_caches_with(&self.s, args),
+            "charts" => crate::charts::charts(&self.s, args),
+            "iconsets" => crate::cond_formats::icon_sets(args),
+            "exportasfixedformat" => crate::page_setup::export_pdf_book(&self.s, args),
+            "printout" | "printpreview" => crate::page_setup::print_out(),
             "windows" => Ok(obj(Rc::new(WindowObj { s: self.s.clone() }))),
             _ => Err(ScriptError::no_member("Workbook", name)),
         }

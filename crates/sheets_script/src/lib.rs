@@ -24,14 +24,26 @@
 
 pub mod addr;
 pub mod app;
+pub mod characters;
+pub mod charts;
+pub mod comments;
+pub mod cond_formats;
 pub mod consts;
+pub mod fit;
 pub mod format;
+pub mod hyperlinks;
+pub mod page_setup;
 pub mod paths;
+pub mod pivots;
+pub mod protection;
 pub mod range;
 pub mod run;
 pub mod session;
+pub mod shapes;
 pub mod sheet;
+pub mod tables;
 pub mod udf;
+pub mod validation;
 pub mod values;
 
 pub use run::{
