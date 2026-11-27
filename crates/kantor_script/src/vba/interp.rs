@@ -10,7 +10,7 @@ use super::ast::*;
 use super::builtins;
 use super::compile::*;
 use super::convert::{self, Arith, Scalar};
-use super::forms::{FormRt, form_of_instance, form_of_object};
+use super::forms::{form_of_instance, form_of_object};
 use super::objects::*;
 use crate::object::*;
 
@@ -1030,10 +1030,7 @@ impl Interp<'_> {
                     "Calling the DLL function {} (\"{}\")",
                     id.text, lib
                 ))),
-                Binding::FormMember(o) => {
-                    let a = self.eval_args_in(args, f)?;
-                    self.instance_member(&o, &id.key, a, access)
-                }
+                Binding::FormMember(o) => self.form_member_call(&o, id, args, f, access),
                 Binding::Module(_) | Binding::Enum => Err(ScriptError::syntax(format!(
                     "Expected procedure, not '{}'",
                     id.text
@@ -2351,28 +2348,48 @@ impl Interp<'_> {
                 kind: ErrorKind::Halt,
                 ..ScriptError::new(0, "End")
             }),
-            StmtKind::Load(e) => {
-                let v = self.eval(e, f)?;
-                self.exec_load(v)
-            }
-            StmtKind::Unload(e) => {
-                // `Unload UserForm1` when its default instance isn't loaded does nothing.
-                if let Expr::Name(id) = e
-                    && let Binding::Module(m) = self.lookup(id, f)?
-                    && m.kind == ModuleKind::Form
-                {
-                    let Some(o) = self.st.default_forms.get(&m.idx).cloned() else {
-                        return Ok(());
-                    };
-                    return self.exec_unload(Value::object(o));
-                }
-                let v = self.eval(e, f)?;
-                self.exec_unload(v)
-            }
+            StmtKind::Load(e) => self.load_stmt(e, f, true),
+            StmtKind::Unload(e) => self.load_stmt(e, f, false),
             StmtKind::Unsupported(feature) => Err(ScriptError::unsupported(feature)),
             StmtKind::Invalid(msg) => Err(ScriptError::syntax(msg.clone())),
             _ => Ok(()),
         }
+    }
+
+    // Kept out of the statement loop and `eval_call`: they are on the stack of every nested
+    // call, and a bigger frame there means less recursion before the stack runs out.
+
+    #[inline(never)]
+    fn load_stmt(&mut self, e: &Expr, f: &mut Frame, load: bool) -> R<()> {
+        if load {
+            let v = self.eval(e, f)?;
+            return self.exec_load(v);
+        }
+        // `Unload UserForm1` when its default instance isn't loaded does nothing.
+        if let Expr::Name(id) = e
+            && let Binding::Module(m) = self.lookup(id, f)?
+            && m.kind == ModuleKind::Form
+        {
+            let Some(o) = self.st.default_forms.get(&m.idx).cloned() else {
+                return Ok(());
+            };
+            return self.exec_unload(Value::object(o));
+        }
+        let v = self.eval(e, f)?;
+        self.exec_unload(v)
+    }
+
+    #[inline(never)]
+    fn form_member_call(
+        &mut self,
+        o: &ObjectRef,
+        id: &Ident,
+        args: &[ArgExpr],
+        f: &mut Frame,
+        access: Access,
+    ) -> R<Value> {
+        let a = self.eval_args_in(args, f)?;
+        self.instance_member(o, &id.key, a, access)
     }
 
     fn redim(&mut self, item: &ReDimItem, preserve: bool, f: &mut Frame) -> R<()> {

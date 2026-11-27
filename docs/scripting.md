@@ -68,6 +68,118 @@ map onto it one to one. Nothing in it is VBA-specific.
   `Scripting.Dictionary` as built-in objects, and class modules with `Class_Initialize`,
   `Class_Terminate`, `Property Get/Let/Set`, a default member (`VB_UserMemId = 0`) and an
   enumerator (`VB_UserMemId = -4`).
+- **UserForms** (below).
+
+## UserForms
+
+### The designer (`kantor_vba::forms`)
+
+A form module's designer lives next to the `VBA` storage in `vbaProject.bin`, in a storage
+named after the form ([MS-OFORMS]): `f` is the form (a FormControl: caption, client size,
+colours, font) followed by one *site* per control (name, ID, position, tab index, flags such as
+visible / Default / Cancel, ControlSource, RowSource, and the control's type as a
+ClsidCacheIndex); `o` holds the controls' own data one after another (each as long as its site
+says); `\x03VBFrame` is the designer's text header (client size in twips, StartUpPosition); a
+Frame, a MultiPage and each of its Pages have a storage `i<ID>` with their own `f` and `o`
+(a MultiPage's `o` is the TabStrip with the page captions).
+
+Every structure is a version, a size, a property mask and the stored properties in mask order:
+those of four bytes or less first (each aligned to its size), then sizes, positions and
+strings, then pictures and fonts. `forms::read_props` reads any of them from a table of
+(bit, name, kind); `write_props` writes them (`synth::Builder::form` writes whole designers for
+tests). A property that doesn't decode keeps its default and a control that doesn't decode
+keeps its site, so a damaged form still opens. `VbaProject::form(name)` returns a
+`FormDesign`: caption, size in points (HIMETRIC × 72 / 2540), colours as OLE_COLORs
+(`ole_rgb` resolves system colours), font, StartUpPosition, and a flat list of controls
+(parents before children, `parent` pointing at the Frame / MultiPage / Page) with: kind
+(Label, TextBox, CommandButton, CheckBox, OptionButton, ToggleButton, ComboBox, ListBox,
+Frame, MultiPage, Page, Image, SpinButton, ScrollBar, TabStrip; other ActiveX controls as
+`Other`), name, position and size, caption, value, tab index / tab stop, visible, enabled,
+locked, Default / Cancel, accelerator, font, fore / back / border colours, back style, border
+style, special effect, MaxLength, MultiLine, WordWrap, AutoSize, PasswordChar, text alignment,
+ColumnCount / BoundColumn / TextColumn / ColumnHeads, ListStyle, MultiSelect, Style (drop-down
+list), RowSource, ControlSource, GroupName, Min / Max / value / SmallChange / LargeChange /
+Orientation, the Image's picture (bytes as stored; a bare DIB gets a BMP header) and size mode,
+tab captions, tag and tip text. Not read: column widths (`rgColumnInfo`), mouse icons, the
+design-time extender, ActiveX controls outside the cache (only their sites). Fixtures: two
+Excel-made forms from MIT-licensed public repositories (`crates/kantor_vba/tests/fixtures`).
+
+[MS-OFORMS]: https://learn.microsoft.com/en-us/openspecs/office_file_formats/ms-oforms/
+
+### Running forms (`kantor_script::vba::forms`)
+
+A form module compiles like a class module whose instances are forms. `Project::add_form`
+gives it its design. `UserForm1` used as an object is the form's default instance (created and
+initialised on first use: module variables, lists from RowSource, values from ControlSource,
+then `UserForm_Initialize`); `Dim f As New UserForm1` / `Set f = New UserForm1` make others.
+`Load`, `Unload` (QueryClose with CloseMode 1, which can cancel, then Terminate; the default
+instance is forgotten, so the next use loads a fresh one), `Show` (modal by default),
+`Show vbModeless` (the macro goes on; the form's loop runs once the macro has finished),
+`Hide`, `Me`. Inside the form's module its controls and properties are in scope (`TextBox1`,
+`Caption`, `Hide`), after the module's own names and before other modules' (VBA functions win
+over form properties of the same name: `Left(s, 1)` is the function, `Me.Left` the form's).
+
+Controls are objects (`TypeName` gives `TextBox`…) with `Value` (default member; a Label's or
+Frame's default is `Caption`), `Text`, `Caption`, `Enabled`, `Visible`, `Locked`, `Left` / `Top`
+/ `Width` / `Height` (points), `Tag`, `ControlTipText`, `TabIndex`, `TabStop`, colours,
+`Font` (Name, Size, Bold, Italic, Underline, Strikethrough), `ControlSource`, `RowSource`
+(filled from the sheet through the host's `Range`; `Sheet!Name` falls back to the workbook
+name), `GroupName`, `MaxLength`, `MultiLine`, `PasswordChar`, `Default`, `Cancel`,
+`Accelerator`; lists: `AddItem item[, index]`, `RemoveItem`, `Clear` (error 70 with a
+RowSource, as in Excel), `List` (the whole 2-D array, or `List(row[, col])`, read and
+written), `Column`, `ListCount`, `ListIndex`, `Selected(i)`, `MultiSelect`, `ColumnCount`,
+`BoundColumn`, `TextColumn`, `Style`; `Min` / `Max` / `SmallChange` / `LargeChange`; a
+MultiPage's `Value`, `Pages(i)`, `SelectedItem`; containers' `Controls`; methods `SetFocus`
+(runs Exit / Enter), `Move`, `ZOrder`. The form has `Controls` (`Me.Controls("Name")`,
+`.Count`, `For Each`; also the form's default member), `Caption`, `Width` / `Height` /
+`InsideWidth` / `InsideHeight`, `Left` / `Top`, `BackColor`, `ForeColor`, `Enabled`, `Tag`,
+`Font`, `ActiveControl`, `StartUpPosition`; `Repaint`, `PrintForm` and the like do nothing.
+
+Changing a value (from the user or from code) queues the events it causes, which run right
+after the statement, as in VBA: `Change` for every value change, `Click` too for CheckBoxes,
+OptionButtons, ToggleButtons and list picks; picking an OptionButton clears the others of its
+group (GroupName, or same parent); a value with a ControlSource is written to its cell. Moving
+the focus runs `BeforeUpdate(Cancel)` / `AfterUpdate` for a changed control, then
+`Exit(Cancel)` and `Enter`; clicking a CommandButton moves the focus to it first. Form events:
+`UserForm_Initialize`, `Activate`, `Click`, `QueryClose(Cancel, CloseMode)`, `Terminate`;
+control events: `Click`, `DblClick(Cancel)`, `Change`, `BeforeUpdate`, `AfterUpdate`, `Enter`,
+`Exit`, `KeyPress(KeyAscii)` (`KeyAscii = 0` drops the key) and `KeyDown(KeyCode, Shift)`.
+`Cancel`, `KeyAscii` and `KeyCode` are `MSForms.ReturnBoolean` / `ReturnInteger` objects:
+`Cancel = True` assigns their default member (Let to an object variable).
+
+`Show` runs the form loop: the host gets a `forms::FormView` (the design as the code changed
+it, each control's state, the focus, which controls the code watches live) through
+`Host::form_event` and returns a `forms::FormInput` (edits: typed text, a ticked box, a picked
+row, a number; and an action: a click, a focus change, Enter / Esc for the Default / Cancel
+button, a key press, the close box). The loop runs the handlers and asks again until the form
+is hidden or unloaded, then calls `Host::form_closed`. Handlers run in the same project as the
+macro, so module variables are shared. An error in a handler ends the run (the form closes).
+`forms::scripted_input` turns "set these controls by name, click that one" into an input: the
+tests and `--form-answers` use it.
+
+### Forms in Sheets
+
+`sheets_script` passes the designs on (`MacroProject::forms`) and `MacroUi::form_event` is lent
+the workbook while a form shows, as for `MsgBox`. In `sheets_ui` (`macro_form.rs`) the form is
+a modal card over the grid drawn from its design: positions and sizes from the file (points ×
+4/3), the form's and controls' colours, captions and font sizes and styles, Kantor's look
+otherwise (the system font). TextBoxes and editable ComboBoxes are Kantor inputs kept between
+steps; typed text goes with the next action unless the code handles that control's `Change` or
+`KeyPress` (then each change goes at once). A MsgBox shown by a handler appears over the form.
+The Macros dialog shows a form module's layout read-only under its code.
+
+Headless (`kantor sheets macros run`), a form fails the run with error 445 naming it, unless
+`--form-answers FILE.json` gives its steps:
+`{"UserForm1": [{"set": {"txtName": "Ann", "chkVip": true, "lstCity": "Rome"}, "click": "cmdOK"}]}`
+(a list takes a row number or a row's text; `"click": "close"` is the close box; each step is
+one round of the form's loop).
+
+Not done: modeless forms don't let the user edit the grid while they show (their loop runs
+after the macro, holding the workbook as a modal form does); multi-line TextBoxes are drawn
+single-line; no Tab-order navigation of its own (the inputs' focus order), no KeyDown from the
+UI, no dragging ScrollBar thumbs, no column widths in lists, no mouse icons or `MouseMove` /
+`MouseDown` events, no controls added at run time (`Controls.Add`), WMF/EMF pictures in Image
+controls aren't drawn.
 
 ## The Sheets object model (`crates/sheets_script`)
 
@@ -168,7 +280,7 @@ the same way.
   filter, alignment, borders, colours, calculation, sheet visibility, file formats, error
   codes), registered with `Project::register_constant` (`consts.rs`).
 
-Not covered: events (`Workbook_Open`, `Worksheet_Change` don't fire), UserForms, charts, shapes
+Not covered: events (`Workbook_Open`, `Worksheet_Change` don't fire), charts, shapes
 and pivot tables as objects, comments/notes, hyperlinks, conditional formats and validation from
 macros, `Application.Run`, other workbooks, printing; removing a single border edge with
 `xlNone` is ignored (the engine removes all of a range's borders or none) and diagonal borders
@@ -209,9 +321,10 @@ formats; module-level variables start fresh on each run (the project is compiled
 
 ### Headless: `kantor sheets macros run`
 
-`kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]...` runs a macro and
-saves the workbook (in place unless `--out`). `MsgBox` prints to standard error and answers OK
-(or Yes); `InputBox` takes the `--input` values in order and fails clearly when none is left;
+`kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]... [--form-answers
+F.json]` runs a macro and saves the workbook (in place unless `--out`). `MsgBox` prints to
+standard error and answers OK (or Yes); `InputBox` takes the `--input` values in order and fails
+clearly when none is left; a UserForm takes its steps from `--form-answers` (see UserForms);
 `Debug.Print` goes to standard error. Running the file's macros trusts it, so its VBA functions
 work in its formulas too. On a run-time error nothing is saved (exit status 1).
 
@@ -286,7 +399,7 @@ Sources: [rquickjs on docs.rs](https://docs.rs/crate/rquickjs/latest),
 - `ByRef` on an object's property passes a copy (as VBA does for properties); `ByRef` to a
   `ParamArray` element doesn't write back.
 - Not implemented: `Implements` dispatch through interfaces, `Event`/`RaiseEvent`/`WithEvents`,
-  UserForms, `Decimal` (mapped to Double), `LSet` between user-defined types, `On … GoTo`
+  `Decimal` (mapped to Double), `LSet` between user-defined types, `On … GoTo`
   lists, file I/O, `Declare`d DLL calls, `Shell`, `SendKeys`, registry settings. Each raises
   an error naming the feature.
 - `Format` covers the common number, date and text patterns and the named formats, en-US only.

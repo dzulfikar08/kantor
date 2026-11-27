@@ -1345,3 +1345,5 @@ Enable Content	Aktifkan Konten
 Run starts the selected macro. One Undo takes back everything it changed.	Jalankan memulai makro yang dipilih. Satu kali Urungkan membatalkan semua perubahannya.
 Macros are disabled. Enable Content on the bar to run them. Paparan AI can explain a macro or turn it into formulas.	Makro dinonaktifkan. Pilih Aktifkan Konten pada bilah untuk menjalankannya. Paparan AI dapat menjelaskan makro atau mengubahnya menjadi rumus.
 Output (Debug.Print)	Keluaran (Debug.Print)
+{} controls, {} × {} pt	{} kontrol, {} × {} pt
+The form's layout can't be shown:	Tata letak formulir tidak dapat ditampilkan:
