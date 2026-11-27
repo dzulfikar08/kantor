@@ -665,7 +665,7 @@ impl Parser {
         loop {
             self.skip_separators();
             if self.at(&Tok::Eof) {
-                return Err(self.err(format!("Expected '{}'", title(terms[0]))));
+                return Err(self.err(format!("Expected '{}'", title(terms[terms.len() - 1]))));
             }
             if self.pending_next > 0 {
                 if terms.iter().any(|t| *t == ["next"]) {
@@ -680,7 +680,7 @@ impl Parser {
                 if self.is_words(&["end", end]) {
                     return Err(self.err(format!(
                         "Expected '{}' before 'End {}'",
-                        title(terms[0]),
+                        title(terms[terms.len() - 1]),
                         title(&[end])
                     )));
                 }

@@ -172,12 +172,12 @@ fn unhandled_errors_carry_module_procedure_and_line() {
     let err = p.run("Outer", &[], &mut MockHost::new()).unwrap_err();
     assert_eq!(err.number, 6);
     assert_eq!(err.kind, ErrorKind::Runtime);
+    assert!(err.to_string().contains("Overflow"), "{err}");
     let loc = err.location.expect("location");
     assert_eq!(
         (loc.module.as_str(), loc.procedure.as_str(), loc.line),
         ("Module1", "Inner", 6)
     );
-    assert!(err.to_string().contains("Overflow"), "{err}");
 }
 
 #[test]

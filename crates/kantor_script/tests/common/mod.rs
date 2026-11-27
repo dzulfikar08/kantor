@@ -50,7 +50,7 @@ pub struct RangeObj {
 }
 
 impl RangeObj {
-    pub fn new(grid: &Grid, r1: i32, c1: i32, r2: i32, c2: i32) -> Rc<RangeObj> {
+    pub fn at(grid: &Grid, r1: i32, c1: i32, r2: i32, c2: i32) -> Rc<RangeObj> {
         Rc::new(RangeObj {
             grid: grid.clone(),
             r1,
@@ -66,11 +66,11 @@ impl RangeObj {
             Some((a, b)) => {
                 let (r1, c1) = parse_ref(a).ok_or_else(bad)?;
                 let (r2, c2) = parse_ref(b).ok_or_else(bad)?;
-                Ok(RangeObj::new(grid, r1, c1, r2, c2))
+                Ok(RangeObj::at(grid, r1, c1, r2, c2))
             }
             None => {
                 let (r, c) = parse_ref(text).ok_or_else(bad)?;
-                Ok(RangeObj::new(grid, r, c, r, c))
+                Ok(RangeObj::at(grid, r, c, r, c))
             }
         }
     }
@@ -121,7 +121,7 @@ impl Dispatch for RangeObj {
                 let r = int(find_arg(args, 0, "RowIndex").unwrap_or(&Value::Long(1)))?;
                 let c = int(find_arg(args, 1, "ColumnIndex").unwrap_or(&Value::Long(1)))?;
                 let (r, c) = (self.r1 + r - 1, self.c1 + c - 1);
-                obj(RangeObj::new(&self.grid, r, c, r, c))
+                obj(RangeObj::at(&self.grid, r, c, r, c))
             }
             "" | "value" | "value2" => Ok(self.value()),
             "text" => Ok(Value::String(kantor_script::vba::convert::display(
@@ -137,13 +137,11 @@ impl Dispatch for RangeObj {
                 col_letters(self.c1),
                 self.r1
             ))),
-            "cells" => obj(RangeObj::new(
-                &self.grid, self.r1, self.c1, self.r2, self.c2,
-            )),
+            "cells" => obj(RangeObj::at(&self.grid, self.r1, self.c1, self.r2, self.c2)),
             "offset" => {
                 let dr = find_arg(args, 0, "RowOffset").map_or(Ok(0), int)?;
                 let dc = find_arg(args, 1, "ColumnOffset").map_or(Ok(0), int)?;
-                obj(RangeObj::new(
+                obj(RangeObj::at(
                     &self.grid,
                     self.r1 + dr,
                     self.c1 + dc,
@@ -155,7 +153,7 @@ impl Dispatch for RangeObj {
                 let rows = find_arg(args, 0, "RowSize").map_or(Ok(self.r2 - self.r1 + 1), int)?;
                 let cols =
                     find_arg(args, 1, "ColumnSize").map_or(Ok(self.c2 - self.c1 + 1), int)?;
-                obj(RangeObj::new(
+                obj(RangeObj::at(
                     &self.grid,
                     self.r1,
                     self.c1,
@@ -223,7 +221,7 @@ impl Dispatch for RangeObj {
         for r in self.r1..=self.r2 {
             for c in self.c1..=self.c2 {
                 out.push(Value::object(
-                    RangeObj::new(&self.grid, r, c, r, c) as ObjectRef
+                    RangeObj::at(&self.grid, r, c, r, c) as ObjectRef
                 ));
             }
         }
@@ -303,7 +301,7 @@ fn sheet_member(grid: &Grid, name: &str, args: &[Arg]) -> Result<Value, ScriptEr
         _ => {
             if args.is_empty() {
                 return Ok(Value::object(
-                    RangeObj::new(grid, 1, 1, 1_048_576, 16_384) as ObjectRef
+                    RangeObj::at(grid, 1, 1, 1_048_576, 16_384) as ObjectRef
                 ));
             }
             let r = int(find_arg(args, 0, "RowIndex").ok_or_else(|| ScriptError::runtime(449))?)?;
@@ -312,7 +310,7 @@ fn sheet_member(grid: &Grid, name: &str, args: &[Arg]) -> Result<Value, ScriptEr
                 Some(v) => int(v)?,
                 None => 1,
             };
-            Ok(Value::object(RangeObj::new(grid, r, c, r, c) as ObjectRef))
+            Ok(Value::object(RangeObj::at(grid, r, c, r, c) as ObjectRef))
         }
     }
 }
@@ -377,6 +375,12 @@ pub struct MockHost {
     pub inputs: VecDeque<Option<String>>,
     pub cancel: CancelToken,
     pub now: f64,
+}
+
+impl Default for MockHost {
+    fn default() -> MockHost {
+        MockHost::new()
+    }
 }
 
 impl MockHost {

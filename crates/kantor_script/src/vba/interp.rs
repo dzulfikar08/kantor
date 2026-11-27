@@ -44,7 +44,7 @@ impl State {
             print_line: String::new(),
             steps: 0,
             max_steps: None,
-            max_depth: 200,
+            max_depth: 100,
             constants: HashMap::new(),
         }
     }
