@@ -5094,7 +5094,7 @@ dependencies = [
 
 [[package]]
 name = "notes_engine"
-version = "0.26.2"
+version = "0.27.0"
 dependencies = [
  "pulldown-cmark",
  "unicode-segmentation",
@@ -5102,7 +5102,7 @@ dependencies = [
 
 [[package]]
 name = "notes_ui"
-version = "0.26.2"
+version = "0.27.0"
 dependencies = [
  "anyhow",
  "gpui-kit",
