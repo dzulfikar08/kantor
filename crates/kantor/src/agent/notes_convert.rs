@@ -467,9 +467,24 @@ pub fn slides_json(text: &str, fallback_title: &str) -> Value {
             LineKind::Rule => finish(&mut current, &mut slides),
             LineKind::Paragraph => {
                 let t = plain(&runs(&buf, &parsed, l..l + 1));
-                if t.trim().is_empty() {
+                // Pictures aren't placed on slides (yet): their alt text
+                // isn't a bullet either.
+                let only_picture = info.spans.iter().any(|s| {
+                    matches!(s.kind, SpanKind::Image(_))
+                        && info
+                            .visible
+                            .iter()
+                            .all(|v| v.start >= s.range.start && v.end <= s.range.end)
+                });
+                if t.trim().is_empty() || only_picture {
                     continue;
                 }
+                // A line continuing the paragraph above (no blank line
+                // between) joins its bullet.
+                let continues = l > 0
+                    && info.marker == ListMarker::None
+                    && parsed.lines[l - 1].kind == LineKind::Paragraph
+                    && parsed.lines[l - 1].quote == info.quote;
                 let t = match &info.marker {
                     ListMarker::Task { checked: true, .. } => format!("☑ {t}"),
                     ListMarker::Task { .. } => format!("☐ {t}"),
@@ -486,9 +501,17 @@ pub fn slides_json(text: &str, fallback_title: &str) -> Value {
                     slides[0]["subtitle"] = t.into();
                     continue;
                 }
+                if current.is_none()
+                    && continues
+                    && let Some(Value::String(st)) =
+                        slides.first_mut().and_then(|c| c.get_mut("subtitle"))
+                {
+                    st.push(' ');
+                    st.push_str(&t);
+                    continue;
+                }
                 let cur = current.get_or_insert_with(|| (String::new(), Vec::new()));
-                if info.marker == ListMarker::None
-                    && info.list_depth > 0
+                if continues
                     && let Some(Value::Object(last)) = cur.1.last_mut()
                     && let Some(Value::String(s)) = last.get_mut("text")
                 {
@@ -591,6 +614,8 @@ mod tests {
         assert_eq!(b[0]["text"], "one");
         assert_eq!(b[1]["level"], 1);
         assert_eq!(b[2]["text"], "☑ two");
+        let j = slides_json("# T\n\n## S\n\n> one\n> two\n\n![pic](p.png)\n", "x");
+        assert_eq!(j["slides"][1]["bullets"], json!([{"text": "one two"}]));
     }
 
     #[test]
