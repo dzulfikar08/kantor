@@ -588,8 +588,12 @@ pub struct DocsView {
     /// [`DocsView::first_layout`]); meanwhile only its start is laid out.
     bg_layout: Option<Task<()>>,
     /// The main document's words and characters (see [`DocsView::counts`]).
-    counts: Cell<Option<((u64, usize, usize), usize, usize)>>,
+    counts: Cell<Option<Counts>>,
 }
+
+/// A document's words and characters, and the revision, paragraph storage
+/// and length they were counted at.
+type Counts = ((u64, usize, usize), usize, usize);
 
 /// Documents with at least this many paragraphs are laid out in the
 /// background on opening, their first pages shown at once.
