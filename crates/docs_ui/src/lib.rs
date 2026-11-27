@@ -589,13 +589,15 @@ pub struct DocsView {
     bg_layout: Option<Task<()>>,
     /// A save being written in the background (see [`DocsView::save_with`]).
     saving: Option<Task<()>>,
+    /// The document (instance, revision) `laid`'s paragraph texts are of.
+    texts_at: Option<(u64, u64)>,
     /// The main document's words and characters (see [`DocsView::counts`]).
     counts: Cell<Option<Counts>>,
 }
 
-/// A document's words and characters, and the revision, paragraph storage
-/// and length they were counted at.
-type Counts = ((u64, usize, usize), usize, usize);
+/// A document's words and characters, and the revision, instance and
+/// length they were counted at.
+type Counts = ((u64, u64, usize), usize, usize);
 
 /// Documents with at least this many paragraphs are laid out in the
 /// background on opening, their first pages shown at once.
@@ -699,6 +701,7 @@ impl DocsView {
             review_memo: RefCell::default(),
             bg_layout: None,
             saving: None,
+            texts_at: None,
             counts: Cell::default(),
         };
         this.first_layout(cx);
@@ -763,6 +766,7 @@ impl DocsView {
                     .iter()
                     .map(|p| p.text.clone())
                     .collect();
+                self.texts_at = Some((self.doc.instance(), self.doc.revision()));
                 self.set_laid(laid, texts);
             }
             None => self.relayout(),
@@ -826,9 +830,23 @@ impl DocsView {
                 } else {
                     self.cache.relayout(&self.doc, &mut engine, prev)
                 };
-                match self.cache.outcome {
-                    docs_pdf::cache::Outcome::Quick { para } if texts.len() == self.doc.len() => {
-                        texts[para] = self.doc.paragraph(para).text.clone();
+                // The texts were of the document as last laid out: one edit
+                // since changes only the paragraphs it made.
+                let doc = &self.doc;
+                let edit = doc.last_splice().filter(|sp| {
+                    self.texts_at == Some((doc.instance(), sp.revision.wrapping_sub(1)))
+                        && texts.len() + sp.inserted == doc.len() + sp.removed
+                        && sp.start + sp.removed <= texts.len()
+                });
+                match (self.cache.outcome, edit) {
+                    (docs_pdf::cache::Outcome::Quick { para }, _) if texts.len() == doc.len() => {
+                        texts[para] = doc.paragraph(para).text.clone();
+                    }
+                    (_, Some(sp)) => {
+                        let new = doc.paragraphs()[sp.start..sp.start + sp.inserted]
+                            .iter()
+                            .map(|p| p.text.clone());
+                        texts.splice(sp.start..sp.start + sp.removed, new);
                     }
                     _ => {
                         let _t = docs_layout::perf::span("docs relayout texts");
@@ -840,9 +858,13 @@ impl DocsView {
                             .collect();
                     }
                 }
+                self.texts_at = Some((self.doc.instance(), self.doc.revision()));
                 (laid, texts)
             }
         };
+        if self.part.is_some() {
+            self.texts_at = None;
+        }
         drop(engine);
         self.set_laid(laid, texts);
     }
@@ -1484,28 +1506,27 @@ impl DocsView {
     /// the inspector asks on every frame).
     fn counts(&self) -> (usize, usize) {
         let main = self.main_doc();
-        let key = (
-            main.revision(),
-            main.paragraphs().as_ptr() as usize,
-            main.len(),
-        );
+        let key = (main.revision(), main.instance(), main.len());
         let last = self.counts.get();
         if let Some((k, w, c)) = last
             && k == key
         {
             return (w, c);
         }
-        // One paragraph changed since: count it again.
+        // One edit since: count what it replaced and what it made.
         let one = main
             .last_splice()
-            .filter(|sp| sp.removed == 1 && sp.inserted == 1 && sp.old.len() == 1);
+            .filter(|sp| sp.old.len() == sp.removed && sp.start + sp.inserted <= main.len());
         let counted = match (last, one) {
-            (Some((k, w, c)), Some(sp)) if k.0 + 1 == key.0 && (k.1, k.2) == (key.1, key.2) => {
-                let (old, new) = (&sp.old[0], main.paragraph(sp.start));
-                (
-                    (w + new.word_count()).saturating_sub(old.word_count()),
-                    (c + new.char_count()).saturating_sub(old.char_count()),
-                )
+            (Some((k, w, c)), Some(sp)) if k.0 + 1 == key.0 && k.1 == key.1 => {
+                let new = &main.paragraphs()[sp.start..sp.start + sp.inserted];
+                let sum = |ps: &[docs_engine::Paragraph]| {
+                    ps.iter()
+                        .fold((0, 0), |(w, c), p| (w + p.word_count(), c + p.char_count()))
+                };
+                let (ow, oc) = sum(&sp.old);
+                let (nw, nc) = sum(new);
+                ((w + nw).saturating_sub(ow), (c + nc).saturating_sub(oc))
             }
             _ => (main.word_count(), main.char_count()),
         };

@@ -27,9 +27,9 @@ use crate::DocsView;
 /// every frame asks for them, and a reviewed long document has thousands.
 #[derive(Default)]
 pub(crate) struct ReviewMemo {
-    /// Revision, paragraph storage, paragraphs and comments of the
+    /// Revision, document (instance), paragraphs and comments of the
     /// document they're from.
-    key: Option<(u64, usize, usize, usize)>,
+    key: Option<(u64, u64, usize, usize)>,
     changes: Option<std::rc::Rc<Vec<docs_engine::Change>>>,
     anchors: Option<std::rc::Rc<Vec<(String, docs_engine::Anchor)>>>,
     /// Some change shows as a balloon (formatting, field code edits).
@@ -182,41 +182,69 @@ impl DocsView {
             return None;
         }
         let d = &self.doc;
-        let key = (
-            d.revision(),
-            d.paragraphs().as_ptr() as usize,
-            d.len(),
-            d.comments().len(),
-        );
+        let key = (d.revision(), d.instance(), d.len(), d.comments().len());
         let mut m = self.review_memo.borrow_mut();
         if m.key != Some(key) {
-            // Typing in a paragraph with no changes or comments (out of
-            // tables) leaves them all where they were.
-            let typed = m
+            // An edit of paragraphs with no changes or comments (out of
+            // tables: typing, Enter, joining) leaves them all as they were,
+            // those after it moved along.
+            let plain = |p: &docs_engine::Paragraph| p.cell.is_none() && !p.has_review_marks();
+            let edit = m
                 .key
-                .is_some_and(|k| k.0 + 1 == key.0 && (k.1, k.2, k.3) == (key.1, key.2, key.3))
-                && d.last_splice().is_some_and(|sp| {
-                    sp.removed == 1
-                        && sp.inserted == 1
-                        && sp.old.len() == 1
-                        && !sp.side
-                        && sp.start < d.len()
-                        && {
-                            let (old, new) = (&sp.old[0], d.paragraph(sp.start));
-                            old.props == new.props
-                                && old.cell.is_none()
-                                && new.cell.is_none()
-                                && !old.has_review_marks()
-                                && !new.has_review_marks()
-                        }
+                .filter(|k| k.0 + 1 == key.0 && (k.1, k.3) == (key.1, key.3))
+                .and(d.last_splice())
+                .filter(|sp| {
+                    !sp.side
+                        && sp.old.len() == sp.removed
+                        && sp.start + sp.inserted <= d.len()
+                        && sp.old.iter().all(plain)
+                        && d.paragraphs()[sp.start..sp.start + sp.inserted]
+                            .iter()
+                            .all(plain)
                 });
-            if typed {
-                m.key = Some(key);
-            } else {
-                *m = ReviewMemo {
-                    key: Some(key),
-                    ..ReviewMemo::default()
+            let clear = |list: Option<&std::rc::Rc<Vec<docs_engine::Change>>>,
+                         anchors: Option<&std::rc::Rc<Vec<(String, docs_engine::Anchor)>>>,
+                         sp: &docs_engine::Splice| {
+                let end = sp.start + sp.removed;
+                let away = |a: docs_engine::Position, b: docs_engine::Position| {
+                    b.para < sp.start || a.para >= end
                 };
+                list.is_none_or(|l| l.iter().all(|c| away(c.start, c.end)))
+                    && anchors.is_none_or(|l| l.iter().all(|(_, a)| away(a.start, a.end)))
+            };
+            match edit {
+                Some(sp) if clear(m.changes.as_ref(), m.anchors.as_ref(), sp) => {
+                    let (end, d) = (
+                        sp.start + sp.removed,
+                        sp.inserted as isize - sp.removed as isize,
+                    );
+                    let moved = |p: &mut docs_engine::Position| {
+                        if p.para >= end {
+                            p.para = (p.para as isize + d) as usize;
+                        }
+                    };
+                    if d != 0 {
+                        if let Some(l) = m.changes.as_mut() {
+                            for c in std::rc::Rc::make_mut(l) {
+                                moved(&mut c.start);
+                                moved(&mut c.end);
+                            }
+                        }
+                        if let Some(l) = m.anchors.as_mut() {
+                            for (_, a) in std::rc::Rc::make_mut(l) {
+                                moved(&mut a.start);
+                                moved(&mut a.end);
+                            }
+                        }
+                    }
+                    m.key = Some(key);
+                }
+                _ => {
+                    *m = ReviewMemo {
+                        key: Some(key),
+                        ..ReviewMemo::default()
+                    };
+                }
             }
         }
         Some(m)

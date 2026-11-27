@@ -88,8 +88,11 @@ struct Command {
     hf: Option<Box<(HfState, HfState)>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct History {
+    /// Which document's history this is: new for every new history (a
+    /// clone keeps it), so callers can tell documents apart.
+    instance: u64,
     undo: Vec<Command>,
     redo: Vec<Command>,
     next_id: u64,
@@ -133,6 +136,22 @@ impl Splice {
             } else {
                 Vec::new()
             },
+        }
+    }
+}
+
+impl Default for History {
+    fn default() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self {
+            instance: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            next_id: 0,
+            saved: None,
+            sealed: false,
+            changes: 0,
+            splice: None,
         }
     }
 }
@@ -592,6 +611,12 @@ impl Document {
     /// callers can tell the document changed.
     pub fn revision(&self) -> u64 {
         self.history.changes
+    }
+
+    /// Tells this document (and its clones) from others: with
+    /// [`Self::revision`], whether a layout is of this document as it is.
+    pub fn instance(&self) -> u64 {
+        self.history.instance
     }
 
     /// What the edit, undo or redo that made the current [`Self::revision`]

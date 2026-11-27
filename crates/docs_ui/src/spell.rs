@@ -39,9 +39,9 @@ pub(crate) struct SpellState {
     in_flight: HashSet<u64>,
     keys: Vec<u64>,
     lang: Option<Lang>,
-    /// The document `keys` are for: revision, paragraph storage, length
-    /// (after a one-paragraph edit only that paragraph is looked at again).
-    seen: Option<(u64, usize, usize)>,
+    /// The document `keys` are for: revision and instance (after one edit
+    /// only the paragraphs it made are looked at again).
+    seen: Option<(u64, u64)>,
     /// The caret is where the user is typing: don't flag the word it's in
     /// until it moves on (as Word).
     pub typing: bool,
@@ -105,23 +105,21 @@ impl DocsView {
             st.seen = None;
         }
         let n = self.doc.len();
-        let now = (
-            self.doc.revision(),
-            self.doc.paragraphs().as_ptr() as usize,
-            n,
-        );
-        // One paragraph changed since the last time: only it.
+        let now = (self.doc.revision(), self.doc.instance());
+        // One edit since the last time: only the paragraphs it made.
         let one = self.doc.last_splice().and_then(|sp| {
-            (st.seen == Some((now.0.wrapping_sub(1), now.1, n))
-                && st.keys.len() == n
-                && sp.removed == 1
-                && sp.inserted == 1
-                && sp.start < n)
-                .then_some(sp.start)
+            (st.seen == Some((now.0.wrapping_sub(1), now.1))
+                && st.keys.len() + sp.inserted == n + sp.removed
+                && sp.start + sp.inserted <= n)
+                .then_some((sp.start, sp.removed, sp.inserted))
         });
         st.seen = Some(now);
         let (mut keys, range) = match one {
-            Some(i) => (std::mem::take(&mut st.keys), i..i + 1),
+            Some((start, removed, inserted)) => {
+                let mut keys = std::mem::take(&mut st.keys);
+                keys.splice(start..start + removed, (0..inserted).map(|_| 0));
+                (keys, start..start + inserted)
+            }
             None => (vec![0; n], 0..n),
         };
         let mut jobs = Vec::new();
@@ -191,9 +189,12 @@ impl DocsView {
             .detach();
         }
         match one {
-            Some(i) if st.flags.len() == n => {
-                let flag = st.cache.get(&st.keys[i]).cloned();
-                Rc::make_mut(&mut st.flags)[i] = flag;
+            Some((start, removed, inserted)) if st.flags.len() + inserted == n + removed => {
+                let new: Vec<Option<Flags>> = st.keys[start..start + inserted]
+                    .iter()
+                    .map(|k| st.cache.get(k).cloned())
+                    .collect();
+                Rc::make_mut(&mut st.flags).splice(start..start + removed, new);
             }
             _ => self.spell_flags_from_cache(),
         }

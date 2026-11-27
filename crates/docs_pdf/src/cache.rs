@@ -71,8 +71,12 @@ pub fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
 
 /// What the last full layout knew about the body.
 struct Last {
-    /// The document's revision it (or a quick update since) laid out.
+    /// The document's revision it (or a quick update since) laid out,
+    /// which document that is, and its styles and lists then.
     revision: u64,
+    instance: u64,
+    styles: docs_engine::StyleSheet,
+    numbering: docs_engine::numbering::Numbering,
     /// The document's paragraph storage (a stand-in for the document's
     /// identity: a one-paragraph edit doesn't move it).
     paras: usize,
@@ -157,15 +161,31 @@ impl LayoutCache {
             }
         }
         self.outcome = Outcome::Full;
-        // The last layout's pages that come out the same are kept.
-        let last = self.last.take();
-        let reuse = prev.as_ref().zip(last.as_ref().map(|l| &l.body));
+        // The last layout's pages that come out the same are kept, and
+        // after a known edit what it didn't change is taken over.
+        let mut last = self.last.take();
+        if let Some(p) = prev.as_mut() {
+            // (The struck-through paragraphs are the body's: let go.)
+            p.strikes = Arc::default();
+        }
+        let splice = last.as_ref().and_then(|l| known_splice(doc, l));
+        let reuse = prev
+            .as_ref()
+            .zip(last.as_mut())
+            .map(|(laid, l)| crate::pages::Prev {
+                laid,
+                body: &mut l.body,
+                splice,
+            });
         let (laid, body) = self.full(doc, engine, None, reuse);
         self.reused = laid.paged.reused();
         drop(prev);
         drop(last);
         self.last = (body.shaped.len() == doc.len()).then(|| Last {
             revision: doc.revision(),
+            instance: doc.instance(),
+            styles: doc.styles.clone(),
+            numbering: doc.numbering.clone(),
             paras: doc.paragraphs().as_ptr() as usize,
             len: doc.len(),
             body,
@@ -196,6 +216,9 @@ impl LayoutCache {
         self.paras = bg.paras;
         self.last = Some(Last {
             revision: bg.revision,
+            instance: doc.instance(),
+            styles: doc.styles.clone(),
+            numbering: doc.numbering.clone(),
             paras: doc.paragraphs().as_ptr() as usize,
             len: doc.len(),
             body: bg.body,
@@ -211,11 +234,23 @@ impl LayoutCache {
         doc: &Document,
         engine: &mut Engine,
         limit: Option<usize>,
-        prev: Option<(&Layout, &Body)>,
+        prev: Option<crate::pages::Prev>,
     ) -> (Layout, Body) {
-        let fresh = RefCell::new(HashMap::with_capacity(self.paras.len()));
+        let edit = prev.as_ref().is_some_and(|p| p.splice.is_some());
+        let fresh = RefCell::new(HashMap::with_capacity(if edit {
+            64
+        } else {
+            self.paras.len()
+        }));
         let laid = lay_out_shared(doc, &self.paras, &fresh, engine, limit, prev);
-        self.paras = fresh.into_inner();
+        let fresh = fresh.into_inner();
+        // After an edit only what changed was looked up: keep the rest
+        // (until there's much more than the document needs).
+        if edit && self.paras.len() < 2 * doc.len() + 4096 {
+            self.paras.extend(fresh);
+        } else {
+            self.paras = fresh;
+        }
         laid
     }
 
@@ -342,7 +377,7 @@ fn lay_out_shared(
     fresh: &RefCell<Shaped>,
     engine: &mut Engine,
     limit: Option<usize>,
-    prev: Option<(&Layout, &Body)>,
+    prev: Option<crate::pages::Prev>,
 ) -> (Layout, Body) {
     let engine = RefCell::new(engine);
     let mut one = |p: &docs_layout::Paragraph, width: f32| {
@@ -369,6 +404,20 @@ fn lay_out_shared(
         Some(&mut batch as &mut crate::pages::BatchFn<'_>),
         prev,
     )
+}
+
+/// The one edit made to `doc` since `last` was laid out, when that's
+/// known: `.1` paragraphs from `.0` on became `.2` (styles, lists and
+/// everything else as they were).
+fn known_splice(doc: &Document, last: &Last) -> Option<(usize, usize, usize)> {
+    let sp = doc.last_splice()?;
+    (doc.instance() == last.instance
+        && sp.revision == last.revision + 1
+        && !sp.side
+        && sp.removed + sp.inserted > 0
+        && doc.styles == last.styles
+        && doc.numbering == last.numbering)
+        .then_some((sp.start, sp.removed, sp.inserted))
 }
 
 /// A layout of nothing (what's left where one was taken out).

@@ -818,6 +818,39 @@ pub fn build_marked_upto(
     marks: &Marks,
     cut: usize,
 ) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
+    let b = build_body(doc, marks, cut, None);
+    (b.lps, b.widths, b.blocks)
+}
+
+/// What the body was built from before an edit, to build only what the
+/// edit changed ([`build_body`]).
+pub struct Prior {
+    /// The layout paragraphs, their list markers and widths as built.
+    pub lps: Vec<docs_layout::Paragraph>,
+    pub markers: Vec<Option<String>>,
+    pub widths: Vec<f32>,
+    /// The edit: `removed` paragraphs from `start` on became `inserted`.
+    pub start: usize,
+    pub removed: usize,
+    pub inserted: usize,
+    /// Other paragraphs (new numbering) to build again (their footnote
+    /// numbers changed, say).
+    pub dirty: Vec<usize>,
+}
+
+/// The body's layout paragraphs, widths and blocks, each paragraph's list
+/// marker, and which paragraphs were built (not taken from a [`Prior`]).
+pub struct Built {
+    pub lps: Vec<docs_layout::Paragraph>,
+    pub widths: Vec<f32>,
+    pub blocks: Vec<Block>,
+    pub markers: Vec<Option<String>>,
+    pub fresh: Vec<bool>,
+}
+
+/// [`build_marked_upto`], building again only what changed since `prior`
+/// (the marks must show no field codes or merge values then).
+pub fn build_body(doc: &Document, marks: &Marks, cut: usize, prior: Option<Prior>) -> Built {
     let paras = doc.paragraphs();
     let mut cut = cut.min(paras.len());
     while cut > 0
@@ -846,7 +879,7 @@ pub fn build_marked_upto(
             .position(|s| i < s.paras.end)
             .unwrap_or(sections.len() - 1)
     };
-    build_with(doc, &paras[..cut], &|i| widths[section_of(i)], marks)
+    build_with_prior(doc, &paras[..cut], &|i| widths[section_of(i)], marks, prior)
 }
 
 /// [`build`] over `paras` (the document's paragraphs, or a header's with
@@ -858,6 +891,17 @@ pub fn build_with(
     content_tw: &dyn Fn(usize) -> u32,
     marks: &Marks,
 ) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
+    let b = build_with_prior(doc, paras, content_tw, marks, None);
+    (b.lps, b.widths, b.blocks)
+}
+
+fn build_with_prior(
+    doc: &Document,
+    paras: &[docs_engine::Paragraph],
+    content_tw: &dyn Fn(usize) -> u32,
+    marks: &Marks,
+    prior: Option<Prior>,
+) -> Built {
     let markers = doc.list_markers();
     let mut widths: Vec<f32> = (0..paras.len()).map(|i| tw(content_tw(i))).collect();
     let mut blocks = Vec::new();
@@ -892,27 +936,77 @@ pub fn build_with(
             }
         }
     }
+    let n = paras.len();
+    // After an edit: the paragraphs it didn't touch as they were built
+    // (the same marker, width and neighbours' styles), the others again.
+    let prior = prior.filter(|p| {
+        marks.merge.is_none()
+            && marks.codes.is_none()
+            && p.lps.len() + p.inserted == n + p.removed
+            && p.markers.len() == p.lps.len()
+            && p.widths.len() == p.lps.len()
+            && p.start + p.removed <= p.lps.len()
+    });
+    let (mut out, fresh) = match prior {
+        Some(mut p) => {
+            let (a, b) = (p.start, p.start + p.removed);
+            let blank = || docs_layout::Paragraph::new(String::new());
+            p.lps.splice(a..b, (0..p.inserted).map(|_| blank()));
+            p.markers.splice(a..b, (0..p.inserted).map(|_| None));
+            p.widths.splice(a..b, (0..p.inserted).map(|_| f32::NAN));
+            let mut fresh = vec![false; n];
+            let end = (a + p.inserted).min(n);
+            for f in &mut fresh[a.saturating_sub(1)..(end + 1).min(n)] {
+                *f = true;
+            }
+            for &k in &p.dirty {
+                if let Some(f) = fresh.get_mut(k) {
+                    *f = true;
+                }
+            }
+            for k in 0..n {
+                if p.markers[k] != markers[k] || p.widths[k].to_bits() != widths[k].to_bits() {
+                    fresh[k] = true;
+                }
+            }
+            (p.lps, fresh)
+        }
+        None => (Vec::new(), vec![true; n]),
+    };
+    let todo: Vec<usize> = (0..n).filter(|&k| fresh[k]).collect();
     // On several threads for a long document.
     // (With whether it has contextual spacing: resolving a paragraph's
     // style is most of the work.)
-    let (mut out, contextual): (Vec<docs_layout::Paragraph>, Vec<bool>) =
-        crate::par::map(paras.len(), &|k| {
-            let marker = markers.get(k).and_then(|m| m.as_deref());
-            (
-                layout_paragraph(doc, &paras[k], marker, widths[k], marks),
-                doc.resolve_para(&paras[k]).contextual,
-            )
-        })
-        .into_iter()
-        .unzip();
+    let built: Vec<(docs_layout::Paragraph, bool)> = crate::par::map(todo.len(), &|j| {
+        let k = todo[j];
+        let marker = markers.get(k).and_then(|m| m.as_deref());
+        (
+            layout_paragraph(doc, &paras[k], marker, widths[k], marks),
+            doc.resolve_para(&paras[k]).contextual,
+        )
+    });
+    let mut contextual = vec![false; n];
+    if out.is_empty() {
+        out = Vec::with_capacity(n);
+        for (lp, c) in built {
+            contextual[out.len()] = c;
+            out.push(lp);
+        }
+    } else {
+        for (&k, (lp, c)) in todo.iter().zip(built) {
+            out[k] = lp;
+            contextual[k] = c;
+        }
+    }
     if let Some(values) = &marks.merge {
         show_merge_values(paras, &mut out, values, marks.codes.as_deref());
     }
     if let Some(view) = &marks.codes {
         show_codes(paras, &mut out, view);
     }
-    // Contextual spacing: no space between paragraphs of the same style.
-    for k in 0..paras.len() {
+    // Contextual spacing: no space between paragraphs of the same style
+    // (those just built: the others have theirs).
+    for &k in &todo {
         if !contextual[k] {
             continue;
         }
@@ -928,7 +1022,13 @@ pub fn build_with(
             out[k].space_after_pt = 0.0;
         }
     }
-    (out, widths, blocks)
+    Built {
+        lps: out,
+        widths,
+        blocks,
+        markers,
+        fresh,
+    }
 }
 
 /// Paragraph index range of table `id` in `paras`.
