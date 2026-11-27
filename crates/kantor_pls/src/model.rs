@@ -1,6 +1,8 @@
 //! The model: constructs measured by indicators, and the structural paths
 //! between constructs. Deserialises from the JSON in docs/pls-json.md.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::Missing;
@@ -17,6 +19,34 @@ pub struct Model {
     /// `Options` where it sets them; see `Options::merged`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<Options>,
+    /// How Kantor's path diagram shows the model (ignored by `estimate`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub layout: Option<Layout>,
+}
+
+/// What a path diagram keeps beside the model: where each construct is
+/// drawn, where its data is and how p values are shown. Estimation ignores
+/// it, so a model saved by the Sheets editor runs with `kantor pls` as is.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Layout {
+    /// The model's name (the tab's title).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Construct name → the centre of its ellipse, `[x, y]` in diagram
+    /// points (y down).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub positions: BTreeMap<String, [f64; 2]>,
+    /// The data's sheet in the workbook.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sheet: Option<String>,
+    /// The data's cells, header row first (`A1:K251`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub range: Option<String>,
+    /// p values are one-tailed (SmartPLS's test type); two-tailed when
+    /// false.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub one_tailed: bool,
 }
 
 /// How a construct relates to its indicators.

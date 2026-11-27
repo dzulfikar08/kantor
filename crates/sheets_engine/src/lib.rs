@@ -126,6 +126,7 @@ pub mod check;
 pub mod format;
 pub mod formula;
 pub mod grid;
+pub mod pls_models;
 pub mod script;
 pub mod script_charts;
 pub mod script_shapes;
@@ -382,6 +383,9 @@ pub struct Workbook {
     /// JavaScript and Python scripts set in Kantor (`None`: the file's, see
     /// [`scripts`]).
     scripts: Option<Vec<scripts::Script>>,
+    /// PLS-SEM models set in Kantor (`None`: the file's, see
+    /// [`pls_models`]).
+    pls_models: Option<Vec<pls_models::PlsModel>>,
     /// The VBA project as edited in Kantor (`None`: the file's;
     /// `Some(None)`: removed), see [`Workbook::set_vba_project`].
     vba: Option<Option<std::sync::Arc<Vec<u8>>>>,
@@ -718,6 +722,7 @@ impl Workbook {
             custom_lists: Vec::new(),
             password: None,
             scripts: None,
+            pls_models: None,
             vba: None,
         })
     }
@@ -1010,6 +1015,7 @@ impl Workbook {
             custom_lists: Vec::new(),
             password: None,
             scripts: None,
+            pls_models: None,
             vba: None,
         };
         book.apply_read_panes(&panes);
@@ -1147,6 +1153,30 @@ impl Workbook {
     /// save). Not an undo step; the workbook becomes unsaved.
     pub fn set_scripts(&mut self, scripts: Vec<scripts::Script>) {
         self.scripts = Some(scripts);
+        self.history.view_changed = true;
+        self.history.view_changes += 1;
+    }
+
+    /// The workbook's PLS-SEM models (see [`pls_models`]): the ones set
+    /// with [`Workbook::set_pls_models`], else the file's.
+    pub fn pls_models(&self) -> Result<Vec<pls_models::PlsModel>, String> {
+        if let Some(m) = &self.pls_models {
+            return Ok(m.clone());
+        }
+        match self.origin_bytes() {
+            Some(bytes) => preserve::read_pls_models(&bytes),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Replaces the workbook's PLS-SEM models (written by the next
+    /// `.xlsx`/`.xlsm` save). Not an undo step (the editor has its own);
+    /// the workbook becomes unsaved.
+    pub fn set_pls_models(&mut self, models: Vec<pls_models::PlsModel>) {
+        if self.pls_models.as_ref() == Some(&models) {
+            return;
+        }
+        self.pls_models = Some(models);
         self.history.view_changed = true;
         self.history.view_changes += 1;
     }
@@ -2002,6 +2032,7 @@ impl Workbook {
             keep_macros: true,
             macro_enabled: false,
             scripts: self.scripts.clone(),
+            pls_models: self.pls_models.clone(),
             vba: self.vba_save(),
         }
     }
@@ -2043,6 +2074,8 @@ struct XlsxParts {
     macro_enabled: bool,
     /// The scripts set in Kantor (`None`: the original's are carried).
     scripts: Option<Vec<scripts::Script>>,
+    /// The PLS-SEM models set in Kantor (`None`: the original's are carried).
+    pls_models: Option<Vec<pls_models::PlsModel>>,
     /// The VBA project edited in Kantor (`None`: the original's is carried).
     vba: Option<preserve::VbaSave>,
 }
@@ -2101,6 +2134,7 @@ fn build_xlsx(
         keep_macros: parts.keep_macros,
         macro_enabled: parts.macro_enabled,
         scripts: parts.scripts.as_deref(),
+        pls_models: parts.pls_models.as_deref(),
         vba: parts.vba.as_ref(),
     };
     Ok(preserve::finish(written, original, &ctx))

@@ -31,13 +31,14 @@ mod spec;
 
 use std::borrow::Cow;
 
+pub use bootstrap::Progress;
 pub use bootstrap::{BootstrapResults, Estimate};
 pub use check::{Finding, Level, check};
 pub use data::{Data, Missing};
 pub use fit::{Fit, FitMeasures};
 pub use model::{
-    Algorithm, Bootstrap, Construct, HigherOrder, Measurement, Model, Options, Path, SignChanges,
-    WeightMode, Weighting,
+    Algorithm, Bootstrap, Construct, HigherOrder, Layout, Measurement, Model, Options, Path,
+    SignChanges, WeightMode, Weighting,
 };
 pub use results::{
     ConstructResult, Effect, Effects, OuterResult, PathResult, Results, SpecificEffect, Table,
@@ -56,6 +57,8 @@ pub enum Error {
     Estimation(String),
     /// A feature of a later phase (higher-order constructs).
     Unsupported(String),
+    /// Stopped through [`Progress::cancel`].
+    Cancelled,
 }
 
 impl std::fmt::Display for Error {
@@ -65,6 +68,7 @@ impl std::fmt::Display for Error {
             Error::Data(s) => write!(f, "data: {s}"),
             Error::Estimation(s) => write!(f, "estimation: {s}"),
             Error::Unsupported(s) => write!(f, "not supported yet: {s}"),
+            Error::Cancelled => write!(f, "stopped"),
         }
     }
 }
@@ -131,6 +135,18 @@ fn prepare(data: &Data, spec: &Spec, opts: &Options) -> Result<Prepared, Error> 
 
 /// Estimate `model` on `data`.
 pub fn estimate(data: &Data, model: &Model, opts: &Options) -> Result<Results, Error> {
+    estimate_with(data, model, opts, None)
+}
+
+/// [`estimate`], reporting the bootstrap's progress to `progress` and
+/// stopping with [`Error::Cancelled`] when it is cancelled (a UI running
+/// it on another thread).
+pub fn estimate_with(
+    data: &Data,
+    model: &Model,
+    opts: &Options,
+    progress: Option<&Progress>,
+) -> Result<Results, Error> {
     let data: Cow<Data> = match opts.missing_value {
         Some(code) => Cow::Owned(data.clone().with_missing_code(code)),
         None => Cow::Borrowed(data),
@@ -346,7 +362,8 @@ pub fn estimate(data: &Data, model: &Model, opts: &Options) -> Result<Results, E
         .bootstrap
         .as_ref()
         .filter(|b| b.samples > 0)
-        .map(|b| bootstrap::run(&prep.x, &spec, opts, b, &core, &s));
+        .map(|b| bootstrap::run(&prep.x, &spec, opts, b, &core, &s, progress))
+        .transpose()?;
     if let Some(b) = &bootstrap
         && b.failed > 0
     {

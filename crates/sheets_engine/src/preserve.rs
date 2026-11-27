@@ -279,6 +279,9 @@ pub(crate) struct Context<'a> {
     /// The JavaScript and Python scripts to write in place of the
     /// original's (`None`: the original's, as they are).
     pub scripts: Option<&'a [crate::scripts::Script]>,
+    /// The PLS-SEM models to write in place of the original's (`None`: the
+    /// original's, as they are).
+    pub pls_models: Option<&'a [crate::pls_models::PlsModel]>,
     /// The VBA project as edited in Kantor (`None`: the original's).
     pub vba: Option<&'a VbaSave>,
 }
@@ -639,6 +642,16 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
                 Ok(with) => with,
                 Err(e) => {
                     notes.push(format!("the scripts are not saved: {e}"));
+                    bytes
+                }
+            },
+            None => bytes,
+        };
+        let bytes = match ctx.pls_models {
+            Some(models) => match with_pls_models(&bytes, models) {
+                Ok(with) => with,
+                Err(e) => {
+                    notes.push(format!("the PLS-SEM models are not saved: {e}"));
                     bytes
                 }
             },
@@ -1534,13 +1547,36 @@ fn workbook_part(pkg: &Package) -> Result<String, String> {
         .ok_or_else(|| "no workbook part".to_owned())
 }
 
-/// The JavaScript and Python scripts stored in `bytes` (an `.xlsx`/`.xlsm`
-/// package), see [`crate::scripts`]. Empty when it has none.
-pub(crate) fn read_scripts(bytes: &[u8]) -> Result<Vec<crate::scripts::Script>, String> {
+/// A custom XML part of Kantor's own (scripts, PLS-SEM models): how it is
+/// recognised and its properties' fixed `itemID` and schema.
+struct OwnPart {
+    is_ours: fn(&str) -> bool,
+    item_id: &'static str,
+    namespace: &'static str,
+}
+
+const SCRIPTS_PART: OwnPart = OwnPart {
+    is_ours: crate::scripts::is_scripts_part,
+    item_id: SCRIPTS_ITEM_ID,
+    namespace: crate::scripts::NAMESPACE,
+};
+
+/// The `itemID` of the PLS-SEM models part's properties.
+const PLS_ITEM_ID: &str = "{0D5F3B7C-2A41-4E8B-B6C9-71E2A9F04D18}";
+
+const PLS_PART: OwnPart = OwnPart {
+    is_ours: crate::pls_models::is_pls_part,
+    item_id: PLS_ITEM_ID,
+    namespace: crate::pls_models::NAMESPACE,
+};
+
+/// The text of the first custom XML part of the workbook in `bytes` that
+/// `is_ours` recognises.
+fn read_own_part(bytes: &[u8], is_ours: fn(&str) -> bool) -> Result<Option<String>, String> {
     let orig = Original::new(bytes)?;
     let wb = rel_source_workbook(&orig)?;
     let Some(xml) = orig.text(&rels_part(&wb))? else {
-        return Ok(Vec::new());
+        return Ok(None);
     };
     for r in parse_rels(&xml)? {
         if r.external || r.short_kind() != "customXml" {
@@ -1552,16 +1588,50 @@ pub(crate) fn read_scripts(bytes: &[u8]) -> Result<Vec<crate::scripts::Script>, 
         let Some(text) = orig.text(&part)? else {
             continue;
         };
-        if let Some(found) = crate::scripts::from_xml(&text) {
-            return found;
+        if is_ours(&text) {
+            return Ok(Some(text));
         }
     }
-    Ok(Vec::new())
+    Ok(None)
+}
+
+/// The JavaScript and Python scripts stored in `bytes` (an `.xlsx`/`.xlsm`
+/// package), see [`crate::scripts`]. Empty when it has none.
+pub(crate) fn read_scripts(bytes: &[u8]) -> Result<Vec<crate::scripts::Script>, String> {
+    match read_own_part(bytes, crate::scripts::is_scripts_part)? {
+        Some(text) => crate::scripts::from_xml(&text).unwrap_or(Ok(Vec::new())),
+        None => Ok(Vec::new()),
+    }
+}
+
+/// The PLS-SEM models stored in `bytes`, see [`crate::pls_models`].
+pub(crate) fn read_pls_models(bytes: &[u8]) -> Result<Vec<crate::pls_models::PlsModel>, String> {
+    match read_own_part(bytes, crate::pls_models::is_pls_part)? {
+        Some(text) => crate::pls_models::from_xml(&text).unwrap_or(Ok(Vec::new())),
+        None => Ok(Vec::new()),
+    }
 }
 
 /// `bytes` with its scripts part replaced by one holding `scripts` (none
 /// when `scripts` is empty).
 fn with_scripts(bytes: &[u8], scripts: &[crate::scripts::Script]) -> Result<Vec<u8>, String> {
+    let xml = (!scripts.is_empty()).then(|| crate::scripts::to_xml(scripts));
+    with_own_part(bytes, &SCRIPTS_PART, xml)
+}
+
+/// `bytes` with its PLS-SEM models part replaced by one holding `models`
+/// (none when `models` is empty).
+fn with_pls_models(
+    bytes: &[u8],
+    models: &[crate::pls_models::PlsModel],
+) -> Result<Vec<u8>, String> {
+    let xml = (!models.is_empty()).then(|| crate::pls_models::to_xml(models));
+    with_own_part(bytes, &PLS_PART, xml)
+}
+
+/// `bytes` with its `own` part replaced by one holding `xml` (removed when
+/// `None`).
+fn with_own_part(bytes: &[u8], own: &OwnPart, xml: Option<String>) -> Result<Vec<u8>, String> {
     let mut pkg = Package::read(bytes)?;
     let wb = workbook_part(&pkg)?;
     let wb_rels_part = rels_part(&wb);
@@ -1582,11 +1652,7 @@ fn with_scripts(bytes: &[u8], scripts: &[crate::scripts::Script]) -> Result<Vec<
         let Some(part) = resolve(&wb, &r.target) else {
             return true;
         };
-        let ours = pkg
-            .text(&part)
-            .ok()
-            .flatten()
-            .is_some_and(crate::scripts::is_scripts_part);
+        let ours = pkg.text(&part).ok().flatten().is_some_and(own.is_ours);
         if ours {
             gone.push(part);
         }
@@ -1606,7 +1672,7 @@ fn with_scripts(bytes: &[u8], scripts: &[crate::scripts::Script]) -> Result<Vec<
         pkg.remove(&part);
         types = remove_override(&types, &part)?;
     }
-    if !scripts.is_empty() {
+    if let Some(xml) = xml {
         let n = (1..)
             .find(|n| {
                 !pkg.has(&format!("customXml/item{n}.xml"))
@@ -1615,12 +1681,13 @@ fn with_scripts(bytes: &[u8], scripts: &[crate::scripts::Script]) -> Result<Vec<
             .unwrap_or(1);
         let item = format!("customXml/item{n}.xml");
         let props = format!("customXml/itemProps{n}.xml");
-        pkg.set(&item, crate::scripts::to_xml(scripts).into_bytes());
+        pkg.set(&item, xml.into_bytes());
         pkg.set(
             &props,
             format!(
-                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n<ds:datastoreItem ds:itemID=\"{SCRIPTS_ITEM_ID}\" xmlns:ds=\"http://schemas.openxmlformats.org/officeDocument/2006/customXml\"><ds:schemaRefs><ds:schemaRef ds:uri=\"{}\"/></ds:schemaRefs></ds:datastoreItem>",
-                crate::scripts::NAMESPACE
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n<ds:datastoreItem ds:itemID=\"{}\" xmlns:ds=\"http://schemas.openxmlformats.org/officeDocument/2006/customXml\"><ds:schemaRefs><ds:schemaRef ds:uri=\"{}\"/></ds:schemaRefs></ds:datastoreItem>",
+                own.item_id,
+                own.namespace
             )
             .into_bytes(),
         );
@@ -7985,6 +8052,7 @@ mod tests {
             keep_macros: false,
             macro_enabled: false,
             scripts: None,
+            pls_models: None,
             vba: None,
         };
         let done = finish(out, original, &ctx);

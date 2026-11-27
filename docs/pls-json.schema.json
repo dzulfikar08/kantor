@@ -30,9 +30,26 @@
         ]
       }
     },
-    "options": {"$ref": "#/$defs/options"}
+    "options": {"$ref": "#/$defs/options"},
+    "layout": {"$ref": "#/$defs/layout"}
   },
   "$defs": {
+    "layout": {
+      "description": "How Kantor's path diagram shows the model (ignored by estimation): written by the Sheets PLS-SEM editor.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "description": "The model's name"},
+        "positions": {
+          "type": "object",
+          "description": "Construct name → [x, y], the centre of its ellipse in diagram points (y down)",
+          "additionalProperties": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+        },
+        "sheet": {"type": "string", "description": "The data's sheet in the workbook"},
+        "range": {"type": "string", "description": "The data's cells, header row first (A1:K251)"},
+        "one_tailed": {"type": "boolean", "description": "p values shown one-tailed (default two-tailed)"}
+      }
+    },
     "names": {
       "oneOf": [
         {"type": "string"},

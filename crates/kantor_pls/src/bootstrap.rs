@@ -5,6 +5,8 @@
 //! Subsample `b` draws from its own ChaCha8 stream (seed, stream `b`), so
 //! results are the same on any number of threads.
 
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
 use rand_chacha::ChaCha8Rng;
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use serde::Serialize;
@@ -151,6 +153,48 @@ fn map_range<T: Send>(n: usize, f: impl Fn(usize) -> T + Sync + Send) -> Vec<T> 
     (0..n).map(f).collect()
 }
 
+/// The bootstrap's progress, shared with the thread running it: how many
+/// estimations (subsamples, then jackknife rows for BCa) are done of how
+/// many, and a flag that stops it.
+#[derive(Debug, Default)]
+pub struct Progress {
+    done: AtomicUsize,
+    total: AtomicUsize,
+    cancelled: AtomicBool,
+}
+
+impl Progress {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Stop as soon as the running estimations end.
+    pub fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed)
+    }
+
+    /// `(done, total)`; total is 0 until the bootstrap starts.
+    pub fn get(&self) -> (usize, usize) {
+        (
+            self.done.load(Ordering::Relaxed),
+            self.total.load(Ordering::Relaxed),
+        )
+    }
+
+    fn start(&self, total: usize) {
+        self.done.store(0, Ordering::Relaxed);
+        self.total.store(total, Ordering::Relaxed);
+    }
+
+    fn step(&self) {
+        self.done.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 /// One statistic summarised over the subsamples.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Estimate {
@@ -230,14 +274,28 @@ pub(crate) fn run(
     boot: &Bootstrap,
     original: &Core,
     s: &Mat,
-) -> BootstrapResults {
+    progress: Option<&Progress>,
+) -> Result<BootstrapResults, crate::Error> {
     let p = spec.p();
     let n = x.len() / p;
+    if let Some(pr) = progress {
+        pr.start(boot.samples + if boot.bca { n } else { 0 });
+    }
+    let stopped = || progress.is_some_and(Progress::is_cancelled);
+    let tick = || {
+        if let Some(pr) = progress {
+            pr.step();
+        }
+    };
     let keys = keys(spec);
     let orig = values(&keys, s, spec, original);
     let signs = boot.sign_changes;
     let samples = boot.samples;
     let runs: Vec<Option<(Vec<f64>, bool)>> = map_range(samples, |b| {
+        if stopped() {
+            return None;
+        }
+        let _done = Tick(&tick);
         let mut rng = ChaCha8Rng::seed_from_u64(boot.seed);
         rng.set_stream(b as u64);
         let mut counts = vec![0u32; n];
@@ -262,6 +320,9 @@ pub(crate) fn run(
         }
         Some((v, c.converged))
     });
+    if stopped() {
+        return Err(crate::Error::Cancelled);
+    }
     let failed = runs.iter().filter(|r| r.is_none()).count();
     let not_converged = runs
         .iter()
@@ -272,12 +333,19 @@ pub(crate) fn run(
     let jack: Option<Vec<Vec<f64>>> = boot.bca.then(|| {
         let full = Moments::of(x, p, None);
         let rows: Vec<Option<Vec<f64>>> = map_range(n, |i| {
+            if stopped() {
+                return None;
+            }
+            let _done = Tick(&tick);
             let sj = full.without(x, p, i).correlation(p)?;
             let c = run_one(&sj, spec, opts, original, SignChanges::Construct)?;
             Some(values(&keys, &sj, spec, &c))
         });
         rows.into_iter().flatten().collect()
     });
+    if stopped() {
+        return Err(crate::Error::Cancelled);
+    }
     let m = ok.len();
     let df = (m.max(2) - 1) as f64;
     let alpha = boot.alpha.clamp(1e-6, 0.5);
@@ -399,5 +467,15 @@ pub(crate) fn run(
             }
         }
     }
-    out
+    Ok(out)
+}
+
+/// Counts one estimation as done when dropped (whichever way the closure
+/// returns).
+struct Tick<'a, F: Fn()>(&'a F);
+
+impl<F: Fn()> Drop for Tick<'_, F> {
+    fn drop(&mut self) {
+        (self.0)();
+    }
 }

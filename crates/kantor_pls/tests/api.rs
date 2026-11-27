@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use kantor_pls::{
-    Algorithm, Bootstrap, Construct, Data, Level, Model, Options, Path as PathSpec, SignChanges,
-    WeightMode, check, estimate,
+    Algorithm, Bootstrap, Construct, Data, Error, Layout, Level, Model, Options, Path as PathSpec,
+    Progress, SignChanges, WeightMode, check, estimate, estimate_with,
 };
 
 fn data(name: &str) -> Data {
@@ -46,6 +46,7 @@ fn mediation() -> Model {
             PathSpec::new("X", "Y"),
         ],
         options: None,
+        layout: None,
     }
 }
 
@@ -168,6 +169,58 @@ fn bootstrap_is_reproducible_and_complete() {
         let r = estimate(&d, &mediation(), &o).unwrap();
         assert_eq!(r.bootstrap.unwrap().failed, 0);
     }
+}
+
+#[test]
+fn bootstrap_reports_progress_and_stops() {
+    let d = data("mediation.csv");
+    let opts = Options {
+        bootstrap: Some(Bootstrap {
+            samples: 200,
+            seed: 42,
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    let progress = Progress::new();
+    let r = estimate_with(&d, &mediation(), &opts, Some(&progress)).unwrap();
+    // 200 subsamples and a jackknife of the 150 rows for BCa.
+    assert_eq!(progress.get(), (350, 350));
+    // The same numbers as without progress.
+    assert_eq!(
+        r.bootstrap,
+        estimate(&d, &mediation(), &opts).unwrap().bootstrap
+    );
+    let stopped = Progress::new();
+    stopped.cancel();
+    assert_eq!(
+        estimate_with(&d, &mediation(), &opts, Some(&stopped)).unwrap_err(),
+        Error::Cancelled
+    );
+    // Without a bootstrap there is nothing to stop.
+    assert!(estimate_with(&d, &mediation(), &Options::default(), Some(&stopped)).is_ok());
+}
+
+#[test]
+fn layout_round_trips_and_is_ignored() {
+    let mut m = mediation();
+    m.layout = Some(Layout {
+        name: Some("Mediasi".into()),
+        positions: [("X".to_owned(), [10.0, 20.0])].into_iter().collect(),
+        sheet: Some("Data".into()),
+        range: Some("A1:L151".into()),
+        one_tailed: true,
+    });
+    let text = serde_json::to_string(&m).unwrap();
+    let back: Model = serde_json::from_str(&text).unwrap();
+    assert_eq!(back, m);
+    let d = data("mediation.csv");
+    let with = estimate(&d, &m, &Options::default()).unwrap();
+    let without = estimate(&d, &mediation(), &Options::default()).unwrap();
+    assert_eq!(with.paths, without.paths);
+    // Unknown layout keys are refused like any other.
+    let bad = text.replace("\"one_tailed\"", "\"two_tailed\"");
+    assert!(serde_json::from_str::<Model>(&bad).is_err());
 }
 
 #[test]
