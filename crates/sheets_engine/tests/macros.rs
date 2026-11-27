@@ -220,7 +220,7 @@ fn reads_the_vba_project() {
     assert!(wb.vba_project().unwrap().is_ok());
 
     // Saved as .xlsx: no project any more.
-    wb.save_as(&scratch("real.xlsx")).unwrap();
+    wb.save_as(scratch("real.xlsx")).unwrap();
     assert!(wb.vba_project().is_none());
 }
 

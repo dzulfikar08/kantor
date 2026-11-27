@@ -155,7 +155,7 @@ impl SheetsView {
             return;
         };
         let project = project.map(Rc::new);
-        let procedures = match &project {
+        let procedures: Vec<Vec<Procedure>> = match &project {
             Ok(p) => p.modules().iter().map(Module::procedures).collect(),
             Err(e) => {
                 log::warn!("reading the VBA project: {e}");

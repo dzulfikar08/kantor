@@ -528,7 +528,9 @@ fn module_source<F: Read + Seek>(
 
 fn is_attribute(line: &str) -> bool {
     let t = line.trim_start();
-    t.len() > 10 && t[..10].eq_ignore_ascii_case("Attribute ")
+    t.len() > 10
+        && t.get(..10)
+            .is_some_and(|p| p.eq_ignore_ascii_case("Attribute "))
 }
 
 /// `(code, attribute lines)` of stored source.
