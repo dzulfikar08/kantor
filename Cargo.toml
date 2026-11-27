@@ -65,6 +65,8 @@ kantor_ui = { path = "crates/kantor_ui" }
 kantor_update = { path = "crates/kantor_update" }
 kantor_vba = { path = "crates/kantor_vba" }
 kantor_script = { path = "crates/kantor_script" }
+notes_engine = { path = "crates/notes_engine" }
+notes_ui = { path = "crates/notes_ui" }
 pdf_engine = { path = "crates/pdf_engine" }
 pdf_ui = { path = "crates/pdf_ui" }
 sheets_engine = { path = "crates/sheets_engine" }

@@ -1,0 +1,23 @@
+[package]
+name = "notes_ui"
+description = "Kantor Notes UI: a drawn Markdown editor with live preview, source and reading modes (GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+gpui-kit.workspace = true
+# Picture sizes from file headers, for laying out pictures before they decode.
+imagesize.workspace = true
+kantor_core.workspace = true
+kantor_ui.workspace = true
+notes_engine.workspace = true
+
+[dev-dependencies]
+# Headless GPUI text system for the layout tests (as in docs_ui).
+gpui_wgpu = { package = "gpui-pre-wgpu", version = "0.3.11" }
+
+[lints]
+workspace = true

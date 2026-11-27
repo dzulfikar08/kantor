@@ -41,6 +41,8 @@ kantor_theme.workspace = true
 kantor_ui.workspace = true
 kantor_update.workspace = true
 log.workspace = true
+notes_engine.workspace = true
+notes_ui.workspace = true
 pdf_ui.workspace = true
 # `kantor pdf verify`: the signature checker.
 pdf_engine.workspace = true
