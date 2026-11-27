@@ -485,25 +485,25 @@ impl Render for BrowserPanel {
         let body = body
             .when(gdrive, |b| {
                 b.child(note(
-                    t("Google Drive: Kantor sees only the files it created or opened, not the rest of your Drive. To work on another file, open it on this computer and choose Save to Cloud."),
+                    kantor_ui::i18n::t("Google Drive: Kantor sees only the files it created or opened, not the rest of your Drive. To work on another file, open it on this computer and choose Save to Cloud."),
                     cx,
                 ))
             })
             .when_some(self.save.as_ref(), |b, save| {
                 b.child(super::widgets::field(
-                    t("File name"),
+                    kantor_ui::i18n::t("File name"),
                     Input::new(&save.name),
                     cx,
                 ))
                 .when(gdrive && self.folder.is_empty(), |b| {
                     b.child(note(
-                        t("At the top of Google Drive, Kantor saves into its “Kantor” folder."),
+                        kantor_ui::i18n::t("At the top of Google Drive, Kantor saves into its “Kantor” folder."),
                         cx,
                     ))
                 })
             });
         let title = if self.save.is_some() {
-            t("Save to Cloud")
+            kantor_ui::i18n::t("Save to Cloud")
         } else {
             tr("Open from Cloud", "Buka dari Cloud")
         };
@@ -546,7 +546,7 @@ impl Render for BrowserPanel {
                                 Button::new("cloud-browser-save")
                                     .primary()
                                     .small()
-                                    .label(t("Save Here"))
+                                    .label(kantor_ui::i18n::t("Save Here"))
                                     .disabled(self.loading)
                                     .on_click(cx.listener(|this, _, _, cx| this.save_here(cx))),
                             )
