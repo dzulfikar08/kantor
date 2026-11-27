@@ -38,7 +38,7 @@ env:
   # variables, compiled in; unset hides the providers in Cloud Accounts.
   KANTOR_MS_CLIENT_ID: ${{ vars.KANTOR_MS_CLIENT_ID }}
   KANTOR_GOOGLE_CLIENT_ID: ${{ vars.KANTOR_GOOGLE_CLIENT_ID }}
-  KANTOR_GOOGLE_CLIENT_SECRET: ${{ vars.KANTOR_GOOGLE_CLIENT_SECRET }}
+  KANTOR_GOOGLE_CLIENT_SECRET: ${{ secrets.KANTOR_GOOGLE_CLIENT_SECRET }}
 
 jobs:
   build:

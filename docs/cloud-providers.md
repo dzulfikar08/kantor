@@ -11,7 +11,7 @@ Kantor needs one app registration with each provider. Until a client id is set, 
 | `KANTOR_GOOGLE_CLIENT_ID` | Client ID of the Google Cloud OAuth client (type **Desktop app**) | No |
 | `KANTOR_GOOGLE_CLIENT_SECRET` | That client's secret. Google gives desktop clients a secret, but it ships in every copy of the app and Google doesn't treat it as confidential | No (but keep it out of the repository anyway) |
 
-The values are compiled in (`option_env!` in `crates/kantor_cloud/src/oauth.rs`). The release, nightly and App Store workflows pass them from **repository variables** of the same names (Settings → Secrets and variables → Actions → Variables). The same variables set when Kantor *runs* take precedence, so a registration can be tried on a local build without rebuilding:
+The values are compiled in (`option_env!` in `crates/kantor_cloud/src/oauth.rs`). The release, nightly and App Store workflows pass them from **repository variables** of the same names (Settings → Secrets and variables → Actions → Variables), except `KANTOR_GOOGLE_CLIENT_SECRET`, a repository **secret** (Google calls a desktop client's secret non-confidential, but it stays out of logs). The same variables set when Kantor *runs* take precedence, so a registration can be tried on a local build without rebuilding:
 
 ```sh
 KANTOR_MS_CLIENT_ID=… KANTOR_GOOGLE_CLIENT_ID=… KANTOR_GOOGLE_CLIENT_SECRET=… kantor
