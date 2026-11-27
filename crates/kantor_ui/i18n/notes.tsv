@@ -1,0 +1,40 @@
+# English<TAB>Indonesian, one string per line (see kantor_ui/src/i18n.rs).
+# Notes (Markdown) and its commands in the shell.
+Bulleted list	Daftar berpoin
+Can't open this note: {}	Catatan ini tidak dapat dibuka: {}
+Characters	Karakter
+Code	Kode
+Couldn't convert the note: {}	Catatan tidak dapat dikonversi: {}
+Couldn't save the picture: {}	Gambar tidak dapat disimpan: {}
+Headings	Judul
+Line endings	Akhir baris
+Line {}	Baris {}
+Lines	Baris
+Links	Tautan
+Make Slides from Note…	Buat Slide dari Catatan…
+Make slides from this note	Buat slide dari catatan ini
+No note named {} in this folder	Tidak ada catatan bernama {} di folder ini
+Note	Catatan
+Notes · a .docx made from the note	Catatan · .docx yang dibuat dari catatan
+Notes · a .pptx deck, one slide per heading	Catatan · presentasi .pptx, satu slide per judul
+Notes · a PDF made from the note	Catatan · PDF yang dibuat dari catatan
+Notes · every line as typed	Catatan · setiap baris seperti diketik
+Notes · the note formatted, not editable	Catatan · catatan berformat, tidak dapat diedit
+Picture saved as {}	Gambar disimpan sebagai {}
+Quote	Kutipan
+Reading View	Tampilan Baca
+Reading view	Tampilan baca
+Save Note as PDF…	Simpan Catatan sebagai PDF…
+Save as PDF	Simpan sebagai PDF
+Save as Word Document…	Simpan sebagai Dokumen Word…
+Save as Word document	Simpan sebagai dokumen Word
+Save the note first: pictures are saved next to it	Simpan catatan terlebih dahulu: gambar disimpan di sebelahnya
+Source Mode	Mode Sumber
+Source mode: every line as typed	Mode sumber: setiap baris seperti diketik
+Take .md notes	Tulis catatan .md
+Task list	Daftar tugas
+This note couldn't be read, so it isn't saved over	Catatan ini tidak dapat dibaca, jadi tidak ditimpa
+Untitled.md	Tanpa Judul.md
+Words	Kata
+changed the note	mengubah catatan
+{} words selected	{} kata dipilih

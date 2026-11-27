@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 use docs_ui::DocsView;
 use gpui_kit::*;
+use notes_ui::NotesView;
 use pdf_ui::PdfView;
 use sheets_ui::{Format, HAlign, SheetsView};
 use slides_ui::SlidesView;
@@ -40,13 +41,14 @@ pub(super) struct SnapshotInfo {
     pub unsupported: Vec<String>,
 }
 
-/// A document view: Sheets, Docs or Slides.
+/// A document view: Sheets, Docs, Slides, a PDF or a note.
 #[derive(Clone)]
 pub(super) enum DocView {
     Sheets(Entity<SheetsView>),
     Docs(Entity<DocsView>),
     Slides(Entity<SlidesView>),
     Pdf(Entity<PdfView>),
+    Notes(Entity<NotesView>),
 }
 
 /// Formatting commands both apps understand (palette entries).
@@ -80,6 +82,10 @@ macro_rules! both {
                 let $v = e.read($cx);
                 $body
             }
+            DocView::Notes(e) => {
+                let $v = e.read($cx);
+                $body
+            }
         }
     };
 }
@@ -100,6 +106,10 @@ macro_rules! both_mut {
                 $body
             }),
             DocView::Pdf(e) => e.update($cx, |$v, $c| {
+                let $w = $window;
+                $body
+            }),
+            DocView::Notes(e) => e.update($cx, |$v, $c| {
                 let $w = $window;
                 $body
             }),
@@ -124,6 +134,7 @@ impl DocView {
                 let file = file?;
                 Self::Pdf(cx.new(|cx| PdfView::new(Some(file), window, cx)))
             }
+            AppKind::Notes => Self::Notes(cx.new(|cx| NotesView::new(file, window, cx))),
         })
     }
 
@@ -174,6 +185,14 @@ impl DocView {
                 let (original, name) = (doc.original.clone(), doc.name.clone());
                 Self::Pdf(cx.new(|cx| PdfView::new_recovered(bytes, original, name, window, cx)))
             }
+            RApp::Notes => {
+                let bytes = std::fs::read(&found.copy)?;
+                notes_engine::Buffer::from_bytes(&bytes).map_err(|e| anyhow::anyhow!("{e}"))?;
+                let (original, name) = (doc.original.clone(), doc.name.clone());
+                Self::Notes(
+                    cx.new(|cx| NotesView::new_recovered(bytes, original, name, window, cx)),
+                )
+            }
         })
     }
 
@@ -190,7 +209,7 @@ impl DocView {
             Self::Sheets(e) => e.read(cx).has_password(cx),
             Self::Docs(e) => e.read(cx).has_password(cx),
             Self::Slides(e) => e.read(cx).has_password(cx),
-            Self::Pdf(_) => false,
+            Self::Pdf(_) | Self::Notes(_) => false,
         }
     }
 
@@ -230,6 +249,14 @@ impl DocView {
                     },
                 ))
             }
+            Self::Notes(e) => Some((
+                Snapshot::Bytes(Ok(e.read(cx).recovery_bytes(cx))),
+                SnapshotInfo {
+                    original: self.path(cx),
+                    source_format: None,
+                    unsupported: Vec::new(),
+                },
+            )),
             Self::Pdf(e) => {
                 let build = e.read(cx).recovery_snapshot(cx)?;
                 Some((
@@ -258,6 +285,7 @@ impl DocView {
         match self {
             Self::Sheets(e) => e.update(cx, |v, cx| v.autosave(window, cx)),
             Self::Pdf(e) => e.update(cx, |v, cx| v.autosave(window, cx)),
+            Self::Notes(e) => e.update(cx, |v, cx| v.autosave(window, cx)),
             _ => {
                 self.save(window, cx);
                 Task::ready(if self.is_dirty(cx) {
@@ -276,6 +304,7 @@ impl DocView {
             Self::Docs(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
             Self::Slides(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
             Self::Pdf(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
+            Self::Notes(e) => e.update(cx, |v, _| v.set_disk_guard(guard)),
         }
     }
 
@@ -285,6 +314,7 @@ impl DocView {
             Self::Docs(_) => AppKind::Docs,
             Self::Slides(_) => AppKind::Slides,
             Self::Pdf(_) => AppKind::Pdf,
+            Self::Notes(_) => AppKind::Notes,
         }
     }
 
@@ -294,6 +324,7 @@ impl DocView {
             Self::Docs(e) => e.clone().into(),
             Self::Slides(e) => e.clone().into(),
             Self::Pdf(e) => e.clone().into(),
+            Self::Notes(e) => e.clone().into(),
         }
     }
 
@@ -307,6 +338,7 @@ impl DocView {
             Self::Sheets(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
             Self::Docs(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
             Self::Slides(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
+            Self::Notes(e) => e.update(cx, |v, cx| v.set_untitled_name(name, cx)),
             Self::Pdf(_) => {}
         }
     }
@@ -366,6 +398,7 @@ impl DocView {
             Self::Docs(e) => e.read(cx).location(),
             Self::Slides(e) => e.read(cx).location(),
             Self::Pdf(e) => e.read(cx).location(),
+            Self::Notes(e) => e.read(cx).location(),
         }
     }
 
@@ -401,6 +434,7 @@ impl DocView {
             Self::Docs(e) => e.read(cx).editor_focus_handle(),
             Self::Slides(e) => e.read(cx).editor_focus_handle(),
             Self::Pdf(e) => e.read(cx).editor_focus_handle(),
+            Self::Notes(e) => e.read(cx).editor_focus_handle(),
         }
     }
 
@@ -473,6 +507,13 @@ impl DocView {
                 CommonFormat::Bold => v.toggle_doc(Toggle::Bold, window, cx),
                 CommonFormat::Italic => v.toggle_doc(Toggle::Italic, window, cx),
                 CommonFormat::Underline => v.toggle_doc(Toggle::Underline, window, cx),
+                _ => {}
+            }),
+            // Markdown: wrap the selection in `**` / `*` (no underline or
+            // alignment in Markdown).
+            Self::Notes(e) => e.update(cx, |v, cx| match format {
+                CommonFormat::Bold => v.wrap_doc("**", cx),
+                CommonFormat::Italic => v.wrap_doc("*", cx),
                 _ => {}
             }),
             Self::Pdf(_) => {}

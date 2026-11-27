@@ -130,6 +130,7 @@ fn app_of(kind: AppKind) -> recovery::App {
         AppKind::Docs => recovery::App::Docs,
         AppKind::Slides => recovery::App::Slides,
         AppKind::Pdf => recovery::App::Pdf,
+        AppKind::Notes => recovery::App::Notes,
     }
 }
 
@@ -139,6 +140,7 @@ fn kind_of(app: recovery::App) -> AppKind {
         recovery::App::Docs => AppKind::Docs,
         recovery::App::Slides => AppKind::Slides,
         recovery::App::Pdf => AppKind::Pdf,
+        recovery::App::Notes => AppKind::Notes,
     }
 }
 

@@ -9,6 +9,22 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- **Notes**, a Markdown editor and viewer (`.md`, `.markdown`): *New Note* (start screen, palette), Open, *Open with*
+  Kantor, drops, recent files, autosave and recovery copies like the other apps. Live preview as Obsidian's: each line
+  is drawn formatted (headings, bold, italic, strikethrough, inline code, links, bullets and numbers, task check boxes
+  you can click, quotes, rules, code blocks, tables as grids, pictures from relative paths) with its Markdown hidden,
+  and the lines the caret is on show as typed. *Source Mode* shows every line as typed, *Reading View* (`Ctrl E`)
+  formats every line and isn't editable. The file is the document: an unedited note saves byte for byte (line endings,
+  byte-order mark and last line break kept), and edits change only what was typed. `Ctrl B` / `Ctrl I` / `Ctrl K` (with a selection; else it
+  is the palette) wrap the selection, Enter continues lists, quotes and task lists (and ends an empty item), Tab and Shift+Tab indent
+  list items, a pasted or dropped picture is saved in `attachments/` next to the note and linked, Find & Replace,
+  undo, input methods. *Save as Word Document…*, *Save Note as PDF…* and *Make Slides from Note…* (a slide per
+  heading) build through Kantor's own document and deck builders; `kantor convert note.md note.docx|pdf|pptx` does
+  the same without a window, and the MCP server reads and edits open notes (`notes_read`, `notes_write`,
+  `notes_replace`).
+
 ## [0.27.0] - 2026-11-27
 
 ### Added

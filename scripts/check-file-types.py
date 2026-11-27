@@ -45,6 +45,8 @@ EXPECTED = {
     "odp": "org.oasis-open.opendocument.presentation",
     "otp": "org.oasis-open.opendocument.presentation-template",
     "pdf": "com.adobe.pdf",
+    "md": "net.daringfireball.markdown",
+    "markdown": "net.daringfireball.markdown",
 }
 # Declared by macOS itself: no import needed.
 SYSTEM = {
@@ -96,6 +98,8 @@ MIME = {
     "odp": "application/vnd.oasis.opendocument.presentation",
     "otp": "application/vnd.oasis.opendocument.presentation-template",
     "pdf": "application/pdf",
+    "md": "text/markdown",
+    "markdown": "text/markdown",
 }
 SHEETS = {"xlsx", "xlsm", "xls", "xlt", "xlsb", "ods", "csv", "tsv"}
 
