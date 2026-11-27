@@ -960,7 +960,7 @@ Left as is: PCRE2 details `fancy-regex` reads differently (`\d`, `\w` and
 final line break).
 
 Tests: `test/text_functions/fn_regex.rs`, run in CI by `ci.yml`
-(`cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib fn_regex`).
+(`cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib regex`).
 
 ## Updating or dropping
 
