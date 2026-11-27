@@ -1,0 +1,24 @@
+[package]
+name = "kantor_script_py"
+description = "Python macros for Kantor: RustPython bound to kantor_script's object layer (not built by default: see docs/scripting.md)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+kantor_script.workspace = true
+# No default features: no host_env (os, socket, subprocess, file I/O), no stdlib.
+rustpython-vm = { version = "0.6", default-features = false, features = ["compiler"] }
+# rustpython-codegen 0.6.0 doesn't build with the 0.16.10 ruff fork: pin what it was released with.
+ruff_python_ast = { package = "rustpython-ruff_python_ast", version = "=0.16.5" }
+ruff_python_parser = { package = "rustpython-ruff_python_parser", version = "=0.16.5" }
+ruff_text_size = { package = "rustpython-ruff_text_size", version = "=0.16.5" }
+ruff_source_file = { package = "rustpython-ruff_source_file", version = "=0.16.5" }
+ruff_python_trivia = { package = "rustpython-ruff_python_trivia", version = "=0.16.5" }
+# rustpython-host_env doesn't build on Windows without its ctypes feature (0.6.0).
+rustpython-host_env = { version = "0.6", default-features = false, features = ["ctypes"] }

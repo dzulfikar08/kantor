@@ -1,7 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "tools/fidelity"]
-exclude = ["vendor"]
+# Python macros: kept out of the build (RustPython adds ~16 MB, see docs/scripting.md).
+exclude = ["vendor", "crates/kantor_script_py"]
 
 [workspace.package]
 version = "0.27.0"
@@ -68,6 +69,7 @@ kantor_update = { path = "crates/kantor_update" }
 kantor_vba = { path = "crates/kantor_vba" }
 kantor_script = { path = "crates/kantor_script" }
 kantor_script_js = { path = "crates/kantor_script_js" }
+kantor_script_py = { path = "crates/kantor_script_py" }
 notes_engine = { path = "crates/notes_engine" }
 notes_ui = { path = "crates/notes_ui" }
 pdf_engine = { path = "crates/pdf_engine" }
