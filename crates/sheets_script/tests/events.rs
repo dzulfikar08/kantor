@@ -612,10 +612,20 @@ Public Function SumBig(r As Range, limit As Double) As Double
     Next
 End Function
 
-Public Function Info(r As Range) As String
-    Info = r.Address & " " & r.Count & " " & r.Rows.Count & "x" & r.Columns.Count & _
-        " " & r.Cells(2, 1).Value & " " & r.Offset(1, 0).Resize(1, 1).Value & _
-        " by " & Application.Caller.Address(False, False)
+Public Function Addr(r As Range) As String
+    Addr = r.Address
+End Function
+
+Public Function SizeOf(r As Range) As String
+    SizeOf = r.Count & " " & r.Rows.Count & "x" & r.Columns.Count
+End Function
+
+Public Function PickSecond(r As Range) As String
+    PickSecond = r.Cells(2, 1).Value & " " & r.Offset(1, 0).Resize(1, 1).Value
+End Function
+
+Public Function Who() As String
+    Who = Application.Caller.Address(False, False)
 End Function
 
 Public Function Sneaky(r As Range) As String
@@ -629,12 +639,19 @@ End Function
         set(&mut book, 0, a1, v);
     }
     set(&mut book, 0, "C1", "=SumBig(A1:A3, 5)");
-    set(&mut book, 0, "C2", "=Info(A1:A3)");
+    set(&mut book, 0, "C2", "=Addr(A1:A3)");
+    set(&mut book, 0, "D2", "=SizeOf(A1:A3)");
+    set(&mut book, 0, "E2", "=PickSecond(A1:A3)");
+    set(&mut book, 0, "F2", "=Who()");
     set(&mut book, 0, "C3", "=Sneaky(A1)");
     sheets_script::enable_functions(&mut book, Some(&macros));
     book.recalculate();
     assert_eq!(cell(&book, 0, "C1"), "22");
-    assert_eq!(cell(&book, 0, "C2"), "$A$1:$A$3 3 3x1 10 10 by C2");
+    let got: Vec<String> = ["C2", "D2", "E2", "F2"]
+        .iter()
+        .map(|a| cell(&book, 0, a))
+        .collect();
+    assert_eq!(got, ["$A$1:$A$3", "3 3x1", "10 10", "F2"]);
     assert_eq!(cell(&book, 0, "C3"), "#VALUE!");
     set(&mut book, 0, "A1", "100");
     assert_eq!(cell(&book, 0, "C1"), "122");

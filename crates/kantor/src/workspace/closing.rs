@@ -119,6 +119,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // `Workbook_BeforeClose` first (it may cancel the close).
+        if self.before_close_macros(closing, window, cx) {
+            return;
+        }
         let dirty = self.dirty_views(closing, cx);
         if dirty.is_empty() {
             self.finish_close(closing, window, cx);

@@ -18,6 +18,7 @@ mod closing;
 mod cloud;
 mod doc;
 mod home;
+mod macro_books;
 mod naming;
 mod opening;
 mod palette;
@@ -168,6 +169,9 @@ pub struct Workspace {
     /// The focus when the window last rendered: a change (a gpui-kit menu
     /// opening or closing) redraws once more for `overlay::menu_shield`.
     last_focus: Option<FocusHandle>,
+    /// A close waiting for a workbook's `Workbook_BeforeClose` (see
+    /// `macro_books`).
+    pending_close: Option<closing::Closing>,
 }
 
 impl Workspace {
@@ -202,6 +206,7 @@ impl Workspace {
             recovery: recovery::Recovery::default(),
             cloud: cloud::Cloud::default(),
             last_focus: None,
+            pending_close: None,
         };
         let ws = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -313,6 +318,7 @@ impl Workspace {
                 cx.subscribe_in(e, window, move |ws, _, event, window, cx| match event {
                     sheets_ui::SheetsEvent::Close => ws.remove_doc(id, window, cx),
                     sheets_ui::SheetsEvent::Notice(text) => ws.notice(text.clone(), cx),
+                    other => ws.sheets_macro_event(id, other, window, cx),
                 }),
             ],
             DocView::Docs(e) => vec![

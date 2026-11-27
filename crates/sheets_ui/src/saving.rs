@@ -176,6 +176,9 @@ impl SheetsView {
         };
         self.update_title(window, cx);
         cx.notify();
+        if !saving.autosave {
+            self.macro_after_save(outcome.is_ok(), window, cx);
+        }
         let again = saving.again && matches!(outcome, Ok(false)) && self.busy.is_none();
         if again && let Some(rx) = self.start_save(saving.path.clone(), false, window, cx) {
             // The waiters get the second save's outcome.

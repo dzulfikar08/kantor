@@ -113,7 +113,9 @@ mod plain_cell;
 pub use notes_ui::NoteCommand;
 pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
+mod macro_events;
 mod macro_run;
+mod macro_thread;
 mod toolbar;
 mod vba_ui;
 mod web_ui;
@@ -121,7 +123,7 @@ mod zoom;
 pub use web_ui::{toggle_web_formulas, web_formulas_enabled};
 
 pub use ai::AiTarget;
-pub use calc::SheetsEvent;
+pub use calc::{Handoff, SheetsEvent};
 use cell_editor::{CellEditor, EditMode};
 pub use grid_ops::GridCommand;
 use grid_ops::{GridDrag, Header, Span};
@@ -602,13 +604,30 @@ impl TableDelegate for SheetGrid {
         row_ix: usize,
         col_ix: usize,
         menu: PopupMenu,
-        _: &mut Window,
-        _: &mut Context<TableState<Self>>,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
         if col_ix == 0 {
             return menu;
         }
         let cell = (row_ix as u32, col_ix as u32 - 1);
+        // `Worksheet_BeforeRightClick`: its Cancel keeps the menu shut.
+        let target = if self.range().contains(cell.0, cell.1) {
+            self.range()
+        } else {
+            CellRange::from_corners(cell, cell)
+        };
+        let sheet = self.sheet;
+        let view = self.view.clone();
+        let book = &mut self.book;
+        let show = view
+            .update(cx, |v, cx| {
+                v.macro_right_click(book, sheet, target, window, cx)
+            })
+            .unwrap_or(true);
+        if !show {
+            return menu;
+        }
         type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
         let clip: [(&str, &str, Run); 3] = [
             ("Cut", "Ctrl+X", SheetsView::cut_doc),
@@ -1788,6 +1807,7 @@ impl SheetsView {
                 if self.editing.is_none() {
                     self.load_selected_into_formula(window, cx);
                 }
+                self.macro_selection_changed(window, cx);
                 cx.notify();
             }
             TableEvent::RightClickedCell(row, col) if *col > 0 => {
@@ -1800,7 +1820,11 @@ impl SheetsView {
             }
             TableEvent::DoubleClickedCell(row, col) if *col > 0 => {
                 self.selected = (*row as u32, *col as u32 - 1);
-                self.start_edit(None, window, cx);
+                // `Worksheet_BeforeDoubleClick` first; it starts the edit
+                // unless cancelled.
+                if !self.macro_double_click(self.selected, window, cx) {
+                    self.start_edit(None, window, cx);
+                }
             }
             TableEvent::ColumnWidthsChanged(widths) => self.save_column_widths(widths, window, cx),
             _ => {}
@@ -2539,10 +2563,12 @@ impl SheetsView {
             }
             self.commit_edit(None, window, cx);
         }
+        let old = self.grid_sheet(cx);
         self.show_sheet(sheet, cx);
         self.select_cell(0, 0, cx);
         self.load_selected_into_formula(window, cx);
         self.focus_grid(window, cx);
+        self.macro_sheet_switched(old, sheet, window, cx);
     }
 
     /// Show chart sheet `k` in place of the grid (an edit in progress is
@@ -2721,6 +2747,11 @@ impl SheetsView {
     fn update_title(&self, window: &mut Window, cx: &mut Context<Self>) {
         let title = self.title(cx);
         window.set_window_title(&title);
+        // Edits, undos and redos end here: macro events look at them
+        // (nothing to do, and no cost, without handlers).
+        if self.macros.wants_after_edit() {
+            cx.defer_in(window, |this, window, cx| this.macro_after_edit(window, cx));
+        }
     }
 
     /// Replace the open workbook with the file at `path` (opened in the
@@ -2735,6 +2766,10 @@ impl SheetsView {
 
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
         if self.blocked(cx) {
+            return;
+        }
+        // `Workbook_BeforeSave` first; it saves afterwards unless cancelled.
+        if self.macro_before_save(false, window, cx) {
             return;
         }
         // A note being written is part of what gets saved.
@@ -2757,6 +2792,9 @@ impl SheetsView {
     }
 
     fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        if self.macro_before_save(true, window, cx) {
+            return;
+        }
         self.commit_note(false, window, cx);
         self.save_as_task(window, cx).detach();
     }

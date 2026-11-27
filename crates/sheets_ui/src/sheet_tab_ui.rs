@@ -242,12 +242,16 @@ impl SheetsView {
                     .map_or(tabs.len(), |p| p + 1)
             }
         };
-        let _ = self.tab_edit(t("Inserted a sheet").into(), window, cx, |b| {
+        let inserted = self.tab_edit(t("Inserted a sheet").into(), window, cx, |b| {
             b.insert_sheet(at).map(|_| ())
         });
         self.select_cell(0, 0, cx);
         self.load_selected_into_formula(window, cx);
         self.focus_grid(window, cx);
+        if inserted.is_ok() {
+            let sheet = self.grid_sheet(cx);
+            self.queue_macro_events(vec![sheets_script::Event::NewSheet { sheet }], window, cx);
+        }
     }
 
     /// Delete: asks first when the sheet has something on it, as Excel.

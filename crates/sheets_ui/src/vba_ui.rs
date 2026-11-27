@@ -64,6 +64,21 @@ pub(crate) struct MacroState {
     pub(crate) error_focus: Option<FocusHandle>,
     /// `Debug.Print` lines, oldest first.
     pub(crate) output: Vec<SharedString>,
+    /// The macro thread with the live project (content enabled).
+    pub(crate) thread: Option<crate::macro_thread::MacroThread>,
+    /// The workbook is lent to a macro of another pane.
+    pub(crate) lent: bool,
+    /// What events last saw: the undo/redo history's lengths, the sheet
+    /// and selection (see `macro_events`).
+    pub(crate) seen_hist: Option<(usize, usize)>,
+    pub(crate) seen_sel: Option<(u32, sheets_engine::CellRange)>,
+    /// `Workbook_BeforeClose` / `Workbook_BeforeSave` ran and let it go on.
+    pub(crate) close_approved: bool,
+    pub(crate) save_approved: bool,
+    /// Waits for the next `Application.OnTime` schedule.
+    pub(crate) timer: Option<Task<()>>,
+    /// Events that wait for the workbook (it was busy when they happened).
+    pub(crate) pending: Vec<(sheets_script::Event, Option<usize>)>,
 }
 
 /// The Macros dialog.
@@ -105,7 +120,7 @@ fn code_lines(module: &Module) -> Rc<Vec<SharedString>> {
 
 impl SheetsView {
     /// After a workbook was opened: the bar when it has macros.
-    pub(crate) fn macros_after_open(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn macros_after_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let (has, path) = {
             let book = &self.table.read(cx).delegate().book;
             (book.has_macros(), book.path().map(|p| p.to_path_buf()))
@@ -116,7 +131,9 @@ impl SheetsView {
         };
         if self.macros.trust == MacroTrust::Enabled {
             self.macros.trust = MacroTrust::Disabled;
-            self.enable_content_now(cx);
+            if self.enable_content_now(cx) {
+                self.fire_macro_event(sheets_script::Event::Open, None, window, cx);
+            }
         }
     }
 
@@ -126,10 +143,20 @@ impl SheetsView {
         if self.busy.is_some() || !self.enable_content_now(cx) {
             return;
         }
-        // Formulas using the VBA functions get their values.
-        self.calculate_doc(window, cx);
         self.status = t("Macros enabled for this session").into();
         cx.notify();
+        // Workbook_Open, as when Excel opens a trusted file; then formulas
+        // using the VBA functions get their values.
+        let opened = self.fire_event_then(
+            sheets_script::Event::Open,
+            crate::macro_run::After::Recalculate,
+            None,
+            window,
+            cx,
+        );
+        if !opened {
+            self.calculate_doc(window, cx);
+        }
     }
 
     fn enable_content_now(&mut self, cx: &mut Context<Self>) -> bool {
@@ -146,8 +173,10 @@ impl SheetsView {
         self.table.update(cx, |table, _| {
             sheets_script::enable_functions(&mut table.delegate_mut().book, Some(&project));
         });
+        self.macros.thread = crate::macro_thread::MacroThread::start(project.clone());
         self.macros.project = Some(project);
         self.macros.trust = MacroTrust::Enabled;
+        self.macro_events_seen(cx);
         cx.notify();
         true
     }
