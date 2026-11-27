@@ -1638,7 +1638,7 @@ mod tests {
             assert!(
                 s.run(
                     "find_replace",
-                    &json!({"find": "a", "replace": "b", "in": "notes"})
+                    &json!({"find": "a", "replace": "b", "in": "margins"})
                 )
                 .is_err()
             );
@@ -1689,7 +1689,7 @@ mod tests {
         let a = fx[..i].rfind("<w:r ").unwrap();
         let end = "</mc:AlternateContent></w:r>";
         let b = fx[i..].find(end).unwrap() + i + end.len();
-        let run = fx[a..b].replace("with two paragraphs", "$BOX");
+        let run = fx[a..b].replace("Text box", "$BOX");
         assert_eq!(run.matches("$BOX").count(), 2, "shape and VML fallback");
         let ns_start = fx.find("<w:document ").unwrap() + "<w:document ".len();
         let ns = &fx[ns_start..fx[ns_start..].find('>').unwrap() + ns_start];
