@@ -70,8 +70,8 @@ impl DocsView {
         ) {
             return None;
         }
-        // Sharp at 300 % (zoom and HiDPI screens).
-        let side = (box_px * 3.0).ceil().max(64.0) as u32;
+        // Sharp at 200 % (zoom or a HiDPI screen).
+        let side = (box_px * 2.0).ceil().max(64.0) as u32;
         let key = rel_id.to_owned();
         self.pictures.loading.insert(key.clone());
         let task = cx.background_spawn(async move { decode(&bytes, side) });
