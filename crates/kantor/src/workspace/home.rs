@@ -24,6 +24,7 @@ impl Workspace {
             AppKind::Sheets => (t.sheets, true),
             AppKind::Slides => (t.slides, true),
             AppKind::Pdf => (t.danger, true),
+            AppKind::Notes => (t.info, true),
         };
         let entity = cx.entity().downgrade();
         v_flex()
@@ -57,14 +58,18 @@ impl Workspace {
                 div()
                     .text_size(FONT_CAPTION)
                     .text_color(if ready { accent } else { t.fg_dim })
-                    .child(if ready {
-                        i18n::t("New  →")
-                    } else {
-                        i18n::t("Coming soon")
+                    .child(match (ready, app) {
+                        // There's no new PDF: the card opens one.
+                        (true, AppKind::Pdf) => i18n::t("Open  →"),
+                        (true, _) => i18n::t("New  →"),
+                        (false, _) => i18n::t("Coming soon"),
                     }),
             )
             .on_click(move |_, window, cx| {
-                let _ = entity.update(cx, |ws, cx| ws.launch(app, None, window, cx));
+                let _ = entity.update(cx, |ws, cx| match app {
+                    AppKind::Pdf => ws.open_file(&crate::actions::OpenFile, window, cx),
+                    _ => ws.launch(app, None, window, cx),
+                });
             })
     }
 
@@ -88,6 +93,13 @@ impl Workspace {
             i18n::t("Present .pptx decks"),
             cx,
         );
+        let pdf = self.render_card(
+            "home-pdf",
+            AppKind::Pdf,
+            i18n::t("Read and sign .pdf files"),
+            cx,
+        );
+        let notes = self.render_card("home-notes", AppKind::Notes, i18n::t("Take .md notes"), cx);
         let hints: Vec<Div> = [
             ("Ctrl N", i18n::t("New spreadsheet")),
             ("Ctrl Shift N", i18n::t("New document")),
@@ -122,7 +134,9 @@ impl Workspace {
                         div()
                             .text_size(FONT_BODY)
                             .text_color(t.fg_muted)
-                            .child(i18n::t("Docs, Sheets and Slides — native, fast, yours.")),
+                            .child(i18n::t(
+                                "Docs, Sheets, Slides, PDF and Notes — native, fast, yours.",
+                            )),
                     ),
             )
             .child(
@@ -131,7 +145,9 @@ impl Workspace {
                         .gap(SPACE_6)
                         .child(docs)
                         .child(sheets)
-                        .child(slides),
+                        .child(slides)
+                        .child(pdf)
+                        .child(notes),
                 ),
             )
             .child(

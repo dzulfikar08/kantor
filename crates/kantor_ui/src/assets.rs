@@ -133,6 +133,11 @@ icon_assets!(
         Paperclip,
         // Sheets: View ▸ Macros
         FileCode,
+        // Notes.
+        Link,
+        Code,
+        TextQuote,
+        NotebookPen,
     ]
 );
 

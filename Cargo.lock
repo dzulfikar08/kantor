@@ -4206,6 +4206,8 @@ dependencies = [
  "kantor_ui",
  "kantor_update",
  "log",
+ "notes_engine",
+ "notes_ui",
  "pdf_engine",
  "pdf_ui",
  "ring",
@@ -5088,6 +5090,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b11ce00d2594068e8a27c9146fdc5cf9f3ac38eb42c7cd34d05fea618873ac9f"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "notes_engine"
+version = "0.27.0"
+dependencies = [
+ "pulldown-cmark",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "notes_ui"
+version = "0.27.0"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "gpui-pre-wgpu",
+ "imagesize 0.14.0",
+ "kantor_core",
+ "kantor_ui",
+ "notes_engine",
 ]
 
 [[package]]
@@ -6285,6 +6308,17 @@ checksum = "4488a4a36b9a4ba6b9334a32a39971f77c1436ec82c38707bce707699cc3bbcb"
 dependencies = [
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
+dependencies = [
+ "bitflags 2.13.2",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]

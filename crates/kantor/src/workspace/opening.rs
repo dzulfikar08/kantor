@@ -129,8 +129,8 @@ impl Workspace {
         });
     }
 
-    /// Files dropped on the window: pictures into the focused Docs document
-    /// or presentation, the rest opened in tabs.
+    /// Files dropped on the window: pictures into the focused Docs document,
+    /// presentation or note, the rest opened in tabs.
     pub(super) fn drop_files(
         &mut self,
         paths: &ExternalPaths,
@@ -153,8 +153,17 @@ impl Workspace {
             }
         }
         let view = self.focused_view();
-        let takes_pictures = matches!(view, Some(DocView::Docs(_) | DocView::Slides(_)));
+        let takes_pictures = matches!(
+            view,
+            Some(DocView::Docs(_) | DocView::Slides(_) | DocView::Notes(_))
+        );
         let plan = plan_drop(paths.paths(), takes_pictures);
+        // A note links them all at once (copied next to it).
+        if let Some(DocView::Notes(v)) = &view
+            && !plan.pictures.is_empty()
+        {
+            v.update(cx, |v, cx| v.drop_pictures(&plan.pictures, cx));
+        }
         for picture in &plan.pictures {
             match &view {
                 Some(DocView::Docs(v)) => {

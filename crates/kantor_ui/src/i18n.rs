@@ -102,6 +102,7 @@ pub const CATALOG_FILES: &[(&str, &str)] = &[
     ("docs.tsv", include_str!("../i18n/docs.tsv")),
     ("slides.tsv", include_str!("../i18n/slides.tsv")),
     ("pdf.tsv", include_str!("../i18n/pdf.tsv")),
+    ("notes.tsv", include_str!("../i18n/notes.tsv")),
     ("widgets.tsv", include_str!("../i18n/widgets.tsv")),
     ("content.tsv", include_str!("../i18n/content.tsv")),
 ];
@@ -254,6 +255,7 @@ mod tests {
         "docs_ui",
         "slides_ui",
         "pdf_ui",
+        "notes_ui",
     ];
 
     fn crates_dir() -> PathBuf {
