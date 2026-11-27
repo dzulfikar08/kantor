@@ -652,6 +652,9 @@ pub struct FormAnswer {
     pub click: Option<String>,
 }
 
+/// [`HeadlessUi`]'s steps for each form (by name, lowercase), in order.
+pub type FormSteps = std::collections::HashMap<String, std::collections::VecDeque<FormAnswer>>;
+
 /// A UI with nobody to ask (the command line, tests): message boxes print
 /// to stderr and answer OK or Yes; input boxes take the given answers in
 /// order and fail when there are none left; UserForms take the steps in
@@ -661,11 +664,7 @@ pub struct HeadlessUi {
     /// Answers for input boxes, shared by clones (one per run).
     pub inputs: Rc<std::cell::RefCell<std::collections::VecDeque<String>>>,
     /// Steps for each form (by name, lowercase), in order; shared by clones.
-    pub forms: Rc<
-        std::cell::RefCell<
-            std::collections::HashMap<String, std::collections::VecDeque<FormAnswer>>,
-        >,
-    >,
+    pub forms: Rc<std::cell::RefCell<FormSteps>>,
     /// The forms shown (each step's view), in order.
     pub form_views: Rc<std::cell::RefCell<Vec<FormView>>>,
     /// Message boxes shown, in order.
@@ -693,7 +692,7 @@ impl HeadlessUi {
     }
 
     /// Adds steps for form `name`.
-    pub fn with_form_answers(mut self, name: &str, steps: Vec<FormAnswer>) -> HeadlessUi {
+    pub fn with_form_answers(self, name: &str, steps: Vec<FormAnswer>) -> HeadlessUi {
         self.forms
             .borrow_mut()
             .entry(name.to_lowercase())
