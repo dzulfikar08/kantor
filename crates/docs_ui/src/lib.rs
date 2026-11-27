@@ -338,7 +338,7 @@ pub struct DocInfo {
 /// bridge samples), each page's header and footer, and where pages sit.
 struct Laid {
     paged: PagedDocument,
-    texts: Vec<String>,
+    texts: Arc<Vec<String>>,
     furniture: Vec<Vec<docs_pdf::Placed>>,
     /// Per page: its floating objects (back to front).
     floats: Vec<Vec<docs_pdf::FloatItem>>,
@@ -354,7 +354,7 @@ impl Laid {
     fn empty() -> Self {
         Self {
             paged: PagedDocument::paginate(&[], Vec::new(), PageSetup::a4()),
-            texts: Vec::new(),
+            texts: Arc::default(),
             furniture: Vec::new(),
             floats: Vec::new(),
             strikes: Arc::default(),
@@ -564,6 +564,10 @@ pub struct DocsView {
     find: Entity<kantor_ui::find_bar::FindBar>,
     found: find::Found,
     found_current: Option<usize>,
+    /// A search going on in the background (long documents), and where to
+    /// go once it's done.
+    find_task: Option<Task<()>>,
+    find_go: Option<(Position, bool)>,
     _find_sub: Subscription,
     /// Spell checking as you type.
     spell: spell::SpellState,
@@ -688,6 +692,8 @@ impl DocsView {
             find,
             found: Rc::default(),
             found_current: None,
+            find_task: None,
+            find_go: None,
             _find_sub: find_sub,
             spell: spell::SpellState::default(),
             float_sel: None,
@@ -818,7 +824,8 @@ impl DocsView {
                             floats: l.floats,
                             strikes: l.strikes,
                         }),
-                        l.texts,
+                        // (A copy when a search in the background has it.)
+                        Arc::try_unwrap(l.texts).unwrap_or_else(|t| t.as_ref().clone()),
                     ),
                     Err(_) => (None, Vec::new()),
                 };
@@ -875,7 +882,7 @@ impl DocsView {
         let part = self.part_pieces(&laid.furniture, &laid.floats);
         self.laid = Rc::new(Laid {
             paged: laid.paged,
-            texts,
+            texts: Arc::new(texts),
             furniture: laid.furniture,
             floats: laid.floats,
             strikes: laid.strikes,
