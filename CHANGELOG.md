@@ -9,6 +9,12 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Fixed
+
+- Accept All and Reject All (Review, and `accept_changes`/`reject_changes` in `kantor docs edit`) now also resolve
+  tracked changes inside text boxes; before, they stayed. `kantor docs list` (`tracked_change_count`),
+  `kantor docs check` and the Review count include them, and `accept_changes` reports changes left anywhere.
+
 ## [0.26.1] - 2026-11-27
 
 ### Fixed
