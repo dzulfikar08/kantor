@@ -353,14 +353,15 @@ impl Drive {
         let (url, ctype, body) = match self.existing(c, path, cond)? {
             Some(id) => (
                 format!("{}files/{id}?uploadType=media&fields={FIELDS}", self.upload),
-                "application/octet-stream".to_owned(),
+                mime_for(path).to_owned(),
                 bytes.to_vec(),
             ),
             None => {
                 let meta = self.new_file_meta(c, path)?;
                 let boundary = format!("kantor-{}", crate::oidc::random_token(12));
                 let mut body = format!(
-                    "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{meta}\r\n--{boundary}\r\nContent-Type: application/octet-stream\r\n\r\n"
+                    "--{boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n{meta}\r\n--{boundary}\r\nContent-Type: {}\r\n\r\n",
+                    mime_for(path)
                 )
                 .into_bytes();
                 body.extend_from_slice(bytes);
@@ -481,7 +482,7 @@ impl Drive {
                 &|| {
                     c.request_url(method, &start)
                         .header("content-type", "application/json; charset=UTF-8")
-                        .header("x-upload-content-type", "application/octet-stream")
+                        .header("x-upload-content-type", mime_for(path))
                         .header("x-upload-content-length", total.to_string())
                 },
                 text.as_bytes(),
@@ -537,6 +538,30 @@ impl Drive {
     }
 }
 
+/// The content type to send for `path` (Drive keeps it as the file's
+/// type, which decides how its web app shows and opens the file).
+pub fn mime_for(path: &str) -> &'static str {
+    let ext = path
+        .rsplit_once('.')
+        .map(|(_, e)| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "xlsm" => "application/vnd.ms-excel.sheet.macroEnabled.12",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "pdf" => "application/pdf",
+        "csv" => "text/csv",
+        "ods" => "application/vnd.oasis.opendocument.spreadsheet",
+        "odt" => "application/vnd.oasis.opendocument.text",
+        "odp" => "application/vnd.oasis.opendocument.presentation",
+        "xls" => "application/vnd.ms-excel",
+        "doc" => "application/msword",
+        "ppt" => "application/vnd.ms-powerpoint",
+        _ => "application/octet-stream",
+    }
+}
+
 /// The next byte after a `Range: bytes=0-N` reply (0 without one).
 fn range_end(range: Option<&str>) -> u64 {
     range
@@ -586,6 +611,8 @@ mod tests {
         assert_eq!(range_end(Some("bytes=0-5242879")), 5_242_880);
         assert_eq!(range_end(None), 0);
         assert!(same_version("\"17\"", "17"));
+        assert_eq!(mime_for("Kantor/A.PDF"), "application/pdf");
+        assert_eq!(mime_for("x"), "application/octet-stream");
     }
 
     #[test]

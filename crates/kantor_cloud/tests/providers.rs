@@ -689,12 +689,16 @@ struct GFile {
     trashed: bool,
 }
 
+/// A resumable session: the file id (`None`: a new file), its metadata,
+/// the bytes so far.
+type GSession = (Option<String>, Value, Vec<u8>);
+
 #[derive(Default)]
 struct Gd {
     tokens: Mutex<Tokens>,
     files: Mutex<Vec<GFile>>,
     /// Resumable sessions: (file id or None for new, metadata, bytes so far, total).
-    sessions: Mutex<Vec<(Option<String>, Value, Vec<u8>)>>,
+    sessions: Mutex<Vec<GSession>>,
     drop_parts: Mutex<u32>,
     part_starts: Mutex<Vec<u64>>,
     next: Mutex<u32>,
