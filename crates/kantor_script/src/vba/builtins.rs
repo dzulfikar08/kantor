@@ -139,6 +139,15 @@ pub fn constant(key: &str) -> Option<Value> {
         "vbformfeed" => text("\u{c}"),
         "vbverticaltab" => text("\u{b}"),
         "vbobjecterror" => long(-2_147_221_504),
+        // UserForms: Show's modality, QueryClose's CloseMode, MSForms enumerations.
+        "vbmodeless"
+        | "vbformcontrolmenu"
+        | "fmmultiselectsingle"
+        | "fmstyledropdowncombo"
+        | "fmliststyleplain" => long(0),
+        "vbmodal" | "vbformcode" | "fmmultiselectmulti" | "fmliststyleoption" => long(1),
+        "vbappwindows" | "fmmultiselectextended" | "fmstyledropdownlist" => long(2),
+        "vbapptaskmanager" => long(3),
         "vbokonly"
         | "vbapplicationmodal"
         | "vbdefaultbutton1"

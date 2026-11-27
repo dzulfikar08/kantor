@@ -17,6 +17,9 @@
 //! keep their values between runs until [`Project::reset`] or an `End` statement, as in VBA.
 //! Global names the project doesn't define come from the [`Host`].
 //!
+//! UserForms: [`Project::add_form`] gives a form module its designer; `UserForm1.Show` then
+//! shows it through [`Host::form_event`] and runs its event handlers (see [`crate::forms`]).
+//!
 //! The rules follow the VBA language specification (MS-VBAL); comments cite its sections.
 
 pub mod ast;
@@ -24,6 +27,7 @@ pub mod builtins;
 pub mod compile;
 pub mod convert;
 pub mod format;
+mod forms;
 mod interp;
 pub mod lexer;
 pub mod objects;
@@ -144,6 +148,14 @@ impl Project {
         out
     }
 
+    /// The designer of form module `design.name` (its controls): what `UserForm1.Show` shows.
+    /// A form module without one shows an empty form.
+    pub fn add_form(&mut self, design: crate::forms::FormDesign) {
+        self.state
+            .forms
+            .insert(design.name.to_lowercase(), Rc::new(design));
+    }
+
     /// Makes a constant visible to every module (the object model's `xlUp`, `xlValues`…).
     pub fn register_constant(&mut self, name: &str, value: Value) {
         self.state.constants.insert(name.to_lowercase(), value);
@@ -217,7 +229,13 @@ impl Project {
                 host,
                 depth: 0,
             };
-            let r = it.call_proc(&module, &proc, args, None, None);
+            let mut r = it.call_proc(&module, &proc, args, None, None);
+            // Forms shown modeless stay up once the macro is done; their events run now.
+            if r.is_ok()
+                && let Err(e) = it.run_modeless()
+            {
+                r = Err(e);
+            }
             it.flush_print();
             match r {
                 Err(e) if e.kind == ErrorKind::Halt => (Ok(Value::Empty), true),

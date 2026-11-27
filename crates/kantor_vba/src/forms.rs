@@ -896,8 +896,10 @@ fn fm_string(d: &[u8], at: usize, count: u32) -> Option<String> {
         raw.iter().map(|&b| char::from(b)).collect()
     } else {
         let units: Vec<u16> = raw
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|c| u16::from_le_bytes(*c))
             .collect();
         String::from_utf16_lossy(&units)
     })
@@ -1583,7 +1585,7 @@ pub(crate) fn write_props(
     let mut extra: Vec<u8> = Vec::new();
     let value = |bit: u8| values.iter().find(|(b, _)| *b == bit).map(|(_, v)| v);
     let pad_to = |out: &mut Vec<u8>, n: usize| {
-        while out.len() % n != 0 {
+        while !out.len().is_multiple_of(n) {
             out.push(0);
         }
     };
@@ -1629,7 +1631,7 @@ pub(crate) fn write_props(
             }
             PVal::Str(s) => {
                 extra.extend_from_slice(&string_bytes(s));
-                while extra.len() % 4 != 0 {
+                while !extra.len().is_multiple_of(4) {
                     extra.push(0);
                 }
             }
@@ -1673,7 +1675,7 @@ fn array_string(s: &str) -> Vec<u8> {
     };
     let mut out = chars.to_le_bytes().to_vec();
     out.extend_from_slice(&bytes);
-    while out.len() % 4 != 0 {
+    while !out.len().is_multiple_of(4) {
         out.push(0);
     }
     out
@@ -1966,7 +1968,7 @@ fn write_form_control(
     for _ in sites {
         depths.extend_from_slice(&[0, 1]);
     }
-    while depths.len() % 4 != 0 {
+    while !depths.len().is_multiple_of(4) {
         depths.push(0);
     }
     f.extend_from_slice(&(sites.len() as u32).to_le_bytes());

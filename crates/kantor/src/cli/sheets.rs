@@ -7,7 +7,7 @@
 //! kantor sheets edit book.xlsx -o out.xlsx --ops ops.json
 //! kantor sheets check book.xlsx [--json] [--sheet Data]
 //! kantor sheets macros book.xlsm [--module Module1] [--json]
-//! kantor sheets macros run book.xlsm --macro Macro1 [--out out.xlsm] [--input VALUE]...
+//! kantor sheets macros run book.xlsm --macro Macro1 [--out out.xlsm] [--input VALUE]... [--form-answers FILE.json]
 //! kantor sheets schema > sheets-json.schema.json
 //! ```
 //!
@@ -29,6 +29,7 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20      kantor sheets check FILE [--json] [--sheet S]\n\
     \x20      kantor sheets macros FILE [--module NAME] [--json]\n\
     \x20      kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]...\n\
+    \x20                [--form-answers ANSWERS.json]\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] TOOL ARGS\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] --ops OPS.json\n\
     \x20      kantor sheets schema\n\
@@ -68,8 +69,10 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20          you trust: they change the workbook like a person would.\n\
     \x20          MsgBox prints to standard error and answers OK (or Yes);\n\
     \x20          InputBox takes the --input values in order and fails when\n\
-    \x20          none is left. The workbook's VBA functions work in its\n\
-    \x20          formulas. On a run-time error nothing is saved (exit 1).\n\
+    \x20          none is left. A UserForm the macro shows fails the run\n\
+    \x20          unless --form-answers gives what to fill in and click. The\n\
+    \x20          workbook's VBA functions work in its formulas. On a run-time\n\
+    \x20          error nothing is saved (exit 1).\n\
     \x20 edit     run editing tools on a file and save it (in place unless -o):\n\
     \x20          TOOL is one of the tools below, ARGS its JSON arguments (or\n\
     \x20          @FILE); --ops runs a list of {\"tool\": ..., \"args\": {...}}.\n\
@@ -102,6 +105,10 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20                     the macros; same as -o)\n\
     \x20     --input V       macros run: an answer for the next InputBox\n\
     \x20                     (repeat for several)\n\
+    \x20     --form-answers F  macros run: UserForm steps, a JSON object of\n\
+    \x20                     form name -> [{\"set\": {\"TextBox1\": \"Ann\",\n\
+    \x20                     \"CheckBox1\": true, \"ListBox1\": 2}, \"click\": \"cmdOK\"}]\n\
+    \x20                     (\"click\": \"close\" is the close box)\n\
     \x20     --sheet S       list, check: one sheet (name or number from 1)\n\
     \x20     --range R       list: the cells to show (A1:H200, Data!A1:H200)\n\
     \x20     --formulas      list: formulas in place of their values\n\
@@ -134,6 +141,7 @@ struct Opts {
     module: Option<String>,
     macro_name: Option<String>,
     inputs: Vec<String>,
+    form_answers: Option<String>,
     rest: Vec<String>,
 }
 
@@ -153,6 +161,7 @@ fn parse(args: &[OsString]) -> Result<Opts, Usage> {
             "-o" | "--output" | "--out" => o.output = Some(PathBuf::from(value(&mut it, a)?)),
             "--macro" => o.macro_name = Some(value(&mut it, a)?),
             "--input" => o.inputs.push(value(&mut it, a)?),
+            "--form-answers" => o.form_answers = Some(value(&mut it, a)?),
             "-f" | "--force" => o.force = true,
             "--check" => o.check = true,
             "--json" => o.json = true,
@@ -184,6 +193,56 @@ fn is_xlsx(p: &Path) -> bool {
 }
 
 /// Read JSON from a file, `-` (standard input), or `@FILE`.
+/// `--form-answers`: `{"UserForm1": [{"set": {"TextBox1": "Ann"}, "click": "cmdOK"}]}`.
+fn form_answers(v: &Value) -> Result<Vec<(String, Vec<sheets_script::FormAnswer>)>> {
+    use sheets_script::Answer;
+    let Some(forms) = v.as_object() else {
+        bail!("--form-answers must hold an object of form name -> list of steps");
+    };
+    let mut out = Vec::new();
+    for (form, steps) in forms {
+        let Some(steps) = steps.as_array() else {
+            bail!("--form-answers: {form} must have a list of steps");
+        };
+        let mut list = Vec::new();
+        for step in steps {
+            let mut set = Vec::new();
+            if let Some(values) = step.get("set") {
+                let Some(values) = values.as_object() else {
+                    bail!("--form-answers: {form}: \"set\" must be an object of control -> value");
+                };
+                for (control, value) in values {
+                    let answer = match value {
+                        Value::String(s) => Answer::Text(s.clone()),
+                        Value::Bool(b) => Answer::Bool(*b),
+                        Value::Number(n) => Answer::Number(n.as_f64().unwrap_or_default()),
+                        Value::Array(rows) => Answer::Rows(
+                            rows.iter()
+                                .map(|r| match r {
+                                    Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                })
+                                .collect(),
+                        ),
+                        other => bail!("--form-answers: {form}.{control}: can't use {other}"),
+                    };
+                    set.push((control.clone(), answer));
+                }
+            }
+            let click = match step.get("click") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) => Some(s.clone()),
+                Some(other) => {
+                    bail!("--form-answers: {form}: \"click\" must name a control, not {other}")
+                }
+            };
+            list.push(sheets_script::FormAnswer { set, click });
+        }
+        out.push((form.clone(), list));
+    }
+    Ok(out)
+}
+
 fn read_json(arg: &str) -> Result<Value> {
     let text = if arg == "-" {
         let mut s = String::new();
@@ -398,7 +457,12 @@ fn run_macro(o: &Opts) -> Outcome {
         sheet,
         ..Default::default()
     };
-    let ui = sheets_script::HeadlessUi::new(o.inputs.clone(), true);
+    let mut ui = sheets_script::HeadlessUi::new(o.inputs.clone(), true);
+    if let Some(path) = &o.form_answers {
+        for (form, steps) in form_answers(&read_json(path)?)? {
+            ui = ui.with_form_answers(&form, steps);
+        }
+    }
     let options = sheets_script::RunOptions::default();
     let (mut book, outcome) = sheets_script::run_headless(book, &macros, name, view, ui, &options);
     if let Err(e) = &outcome.result {

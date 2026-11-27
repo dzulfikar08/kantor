@@ -2,7 +2,7 @@
 //! expressions).
 //!
 //! A simple statement that doesn't parse becomes [`StmtKind::Invalid`], and statements Kantor
-//! doesn't run (file I/O, `Load`, `RaiseEvent`…) become [`StmtKind::Unsupported`], so one bad
+//! doesn't run (file I/O, `RaiseEvent`…) become [`StmtKind::Unsupported`], so one bad
 //! line doesn't block a module; both raise an error only when executed. Broken block structure
 //! (`If` without `End If`) fails the module.
 
@@ -995,7 +995,13 @@ impl Parser {
                 return self.unsupported("Renaming files (Name ... As)");
             }
             "load" | "unload" if !matches!(next, Tok::Op("=") | Tok::Dot | Tok::LParen) => {
-                return self.unsupported("UserForms (Load/Unload)");
+                self.bump();
+                let target = self.expr()?;
+                return Ok(if word == "load" {
+                    StmtKind::Load(target)
+                } else {
+                    StmtKind::Unload(target)
+                });
             }
             "raiseevent" => return self.unsupported("Events (RaiseEvent)"),
             "attribute" => {
