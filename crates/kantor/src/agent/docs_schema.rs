@@ -398,9 +398,16 @@ mod tests {
     fn the_schema_file_is_current() {
         let file = include_str!("../../../../docs/docs-json.schema.json");
         let now = serde_json::to_string_pretty(&document()).unwrap() + "\n";
+        let first = file
+            .lines()
+            .zip(now.lines())
+            .enumerate()
+            .find(|(_, (a, b))| a != b)
+            .map(|(i, (a, b))| format!("line {}: file {a:?}, now {b:?}", i + 1));
         assert!(
             file == now,
-            "docs/docs-json.schema.json is out of date: run `kantor docs schema > docs/docs-json.schema.json`"
+            "docs/docs-json.schema.json is out of date: run `kantor docs schema > docs/docs-json.schema.json` ({})",
+            first.unwrap_or_else(|| "lengths differ".into())
         );
     }
 
