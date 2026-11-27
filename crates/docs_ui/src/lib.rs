@@ -1525,6 +1525,9 @@ impl DocsView {
     }
 
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(p) = &self.perf {
+            p.input("action Save");
+        }
         if self.main_doc().needs_save_as() {
             self.save_as_task(window, cx).detach();
             return;
@@ -2269,7 +2272,13 @@ fn layout_color(c: docs_layout::Rgba) -> Hsla {
 
 macro_rules! listeners {
     ($el:expr, $cx:expr, [$($action:ident => |$this:ident, $window:ident, $c:ident| $body:expr),* $(,)?]) => {
-        $el$(.on_action($cx.listener(|$this: &mut DocsView, _: &$action, $window: &mut Window, $c: &mut Context<DocsView>| { $body; })))*
+        $el$(.on_action($cx.listener(|$this: &mut DocsView, _: &$action, $window: &mut Window, $c: &mut Context<DocsView>| {
+            // KANTOR_PERF: the action's time to the frame showing it.
+            if let Some(p) = &$this.perf {
+                p.input(concat!("action ", stringify!($action)));
+            }
+            $body;
+        })))*
     };
 }
 
