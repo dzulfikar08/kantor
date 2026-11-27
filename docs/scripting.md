@@ -40,12 +40,24 @@ map onto it one to one. Nothing in it is VBA-specific.
   `ActiveSheet`), `constant()` supplies the object model's constants (`xlUp`), and there are
   `create_object`, `msg_box`, `input_box`, `debug_print`, `now` (local time) and `cancelled`
   (polled every 1024 statements; `CancelToken` is a ready-made flag for the UI thread).
-  `Project::set_step_limit` adds a hard step budget.
+  `Project::set_step_limit` adds a hard step budget. `take_calls` is asked before every
+  statement for `HostCall`s to run there: event handlers for what the script just did
+  (`HostCall::Proc`, a procedure by name) or a host object's event for `WithEvents` variables
+  (`HostCall::Event`); keep it cheap.
+- **Calls back into the script.** `Dispatch::script_member` marks members the runtime answers
+  itself (`ScriptMember::Run`: Excel's `Application.Run` calls a procedure of the running
+  project). `Dispatch::document_module` names the document module an object is (`Sheet1`,
+  `ThisWorkbook`), so that module's public variables and procedures are members of the
+  object too (`ThisWorkbook.Total`, `Sheet1.Recalc`).
 
 ### The VBA interpreter (`kantor_script::vba`)
 
 `Project::new()`, `add_module(name, kind, source)`, `procedures()`, `run(name, args, host)`,
-`call_function(name, args, host)` (for worksheet UDFs), `register_constant`, `reset`.
+`call_function(name, args, host)` (for worksheet UDFs), `run_by_ref(name, args, host)` (any
+procedure of a standard or document module, private ones too, with `ByRef` results back in
+`args`: an event handler's `Cancel`), `raise_event(source_type, event, args, host)` (a host
+object's event to the `WithEvents` variables holding one), `with_events_handlers()`,
+`register_constant`, `reset`.
 
 - **Front end.** A preprocessor (line endings, the `VERSION … BEGIN … END` header of exported
   `.cls`/`.frm` files, `#If`/`#Const`), a lexer (continuations, `:` separators, `'`/`Rem`,
@@ -68,6 +80,25 @@ map onto it one to one. Nothing in it is VBA-specific.
   `Scripting.Dictionary` as built-in objects, and class modules with `Class_Initialize`,
   `Class_Terminate`, `Property Get/Let/Set`, a default member (`VB_UserMemId = 0`) and an
   enumerator (`VB_UserMemId = -4`).
+- **Events and interfaces** (`vba/events.rs`). `Event Name(params)` declares an event of a
+  class; `RaiseEvent Name(args)` calls `<variable>_Name` in every module whose `WithEvents`
+  variable holds this instance (arguments `ByRef` where the handler says so; an undeclared
+  event is a compile error). A `WithEvents` variable is a *sink*, registered when it comes to
+  exist: a document module's on first use of its variables, a class instance's when it is
+  created (kept weakly, so the sink doesn't keep its instance alive). `Private WithEvents App
+  As Application` works the same for host objects: the host raises `SheetChange`… with
+  `raise_event("Application", …)`, matched by type name. `Implements IShape` makes a class
+  answer for an interface: a member called through a variable declared `As IShape` runs
+  `IShape_Member` (private, as VBA writes them); through a variable of the class itself the
+  class's own public member wins, and an interface member is used when the class has none of
+  that name; `TypeOf x Is IShape` is true. `On n GoTo a, b, c` / `On n GoSub …` jump to the
+  n-th label (0 or past the list falls through, below 0 or above 255 is error 5, MS-VBAL
+  §5.4.2.10).
+- **Handlers between statements.** Before each statement the interpreter runs what
+  `Host::take_calls` returns. An error in such a handler stops the run (it isn't the caller's
+  to trap with `On Error`, as VBA reports it in the handler). Handlers that fire themselves
+  again (a `Worksheet_Change` that writes its own cells without `EnableEvents = False`) end
+  at the call depth limit with "Out of stack space" (error 28), not in a hang.
 
 ## The Sheets object model (`crates/sheets_script`)
 
@@ -81,7 +112,27 @@ the same way.
  tests                    ─┘   run_macro · objects   └─► kantor_script::vba::Project
 ```
 
-- **A run** (`run::run_macro`) takes the workbook, runs one macro and gives the workbook back
+- **The live project** (`engine::MacroEngine`). While content is enabled a workbook keeps
+  one compiled project, so module-level and global variables keep their values between macro
+  runs and event handlers, as in Excel. It is reset (variables cleared) by an `End` statement,
+  by a run that ends with an unhandled error (the error dialog's End; Stop too), and it goes
+  away with the engine: content disabled or the workbook closed. The engine also keeps one
+  `Session` for all its runs (`Session::reload` puts the next run's workbook, view and
+  dialogs in), so objects a macro keeps in module variables (`Set ws = Sheet1`, a `WithEvents`
+  `Application`) stay valid from run to run, and what Excel's application keeps:
+  `Application.EnableEvents` (a macro that turns it off and ends leaves events off, as in
+  Excel), `Application.OnTime` schedules and the paths the user allowed. Worksheet UDFs keep
+  their own per-thread copies of the project (below): module variables aren't shared between
+  macros and UDFs.
+- **The engine and threads.** The interpreter is built on `Rc` and isn't `Send`, so an engine
+  lives on one thread for its whole life. The desktop keeps a *macro thread* per pane
+  (`sheets_ui::macro_thread`), made at Enable Content and ended when the pane closes (its job
+  channel drops). Each macro run, event or due `OnTime` is a job that carries the workbook
+  there (as before, the grid holds a stand-in) and a channel back for dialogs and the result;
+  the workbook comes back with the outcome. The UI thread never touches the project: it keeps
+  the project's `EventIndex` (plain data, `Send`) to tell whether an event has a handler.
+  The command line and the tests use an engine on their own thread.
+- **A run** (`run::run_macro`, `MacroEngine::run`) takes the workbook, runs one macro and gives the workbook back
   with a `RunOutcome`: the result (`MacroError` with the number, description, module, procedure
   and the line as the Visual Basic Editor shows it, attribute lines left out), where the macro
   left the active sheet and selection, and whether `ThisWorkbook.Save` was called (the caller
@@ -105,7 +156,116 @@ the same way.
   Kantor doesn't do (it names the feature), 18 when stopped.
 - **Dialogs** go through the `MacroUi` trait, which is *lent the workbook* while a `MsgBox` or
   `InputBox` shows, so a UI can show the cells as the macro left them. `HeadlessUi` answers OK /
-  Yes and takes input box answers from a list.
+  Yes and takes input box answers from a list. `MacroUi` also lists the window's other
+  workbooks (`other_books`), lends one to the run (`lend_book`) and answers whether a path may
+  be used (`allow_path`).
+
+### Events (`sheets_script::events`)
+
+Only with content enabled and `Application.EnableEvents` True. An event's handlers run in
+Excel's order: the sheet module's (matched by code name), then `ThisWorkbook`'s, then each
+`WithEvents` variable holding the `Application`:
+
+| Event | Sheet module | `ThisWorkbook` | `Application` (`WithEvents`) |
+|---|---|---|---|
+| Enable Content (or a trusted file opening) | | `Workbook_Open` | `WorkbookOpen(Wb)` |
+| Close | | `Workbook_BeforeClose(Cancel)` | `WorkbookBeforeClose(Wb, Cancel)` |
+| Save / Save As | | `Workbook_BeforeSave(SaveAsUI, Cancel)`, `Workbook_AfterSave(Success)` | `WorkbookBeforeSave`, `WorkbookAfterSave` |
+| Cells changed | `Worksheet_Change(Target)` | `Workbook_SheetChange(Sh, Target)` | `SheetChange(Sh, Target)` |
+| Selection moved | `Worksheet_SelectionChange(Target)` | `Workbook_SheetSelectionChange` | `SheetSelectionChange` |
+| Another sheet picked | `Worksheet_Deactivate`, `Worksheet_Activate` | `Workbook_SheetDeactivate/Activate(Sh)` | `SheetDeactivate/Activate` |
+| Sheet inserted | | `Workbook_NewSheet(Sh)` | `WorkbookNewSheet(Wb, Sh)` |
+| Double-click | `Worksheet_BeforeDoubleClick(Target, Cancel)` | `Workbook_SheetBeforeDoubleClick` | `SheetBeforeDoubleClick` |
+| Right-click | `Worksheet_BeforeRightClick(Target, Cancel)` | `Workbook_SheetBeforeRightClick` | `SheetBeforeRightClick` |
+| Recalculation | `Worksheet_Calculate` | `Workbook_SheetCalculate(Sh)` | `SheetCalculate` |
+
+- **Two ways in.** The host's (a user edit, double-click, save, close) go through
+  `MacroEngine::fire`, which returns `RunOutcome::cancel`. A macro's own changes fire events
+  too, as in Excel: between two statements `events::poll` compares the workbook with what it
+  saw last (the undo history's length, the active sheet, its selection, the sheet ids) and
+  hands the interpreter the handlers for the difference. The changed cells come from the undo
+  entries the statement added (`Workbook::edited_since`, KANTOR_PATCHES §37's
+  `kantor_history_changes`), so every way of editing fires `Worksheet_Change` without each
+  object knowing about events. While `EnableEvents` is False nothing fires and nothing is
+  compared; turning it back on takes the state as seen.
+- **Change from the grid.** Typing, paste, fill, clear, sort, undo and redo all end in
+  `update_title`, which compares the undo history's lengths with what events last saw: more
+  undo steps (an edit or redo) give the cells of those steps, fewer (an undo) the cells the
+  undone steps changed. One `Change` per sheet, `Target` holding every changed area; a sheet
+  changed as a whole (rows inserted) gives its used range. In automatic calculation
+  `Worksheet_Calculate` follows; F9 fires it too.
+- **Undo.** The user's edit and what its `Change` handlers do are one undo step
+  (`MacroEngine::fire` with `fold_from`, the undo mark before the edit): Ctrl+Z takes back the
+  typing and the handler's reaction together, where Excel would clear the undo list.
+  `Application.Undo` in a handler that hasn't changed anything yet takes the user's edit back
+  for good (`Workbook::revert_edit`): the classic "validate and undo" handler works. Handlers
+  after an undo are a step of their own. Other events' handlers are one step each, as a macro
+  run is.
+- **Cancel** stops what the event was for: the double-click's edit, the right-click menu, the
+  save, the close. Double-click, save and close wait for their handlers (with dialogs and the
+  busy pane as for a macro) and go on afterwards only if no handler set `Cancel`. The close
+  goes through the workspace: `Workspace::request_close` asks each closing workbook with a
+  `Workbook_BeforeClose` first and closes again when it lets the close go on. The right-click
+  menu is built while the grid holds the workbook, so the handler runs in place with the
+  150 ms wait: when it ends in time its `Cancel` decides; a slower handler goes on with the
+  busy pane and the menu stays shut.
+- **Cost when nothing handles an event: none.** The UI thread keeps the project's
+  `EventIndex`, built once at Enable Content from the procedure names: which of the event
+  kinds any handler exists for (sheet modules, `ThisWorkbook`, `<variable>_<Event>`
+  procedures of modules with a `WithEvents` variable). Each hook asks it first (a hash set
+  lookup), so without a handler typing does exactly what it did before; `update_title` doesn't
+  even schedule the check. Inside a run, the per-statement poll is one flag check when the
+  project handles none of the events a macro's changes fire. With a handler, an event is a
+  job on the macro thread: the 150 ms rule applies (a quick handler never shows the busy pane).
+
+### Other workbooks (`sheets_script::books`)
+
+Every workbook a run touches has a `Session` of its own, so `Workbooks("Data.xlsx").Sheets(1)
+.Range("A1").Value` is the same object model over another workbook. The sessions share an
+`App`: the list of workbooks and the active one. Unqualified `Range`, `Cells`, `ActiveSheet`
+follow the active workbook as in Excel; `ThisWorkbook` (and code names such as `Sheet1`) stay
+the macro's own.
+
+- `Workbooks`: `Count`, `Item` by number or name (with or without the extension), `For Each`
+  over the workbooks open in the window: the run's own, then the other tabs. A tab's workbook
+  is lent to the run when a macro first touches it (the tab shows it's busy) and goes back when
+  the run ends.
+- `Workbooks.Open(Filename)` reads `.xlsx`/`.xlsm`/`.xls`/`.xlsb`/`.ods`/`.csv`/`.tsv` on the
+  macro's thread and makes it active (a workbook already open is returned); `Workbooks.Add`
+  makes a new one. Both come out of the run (`BookOut::New`) and open in new tabs; the command
+  line drops them with a note if they have unsaved changes.
+- `Workbook.Save` (the macro's own is saved by the host when the run ends; another one at
+  once), `SaveAs Filename, FileFormat` (`xlOpenXMLWorkbook` 51 → .xlsx,
+  `xlOpenXMLWorkbookMacroEnabled` 52 → .xlsm, `xlCSV` 6 → .csv of the active sheet; the
+  extension is added when missing, a different one is error 1004), `SaveCopyAs`,
+  `Close [SaveChanges]` (another workbook closes, a lent one's tab too; `ThisWorkbook.Close`
+  closes the pane after the run: saved first with `SaveChanges:=True`, without asking with
+  False, and kept open with a note when it has unsaved changes and no answer), `Activate`.
+- **Paths.** A macro must not read or write files the user didn't mean it to. `Open`,
+  `SaveAs`, `SaveCopyAs` and `Close Filename:=` of a path in the macro's workbook's own folder
+  go ahead on the desktop; any other path asks the user (a Yes/No dialog naming the path, No
+  by default) once per path for the workbook's session. Relative paths are taken from the
+  workbook's folder; `..` is worked out before the check. Headless (`kantor sheets macros
+  run`, tests) only paths given with `--allow-path` (a file, or a folder and everything in it)
+  work, the workbook's folder included; anything else is error 1004 ("Kantor didn't let the
+  macro open …"). On the sandboxed Mac App Store build a path also needs a sandbox grant,
+  which macros can't ask for yet.
+
+### Application.Run, OnTime, Wait, Undo
+
+- `Application.Run "Macro", args…` (and `Run` unqualified) calls a procedure of the project:
+  `"Macro"`, `"Module1.Macro"`, or `"'Book.xlsm'!Macro"` (the workbook part is ignored:
+  only the running workbook's macros can be called). Arguments by value; a Function's result
+  comes back. Unknown: error 1004 with Excel's text.
+- `Application.OnTime EarliestTime, "Macro"[, LatestTime][, Schedule]` keeps a schedule in
+  the engine; `Schedule:=False` removes the one with the same time and macro (error 1004
+  when there is none). On the desktop a timer task waits for the earliest schedule while the
+  pane is open and runs it as a macro (a busy workbook retries a second later); past
+  `LatestTime` a schedule is dropped. `MacroEngine::due(now)` takes the next due one (the
+  tests drive it with their own clock). The command line ends with the macro and notes
+  schedules that didn't run.
+- `Application.Wait Time` sleeps in 50 ms slices, so Stop (and Esc) ends it with error 18.
+- `Application.Undo` (see Events).
 
 ### Coverage
 
@@ -116,12 +276,11 @@ the same way.
   `Name`, `OperatingSystem`, `PathSeparator`; `ScreenUpdating`, `DisplayAlerts`, `EnableEvents`,
   `StatusBar`, `Cursor`, `CutCopyMode` (False clears the clipboard) are kept; `Calculation`
   switches the workbook's calculation mode. `Application.Sum(...)` returns an error value
-  instead of raising. `Wait`, `OnTime`, `OnKey`, `Run`, `Quit`, `SendKeys`, file dialogs and
-  `Caller` fail with error 445.
+  instead of raising. `Run`, `OnTime`, `Wait`, `Undo` (above). `OnKey`, `Quit`, `SendKeys`,
+  file dialogs and `Caller` outside a UDF fail with error 445.
 - **`Workbook`**: `Name`, `FullName`, `Path`, `CodeName`, `Worksheets`, `Sheets`, `Names`,
-  `ActiveSheet`, `Saved`, `Save` (saved when the run ends); `SaveAs`, `SaveCopyAs`, `Close`,
-  `RefreshAll`, printing: 445. `Workbooks(1)`/`Workbooks("Book.xlsm")` is this workbook;
-  `Workbooks.Open`/`Add`: 445.
+  `ActiveSheet`, `Saved`, `Save`, `SaveAs`, `SaveCopyAs`, `Close`, `Activate` (see Other
+  workbooks); `RefreshAll`, printing: 445. `Workbooks`: see Other workbooks.
 - **`Worksheets`/`Sheets`** (worksheets; chart sheets aren't in the object model): `Count`,
   `Item` by number or name (default member), `Add` with `Before`/`After`/`Count` (the new sheet
   becomes active), `For Each`.
@@ -168,12 +327,12 @@ the same way.
   filter, alignment, borders, colours, calculation, sheet visibility, file formats, error
   codes), registered with `Project::register_constant` (`consts.rs`).
 
-Not covered: events (`Workbook_Open`, `Worksheet_Change` don't fire), UserForms, charts, shapes
+Not covered: UserForms, charts, shapes
 and pivot tables as objects, comments/notes, hyperlinks, conditional formats and validation from
-macros, `Application.Run`, other workbooks, printing; removing a single border edge with
+macros, printing; removing a single border edge with
 `xlNone` is ignored (the engine removes all of a range's borders or none) and diagonal borders
 aren't drawn; `AutoFit` measures characters, not glyphs; `RemoveDuplicates` moves values, not
-formats; module-level variables start fresh on each run (the project is compiled per run).
+formats.
 
 ### Running macros in Sheets
 
@@ -187,10 +346,9 @@ formats; module-level variables start fresh on each run (the project is compiled
   macro (`macro="[0]!Macro1"` on the drawing object, or a form control's `controlPr macro` /
   VML `x:FmlaMacro`, read by `sheets_engine::drawing`) run it on click; Ctrl+click selects them.
 - **Where it runs.** The interpreter is built on `Rc` (not `Send`) and recurses on the native
-  stack, so a run can't be cut into slices on the UI thread. It runs on a worker thread of its
-  own instead (32 MB stack), with the workbook moved there as a big recalculation does, and the
-  project compiled there from the module sources (`MacroProject`, which is `Send`). The grid
-  holds a stand-in meanwhile; the UI thread waits up to 150 ms first, so a quick macro never
+  stack, so a run can't be cut into slices on the UI thread. It runs on the pane's macro
+  thread (32 MB stack, see "The engine and threads"), with the workbook moved there as a big
+  recalculation does. The grid holds a stand-in meanwhile; the UI thread waits up to 150 ms first, so a quick macro never
   shows it. A longer run shows the busy pane with **Stop** (and Esc), which sets the
   interpreter's cancel flag (polled every 1024 statements): the macro stops with error 18 and
   what it did so far stays, as one undo step.
@@ -202,15 +360,28 @@ formats; module-level variables start fresh on each run (the project is compiled
 - **Output.** `Debug.Print` lines go to the Macros dialog's Output list (the last 500).
 - **UDFs.** With content enabled, the workbook's VBA `Public Function`s work in cell formulas
   (`=MyTax(A2)`): `udf::VbaFunctions` implements the engine's user functions (§37); each thread
-  that recalculates compiles the project once (thread-local), calls get their arguments as
-  values (ranges as 2-D arrays) with a 5 million statement budget and no workbook objects, and
-  an error shows `#VALUE!`. With content disabled they are `#NAME?`, as in Excel with macros off.
+  that recalculates compiles the project once (thread-local) and calls run with a 5 million
+  statement budget. A reference argument comes as a read-only `Range` (`udf_range`, as Excel
+  passes a `Range` to `Function F(r As Range)` and to Variant parameters): `Value`, `Value2`,
+  `Text`, `Count`, `Cells`, `Item`, `Rows`, `Columns`, `Address`, `Row`, `Column`, `Offset`
+  and `Resize` reading inside the cells passed, `Worksheet.Name`, `For Each`; its values are
+  the ones the engine read for the formula (so they are dependencies as before). Other
+  arguments are values. `Application.Caller` is the calling cell (`Address`, `Row`,
+  `Column`), `Application.Volatile` is accepted. The engine is recalculating, so nothing else
+  of the workbook is reachable: reading outside the cells passed, any write (`r.Value = 1`)
+  and `Range(...)` fail, and the cell shows `#VALUE!`, as Excel shows for a function that
+  writes. A function named like a worksheet function (`Info`, `Second`) is the worksheet
+  function, as in Excel. With content disabled they are `#NAME?`, as in Excel with macros off.
   The formula text is saved as written.
 
 ### Headless: `kantor sheets macros run`
 
-`kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]...` runs a macro and
-saves the workbook (in place unless `--out`). `MsgBox` prints to standard error and answers OK
+`kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]... [--events]
+[--allow-path PATH]...` runs a macro and saves the workbook (in place unless `--out`). With
+`--events`, `Workbook_Open` runs first and `Workbook_BeforeSave` (which may cancel the save)
+and `Workbook_AfterSave` around the save, through one engine, so module variables `Workbook_Open`
+sets are there for the macro. `--allow-path` names files or folders macros may open or save
+(`Workbooks.Open`, `SaveAs`); nothing else is allowed headless. `MsgBox` prints to standard error and answers OK
 (or Yes); `InputBox` takes the `--input` values in order and fails clearly when none is left;
 `Debug.Print` goes to standard error. Running the file's macros trusts it, so its VBA functions
 work in its formulas too. On a run-time error nothing is saved (exit status 1).
@@ -285,10 +456,15 @@ Sources: [rquickjs on docs.rs](https://docs.rs/crate/rquickjs/latest),
   Nothing`, procedure exit), not when a collection or array drops it.
 - `ByRef` on an object's property passes a copy (as VBA does for properties); `ByRef` to a
   `ParamArray` element doesn't write back.
-- Not implemented: `Implements` dispatch through interfaces, `Event`/`RaiseEvent`/`WithEvents`,
-  UserForms, `Decimal` (mapped to Double), `LSet` between user-defined types, `On … GoTo`
-  lists, file I/O, `Declare`d DLL calls, `Shell`, `SendKeys`, registry settings. Each raises
-  an error naming the feature.
+- Not implemented: UserForms, `Decimal` (mapped to Double), `LSet` between user-defined types,
+  file I/O, `Declare`d DLL calls, `Shell`, `SendKeys`, registry settings. Each raises an error
+  naming the feature.
+- Static types are known only from declarations: a member call goes through an interface when
+  the object is in a variable or parameter declared as that interface; through a `Variant` it
+  uses the class's own public member first. Of host objects only the `Application`'s events reach
+  `WithEvents` variables (a `WithEvents wb As Workbook` or `As Worksheet` hears nothing; the
+  same events reach `ThisWorkbook` and the sheet modules). `Workbook_BeforeClose` doesn't run for `ThisWorkbook.Close` called
+  by a macro.
 - `Format` covers the common number, date and text patterns and the named formats, en-US only.
 - Recursion is limited to 100 nested calls by default (`set_max_call_depth`): the tree-walking
   interpreter uses the native stack, and Windows gives the main thread 1 MB.

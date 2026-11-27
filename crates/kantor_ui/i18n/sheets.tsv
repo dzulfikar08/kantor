@@ -1340,6 +1340,10 @@ Running macro {}…	Menjalankan makro {}…
 {} s · Esc or Stop ends it	{} dtk · Esc atau Berhenti mengakhirinya
 Running a macro…	Menjalankan makro…
 Macros enabled for this session	Makro diaktifkan untuk sesi ini
+The macro wants to open {}, outside the workbook's folder. Allow it?	Makro ingin membuka {}, di luar folder buku kerja ini. Izinkan?
+The macro wants to save {}, outside the workbook's folder. Allow it?	Makro ingin menyimpan {}, di luar folder buku kerja ini. Izinkan?
+The macro closed the workbook; it has unsaved changes, so it stays open	Makro menutup buku kerja; ada perubahan yang belum disimpan, jadi buku kerja tetap terbuka
+a macro of another workbook	makro dari buku kerja lain
 Macros have been disabled. Enable them only if you trust where this file came from.	Makro telah dinonaktifkan. Aktifkan hanya jika Anda memercayai asal file ini.
 Enable Content	Aktifkan Konten
 Run starts the selected macro. One Undo takes back everything it changed.	Jalankan memulai makro yang dipilih. Satu kali Urungkan membatalkan semua perubahannya.

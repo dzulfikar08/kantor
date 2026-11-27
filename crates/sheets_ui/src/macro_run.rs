@@ -106,12 +106,12 @@ pub(crate) enum After {
     Recalculate,
 }
 
-enum Ask {
+pub(crate) enum Ask {
     Msg(MsgBoxRequest),
     Input(InputBoxRequest),
 }
 
-enum Answer {
+pub(crate) enum Answer {
     Msg(Result<i32, ScriptError>),
     Input(Result<Option<String>, ScriptError>),
 }
