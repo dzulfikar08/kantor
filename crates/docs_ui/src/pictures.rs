@@ -26,6 +26,10 @@ const RUNNING: usize = 2;
 /// out of view: it isn't decoded (asked again, it waits again).
 const STALE: Duration = Duration::from_secs(1);
 
+/// Pictures with at most this many pixels are never made smaller (1 MB
+/// decoded).
+const SMALL: u64 = 512 * 512;
+
 /// A picture waiting to be decoded.
 struct Job {
     key: String,
@@ -84,7 +88,10 @@ fn image_bytes(img: &RenderImage) -> usize {
 fn decode(bytes: &[u8], side: u32) -> Option<(Arc<RenderImage>, u32)> {
     let img = image::load_from_memory(bytes).ok()?;
     let (w, h) = (img.width(), img.height());
-    let scaled = w.max(h) > side && side > 0;
+    // Small ones (logos, icons) at their own size: little to save, and
+    // fine detail (thin lines) would look different.
+    let small = u64::from(w) * u64::from(h) <= SMALL;
+    let scaled = w.max(h) > side && side > 0 && !small;
     let rgba = if scaled {
         let scale = side as f32 / w.max(h) as f32;
         let (tw, th) = (
@@ -334,9 +341,12 @@ mod tests {
 
     #[std::prelude::v1::test]
     fn decodes_at_the_size_shown() {
-        let (img, side) = decode(&png(400, 200), 100).unwrap();
+        let (img, side) = decode(&png(1200, 600), 100).unwrap();
         let size = img.size(0);
         assert_eq!((size.width.0, size.height.0, side), (100, 50, 100));
+        // Small ones stay as they are.
+        let (img, side) = decode(&png(400, 200), 100).unwrap();
+        assert_eq!((img.size(0).width.0, side), (400, u32::MAX));
         // BGRA, as GPUI wants it.
         assert_eq!(&img.as_bytes(0).unwrap()[..4], &[30, 20, 10, 255]);
         // Smaller than asked for: its own size, never decoded again.
