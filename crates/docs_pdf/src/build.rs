@@ -351,6 +351,22 @@ pub fn layout_paragraph(
                         label: String::new(),
                     }
                 }
+                // An equation, laid out by docs_layout from its OMML.
+                Level::Para
+                    if matches!(
+                        docs_engine::model::element_name(&op.xml),
+                        "oMath" | "oMathPara"
+                    ) =>
+                {
+                    lp.maths.push((index, Arc::from(op.xml.as_str())));
+                    InlineObject {
+                        index,
+                        kind: ObjectKind::Math,
+                        width: 0.0,
+                        height: 0.0,
+                        label: op.label.clone(),
+                    }
+                }
                 Level::Run | Level::Para => InlineObject {
                     index,
                     kind: ObjectKind::Placeholder,

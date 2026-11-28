@@ -1269,19 +1269,11 @@ fn push_item(items: &mut Row, n: Node) {
 /// Attaches a script to the last item.
 fn attach(items: &mut Row, sup: bool, arg: Row) {
     match items.last_mut() {
-        Some(Node::Scripts {
-            sub: s @ None,
-            sup: _,
-            ..
-        }) if !sup => {
+        Some(Node::Scripts { sub: s @ None, .. }) if !sup => {
             *s = Some(arg);
             return;
         }
-        Some(Node::Scripts {
-            sup: s @ None,
-            sub: _,
-            ..
-        }) if sup => {
+        Some(Node::Scripts { sup: s @ None, .. }) if sup => {
             *s = Some(arg);
             return;
         }

@@ -1732,6 +1732,7 @@ dependencies = [
  "encoding_rs",
  "kantor_core",
  "kantor_crypt",
+ "kantor_math",
  "kantor_metafile",
  "kantor_ooxml",
  "log",
@@ -1748,6 +1749,7 @@ version = "0.28.1"
 dependencies = [
  "gpui-pre",
  "gpui-pre-wgpu",
+ "kantor_math",
  "krilla",
  "log",
  "parley",

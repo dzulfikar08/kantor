@@ -186,6 +186,10 @@ pub enum ObjectKind {
     /// The label drawn as text in the paragraph's font, with no box: what
     /// a field with no result shows (`«Name»` for a mail merge field).
     Text,
+    /// An equation ([`Paragraph::maths`] holds its OMML): laid out with
+    /// `kantor_math` at the text's size, sitting on the baseline; display
+    /// equations take the line's width.
+    Math,
 }
 
 /// An object in the text: a box in place of the object's character.
@@ -261,6 +265,9 @@ pub struct Paragraph {
     /// field's result while its code shows, Word's Alt+F9). Offsets stay
     /// those of `text`.
     pub hidden: Vec<Range<usize>>,
+    /// Equations by object byte index: their OMML (`m:oMath` or
+    /// `m:oMathPara`), for objects of kind [`ObjectKind::Math`].
+    pub maths: Vec<(usize, Arc<str>)>,
 }
 
 /// A paragraph's footnotes laid out at another width: their heights and
@@ -405,6 +412,7 @@ impl Paragraph {
             note_splits: Vec::new(),
             note_widths: Vec::new(),
             hidden: Vec::new(),
+            maths: Vec::new(),
         }
     }
 
@@ -466,6 +474,8 @@ pub struct ParaLayout {
     /// The column width it was laid out for (a column of another width
     /// breaks its lines again).
     pub width: f32,
+    /// Laid-out equations by object byte index, and their colour.
+    pub maths: Vec<(usize, Arc<kantor_math::Layout>, Rgba)>,
 }
 
 impl ParaLayout {
@@ -813,6 +823,7 @@ impl Engine {
         let mut labels = Vec::new();
         let mut boxes = Vec::new();
         let mut heights = Vec::with_capacity(para.objects.len());
+        let mut maths = Vec::new();
         // An exact line height ("exactly", `w:lineRule="exact"`) is kept
         // whatever the line holds: an object taller than the room above
         // the baseline is cut at the line's top, as Word does.
@@ -884,19 +895,48 @@ impl Engine {
                 w = 0.0;
                 h = 0.0;
             }
+            let mut baseline = None;
+            if o.kind == ObjectKind::Math
+                && let Some((_, xml)) = para.maths.iter().find(|(i, _)| *i == o.index)
+            {
+                // At the size and colour of the text it sits in.
+                let span = para
+                    .spans
+                    .iter()
+                    .rev()
+                    .find(|s| s.range.start <= o.index && o.index < s.range.end);
+                let size = span.and_then(|s| s.size_pt).unwrap_or(para.size_pt) * PT;
+                let color = span.and_then(|s| s.color).unwrap_or(Rgba::BLACK);
+                let line_w = (width - left - right - first.max(0.0)).max(16.0);
+                let display = xml
+                    .trim_start()
+                    .trim_start_matches('<')
+                    .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+                    .next()
+                    .is_some_and(|n| n.ends_with("oMathPara"));
+                if let Some(l) = kantor_math::layout_omml(xml, size, display.then_some(line_w)) {
+                    w = l.width.min(if display { line_w } else { f32::MAX });
+                    h = l.ascent + l.descent;
+                    baseline = Some(l.ascent);
+                    maths.push((o.index, l, color));
+                }
+            }
             // The box goes at the object character itself (before its
             // zero-width stand-in): parley then puts the caret at the
             // character's start before the box and after it at its end.
             let at = o.index;
             heights.push(h);
             if at < para.text.len() {
+                let height = room.map_or(h, |r| h.min(r));
                 boxes.push(InlineBox {
                     id: id as u64,
                     kind: InlineBoxKind::InFlow,
                     index: at,
                     width: w.min(width.max(1.0)),
-                    height: room.map_or(h, |r| h.min(r)),
-                    baseline: None,
+                    height,
+                    // An equation's baseline is its own (what an exact
+                    // line cuts off comes off the top).
+                    baseline: baseline.map(|b: f32| (b - (h - height)).max(0.0)),
                     vertical_align: VerticalAlign::BASELINE,
                 });
             }
@@ -1043,6 +1083,7 @@ impl Engine {
             alignment,
             avail,
             width,
+            maths,
         }
     }
 
@@ -1301,6 +1342,9 @@ pub enum RunSource {
     /// The number of the note mark at this byte index (document text, in
     /// the PDF too).
     Mark(usize),
+    /// The equation at this byte index (its characters are
+    /// [`kantor_math::Layout::text`]).
+    Math(usize),
 }
 
 /// A run of glyphs sharing one font, size and colour, in page coordinates.
@@ -3569,6 +3613,11 @@ impl PagedDocument {
                 .iter()
                 .find(|x| x.0 == i)
                 .map_or("", |x| x.2.as_str()),
+            RunSource::Math(i) => l
+                .maths
+                .iter()
+                .find(|x| x.0 == i)
+                .map_or("", |x| x.1.text.as_str()),
         }
     }
 
@@ -3591,6 +3640,14 @@ impl PagedDocument {
                 emit_runs(&mut out, &mline, pl.para, RunSource::Marker, mdx, my);
             }
             for item in line.items() {
+                if let PositionedLayoutItem::InlineBox(b) = &item
+                    && let Some(&(index, ObjectKind::Math)) = pl_layout.objects.get(b.id as usize)
+                    && let Some((_, l, color)) = pl_layout.maths.iter().find(|x| x.0 == index)
+                {
+                    let (x0, base) = math_origin(l, b.x + dx, b.y + dy, b.height);
+                    emit_math(&mut out, l, *color, pl.para, index, x0, base);
+                    continue;
+                }
                 if let PositionedLayoutItem::InlineBox(b) = item
                     && let Some(&(index, kind)) = pl_layout.objects.get(b.id as usize)
                     && matches!(
@@ -3653,10 +3710,11 @@ impl PagedDocument {
         out
     }
 
-    /// Tab leaders and bar-tab lines on a page, ready to fill. Leaders
-    /// are drawn as shapes (dots, dashes, lines) sized from the tab's font
-    /// size, the dots on a grid from the column's edge so they line up from
-    /// line to line as Word's do.
+    /// Tab leaders and bar-tab lines on a page, ready to fill, and the
+    /// lines equations draw (fraction bars, radicals). Leaders are drawn
+    /// as shapes (dots, dashes, lines) sized from the tab's font size, the
+    /// dots on a grid from the column's edge so they line up from line to
+    /// line as Word's do.
     pub fn tab_rules(&self, page: usize) -> Vec<RuleRect> {
         let mut out = Vec::new();
         let Some(p) = self.pages.get(page) else {
@@ -3664,6 +3722,24 @@ impl PagedDocument {
         };
         for pl in &p.lines {
             let l = &self.layouts[pl.para];
+            if !l.maths.is_empty()
+                && let Some(line) = l.layout.get(pl.line)
+            {
+                for item in line.items() {
+                    if let PositionedLayoutItem::InlineBox(b) = item
+                        && let Some(&(index, ObjectKind::Math)) = l.objects.get(b.id as usize)
+                        && let Some((_, m, color)) = l.maths.iter().find(|x| x.0 == index)
+                    {
+                        let (x0, base) = math_origin(m, b.x + pl.dx, b.y + pl.dy, b.height);
+                        for r in &m.rules {
+                            out.push(RuleRect {
+                                rect: [x0 + r[0], base + r[1], r[2], r[3]],
+                                color: *color,
+                            });
+                        }
+                    }
+                }
+            }
             for &bx in &l.bars {
                 out.push(RuleRect {
                     rect: [pl.x + bx - 0.5, pl.top, 1.0, pl.height],
@@ -4160,6 +4236,73 @@ fn leader_rects(
                 push(a, baseline + s * 0.1, b - a, h);
             }
         }
+    }
+}
+
+/// The math font as parley font data (one blob, so renderers cache it once).
+fn math_font() -> FontData {
+    static FONT: std::sync::OnceLock<FontData> = std::sync::OnceLock::new();
+    FONT.get_or_init(|| FontData::new(kantor_math::BUNDLED_FONT.to_vec().into(), 0))
+        .clone()
+}
+
+/// Where an equation in a box at `(x, y)`, `h` tall, draws: its left edge
+/// and baseline (the box's bottom less its descent).
+fn math_origin(l: &kantor_math::Layout, x: f32, y: f32, h: f32) -> (f32, f32) {
+    (x, y + h - l.descent)
+}
+
+/// An equation's glyphs as runs, one per size.
+fn emit_math(
+    out: &mut Vec<GlyphRun>,
+    l: &kantor_math::Layout,
+    color: Rgba,
+    para: usize,
+    index: usize,
+    x0: f32,
+    baseline: f32,
+) {
+    let font = math_font();
+    let mut start = 0;
+    while start < l.glyphs.len() {
+        let size = l.glyphs[start].size;
+        let mut end = start + 1;
+        while end < l.glyphs.len() && l.glyphs[end].size == size && l.glyphs[end].font == 0 {
+            end += 1;
+        }
+        let gs = &l.glyphs[start..end];
+        start = end;
+        if gs[0].font != 0 {
+            continue;
+        }
+        let first_x = gs.iter().map(|g| g.x).fold(f32::INFINITY, f32::min);
+        let last_x = gs.iter().map(|g| g.x).fold(f32::NEG_INFINITY, f32::max);
+        out.push(GlyphRun {
+            font: font.clone(),
+            font_size: size,
+            color,
+            normalized_coords: Vec::new(),
+            variations: Vec::new(),
+            embolden: false,
+            skew_deg: None,
+            baseline,
+            origin_x: x0 + first_x,
+            glyphs: gs
+                .iter()
+                .map(|g| PositionedGlyph {
+                    id: g.id as u32,
+                    x: x0 + g.x,
+                    y: baseline + g.y,
+                    advance: 0.0,
+                    cluster: g.cluster.clone(),
+                })
+                .collect(),
+            advance: (last_x - first_x).max(0.0),
+            underline: None,
+            para,
+            text_range: index..index + OBJECT.len_utf8(),
+            source: RunSource::Math(index),
+        });
     }
 }
 

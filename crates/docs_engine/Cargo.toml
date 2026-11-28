@@ -11,6 +11,8 @@ anyhow.workspace = true
 kantor_core.workspace = true
 kantor_ooxml.workspace = true
 kantor_metafile.workspace = true
+# Equations: their LaTeX for labels, OMML written from LaTeX.
+kantor_math.workspace = true
 # Password-protected .docx and .odt files.
 kantor_crypt.workspace = true
 # Default features pull in image decoding, which Docs doesn't need yet.

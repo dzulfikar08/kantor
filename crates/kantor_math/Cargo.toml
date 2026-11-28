@@ -13,4 +13,4 @@ workspace = true
 [dependencies]
 roxmltree.workspace = true
 # MATH table, glyph metrics and size variants (already in the tree via fontdb and pdf_ui).
-ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
+ttf-parser = { version = "0.25", default-features = false, features = ["std", "opentype-layout"] }

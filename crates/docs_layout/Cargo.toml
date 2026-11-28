@@ -12,6 +12,8 @@ log.workspace = true
 # Static instances of variable fonts (instance.rs): reading, and cutting
 # outlines at a location (the same crates krilla uses).
 skrifa = "0.42"
+# Equations (ObjectKind::Math).
+kantor_math.workspace = true
 subsetter = { version = "0.2.6", features = ["variable-fonts"] }
 
 [dev-dependencies]

@@ -303,8 +303,8 @@ fn add_page(
                     .or_insert_with(|| Arc::from(paged.run_text(&run, "")))
                     .clone(),
             ),
-            // A note's number.
-            RunSource::Mark(_) => Some(Arc::from(paged.run_text(&run, ""))),
+            // A note's number, an equation's characters.
+            RunSource::Mark(_) | RunSource::Math(_) => Some(Arc::from(paged.run_text(&run, ""))),
             // Kantor's placeholder labels are not document content.
             RunSource::Label(_) => None,
         };

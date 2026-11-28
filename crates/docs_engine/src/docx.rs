@@ -1134,9 +1134,9 @@ impl BodyParser<'_> {
                     text
                 }
             }
+            // Equations are drawn and edited; the label is their LaTeX.
             "oMath" | "oMathPara" => {
-                self.preserved.insert("equations".into());
-                "Equation".into()
+                kantor_math::omml_to_latex(xml).unwrap_or_else(|| "Equation".into())
             }
             "smartTag" | "customXml" => {
                 if text.is_empty() {
