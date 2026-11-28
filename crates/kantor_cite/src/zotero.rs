@@ -9,8 +9,13 @@
 //! - Zotero 7's local API (on when "Allow other applications on this
 //!   computer to communicate with Zotero" is ticked in Settings ▸
 //!   Advanced): `GET /api/users/0/items/top?q=…&format=json&include=csljson`
-//!   searches the library; `/api/users/0/items/KEY?format=csljson` reads one
-//!   item.
+//!   searches the library; `/api/users/0/items/KEY?format=json&include=csljson`
+//!   reads one item. Zotero sends `csljson` as a string holding a one-item
+//!   array. The local API calls the library `users/0`; the item URIs
+//!   Zotero's Word plug-in writes (`http://zotero.org/users/local/<key>/items/<item>`
+//!   for a library that isn't synced, `users/<id>` for one that is) are read
+//!   from an item's Bibliontology RDF export, which names the item by its
+//!   URI.
 //!
 //! Every call is blocking: run them off the UI thread.
 
@@ -92,6 +97,26 @@ pub fn key_of(uri: &str) -> Option<&str> {
     (last.len() == 8 && last.chars().all(|c| c.is_ascii_alphanumeric())).then_some(last)
 }
 
+/// `http://zotero.org/…/items/` from an export that names item `key` by its
+/// URI.
+fn uri_prefix_in(body: &str, key: &str) -> Option<String> {
+    let end = format!("/items/{key}");
+    let mut from = 0;
+    while let Some(i) = body[from..].find("http://zotero.org/") {
+        let start = from + i;
+        let rest = &body[start..];
+        let len = rest
+            .find(|c: char| c == '"' || c == '<' || c == '\'' || c.is_whitespace())
+            .unwrap_or(rest.len());
+        let uri = &rest[..len];
+        if let Some(stem) = uri.strip_suffix(end.as_str()) {
+            return Some(format!("{stem}/items/"));
+        }
+        from = start + len.max(1);
+    }
+    None
+}
+
 impl Zotero {
     /// The local server (`KANTOR_ZOTERO_URL`, else [`DEFAULT_URL`]).
     pub fn new() -> Self {
@@ -157,11 +182,44 @@ impl Zotero {
             ),
             s => bail!("Zotero answered HTTP {s}"),
         }
-        parse_search(&body)
+        let mut found = parse_search(&body)?;
+        if let Some(first) = found.iter().find(|i| i.uri.is_none()) {
+            let prefix = self.items_uri_prefix(&first.key);
+            for it in found.iter_mut().filter(|i| i.uri.is_none()) {
+                it.uri = prefix.as_ref().map(|p| format!("{p}{}", it.key));
+            }
+        }
+        Ok(found)
     }
 
-    /// One item's CSL-JSON by key.
+    /// `http://zotero.org/users/<local key or id>/items/` for the local
+    /// library, read from `key`'s Bibliontology RDF export (`None` when
+    /// Zotero doesn't say).
+    pub fn items_uri_prefix(&self, key: &str) -> Option<String> {
+        let path = format!(
+            "/api/users/0/items/{}?format=rdf_bibliontology",
+            encode(key)
+        );
+        match self.get(&self.agent, &path) {
+            Ok((200, body)) => uri_prefix_in(&body, key),
+            _ => None,
+        }
+    }
+
+    /// One item's CSL-JSON by key, with its URI.
     pub fn item(&self, key: &str) -> anyhow::Result<ZoteroItem> {
+        let mut item = self.item_data(key)?;
+        if item.uri.is_none() {
+            item.uri = self
+                .items_uri_prefix(&item.key)
+                .map(|p| format!("{p}{}", item.key));
+        }
+        Ok(item)
+    }
+
+    /// One item's CSL-JSON by key (its URI only when the local API gives
+    /// the library id).
+    fn item_data(&self, key: &str) -> anyhow::Result<ZoteroItem> {
         let path = format!(
             "/api/users/0/items/{}?format=json&include=csljson",
             encode(key)
@@ -195,9 +253,21 @@ impl Zotero {
             let Some(key) = key else {
                 bail!("Better BibTeX didn't say which item was picked");
             };
-            let mut item = self.item(&key)?;
-            if uri.as_deref().is_some_and(|u| u.contains("zotero.org/")) {
-                item.uri = uri.clone();
+            // Better BibTeX names the item by its URI: no need to ask
+            // Zotero for it.
+            let mut item = match uri.as_deref().filter(|u| u.contains("zotero.org/")) {
+                Some(u) => {
+                    let mut it = self.item_data(&key)?;
+                    it.uri = Some(u.to_owned());
+                    it
+                }
+                None => self.item(&key)?,
+            };
+            // Zotero's Word plug-in gives citations Zotero's item id.
+            if let Some(id) = p.item.data.get("id").and_then(Value::as_i64)
+                && let Some(o) = item.data.as_object_mut()
+            {
+                o.insert("id".into(), Value::from(id));
             }
             p.item = item;
             out.push(p);
@@ -231,7 +301,18 @@ fn item_of(v: &Value) -> Option<ZoteroItem> {
     if matches!(item_type, "attachment" | "note" | "annotation") {
         return None;
     }
-    let mut data = v.get("csljson")?.clone();
+    // A string holding a one-item array (Zotero 7 to 10), or the item.
+    let mut data = match v.get("csljson")? {
+        Value::String(s) => serde_json::from_str::<Value>(s).ok()?,
+        d => d.clone(),
+    };
+    if let Value::Array(a) = &mut data {
+        data = if a.is_empty() {
+            Value::Null
+        } else {
+            a.swap_remove(0)
+        };
+    }
     if !data.is_object() {
         return None;
     }
@@ -286,13 +367,20 @@ fn parse_cayw(body: &str) -> anyhow::Result<Vec<(Option<String>, Picked)>> {
                     .map(str::to_owned)
             });
             let key = str_of(p.get("itemKey"))
+                .or_else(|| str_of(p.pointer("/item/itemKey")))
                 .or_else(|| str_of(p.get("key")))
                 .unwrap_or_default();
+            // Zotero's item id (a number), kept until the item's data is in.
+            let data = p
+                .get("id")
+                .or_else(|| p.pointer("/item/itemID"))
+                .and_then(Value::as_i64)
+                .map_or(Value::Null, |id| serde_json::json!({ "id": id }));
             let picked = Picked {
                 item: ZoteroItem {
                     key,
                     uri: None,
-                    data: Value::Null,
+                    data,
                 },
                 locator: str_of(p.get("locator")),
                 label: str_of(p.get("label")),
@@ -383,6 +471,104 @@ mod tests {
         );
         assert_eq!(found[0].data["id"], "NUGRH001");
         assert_eq!(found[0].data["title"], "Pengaruh media sosial");
+    }
+
+    /// An item as Zotero 10's local API sends it: the library is
+    /// `users/0` and `csljson` is a string holding a one-item array.
+    fn real_api_item(key: &str, title: &str) -> String {
+        let csl = serde_json::json!([{
+            "id": "nugroho2021", "type": "article-journal", "citation-key": "nugroho2021",
+            "title": title, "author": [{"family": "Nugroho", "given": "Adi"}],
+            "issued": {"date-parts": [["2021"]]}
+        }]);
+        serde_json::json!({
+            "key": key, "version": 2,
+            "library": {"type": "user", "id": 0, "name": "My Library"},
+            "data": {"itemType": "journalArticle"},
+            "csljson": serde_json::to_string_pretty(&csl).unwrap(),
+        })
+        .to_string()
+    }
+
+    const RDF: &str = r#"<rdf:RDF><bibo:AcademicArticle rdf:about="http://zotero.org/users/local/q1R5vhbT/items/LOCAL001"><dcterms:title>T</dcterms:title></bibo:AcademicArticle></rdf:RDF>"#;
+
+    #[test]
+    fn zotero_10_answers() {
+        let base = fake(vec![
+            (
+                "/api/users/0/items/top?q=nugroho",
+                200,
+                format!(
+                    "[{},{}]",
+                    real_api_item("LOCAL001", "Pengaruh media sosial"),
+                    real_api_item("LOCAL002", "Kedua")
+                ),
+            ),
+            ("/api/users/0/items/LOCAL001?format=rdf", 200, RDF.into()),
+            (
+                "/api/users/0/items/LOCAL001",
+                200,
+                real_api_item("LOCAL001", "Pengaruh media sosial"),
+            ),
+        ]);
+        let z = Zotero::at(&base);
+        let found = z.search("nugroho", 10).unwrap();
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].data["title"], "Pengaruh media sosial");
+        assert_eq!(found[0].data["id"], "LOCAL001");
+        assert_eq!(
+            found[0].uri.as_deref(),
+            Some("http://zotero.org/users/local/q1R5vhbT/items/LOCAL001")
+        );
+        assert_eq!(
+            found[1].uri.as_deref(),
+            Some("http://zotero.org/users/local/q1R5vhbT/items/LOCAL002")
+        );
+        let one = z.item("LOCAL001").unwrap();
+        assert_eq!(one.data["type"], "article-journal");
+        assert_eq!(
+            one.uri.as_deref(),
+            Some("http://zotero.org/users/local/q1R5vhbT/items/LOCAL001")
+        );
+    }
+
+    #[test]
+    fn zotero_10_picker() {
+        // Better BibTeX 9's answer: Zotero's item id, the URI, the item.
+        let base = fake(vec![
+            (
+                "/better-bibtex/cayw?format=json",
+                200,
+                r#"[{"id":7,"locator":"","suppressAuthor":false,"prefix":"","suffix":"","label":"","citationKey":"nugroho2021","uri":"http://zotero.org/users/local/q1R5vhbT/items/LOCAL001","itemType":"article-journal","item":{"itemID":7,"itemKey":"LOCAL001"}}]"#.into(),
+            ),
+            ("/api/users/0/items/LOCAL001", 200, real_api_item("LOCAL001", "T")),
+        ]);
+        let picks = Zotero::at(&base).pick().unwrap();
+        assert_eq!(picks.len(), 1);
+        assert_eq!(picks[0].locator, None, "empty fields are left out");
+        assert_eq!(picks[0].item.data["id"], 7);
+        assert_eq!(picks[0].item.data["title"], "T");
+        assert_eq!(
+            picks[0].item.uri.as_deref(),
+            Some("http://zotero.org/users/local/q1R5vhbT/items/LOCAL001")
+        );
+    }
+
+    #[test]
+    fn uri_prefixes() {
+        assert_eq!(
+            uri_prefix_in(RDF, "LOCAL001").as_deref(),
+            Some("http://zotero.org/users/local/q1R5vhbT/items/")
+        );
+        assert_eq!(uri_prefix_in(RDF, "OTHER001"), None);
+        assert_eq!(
+            uri_prefix_in(
+                "<x rdf:resource=\"http://zotero.org/users/1/items/A\"/> <y rdf:about=\"http://zotero.org/users/123/items/ABCD2345\">",
+                "ABCD2345"
+            )
+            .as_deref(),
+            Some("http://zotero.org/users/123/items/")
+        );
     }
 
     #[test]
