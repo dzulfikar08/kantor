@@ -1175,7 +1175,8 @@ pub fn draw_run(surface: &mut Surface, run: &TextRun, font: Font) {
                 GlyphId::new(g.id),
                 g.advance / size,
                 (g.x - pen) / size,
-                (g.y - run.baseline) / size,
+                // krilla offsets go up; page y goes down.
+                (run.baseline - g.y) / size,
                 0.0,
                 g.cluster.clone(),
                 None,

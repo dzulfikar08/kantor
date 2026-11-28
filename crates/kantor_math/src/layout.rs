@@ -1300,12 +1300,18 @@ impl<'a> Ctx<'a> {
         b.add(c, x, 0.0);
         x += cw;
         b.w = x;
-        let cl = if open.is_empty() && close.is_empty() {
+        // Seen from outside as brackets: f(x) and (a)(b) stay tight.
+        b.left = if open.is_empty() {
             Class::Ord
         } else {
-            Class::Inner
+            Class::Open
         };
-        b.class(cl)
+        b.right = if close.is_empty() {
+            Class::Ord
+        } else {
+            Class::Close
+        };
+        b
     }
 
     /// Cells in a grid: rows with struts, columns 1 em apart, centred on
@@ -1314,7 +1320,7 @@ impl<'a> Ctx<'a> {
         &mut self,
         cells: Vec<Vec<B>>,
         aligns: &dyn Fn(usize) -> f32,
-        col_gap: f32,
+        col_gap: &dyn Fn(usize) -> f32,
         row_gap: f32,
         st: St,
     ) -> B {
@@ -1342,16 +1348,19 @@ impl<'a> Ctx<'a> {
             let base = y + a;
             let mut x = 0.0;
             for (j, c) in r.into_iter().enumerate() {
+                if j > 0 {
+                    x += col_gap(j);
+                }
                 let cw = c.w;
                 let dx = (widths[j] - cw) * aligns(j);
                 b.add(c, x + dx, base);
-                x += widths[j] + col_gap;
+                x += widths[j];
             }
             y = base + d + row_gap;
         }
         b.asc = b.asc.max(-top);
         b.desc = b.desc.max(top + total_h);
-        b.w = widths.iter().sum::<f32>() + col_gap * cols.saturating_sub(1) as f32;
+        b.w = widths.iter().sum::<f32>() + (1..cols).map(col_gap).sum::<f32>();
         b
     }
 
@@ -1362,7 +1371,7 @@ impl<'a> Ctx<'a> {
             .map(|r| r.iter().map(|c| self.row(c, cst)).collect())
             .collect();
         let em = self.em(st);
-        self.grid(cells, &|_| 0.5, em, 0.2 * em, st)
+        self.grid(cells, &|_| 0.5, &|_| em, 0.2 * em, st)
     }
 
     /// An equation array: rows split at `&` into columns aligned
@@ -1373,6 +1382,7 @@ impl<'a> Ctx<'a> {
         let mut cells: Vec<Vec<B>> = Vec::new();
         let mut nums: Vec<Option<B>> = Vec::new();
         let mut aligned = false;
+        let mut columns = 1;
         for r in rows {
             let (body, num) = if numbers {
                 split_number(r)
@@ -1380,20 +1390,39 @@ impl<'a> Ctx<'a> {
                 (r.clone(), None)
             };
             let parts = split_amp(&body);
-            aligned |= parts.len() > 1;
+            // `a &= b`: the part after an alignment point starts with a
+            // relation; `x & x > 0` (cases) is a second column.
+            for (j, p) in parts.iter().enumerate().skip(1) {
+                if j % 2 == 1
+                    && let Some(Node::Text(t)) = p.first()
+                    && t.text
+                        .chars()
+                        .next()
+                        .is_some_and(|c| symbols::class(c) == Class::Rel)
+                {
+                    aligned = true;
+                }
+            }
+            columns = columns.max(parts.len());
             cells.push(parts.iter().map(|p| self.row(p, st)).collect());
             nums.push(num.map(|n| self.row(&n, St::TEXT)));
         }
         let em = self.em(st);
+        // One column: rows centred. Alignment points: right / left in
+        // turn, pairs a quad apart. Other columns: left-aligned, a quad
+        // apart (cases).
         let align = move |j: usize| -> f32 {
-            if !aligned {
+            if columns == 1 {
                 0.5
+            } else if !aligned {
+                0.0
             } else if j.is_multiple_of(2) {
                 1.0
             } else {
                 0.0
             }
         };
+        let gap = move |j: usize| -> f32 { if aligned && j % 2 == 1 { 0.0 } else { em } };
         // Baselines of the rows, for the numbers.
         let mut bases = Vec::new();
         {
@@ -1412,7 +1441,7 @@ impl<'a> Ctx<'a> {
                 y += a + d + gap;
             }
         }
-        let b = self.grid(cells, &align, 0.0, 0.25 * em, st);
+        let b = self.grid(cells, &align, &gap, 0.25 * em, st);
         let nums = nums
             .into_iter()
             .zip(bases)

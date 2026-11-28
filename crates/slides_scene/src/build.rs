@@ -616,6 +616,19 @@ impl Builder {
                 prim: Prim::Text(Text { origin, runs }),
             });
         }
+        // Lines equations draw (fraction bars, radicals, boxes).
+        for r in laid.layout.paged.tab_rules(0) {
+            let [x, y, w, h] = r.rect;
+            out.push(Item {
+                layer,
+                transform,
+                prim: Prim::Fill {
+                    path: Path::rect(origin.x + x, origin.y + y, w.max(0.5), h.max(0.5)),
+                    paint: Paint::Solid(r.color),
+                    rule: FillRule::NonZero,
+                },
+            });
+        }
     }
 }
 
