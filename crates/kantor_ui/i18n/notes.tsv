@@ -13,7 +13,6 @@ Lines	Baris
 Links	Tautan
 Make Slides from Note…	Buat Slide dari Catatan…
 Make slides from this note	Buat slide dari catatan ini
-No note named {} in this folder	Tidak ada catatan bernama {} di folder ini
 Note	Catatan
 Notes · a .docx made from the note	Catatan · .docx yang dibuat dari catatan
 Notes · a .pptx deck, one slide per heading	Catatan · presentasi .pptx, satu slide per judul
@@ -38,3 +37,58 @@ Untitled.md	Tanpa Judul.md
 Words	Kata
 changed the note	mengubah catatan
 {} words selected	{} kata dipilih
+# Vaults: files, search, backlinks, renames, graph.
+Back to the note	Kembali ke catatan
+Backlinks	Tautan balik
+Can't undo the rename: the files changed since	Penggantian nama tidak dapat diurungkan: berkasnya sudah berubah
+Couldn't make the note: {}	Catatan tidak dapat dibuat: {}
+Couldn't rename the note: {}	Nama catatan tidak dapat diganti: {}
+Depth {}	Kedalaman {}
+Files	Berkas
+Files in the vault	Berkas di vault
+Fit	Paskan
+Graph View	Tampilan Grafik
+Graph view	Tampilan grafik
+Linked mentions ({})	Sebutan bertaut ({})
+Links away from this note	Jumlah tautan dari catatan ini
+Links to notes not made yet	Tautan ke catatan yang belum dibuat
+Local Graph	Grafik Lokal
+Made the new note {}	Catatan baru {} dibuat
+New note	Catatan baru
+No heading “{}” in this note	Tidak ada judul “{}” di catatan ini
+No notes link here yet.	Belum ada catatan yang menaut ke sini.
+No other notes link to this one.	Tidak ada catatan lain yang menaut ke catatan ini.
+No rename to undo	Tidak ada penggantian nama untuk diurungkan
+Notes · a folder of notes with links, backlinks and a graph	Catatan · folder catatan dengan tautan, tautan balik, dan grafik
+Notes · every note of the vault and its links	Catatan · semua catatan di vault dan tautannya
+Notes · find text in every note of the vault	Catatan · cari teks di semua catatan vault
+Notes · links to it are updated in every note	Catatan · tautan ke catatan ini diperbarui di semua catatan
+Notes · put back the last rename and its links	Catatan · kembalikan penggantian nama terakhir beserta tautannya
+Notes · the notes that link to this one	Catatan · catatan yang menaut ke catatan ini
+Notes · this note and the notes it links with	Catatan · catatan ini dan catatan yang bertaut dengannya
+Open Folder as Vault…	Buka Folder sebagai Vault…
+Open a folder of notes	Buka folder catatan
+Read the folder again	Baca ulang folder
+Reading…	Membaca…
+Rename Note…	Ganti Nama Catatan…
+Rename note	Ganti nama catatan
+Rename undone	Penggantian nama diurungkan
+Rename undone; {} notes had changed and kept their links	Penggantian nama diurungkan; {} catatan sudah berubah dan tautannya tetap
+Renamed to {}; links updated in {} other notes	Nama diganti menjadi {}; tautan diperbarui di {} catatan lain
+Renamed, but some links couldn't be updated: {}	Nama diganti, tetapi beberapa tautan tidak dapat diperbarui: {}
+Save the note first	Simpan catatan terlebih dahulu
+Save the note first: a vault is the note's folder	Simpan catatan terlebih dahulu: vault adalah folder catatan
+Search in Vault	Cari di Vault
+Search in the vault	Cari di vault
+Still reading the vault…	Masih membaca vault…
+There is already a note named {}	Sudah ada catatan bernama {}
+This note	Catatan ini
+Undo Note Rename	Urungkan Ganti Nama Catatan
+Undo rename	Urungkan ganti nama
+Unlinked mentions ({})	Sebutan tanpa tautan ({})
+Untitled	Tanpa Judul
+Whole vault	Seluruh vault
+{} links in this note will be updated.	{} tautan di catatan ini akan diperbarui.
+{} links in {} notes will be updated: {}	{} tautan di {} catatan akan diperbarui: {}
+{} notes	{} catatan
+{}+ matches	{}+ kecocokan

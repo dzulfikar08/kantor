@@ -1,6 +1,6 @@
 # 0005: Notes is a drawn editor over the Markdown text
 
-- **Status:** accepted (2026-11-27), phases 1 (live preview editor) and 2 (reading view, conversions) of Notes. Phase 3 (a folder of notes: wiki links, backlinks, graph view) and plugins build on it.
+- **Status:** accepted (2026-11-27), phases 1 (live preview editor) and 2 (reading view, conversions) of Notes; phase 3 (a folder of notes: wiki links, backlinks, renames, search, graph view) added 2026-11-28 (see "Vaults" below). Plugins build on it.
 - **Decides:** how Kantor edits Markdown notes (`crates/notes_engine`, `crates/notes_ui`).
 
 ## Context
@@ -33,4 +33,15 @@ Notes should be a light, native alternative to Obsidian inside Kantor: the `.md`
 - Saving an unedited note writes the same bytes; every edit is a splice of what was typed.
 - Re-parsing the whole note on each edit (pulldown-cmark, about a millisecond per 100 KB) keeps the model simple; incremental parsing can come later behind the same `Parsed` API.
 - Phase 3 builds on `Parsed::links` (`LinkKind::Wiki` with the target name, `[[Note|label]]` and `#heading` parts in `dest`) and `Parsed::headings`; following a wiki link today opens `Name.md` in the note's folder (`NotesEvent::Open`). Backlinks and a graph need a folder index over these.
-- Known gaps: italics show upright when the UI font has no italic face (GPUI doesn't slant); no autoscroll while drag-selecting past the edge; tables are edited as text (revealed) rather than cell by cell; images from the web aren't fetched; no spell check yet.
+- Known gaps: no autoscroll while drag-selecting past the edge; tables are edited as text (revealed) rather than cell by cell; images from the web aren't fetched; no spell check yet. (Italics used to show upright when the UI font has no italic face: GPUI can't slant glyphs, so italic runs now take an installed family that has a real italic, `NotesView::refresh_italic`.)
+
+## Vaults (phase 3)
+
+**Index** (`notes_engine::vault`, no GPUI): a `Vault` is a folder's notes (hidden folders such as `.obsidian` and `.git` skipped), each with its text and the links `parse` finds: `[[Note]]`, `[[Note|alias]]`, `[[Note#Heading]]`, embeds `![[Note]]`, and Markdown links to `.md` files. `wiki_parts` splits a wiki link into byte ranges (name, heading, alias). Names resolve as Obsidian does: file name without extension, any case; a name with `/` matches a path's end; among notes of one name the linking note's folder wins, then the shortest path. On it: backlinks, unlinked mentions (the name as a whole word outside links and code), search (every word of the query on one line), `[[` completion (prefix, word start, substring, then letters in order; `Note#` lists headings) and the edges for the graph.
+
+**Renames** are plans of byte splices (`Vault::rename_splices`): only the bytes of each link's target change, in the style it was written (bare name, path, `.md`, `%20` in Markdown links). The note's file is moved, open notes take the splices through their editor (one undo step each, then saved), closed files are spliced on disk. The vault keeps the inverse splices and a hash of each file's new text, so Undo Rename puts back the file name and links where a file is still as the rename left it. The rename dialog says how many notes change before anything is written.
+
+**UI** (`notes_ui::vault`, `panels`, `graph_view`, `complete`): one `VaultState` entity per folder, shared by the note views in it (a note opened in an open vault, or under a folder with `.obsidian`, joins it; the toolbar's Files / Search / Backlinks / Graph buttons open the note's own folder as one). The folder is read on a background thread; saves update the index. A plain click follows a link where its line shows formatted, Ctrl/Cmd+click anywhere; a link to a note that doesn't exist yet makes it (in the linking note's folder, or under the vault's root for `Folder/Note`) and is drawn faded until then. The graph is `notes_engine::graph`: d3-force's model (springs on links, a Barnes–Hut push between notes, a weak pull to the middle, cooling to rest), stepped on a 16 ms timer only while it moves, painted with one GPUI path per few thousand links and a quad per note; pan, zoom about the pointer, drag a note (the rest follow), click to open; whole vault or the current note's neighbourhood (depth 1–3).
+
+- The index lives in memory (each note's text): fine for thousands of notes; a file watcher isn't used, so changes made outside Kantor show after "Read the folder again" or a save.
+- Block references (`[[Note#^id]]`), aliases from front matter and tags aren't indexed yet.

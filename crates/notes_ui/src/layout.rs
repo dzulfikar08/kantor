@@ -17,7 +17,7 @@
 // Lists of one source range are normal here (a line shaped whole).
 #![allow(clippy::single_range_in_vec_init)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -31,6 +31,9 @@ use notes_engine::parse::{Align, LineInfo, LineKind, ListMarker, Parsed, SpanKin
 #[derive(Clone, Debug)]
 pub struct Look {
     pub font: SharedString,
+    /// The family for italic text when `font` has no italic face (GPUI
+    /// can't slant glyphs itself).
+    pub italic_font: Option<SharedString>,
     pub mono: SharedString,
     /// Body text size (zoom applied).
     pub size: Pixels,
@@ -46,6 +49,7 @@ pub struct Look {
 impl Look {
     fn hash_into(&self, h: &mut impl Hasher) {
         self.font.hash(h);
+        self.italic_font.hash(h);
         self.mono.hash(h);
         f32::from(self.size).to_bits().hash(h);
         for c in [
@@ -405,6 +409,8 @@ pub struct Input<'a> {
     /// The note's folder, for relative picture paths.
     pub dir: Option<&'a Path>,
     pub image_sizes: &'a mut ImageSizes,
+    /// Links (indices into the parse's links) to notes that don't exist.
+    pub broken: &'a HashSet<usize>,
 }
 
 /// Lay out every line, reusing `cache` (keyed by what shapes each line).
@@ -422,6 +428,7 @@ pub fn layout(
         width,
         dir,
         image_sizes,
+        broken,
     } = input;
     let mut next_cache = HashMap::with_capacity(cache.len());
     let n = buf.line_count();
@@ -447,12 +454,12 @@ pub fn layout(
             look.hash_into(&mut h);
             f32::from(width).to_bits().hash(&mut h);
             for tl in t.lines.clone() {
-                hash_line(&mut h, buf, parsed, tl);
+                hash_line(&mut h, buf, parsed, tl, broken);
             }
             let key = h.finish();
             let b = match cache.get(&key).or_else(|| next_cache.get(&key)) {
                 Some(b) => b.clone(),
-                None => Rc::new(table_box(ts, buf, parsed, look, table, width)),
+                None => Rc::new(table_box(ts, buf, parsed, look, table, width, broken)),
             };
             next_cache.insert(key, b.clone());
             tops.push(y);
@@ -479,7 +486,7 @@ pub fn layout(
         look.hash_into(&mut h);
         (mode, is_revealed).hash(&mut h);
         f32::from(width).to_bits().hash(&mut h);
-        hash_line(&mut h, buf, parsed, l);
+        hash_line(&mut h, buf, parsed, l, broken);
         if let Some(img) = &image {
             img.path.hash(&mut h);
             f32::from(img.size.width).to_bits().hash(&mut h);
@@ -493,10 +500,13 @@ pub fn layout(
                 buf,
                 parsed,
                 look,
-                mode,
+                Shape {
+                    mode,
+                    revealed: is_revealed,
+                    width,
+                    broken,
+                },
                 l,
-                is_revealed,
-                width,
                 image,
             )),
         };
@@ -512,7 +522,13 @@ pub fn layout(
 }
 
 /// Hash what shapes line `l`, with offsets relative to the line start.
-fn hash_line(h: &mut impl Hasher, buf: &Buffer, parsed: &Parsed, l: usize) {
+fn hash_line(
+    h: &mut impl Hasher,
+    buf: &Buffer,
+    parsed: &Parsed,
+    l: usize,
+    broken: &HashSet<usize>,
+) {
     let start = buf.line_start(l);
     let rel = |o: usize| o.wrapping_sub(start);
     buf.line(l).hash(h);
@@ -559,7 +575,10 @@ fn hash_line(h: &mut impl Hasher, buf: &Buffer, parsed: &Parsed, l: usize) {
             SpanKind::Emphasis => 1,
             SpanKind::Strike => 2,
             SpanKind::Code => 3,
-            SpanKind::Link(_) => 4,
+            SpanKind::Link(i) => {
+                broken.contains(&i).hash(h);
+                4
+            }
             SpanKind::Image(_) => 5,
             SpanKind::Html => 6,
             SpanKind::Footnote => 7,
@@ -681,6 +700,7 @@ fn shape(
     revealed: bool,
     x: Pixels,
     width: Pixels,
+    broken: &HashSet<usize>,
 ) -> TextBox {
     let segs: Vec<Range<usize>> = merge(segs);
     let mut display = String::new();
@@ -705,7 +725,7 @@ fn shape(
                 continue;
             }
             display.push_str(buf.slice(a..b));
-            runs.push(run_for(look, base, info, a, b, revealed));
+            runs.push(run_for(look, base, info, a, b, revealed, broken));
         }
     }
     let map = DisplayMap::new(
@@ -766,6 +786,7 @@ fn run_for(
     a: usize,
     b: usize,
     revealed: bool,
+    broken: &HashSet<usize>,
 ) -> TextRun {
     let mut bold = base.bold;
     let mut italic = false;
@@ -783,6 +804,11 @@ fn run_for(
                 SpanKind::Code => {
                     mono = true;
                     background = Some(look.code_bg);
+                }
+                // A link to a note not made yet: faded, no underline.
+                SpanKind::Link(i) if broken.contains(&i) => {
+                    color = look.accent.opacity(0.55);
+                    underline = false;
                 }
                 SpanKind::Link(_) | SpanKind::Footnote => {
                     color = look.accent;
@@ -804,10 +830,10 @@ fn run_for(
         color = look.dim;
         underline = false;
     }
-    let mut font = font(if mono {
-        look.mono.clone()
-    } else {
-        look.font.clone()
+    let mut font = font(match (mono, italic, &look.italic_font) {
+        (true, _, _) => look.mono.clone(),
+        (false, true, Some(f)) => f.clone(),
+        _ => look.font.clone(),
     });
     if bold {
         font.weight = FontWeight::BOLD;
@@ -832,18 +858,30 @@ fn run_for(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// How a line is shaped: the view's mode, whether the line is revealed,
+/// the column width and the broken links.
+struct Shape<'a> {
+    mode: Mode,
+    revealed: bool,
+    width: Pixels,
+    broken: &'a HashSet<usize>,
+}
+
 fn line_box(
     ts: &WindowTextSystem,
     buf: &Buffer,
     parsed: &Parsed,
     look: &Look,
-    mode: Mode,
+    how: Shape<'_>,
     l: usize,
-    revealed: bool,
-    width: Pixels,
     image: Option<ImageBox>,
 ) -> LineBox {
+    let Shape {
+        mode,
+        revealed,
+        width,
+        broken,
+    } = how;
     let info = &parsed.lines[l];
     let lr = buf.line_range(l);
     let base = base_for(look, mode, info);
@@ -890,6 +928,7 @@ fn line_box(
                         false,
                         look.size * 0.6,
                         width,
+                        broken,
                     )
                 });
                 return boxed(Body::Fence { label }, base.line_height);
@@ -927,6 +966,7 @@ fn line_box(
                 true,
                 px(0.),
                 px(100_000.),
+                broken,
             );
             t.wrapped
                 .as_ref()
@@ -951,6 +991,7 @@ fn line_box(
                 dim,
                 x,
                 width,
+                broken,
             ),
             Deco::default(),
         )
@@ -977,6 +1018,7 @@ fn line_box(
                 false,
                 x,
                 width,
+                broken,
             ),
             deco,
         )
@@ -1108,6 +1150,7 @@ fn table_box(
     look: &Look,
     table: usize,
     width: Pixels,
+    broken: &HashSet<usize>,
 ) -> LineBox {
     let t = &parsed.tables[table];
     let first = t.lines.start;
@@ -1155,6 +1198,7 @@ fn table_box(
                 false,
                 px(0.),
                 px(100_000.),
+                broken,
             );
             let w = b
                 .wrapped
@@ -1199,6 +1243,7 @@ fn table_box(
                 false,
                 px(0.),
                 cols[ci] - pad_x * 2.,
+                broken,
             );
             h = h.max(text.height());
             cells.push(TableCell {
@@ -1352,6 +1397,7 @@ mod tests {
     fn look() -> Look {
         Look {
             font: "Liberation Sans".into(),
+            italic_font: None,
             mono: "Liberation Mono".into(),
             size: px(15.),
             fg: black(),
@@ -1382,6 +1428,7 @@ mod tests {
                 width: px(600.),
                 dir: None,
                 image_sizes: &mut sizes,
+                broken: &HashSet::new(),
             },
             cache,
         )

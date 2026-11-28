@@ -138,6 +138,7 @@ icon_assets!(
         Code,
         TextQuote,
         NotebookPen,
+        Pencil,
     ]
 );
 

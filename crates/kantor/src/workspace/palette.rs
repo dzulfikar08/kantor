@@ -2343,6 +2343,48 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Open Folder as Vault…"),
+        detail: tk("Notes · a folder of notes with links, backlinks and a graph"),
+        keys: "",
+        run: |ws, window, cx| ws.open_vault(window, cx),
+    },
+    Command {
+        title: tk("Graph View"),
+        detail: tk("Notes · every note of the vault and its links"),
+        keys: "Ctrl G",
+        run: |ws, window, cx| ws.with_notes(window, cx, |v, _, cx| v.toggle_graph(false, cx)),
+    },
+    Command {
+        title: tk("Local Graph"),
+        detail: tk("Notes · this note and the notes it links with"),
+        keys: "",
+        run: |ws, window, cx| ws.with_notes(window, cx, |v, _, cx| v.toggle_graph(true, cx)),
+    },
+    Command {
+        title: tk("Search in Vault"),
+        detail: tk("Notes · find text in every note of the vault"),
+        keys: "Ctrl Shift F",
+        run: |ws, window, cx| ws.with_notes(window, cx, |v, w, cx| v.open_search(w, cx)),
+    },
+    Command {
+        title: tk("Backlinks"),
+        detail: tk("Notes · the notes that link to this one"),
+        keys: "",
+        run: |ws, window, cx| ws.with_notes(window, cx, |v, _, cx| v.toggle_backlinks(cx)),
+    },
+    Command {
+        title: tk("Rename Note…"),
+        detail: tk("Notes · links to it are updated in every note"),
+        keys: "",
+        run: |ws, window, cx| ws.with_notes(window, cx, |v, w, cx| v.rename_note(w, cx)),
+    },
+    Command {
+        title: tk("Undo Note Rename"),
+        detail: tk("Notes · put back the last rename and its links"),
+        keys: "",
+        run: |ws, window, cx| ws.with_notes(window, cx, |v, _, cx| v.undo_rename(cx)),
+    },
+    Command {
         title: tk("New Slide"),
         detail: "Slides",
         keys: "Ctrl M",

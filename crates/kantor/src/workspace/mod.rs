@@ -369,6 +369,9 @@ impl Workspace {
                     notes_ui::NotesEvent::Open(path) => {
                         ws.open_paths(None, vec![path.clone()], window, cx)
                     }
+                    notes_ui::NotesEvent::OpenAt(path, jump) => {
+                        ws.open_note_at(path.clone(), jump.clone(), window, cx)
+                    }
                     notes_ui::NotesEvent::Export(kind) => {
                         ws.export_note(view.clone(), *kind, window, cx)
                     }

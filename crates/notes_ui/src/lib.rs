@@ -9,23 +9,32 @@
 //!
 //! Three modes ([`Mode`]): live preview (the default), source (every line
 //! as typed) and reading (formatted, not editable).
+//!
+//! A note inside a folder opened as a vault ([`vault`]) gets the vault's
+//! panels ([`panels`]: files, search, backlinks), `[[wiki link]]`
+//! following and completion, renames that update links, and the graph
+//! view ([`graph_view`]).
 
 extern crate gpui_kit as gpui;
 
+mod complete;
 mod find;
+mod graph_view;
 mod input;
 pub mod layout;
 mod paint;
+pub mod panels;
 mod toolbar;
+pub mod vault;
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::component::{ActiveTheme as _, v_flex};
+use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 use kantor_ui::i18n::{t, tf};
@@ -34,6 +43,7 @@ use notes_engine::{Editor, Merge, Selection};
 
 pub use layout::Mode;
 use layout::{Body, ImageSizes, Laid, LineBox, Look, MarkerDeco};
+pub use panels::LeftPanel;
 
 /// Key context of the note editor.
 pub const KEY_CONTEXT: &str = "NotesEditor";
@@ -106,6 +116,10 @@ actions!(
         ZoomIn,
         ZoomOut,
         ZoomReset,
+        ToggleGraph,
+        SearchVault,
+        ToggleFiles,
+        ToggleBacklinks,
     ]
 );
 
@@ -201,6 +215,8 @@ fn key_bindings() -> Vec<KeyBinding> {
         "+" => ZoomIn,
         "shift-=" => ZoomIn,
         "-" => ZoomOut,
+        "g" => ToggleGraph,
+        "shift-f" => SearchVault,
     );
     keys
 }
@@ -212,6 +228,17 @@ pub enum NotesEvent {
     Export(Export),
     /// Open a linked file (another note, a document) in Kantor.
     Open(PathBuf),
+    /// Open a note and go to a place in it.
+    OpenAt(PathBuf, Jump),
+}
+
+/// A place in a note to go to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Jump {
+    /// A byte offset in the text.
+    Offset(usize),
+    /// The heading with this text (any case).
+    Heading(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -272,7 +299,48 @@ pub struct NotesView {
     found: Rc<Vec<Range<usize>>>,
     found_current: Option<usize>,
     _find_sub: Subscription,
+    entity_id: EntityId,
+    // ── the vault ──
+    vault: Option<Entity<vault::VaultState>>,
+    _vault_sub: Option<Subscription>,
+    left: LeftPanel,
+    show_backlinks: bool,
+    search_input: Option<Entity<gpui_kit::component::input::InputState>>,
+    _search_sub: Option<Subscription>,
+    search_cache: Option<panels::SearchData>,
+    links_cache: Option<panels::LinksData>,
+    /// Folders folded in the files list.
+    collapsed: HashSet<String>,
+    /// Note names in the note's folder when it has no vault.
+    folder_index: Option<(std::time::Instant, Rc<notes_engine::vault::Vault>)>,
+    graph: Option<graph_view::GraphState>,
+    completion: Option<complete::Popup>,
+    // ── the caret ──
+    /// Last typing, move or click (the caret shows steadily after it).
+    activity: std::time::Instant,
+    /// The caret as last drawn (blinking).
+    caret_shown: bool,
+    focused_last: bool,
+    _blink: Task<()>,
+    /// The family italic runs use when the UI font has no italic face
+    /// (GPUI can't slant glyphs): `(for font, family)`.
+    italic_font: Option<(SharedString, Option<SharedString>)>,
 }
+
+/// Fonts with real italics, tried in order when the UI font has none.
+const ITALIC_FALLBACKS: &[&str] = &[
+    "Noto Sans",
+    "DejaVu Sans",
+    "Liberation Sans",
+    "Segoe UI",
+    "Helvetica Neue",
+    "Arial",
+    "Noto Serif",
+    "DejaVu Serif",
+];
+
+/// The caret's blink half-period.
+const BLINK: std::time::Duration = std::time::Duration::from_millis(530);
 
 impl NotesView {
     /// A view of `path` (or a new empty note).
@@ -296,6 +364,12 @@ impl NotesView {
         let mut this = Self::with_editor(editor, path, window, cx);
         this.status = status.into();
         this.broken = broken;
+        // A note in an open vault (or an Obsidian vault) joins it.
+        if let Some(p) = this.path.clone()
+            && let Some(v) = vault::vault_for(&p, cx)
+        {
+            this.attach_vault(v, cx);
+        }
         this
     }
 
@@ -334,6 +408,21 @@ impl NotesView {
         cx: &mut Context<Self>,
     ) -> Self {
         let (find, find_sub) = find::new_bar(window, cx);
+        // The caret blinks: a light timer that redraws only when the
+        // caret's state flips in a focused note.
+        let blink = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(BLINK / 2).await;
+                let alive = this.update(cx, |this, cx| {
+                    if this.focused_last && this.caret_visible() != this.caret_shown {
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        });
         Self {
             editor,
             path,
@@ -358,6 +447,65 @@ impl NotesView {
             found: Rc::default(),
             found_current: None,
             _find_sub: find_sub,
+            entity_id: cx.entity_id(),
+            vault: None,
+            _vault_sub: None,
+            left: LeftPanel::Hidden,
+            show_backlinks: false,
+            search_input: None,
+            _search_sub: None,
+            search_cache: None,
+            links_cache: None,
+            collapsed: HashSet::new(),
+            folder_index: None,
+            graph: None,
+            completion: None,
+            activity: std::time::Instant::now(),
+            caret_shown: true,
+            focused_last: false,
+            _blink: blink,
+            italic_font: None,
+        }
+    }
+
+    /// Whether the blinking caret is on now.
+    fn caret_visible(&self) -> bool {
+        let ms = self.activity.elapsed().as_millis();
+        let period = BLINK.as_millis().max(1);
+        ms < period || (ms / period).is_multiple_of(2)
+    }
+
+    /// Typing, moving or clicking: the caret shows steadily for a moment.
+    fn touch(&mut self) {
+        self.activity = std::time::Instant::now();
+    }
+
+    /// Go to `jump` in this note.
+    pub fn jump(&mut self, jump: &Jump, cx: &mut Context<Self>) {
+        let at = match jump {
+            Jump::Offset(o) => Some(self.editor.buffer().clamp(*o)),
+            Jump::Heading(h) => {
+                let want = h.trim().to_lowercase();
+                let slug = want.replace(' ', "-");
+                self.editor
+                    .parsed()
+                    .headings
+                    .iter()
+                    .find(|x| {
+                        let t = x.text.trim().to_lowercase();
+                        t == want || t.replace(' ', "-") == slug
+                    })
+                    .map(|x| self.editor.buffer().line_start(x.line))
+            }
+        };
+        match at {
+            Some(at) => self.move_to(at, false, cx),
+            None => {
+                if let Jump::Heading(h) = jump {
+                    self.status = tf("No heading “{}” in this note", &[h]).into();
+                    cx.notify();
+                }
+            }
         }
     }
 
@@ -488,7 +636,7 @@ impl NotesView {
     }
 
     fn editable(&self) -> bool {
-        self.mode != Mode::Reading && !self.broken
+        self.mode != Mode::Reading && !self.broken && self.graph.is_none()
     }
 
     /// The note's folder (relative links and pictures).
@@ -575,13 +723,17 @@ impl NotesView {
     fn edited(&mut self, cx: &mut Context<Self>) {
         self.reveal_caret = true;
         self.goal_x = None;
+        self.touch();
         self.refresh_find(cx);
+        self.update_completion(cx);
         cx.notify();
     }
 
     fn moved(&mut self, cx: &mut Context<Self>) {
         self.reveal_caret = true;
         self.marked = None;
+        self.touch();
+        self.update_completion(cx);
         cx.notify();
     }
 
@@ -864,6 +1016,7 @@ impl NotesView {
     ) {
         if result.is_ok() {
             self.disk_guard = None;
+            self.saved_to_vault(cx);
         }
         self.status = match result {
             Ok(()) => tf("Saved {}", &[&self.doc_name(cx)]).into(),
@@ -955,21 +1108,13 @@ impl NotesView {
         };
         let dest = link.dest.trim().to_owned();
         if link.kind == notes_engine::parse::LinkKind::Wiki {
-            // Wiki links resolve in the note's folder (a folder of notes
-            // and backlinks come later).
-            if let Some(dir) = self.dir() {
-                let name = dest.split(['#', '|']).next().unwrap_or("").trim();
-                let p = if notes_engine::is_note_path(Path::new(name)) {
-                    dir.join(name)
-                } else {
-                    dir.join(format!("{name}.md"))
-                };
-                if p.is_file() {
-                    cx.emit(NotesEvent::Open(p));
-                } else {
-                    self.status = tf("No note named {} in this folder", &[&name]).into();
-                    cx.notify();
-                }
+            // Wiki links resolve in the vault (else the note's folder); a
+            // link to a note not made yet makes it.
+            let src = self.editor.text();
+            if let Some(p) = notes_engine::vault::wiki_parts(src, link.range.clone()) {
+                let target = src[p.name].to_owned();
+                let heading = p.heading.map(|h| src[h].to_owned());
+                self.follow_wiki(&target, heading.as_deref(), cx);
             }
             return true;
         }
@@ -1050,6 +1195,8 @@ impl NotesView {
 
     fn on_mouse_down(&mut self, ev: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         window.focus(&self.focus, cx);
+        self.touch();
+        self.completion = None;
         if let Some(line) = self.task_box_at(ev.position) {
             if !self.broken {
                 self.editor.toggle_task(line);
@@ -1060,7 +1207,15 @@ impl NotesView {
         }
         let buf = self.editor.buffer();
         let at = self.laid.hit(self.doc_point(ev.position), buf);
-        let follow = self.mode == Mode::Reading || ev.modifiers.secondary(cx);
+        // Ctrl/Cmd+click follows a link anywhere; a plain click follows it
+        // where the line shows formatted (as in Obsidian's live preview).
+        let line = buf.line_of(at);
+        let formatted = match self.mode {
+            Mode::Reading => true,
+            Mode::Source => false,
+            Mode::Live => !self.revealed_lines().contains(&line),
+        };
+        let follow = ev.modifiers.secondary(cx) || (formatted && !ev.modifiers.shift);
         if ev.click_count == 1 && follow && self.follow_link(at, cx) {
             return;
         }
@@ -1158,10 +1313,38 @@ impl NotesView {
 
     // ── layout ─────────────────────────────────────────────────────────────
 
+    /// Find (once per UI font) the family italic runs fall back to.
+    fn refresh_italic(&mut self, cx: &App) {
+        let fam = cx.theme().font_family.clone();
+        if self.italic_font.as_ref().is_some_and(|(f, _)| *f == fam) {
+            return;
+        }
+        let ts = cx.text_system();
+        let has_italic = |family: &str| {
+            let regular = font(SharedString::from(family.to_owned()));
+            let italic = Font {
+                style: FontStyle::Italic,
+                ..regular.clone()
+            };
+            ts.resolve_font(&regular) != ts.resolve_font(&italic)
+        };
+        let fallback = if has_italic(&fam) {
+            None
+        } else {
+            let names = ts.all_font_names();
+            ITALIC_FALLBACKS
+                .iter()
+                .find(|f| names.iter().any(|n| n == *f) && has_italic(f))
+                .map(|f| SharedString::from(*f))
+        };
+        self.italic_font = Some((fam, fallback));
+    }
+
     fn look(&self, cx: &App) -> Look {
         let t = tokens(cx);
         let theme = cx.theme();
         Look {
+            italic_font: self.italic_font.as_ref().and_then(|(_, f)| f.clone()),
             font: theme.font_family.clone(),
             mono: theme.mono_font_family.clone(),
             size: self.look_size(),
@@ -1197,6 +1380,7 @@ impl NotesView {
             .as_deref()
             .and_then(Path::parent)
             .map(Path::to_path_buf);
+        let broken = self.broken_links(cx);
         let input = layout::Input {
             buf: self.editor.buffer(),
             parsed: self.editor.parsed(),
@@ -1206,8 +1390,39 @@ impl NotesView {
             width,
             dir: dir.as_deref(),
             image_sizes: &mut self.image_sizes,
+            broken: &broken,
         };
         self.laid = Rc::new(layout::layout(window.text_system(), input, &mut self.cache));
+    }
+
+    /// Wiki links (indices into the parse's links) to notes that don't
+    /// exist: drawn faded.
+    fn broken_links(&mut self, cx: &App) -> HashSet<usize> {
+        let mut out = HashSet::new();
+        if self.path.is_none() {
+            return out;
+        }
+        let wiki: Vec<(usize, String)> = {
+            let src = self.editor.text();
+            self.editor
+                .parsed()
+                .links
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.kind == notes_engine::parse::LinkKind::Wiki)
+                .filter_map(|(i, l)| {
+                    let p = notes_engine::vault::wiki_parts(src, l.range.clone())?;
+                    Some((i, src[p.name].to_owned()))
+                })
+                .filter(|(_, name)| !name.is_empty())
+                .collect()
+        };
+        for (i, name) in wiki {
+            if self.resolve_wiki(&name, cx).is_none() {
+                out.insert(i);
+            }
+        }
+        out
     }
 
     /// Decoded pictures on screen.
@@ -1331,64 +1546,33 @@ macro_rules! listeners {
 impl Render for NotesView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = tokens(cx);
+        self.focused_last = self.focus.is_focused(window);
+        self.caret_shown = self.caret_visible();
+        self.refresh_italic(cx);
         self.relayout(window, cx);
         if self.reveal_caret && self.viewport.get().size.height > px(0.) {
             self.reveal_caret = false;
             self.scroll_to_caret();
         }
         self.clamp_scroll();
-        let view_h = self.viewport.get().size.height.max(px(600.));
-        let y0 = self.scroll_y - px(PAD_TOP);
-        let visible = self.laid.visible(y0, y0 + view_h);
-        let images = self.visible_images(visible.clone(), window, cx);
-        let frame = paint::Frame::new(self, visible, images, window, cx);
-        let viewport = self.viewport.clone();
-        let entity = cx.entity().downgrade();
-        let canvas = canvas(
-            move |bounds, _, cx| {
-                let old = viewport.replace(bounds);
-                // First paint or a resize: lay out again at the real width.
-                if old.size != bounds.size {
-                    let _ = entity.update(cx, |_, cx| cx.notify());
-                }
-            },
-            move |bounds, _, window, cx| paint::paint(&frame, bounds, window, cx),
-        )
-        .size_full();
+        let main = if self.graph.is_some() {
+            self.render_graph(cx)
+        } else {
+            self.render_editor_area(window, cx)
+        };
+        let left = self.render_left(cx);
+        let right = self.render_right(cx);
 
-        let area = div()
-            .id("notes-editor")
-            .flex_1()
-            .min_h_0()
-            .relative()
-            .overflow_hidden()
-            .cursor(if self.mode == Mode::Reading {
-                CursorStyle::Arrow
-            } else {
-                CursorStyle::IBeam
-            })
-            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_move(cx.listener(Self::on_mouse_move))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, _| this.drag = None),
-            )
-            .on_scroll(cx.listener(Self::on_scroll))
-            .child(canvas)
-            .when(self.find.read(cx).is_open(), |el| {
-                el.child(self.find.clone())
-            });
-
-        let root = v_flex()
+        let column = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus)
-            .size_full()
-            .bg(t.bg)
-            .text_color(t.fg)
-            .text_size(FONT_BODY)
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .child(toolbar::render(self, cx))
-            .child(area);
-        let root = listeners!(root, cx, [
+            .child(main);
+        use complete::Key as CKey;
+        let column = listeners!(column, cx, [
             MoveLeft => |this, _w, cx| this.horizontal(false, false, false, cx),
             MoveRight => |this, _w, cx| this.horizontal(true, false, false, cx),
             SelectLeft => |this, _w, cx| this.horizontal(false, false, true, cx),
@@ -1397,8 +1581,8 @@ impl Render for NotesView {
             MoveWordRight => |this, _w, cx| this.horizontal(true, true, false, cx),
             SelectWordLeft => |this, _w, cx| this.horizontal(false, true, true, cx),
             SelectWordRight => |this, _w, cx| this.horizontal(true, true, true, cx),
-            MoveUp => |this, _w, cx| this.vertical(false, false, cx),
-            MoveDown => |this, _w, cx| this.vertical(true, false, cx),
+            MoveUp => |this, _w, cx| if !this.completion_key(CKey::Up, cx) { this.vertical(false, false, cx) },
+            MoveDown => |this, _w, cx| if !this.completion_key(CKey::Down, cx) { this.vertical(true, false, cx) },
             SelectUp => |this, _w, cx| this.vertical(false, true, cx),
             SelectDown => |this, _w, cx| this.vertical(true, true, cx),
             MoveLineStart => |this, _w, cx| this.line_edge(false, false, cx),
@@ -1415,6 +1599,14 @@ impl Render for NotesView {
             SelectPageDown => |this, _w, cx| this.page(true, true, cx),
             SelectAll => |this, _w, cx| { this.editor.select_all(); this.moved(cx) },
             Collapse => |this, _w, cx| {
+                if this.completion_key(CKey::Close, cx) {
+                    return;
+                }
+                if this.graph.is_some() {
+                    this.graph = None;
+                    cx.notify();
+                    return;
+                }
                 let h = this.editor.selection().head;
                 this.move_to(h, false, cx)
             },
@@ -1422,9 +1614,9 @@ impl Render for NotesView {
             Delete => |this, _w, cx| this.type_or_command(Editor::delete, cx),
             DeleteWordBack => |this, _w, cx| this.type_or_command(Editor::delete_word_back, cx),
             DeleteWordForward => |this, _w, cx| this.type_or_command(Editor::delete_word_forward, cx),
-            Newline => |this, _w, cx| this.type_or_command(Editor::newline, cx),
+            Newline => |this, _w, cx| if !this.completion_key(CKey::Accept, cx) { this.type_or_command(Editor::newline, cx) },
             PlainNewline => |this, _w, cx| this.type_or_command(Editor::plain_newline, cx),
-            Indent => |this, _w, cx| this.type_or_command(Editor::indent, cx),
+            Indent => |this, _w, cx| if !this.completion_key(CKey::Accept, cx) { this.type_or_command(Editor::indent, cx) },
             Outdent => |this, _w, cx| this.type_or_command(Editor::outdent, cx),
             Copy => |this, w, cx| this.copy_doc(w, cx),
             Cut => |this, w, cx| this.cut_doc(w, cx),
@@ -1461,12 +1653,74 @@ impl Render for NotesView {
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),
             ZoomReset => |this, _w, cx| this.set_zoom(1.0, cx),
+            ToggleGraph => |this, _w, cx| this.toggle_graph(false, cx),
+            SearchVault => |this, w, cx| this.open_search(w, cx),
+            ToggleFiles => |this, _w, cx| this.toggle_files(cx),
+            ToggleBacklinks => |this, _w, cx| this.toggle_backlinks(cx),
         ]);
         use kantor_ui::find_bar::{FindNext, FindPrev, OpenFind, OpenReplace};
-        root.on_action(cx.listener(|this, _: &OpenFind, w, cx| this.open_find(false, w, cx)))
+        let column = column
+            .on_action(cx.listener(|this, _: &OpenFind, w, cx| this.open_find(false, w, cx)))
             .on_action(cx.listener(|this, _: &OpenReplace, w, cx| this.open_find(true, w, cx)))
             .on_action(cx.listener(|this, _: &FindNext, w, cx| this.find_next_doc(true, w, cx)))
-            .on_action(cx.listener(|this, _: &FindPrev, w, cx| this.find_next_doc(false, w, cx)))
+            .on_action(cx.listener(|this, _: &FindPrev, w, cx| this.find_next_doc(false, w, cx)));
+        h_flex()
+            .size_full()
+            .bg(t.bg)
+            .text_color(t.fg)
+            .text_size(FONT_BODY)
+            .children(left)
+            .child(column)
+            .children(right)
+    }
+}
+
+impl NotesView {
+    /// The note itself: the drawn text, the find bar and the `[[` list.
+    fn render_editor_area(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let view_h = self.viewport.get().size.height.max(px(600.));
+        let y0 = self.scroll_y - px(PAD_TOP);
+        let visible = self.laid.visible(y0, y0 + view_h);
+        let images = self.visible_images(visible.clone(), window, cx);
+        let frame = paint::Frame::new(self, visible, images, window, cx);
+        let viewport = self.viewport.clone();
+        let entity = cx.entity().downgrade();
+        let canvas = canvas(
+            move |bounds, _, cx| {
+                let old = viewport.replace(bounds);
+                // First paint or a resize: lay out again at the real width.
+                if old.size != bounds.size {
+                    let _ = entity.update(cx, |_, cx| cx.notify());
+                }
+            },
+            move |bounds, _, window, cx| paint::paint(&frame, bounds, window, cx),
+        )
+        .size_full();
+        let completion = self.render_completion(cx);
+        div()
+            .id("notes-editor")
+            .flex_1()
+            .min_h_0()
+            .relative()
+            .overflow_hidden()
+            .cursor(if self.mode == Mode::Reading {
+                CursorStyle::Arrow
+            } else {
+                CursorStyle::IBeam
+            })
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
+            .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, _| this.drag = None),
+            )
+            .on_scroll(cx.listener(Self::on_scroll))
+            .child(canvas)
+            .when(self.find.read(cx).is_open(), |el| {
+                el.child(self.find.clone())
+            })
+            .children(completion)
+            .into_any_element()
     }
 }
 
