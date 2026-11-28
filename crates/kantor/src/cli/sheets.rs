@@ -6,6 +6,10 @@
 //! kantor sheets edit book.xlsx to_numbers '{"range": "Data!B2:B500"}'
 //! kantor sheets edit book.xlsx -o out.xlsx --ops ops.json
 //! kantor sheets check book.xlsx [--json] [--sheet Data]
+//! kantor sheets macros book.xlsm [--module Module1] [--json]
+//! kantor sheets macros run book.xlsm --macro Macro1 [--out out.xlsm] [--input VALUE]... [--form-answers FILE.json]
+//! kantor sheets macros add book.xlsx report.js [--module Report] [--out out.xlsx]
+//! kantor sheets macros remove book.xlsx --module Report [--out out.xlsx]
 //! kantor sheets schema > sheets-json.schema.json
 //! ```
 //!
@@ -20,11 +24,17 @@ use anyhow::{Context as _, Result, bail};
 use serde_json::{Value, json};
 use sheets_engine::Workbook;
 
-use crate::agent::{sheets_author, sheets_check, sheets_list, sheets_schema};
+use crate::agent::{sheets_author, sheets_check, sheets_list, sheets_macros, sheets_schema};
 
 pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [--check [--json]]\n\
     \x20      kantor sheets list FILE [--sheet S] [--range R] [--formulas] [--max-rows N]\n\
     \x20      kantor sheets check FILE [--json] [--sheet S]\n\
+    \x20      kantor sheets macros FILE [--module NAME] [--json]\n\
+    \x20      kantor sheets macros run FILE --macro NAME [--out OUT.xlsm] [--input V]...\n\
+    \x20                [--events] [--allow-path PATH]...\n\
+    \x20                [--form-answers ANSWERS.json]\n\
+    \x20      kantor sheets macros add FILE SCRIPT.js|.py|MODULE.bas|.cls [--module NAME] [--out OUT]\n\
+    \x20      kantor sheets macros remove FILE --module NAME [--out OUT]\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] TOOL ARGS\n\
     \x20      kantor sheets edit FILE [-o OUT.xlsx] [-f] --ops OPS.json\n\
     \x20      kantor sheets schema\n\
@@ -56,6 +66,27 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20          content outside the print area or split by page breaks,\n\
     \x20          unsorted bar charts. Each finding has a sheet and range.\n\
     \x20          Exit status 1 on errors.\n\
+    \x20 macros   list the workbook's macros (its VBA project, and its\n\
+    \x20          JavaScript and Python scripts): modules and their Subs,\n\
+    \x20          Functions and functions with line numbers; --module NAME\n\
+    \x20          prints a module's code.\n\
+    \x20 macros add  store SCRIPT (.js or .py) in the workbook as module\n\
+    \x20          NAME (the file name unless --module), replacing one of that\n\
+    \x20          name, and save (in place unless --out). Scripts are kept in\n\
+    \x20          .xlsx and .xlsm alike; Excel keeps them and doesn't run them.\n\
+    \x20          A VBA .bas or .cls module goes into the VBA project (an\n\
+    \x20          .xlsm output; Excel compiles it from source when it opens).\n\
+    \x20 macros remove  take script --module NAME out and save.\n\
+    \x20 macros run  run macro NAME (Macro1, Module1.Macro1, or a script's\n\
+    \x20          function without parameters, Report.go) of FILE and\n\
+    \x20          save the result (in place unless --out). Only run macros\n\
+    \x20          you trust: they change the workbook like a person would.\n\
+    \x20          MsgBox prints to standard error and answers OK (or Yes);\n\
+    \x20          InputBox takes the --input values in order and fails when\n\
+    \x20          none is left. A UserForm the macro shows fails the run\n\
+    \x20          unless --form-answers gives what to fill in and click. The\n\
+    \x20          workbook's VBA functions work in its formulas. On a run-time\n\
+    \x20          error nothing is saved (exit 1).\n\
     \x20 edit     run editing tools on a file and save it (in place unless -o):\n\
     \x20          TOOL is one of the tools below, ARGS its JSON arguments (or\n\
     \x20          @FILE); --ops runs a list of {\"tool\": ..., \"args\": {...}}.\n\
@@ -80,7 +111,23 @@ pub const USAGE: &str = "usage: kantor sheets build BOOK.json -o OUT.xlsx [-f] [
     \x20 -o, --output FILE   the .xlsx to write\n\
     \x20 -f, --force         overwrite an existing output file\n\
     \x20     --check         build: check the workbook it wrote\n\
-    \x20     --json          check: findings as JSON\n\
+    \x20     --json          check: findings as JSON; macros: the listing (and\n\
+    \x20                     --module's code) as JSON\n\
+    \x20     --module NAME   macros: the module whose code to print\n\
+    \x20     --macro NAME    macros run: the macro to run\n\
+    \x20     --out FILE      macros run: the workbook to write (.xlsm keeps\n\
+    \x20                     the macros; same as -o)\n\
+    \x20     --input V       macros run: an answer for the next InputBox\n\
+    \x20                     (repeat for several)\n\
+    \x20     --events        macros run: fire Workbook_Open first (and the save\n\
+    \x20                     events when saving), as Excel does with macros on\n\
+    \x20     --allow-path P  macros run: a file or folder the macro may open or\n\
+    \x20                     save (Workbooks.Open, SaveAs); any other path is\n\
+    \x20                     refused (repeat for several)\n\
+    \x20     --form-answers F  macros run: UserForm steps, a JSON object of\n\
+    \x20                     form name -> [{\"set\": {\"TextBox1\": \"Ann\",\n\
+    \x20                     \"CheckBox1\": true, \"ListBox1\": 2}, \"click\": \"cmdOK\"}]\n\
+    \x20                     (\"click\": \"close\" is the close box)\n\
     \x20     --sheet S       list, check: one sheet (name or number from 1)\n\
     \x20     --range R       list: the cells to show (A1:H200, Data!A1:H200)\n\
     \x20     --formulas      list: formulas in place of their values\n\
@@ -110,6 +157,12 @@ struct Opts {
     range: Option<String>,
     formulas: bool,
     max_rows: Option<u32>,
+    module: Option<String>,
+    macro_name: Option<String>,
+    inputs: Vec<String>,
+    events: bool,
+    allow_paths: Vec<PathBuf>,
+    form_answers: Option<String>,
     rest: Vec<String>,
 }
 
@@ -126,7 +179,12 @@ fn parse(args: &[OsString]) -> Result<Opts, Usage> {
             .to_str()
             .ok_or_else(|| Usage("arguments must be valid UTF-8".into()))?;
         match a {
-            "-o" | "--output" => o.output = Some(PathBuf::from(value(&mut it, a)?)),
+            "-o" | "--output" | "--out" => o.output = Some(PathBuf::from(value(&mut it, a)?)),
+            "--macro" => o.macro_name = Some(value(&mut it, a)?),
+            "--input" => o.inputs.push(value(&mut it, a)?),
+            "--events" => o.events = true,
+            "--allow-path" => o.allow_paths.push(PathBuf::from(value(&mut it, a)?)),
+            "--form-answers" => o.form_answers = Some(value(&mut it, a)?),
             "-f" | "--force" => o.force = true,
             "--check" => o.check = true,
             "--json" => o.json = true,
@@ -134,6 +192,7 @@ fn parse(args: &[OsString]) -> Result<Opts, Usage> {
             "--sheet" => o.sheet = Some(value(&mut it, a)?),
             "--range" => o.range = Some(value(&mut it, a)?),
             "--ops" => o.ops = Some(value(&mut it, a)?),
+            "--module" => o.module = Some(value(&mut it, a)?),
             "--max-rows" => {
                 let v = value(&mut it, a)?;
                 o.max_rows = Some(
@@ -157,6 +216,56 @@ fn is_xlsx(p: &Path) -> bool {
 }
 
 /// Read JSON from a file, `-` (standard input), or `@FILE`.
+/// `--form-answers`: `{"UserForm1": [{"set": {"TextBox1": "Ann"}, "click": "cmdOK"}]}`.
+fn form_answers(v: &Value) -> Result<Vec<(String, Vec<sheets_script::FormAnswer>)>> {
+    use sheets_script::Answer;
+    let Some(forms) = v.as_object() else {
+        bail!("--form-answers must hold an object of form name -> list of steps");
+    };
+    let mut out = Vec::new();
+    for (form, steps) in forms {
+        let Some(steps) = steps.as_array() else {
+            bail!("--form-answers: {form} must have a list of steps");
+        };
+        let mut list = Vec::new();
+        for step in steps {
+            let mut set = Vec::new();
+            if let Some(values) = step.get("set") {
+                let Some(values) = values.as_object() else {
+                    bail!("--form-answers: {form}: \"set\" must be an object of control -> value");
+                };
+                for (control, value) in values {
+                    let answer = match value {
+                        Value::String(s) => Answer::Text(s.clone()),
+                        Value::Bool(b) => Answer::Bool(*b),
+                        Value::Number(n) => Answer::Number(n.as_f64().unwrap_or_default()),
+                        Value::Array(rows) => Answer::Rows(
+                            rows.iter()
+                                .map(|r| match r {
+                                    Value::String(s) => s.clone(),
+                                    other => other.to_string(),
+                                })
+                                .collect(),
+                        ),
+                        other => bail!("--form-answers: {form}.{control}: can't use {other}"),
+                    };
+                    set.push((control.clone(), answer));
+                }
+            }
+            let click = match step.get("click") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(s)) => Some(s.clone()),
+                Some(other) => {
+                    bail!("--form-answers: {form}: \"click\" must name a control, not {other}")
+                }
+            };
+            list.push(sheets_script::FormAnswer { set, click });
+        }
+        out.push((form.clone(), list));
+    }
+    Ok(out)
+}
+
 fn read_json(arg: &str) -> Result<Value> {
     let text = if arg == "-" {
         let mut s = String::new();
@@ -210,6 +319,7 @@ pub fn main(args: &[OsString]) -> i32 {
             _ => Ok(Err("check takes one FILE".into())),
         },
         "edit" => edit(&opts),
+        "macros" => macros(&opts),
         "schema" => {
             println!(
                 "{}",
@@ -293,6 +403,362 @@ fn list(o: &Opts) -> Outcome {
     )?;
     v["file"] = json!(file);
     println!("{}", serde_json::to_string_pretty(&v)?);
+    Ok(Ok(()))
+}
+
+fn macros(o: &Opts) -> Outcome {
+    match o.rest.first().map(String::as_str) {
+        Some("run") => return run_macro(o),
+        Some("add") => return add_script(o),
+        Some("remove") => return remove_script(o),
+        _ => {}
+    }
+    let [file] = o.rest.as_slice() else {
+        return Ok(Err("macros takes one FILE".into()));
+    };
+    let book = open(file)?;
+    let opts = sheets_macros::MacrosOpts {
+        module: o.module.clone(),
+        code: false,
+    };
+    if o.json {
+        let mut v = sheets_macros::json(&book, &opts)?;
+        v["file"] = json!(file);
+        println!("{}", serde_json::to_string_pretty(&v)?);
+    } else if let Some(name) = &o.module {
+        let v = sheets_macros::json(&book, &opts)?;
+        print!("{}", v["modules"][0]["code"].as_str().unwrap_or_default());
+        if let Some(e) = v["modules"][0]["error"].as_str() {
+            eprintln!("kantor sheets macros: {name}: {e}");
+        }
+    } else {
+        print!("{}", sheets_macros::text(&book)?);
+    }
+    Ok(Ok(()))
+}
+
+/// Where `macros add` / `remove` write: `--out`, else the file itself.
+fn script_output(o: &Opts, file: &str) -> Result<std::result::Result<PathBuf, Usage>> {
+    let out = o.output.clone().unwrap_or_else(|| PathBuf::from(file));
+    if !is_xlsx(&out) {
+        return Ok(Err("the output must be a .xlsx or .xlsm file".into()));
+    }
+    if o.output.is_some() && out.exists() && !o.force {
+        bail!("{} exists (use -f to overwrite)", out.display());
+    }
+    Ok(Ok(out))
+}
+
+/// `kantor sheets macros add FILE SCRIPT.js|.py [--module NAME]`: store a
+/// JavaScript or Python module in the workbook (replacing one of that
+/// name) and save it.
+fn add_script(o: &Opts) -> Outcome {
+    use sheets_engine::scripts::{Script, ScriptLanguage, valid_name};
+    let [_, file, script] = o.rest.as_slice() else {
+        return Ok(Err(
+            "macros add takes FILE and SCRIPT (a .js or .py file)".into()
+        ));
+    };
+    let path = Path::new(script);
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if ext == "bas" || ext == "cls" {
+        return add_vba_module(o, file, path, ext == "cls");
+    }
+    let Some(language) = ScriptLanguage::from_extension(&ext) else {
+        return Ok(Err(
+            "the script must be a .js or .py file (or a VBA .bas or .cls module)".into(),
+        ));
+    };
+    let name = match &o.module {
+        Some(n) => n.clone(),
+        None => path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    };
+    if !valid_name(&name) {
+        return Ok(Err(Usage(format!(
+            "{name:?} can't name a module: use a letter, then letters, digits or _ (--module NAME)"
+        ))));
+    }
+    let out = match script_output(o, file)? {
+        Ok(p) => p,
+        Err(u) => return Ok(Err(u)),
+    };
+    let source = std::fs::read_to_string(path).with_context(|| format!("can't read {script}"))?;
+    let mut book = open(file)?;
+    if let Some(Ok(p)) = book.vba_project()
+        && p.module(&name).is_some()
+    {
+        bail!("the VBA project already has a module {name} (pick another with --module)");
+    }
+    let mut scripts = book
+        .scripts()
+        .map_err(|e| anyhow::anyhow!("the workbook's scripts can't be read: {e}"))?;
+    let new = Script::new(&name, language, &source);
+    match scripts
+        .iter_mut()
+        .find(|s| s.name.eq_ignore_ascii_case(&name))
+    {
+        Some(s) => *s = new,
+        None => scripts.push(new),
+    }
+    book.set_scripts(scripts);
+    book.save_as(&out)
+        .with_context(|| format!("can't save {}", out.display()))?;
+    println!("{file}: {name} ({}) -> {}", language.label(), out.display());
+    Ok(Ok(()))
+}
+
+/// `kantor sheets macros add FILE MODULE.bas|.cls [--module NAME]`: put a
+/// VBA module (as the Visual Basic Editor exports it) into the workbook's
+/// project, as the Macro Editor does, and save it as `.xlsm`.
+fn add_vba_module(o: &Opts, file: &str, path: &Path, class: bool) -> Outcome {
+    use sheets_script::code::{self, CodeKind, CodeModule};
+    let out = match script_output(o, file)? {
+        Ok(p) => p,
+        Err(u) => return Ok(Err(u)),
+    };
+    if !out
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("xlsm"))
+    {
+        return Ok(Err(
+            "a VBA module needs a macro-enabled workbook: give an .xlsm file or --out OUT.xlsm"
+                .into(),
+        ));
+    }
+    let text = std::fs::read(path).with_context(|| format!("can't read {}", path.display()))?;
+    // Exported modules are in the Windows code page; UTF-8 files read as is.
+    let text = match String::from_utf8(text) {
+        Ok(s) => s,
+        Err(e) => e.into_bytes().iter().map(|b| *b as char).collect(),
+    };
+    // The exported header: `VERSION 1.0 CLASS … END` and `Attribute` lines.
+    let mut name_attr = None;
+    let mut lines = Vec::new();
+    let mut in_header = text.trim_start().starts_with("VERSION ");
+    for line in text.lines() {
+        let t = line.trim();
+        if in_header {
+            if t.eq_ignore_ascii_case("END") {
+                in_header = false;
+            }
+            continue;
+        }
+        if t.len() > 10 && t[..10].eq_ignore_ascii_case("Attribute ") {
+            if let Some(v) = t.split_once('=').filter(|(k, _)| k.contains("VB_Name")) {
+                name_attr = Some(v.1.trim().trim_matches('"').to_owned());
+            }
+            continue;
+        }
+        lines.push(line);
+    }
+    let name = o.module.clone().or(name_attr).unwrap_or_else(|| {
+        path.file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    });
+    let mut book = open(file)?;
+    let mut modules = code::code_modules(&book).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let existing = modules
+        .iter()
+        .position(|m| m.name.eq_ignore_ascii_case(&name));
+    if let Some(problem) = code::name_problem(&modules, &name, existing) {
+        bail!("{name:?}: {problem}");
+    }
+    let mut code = lines.join("\n");
+    code.push('\n');
+    let kind = if class {
+        CodeKind::Class
+    } else {
+        CodeKind::Standard
+    };
+    match existing {
+        Some(i) if modules[i].kind == kind => modules[i].code = code,
+        Some(_) => bail!("the workbook already has a module {name} of another kind"),
+        None => modules.push(CodeModule::new(&name, kind, &code)),
+    }
+    code::apply(&mut book, &modules).map_err(|e| anyhow::anyhow!("{e}"))?;
+    book.save_as(&out)
+        .with_context(|| format!("can't save {}", out.display()))?;
+    println!("{file}: {name} (VBA) -> {}", out.display());
+    Ok(Ok(()))
+}
+
+/// `kantor sheets macros remove FILE --module NAME`: take a script out.
+fn remove_script(o: &Opts) -> Outcome {
+    let [_, file] = o.rest.as_slice() else {
+        return Ok(Err("macros remove takes one FILE".into()));
+    };
+    let Some(name) = &o.module else {
+        return Ok(Err("macros remove needs --module NAME".into()));
+    };
+    let out = match script_output(o, file)? {
+        Ok(p) => p,
+        Err(u) => return Ok(Err(u)),
+    };
+    let mut book = open(file)?;
+    let mut scripts = book
+        .scripts()
+        .map_err(|e| anyhow::anyhow!("the workbook's scripts can't be read: {e}"))?;
+    let before = scripts.len();
+    scripts.retain(|s| !s.name.eq_ignore_ascii_case(name));
+    if scripts.len() == before {
+        bail!("{file} has no script {name}");
+    }
+    book.set_scripts(scripts);
+    book.save_as(&out)
+        .with_context(|| format!("can't save {}", out.display()))?;
+    println!("{file}: removed {name} -> {}", out.display());
+    Ok(Ok(()))
+}
+
+/// `kantor sheets macros run FILE --macro NAME`: run a macro headless and
+/// save the workbook.
+fn run_macro(o: &Opts) -> Outcome {
+    let [_, file] = o.rest.as_slice() else {
+        return Ok(Err("macros run takes one FILE".into()));
+    };
+    let Some(name) = &o.macro_name else {
+        return Ok(Err("macros run needs --macro NAME".into()));
+    };
+    let out = o.output.clone().unwrap_or_else(|| PathBuf::from(file));
+    if !is_xlsx(&out) {
+        return Ok(Err("the output must be a .xlsm or .xlsx file".into()));
+    }
+    if o.output.is_some() && out.exists() && !o.force {
+        bail!("{} exists (use -f to overwrite)", out.display());
+    }
+    let mut book = open(file)?;
+    let macros = match sheets_script::MacroProject::of_book(&book) {
+        None => bail!("{file} has no macros"),
+        Some(Err(e)) => bail!("the workbook's VBA project can't be read: {e}"),
+        Some(Ok(m)) => m,
+    };
+    let known = macros.macros();
+    let wanted = name.to_ascii_lowercase();
+    if !known.iter().any(|m| {
+        m.name.to_ascii_lowercase() == wanted || m.full_name().to_ascii_lowercase() == wanted
+    }) {
+        let list: Vec<String> = known.iter().map(|m| m.full_name()).collect();
+        bail!(
+            "there is no macro {name} (macros: {})",
+            if list.is_empty() {
+                "none".to_owned()
+            } else {
+                list.join(", ")
+            }
+        );
+    }
+    // Running the file's macros trusts it: its VBA functions work in its
+    // formulas too.
+    sheets_script::enable_functions(&mut book, Some(&macros));
+    book.recalculate();
+    let sheet = book.active_sheet();
+    let view = sheets_script::View {
+        sheet,
+        ..Default::default()
+    };
+    let mut ui = sheets_script::HeadlessUi::new(o.inputs.clone(), true);
+    let mut allowed = Vec::new();
+    for p in &o.allow_paths {
+        let abs =
+            std::path::absolute(p).with_context(|| format!("--allow-path {}", p.display()))?;
+        allowed.push(abs);
+    }
+    ui.allowed_paths = allowed.clone();
+    if let Some(path) = &o.form_answers {
+        for (form, steps) in form_answers(&read_json(path)?)? {
+            ui = ui.with_form_answers(&form, steps);
+        }
+    }
+    let options = sheets_script::RunOptions::default();
+    let mut engine = sheets_script::MacroEngine::new(macros.clone());
+    engine.set_paths(allowed, false);
+    let mut book = book;
+    let mut view = view;
+    let mut extra = Vec::new();
+    if o.events {
+        let (b, outcome) = engine.fire(
+            book,
+            &sheets_script::Event::Open,
+            view,
+            Box::new(ui.clone()),
+            &options,
+            None,
+        );
+        book = b;
+        if let Err(e) = &outcome.result {
+            bail!("Workbook_Open: {e}; the workbook was not saved");
+        }
+        view = outcome.view;
+        extra.extend(outcome.books);
+    }
+    let (b, outcome) = engine.run(book, name, view, Box::new(ui.clone()), &options);
+    book = b;
+    if let Err(e) = &outcome.result {
+        bail!("{name}: {e}; the workbook was not saved");
+    }
+    let view = outcome.view;
+    extra.extend(outcome.books);
+    let unsaved = extra
+        .iter()
+        .filter(|b| matches!(b, sheets_script::BookOut::New { book } if book.is_dirty()))
+        .count();
+    if unsaved > 0 {
+        eprintln!(
+            "kantor sheets macros run: note: {unsaved} workbook(s) the macro opened or added were changed and not saved (the macro didn't save them)"
+        );
+    }
+    if !engine.timers().is_empty() {
+        eprintln!(
+            "kantor sheets macros run: note: {} Application.OnTime schedule(s) didn't run (the command ends with the macro)",
+            engine.timers().len()
+        );
+    }
+    if o.events {
+        let (b, outcome) = engine.fire(
+            book,
+            &sheets_script::Event::BeforeSave { save_as_ui: false },
+            view,
+            Box::new(ui.clone()),
+            &options,
+            None,
+        );
+        book = b;
+        if let Err(e) = &outcome.result {
+            bail!("Workbook_BeforeSave: {e}; the workbook was not saved");
+        }
+        if outcome.cancel {
+            eprintln!("kantor sheets macros run: Workbook_BeforeSave cancelled the save");
+            return Ok(Ok(()));
+        }
+    }
+    book.set_user_functions(None);
+    let saved = book.save_as(&out);
+    if o.events {
+        let (b, _) = engine.fire(
+            book,
+            &sheets_script::Event::AfterSave {
+                success: saved.is_ok(),
+            },
+            view,
+            Box::new(ui.clone()),
+            &options,
+            None,
+        );
+        book = b;
+    }
+    saved.with_context(|| format!("can't save {}", out.display()))?;
+    for note in book.save_notes() {
+        eprintln!("kantor sheets macros run: note: {note}");
+    }
+    println!("{file}: ran {name} -> {}", out.display());
     Ok(Ok(()))
 }
 

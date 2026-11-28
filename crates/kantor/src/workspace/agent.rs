@@ -20,6 +20,7 @@ use crate::agent::path_arg;
 const SANDBOX_NO_ACCESS: &str = "Kantor isn't allowed to use {} yet: the Mac App Store version of Kantor may only use files and folders the user has chosen. Kantor is now asking the user to grant access; try again once they have, or ask them to open the file in Kantor.";
 
 use super::doc::DocView;
+use super::notices::NoticeKind;
 use super::{AppKind, Workspace};
 use crate::agent::{self, docs, sheets, slides};
 
@@ -35,6 +36,7 @@ fn kind_name(kind: AppKind) -> &'static str {
         AppKind::Docs => "docs",
         AppKind::Slides => "slides",
         AppKind::Pdf => "pdf",
+        AppKind::Notes => "notes",
     }
 }
 
@@ -46,6 +48,7 @@ fn saves_as(kind: AppKind) -> &'static [&'static str] {
         AppKind::Slides => &["pptx"],
         // The viewer doesn't write PDFs.
         AppKind::Pdf => &[],
+        AppKind::Notes => &["md", "markdown"],
     }
 }
 
@@ -82,7 +85,7 @@ impl Workspace {
     ) -> Result<Value> {
         // Edits and saves of a read-only document are refused.
         let edits_document = tool == "save_document"
-            || (["sheets_", "docs_", "slides_"]
+            || (["sheets_", "docs_", "slides_", "notes_"]
                 .iter()
                 .any(|p| tool.starts_with(p))
                 && !crate::mcp::tools::is_read_only(tool));
@@ -102,7 +105,8 @@ impl Workspace {
                     "sheets" => AppKind::Sheets,
                     "docs" => AppKind::Docs,
                     "slides" => AppKind::Slides,
-                    other => bail!("`kind` must be sheets, docs or slides, not \"{other}\""),
+                    "notes" => AppKind::Notes,
+                    other => bail!("`kind` must be sheets, docs, slides or notes, not \"{other}\""),
                 };
                 self.launch(kind, None, window, cx);
                 let pane = self
@@ -135,11 +139,21 @@ impl Workspace {
                         let v = e.read(cx);
                         json!({"page": v.current_page() + 1, "of": v.page_count()})
                     }
+                    DocView::Notes(e) => {
+                        let v = e.read(cx);
+                        let ed = v.editor();
+                        let sel = ed.selection();
+                        json!({
+                            "line": ed.buffer().line_of(sel.head) + 1,
+                            "selected_text": ed.selected_text(),
+                        })
+                    }
                 })
             }
             t if t.starts_with("sheets_") => self.sheets_tool(t, args, window, cx),
             t if t.starts_with("docs_") => self.docs_tool(t, args, window, cx),
             t if t.starts_with("slides_") => self.slides_tool(t, args, window, cx),
+            t if t.starts_with("notes_") => self.notes_tool(t, args, cx),
             "hello" => Ok(json!({"app": "kantor", "version": env!("CARGO_PKG_VERSION")})),
             other => bail!("unknown tool {other}"),
         }
@@ -234,20 +248,33 @@ impl Workspace {
     /// Show `text` in the status bar for a few seconds, whichever document
     /// is in front.
     pub(super) fn notice(&mut self, text: String, cx: &mut Context<Self>) {
-        self.notice_id += 1;
-        let id = self.notice_id;
-        self.notice = Some(text.into());
+        self.notice_as(text, NoticeKind::Info, cx);
+    }
+
+    /// Show `text` in the status bar as `kind` (see
+    /// [`super::notices::Notices`]): an info message for a few seconds,
+    /// progress until the next message, an error until the user's next
+    /// action. Returns its id.
+    pub(super) fn notice_as(
+        &mut self,
+        text: String,
+        kind: NoticeKind,
+        cx: &mut Context<Self>,
+    ) -> u64 {
+        let id = self.notices.post(text.into(), kind);
         cx.notify();
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(NOTICE_TIME).await;
-            let _ = this.update(cx, |ws, cx| {
-                if ws.notice_id == id {
-                    ws.notice = None;
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        if kind == NoticeKind::Info {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(NOTICE_TIME).await;
+                let _ = this.update(cx, |ws, cx| {
+                    if ws.notices.expire(id) {
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
+        id
     }
 
     /// After an agent edit: the notice, naming the document when it isn't
@@ -391,6 +418,7 @@ impl Workspace {
             DocView::Pdf(_) => {
                 bail!("saving PDFs isn't available to the assistant yet; use Save in Kantor")
             }
+            DocView::Notes(e) => e.update(cx, |v, cx| v.agent_save(path.as_deref(), window, cx)),
         }?;
         if let Some(p) = view.path(cx) {
             Session::touch_recent(&mut self.recent, &p);
@@ -400,6 +428,51 @@ impl Workspace {
         let mut out = self.doc_json(pane, cx);
         out["status"] = json!(status);
         Ok(out)
+    }
+
+    // ── Notes ──────────────────────────────────────────────────────────────
+
+    fn notes_tool(&mut self, tool: &str, args: &Value, cx: &mut Context<Self>) -> Result<Value> {
+        let (pane, view) = self.agent_target(args, Some(AppKind::Notes))?;
+        let DocView::Notes(e) = view else {
+            unreachable!("checked by agent_target")
+        };
+        match tool {
+            "notes_read" => {
+                let v = e.read(cx);
+                let ed = v.editor();
+                let headings: Vec<Value> = ed
+                    .parsed()
+                    .headings
+                    .iter()
+                    .map(|h| json!({"level": h.level, "line": h.line + 1, "text": h.text}))
+                    .collect();
+                Ok(json!({
+                    "name": v.doc_name(cx),
+                    "path": v.path(cx),
+                    "text": ed.text(),
+                    "lines": ed.buffer().line_count(),
+                    "headings": headings,
+                }))
+            }
+            "notes_write" => {
+                let text = agent::req_str(args, "text")?.to_owned();
+                e.update(cx, |v, cx| v.agent_set_text(&text, cx));
+                self.edited(pane, kantor_ui::i18n::t("changed the note"), cx);
+                Ok(self.doc_json(pane, cx))
+            }
+            "notes_replace" => {
+                let find = agent::req_str(args, "find")?.to_owned();
+                let with = agent::req_str(args, "replace")?.to_owned();
+                let all = agent::opt_bool(args, "all")?.unwrap_or(true);
+                let n = e.update(cx, |v, cx| v.agent_replace(&find, &with, all, cx));
+                if n > 0 {
+                    self.edited(pane, kantor_ui::i18n::t("changed the note"), cx);
+                }
+                Ok(json!({"replaced": n}))
+            }
+            other => bail!("unknown tool {other}"),
+        }
     }
 
     // ── Sheets ─────────────────────────────────────────────────────────────
@@ -436,7 +509,7 @@ impl Workspace {
                     .read(cx)
                     .agent_read(cx, |book, _| sheets::read_range(book, sheet, args));
             }
-            "sheets_list" | "sheets_check" => {
+            "sheets_list" | "sheets_check" | "sheets_macros" => {
                 return e.read(cx).agent_read(cx, |book, _| {
                     crate::agent::sheets_author::read_tool(book, tool, args)
                 });

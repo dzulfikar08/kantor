@@ -1,5 +1,9 @@
-//! A small blocking WebDAV client for opening and saving files on a
-//! self-hosted drive (Nextcloud, OpenCloud/OCIS, or any RFC 4918 server).
+//! A small blocking client for opening and saving files on a drive: a
+//! self-hosted WebDAV drive (Nextcloud, OpenCloud/OCIS, or any RFC 4918
+//! server), Microsoft OneDrive (Microsoft Graph, see [`graph`]) or Google
+//! Drive (Drive API v3, see [`gdrive`]). The same [`Client`] methods work
+//! for all three, addressed by `/`-separated paths, so the sync rules
+//! ([`session`], [`sync`]) and the working copies ([`cache`]) are shared.
 //!
 //! Only plain WebDAV is spoken so the server stays swappable: `PROPFIND`
 //! (depth 0/1), `GET`, `PUT` with `If-Match` on the ETag so a save can't
@@ -9,6 +13,9 @@
 
 pub mod cache;
 pub mod chunked;
+pub mod gdrive;
+pub mod graph;
+pub mod oauth;
 pub mod oidc;
 pub mod session;
 pub mod sync;
@@ -108,6 +115,10 @@ pub enum Error {
     },
     /// The server replied with something that isn't valid WebDAV.
     Protocol(String),
+    /// The user stopped a sign-in: Cancel in Kantor, declined consent in
+    /// the browser (`access_denied`), or never came back (timed out). Not
+    /// an error to show in red.
+    Cancelled,
 }
 
 impl std::fmt::Display for Error {
@@ -127,6 +138,7 @@ impl std::fmt::Display for Error {
                 Ok(())
             }
             Error::Protocol(m) => write!(f, "bad server reply: {m}"),
+            Error::Cancelled => f.write_str("the sign-in was cancelled"),
         }
     }
 }
@@ -208,8 +220,17 @@ pub struct LockOwner {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LockToken(pub String);
 
+/// Which kind of drive a [`Client`] talks to.
+#[derive(Clone)]
+pub(crate) enum Backend {
+    Dav,
+    Graph,
+    Drive(gdrive::Drive),
+}
+
 #[derive(Clone)]
 pub struct Client {
+    backend: Backend,
     agent: ureq::Agent,
     /// The agent's settings, for uploads that get an agent of their own
     /// (see [`Client::exec_watched`]).
@@ -248,6 +269,10 @@ impl Client {
     /// `base` is the user's DAV root; paths given to the methods are relative
     /// to it, `/`-separated and unencoded (`Laporan/Q3 2026.xlsx`).
     pub fn new(base: &str, auth: Auth) -> Self {
+        Self::with_backend(base, auth, Backend::Dav, "WebDAV")
+    }
+
+    fn with_backend(base: &str, auth: Auth, backend: Backend, kind: &str) -> Self {
         let config = ureq::Agent::config_builder()
             .http_status_as_error(false)
             .allow_non_standard_methods(true)
@@ -259,7 +284,7 @@ impl Client {
             // (see `put_with_progress`).
             .timeout_per_read(Some(STALL_TIMEOUT))
             .timeout_per_write(Some(STALL_TIMEOUT))
-            .user_agent(concat!("Kantor/", env!("CARGO_PKG_VERSION"), " (WebDAV)"))
+            .user_agent(format!("Kantor/{} ({kind})", env!("CARGO_PKG_VERSION")))
             .tls_config(tls::tls_config())
             .build();
         let mut base = base.to_string();
@@ -267,10 +292,106 @@ impl Client {
             base.push('/');
         }
         Self {
+            backend,
             agent: config.clone().into(),
             config,
             base,
             auth,
+        }
+    }
+
+    /// A client for the signed-in user's OneDrive (Microsoft Graph).
+    pub fn onedrive(auth: Auth) -> Self {
+        Self::graph_at(graph::API, auth)
+    }
+
+    /// [`onedrive`](Self::onedrive) with another Graph drive address
+    /// (`…/v1.0/me/drive`; a test server).
+    pub fn graph_at(drive: &str, auth: Auth) -> Self {
+        Self::with_backend(drive, auth, Backend::Graph, "OneDrive")
+    }
+
+    /// A client for the user's Google Drive. `ids` remembers which file id
+    /// each path stands for (share it per account: see
+    /// [`gdrive::shared_ids`]).
+    pub fn google_drive(auth: Auth, ids: std::sync::Arc<gdrive::Ids>) -> Self {
+        Self::google_drive_at(gdrive::API, gdrive::UPLOAD, auth, ids)
+    }
+
+    /// [`google_drive`](Self::google_drive) with other API addresses (a
+    /// test server): `api` like `https://www.googleapis.com/drive/v3/`,
+    /// `upload` like `https://www.googleapis.com/upload/drive/v3/`.
+    pub fn google_drive_at(
+        api: &str,
+        upload: &str,
+        auth: Auth,
+        ids: std::sync::Arc<gdrive::Ids>,
+    ) -> Self {
+        let drive = gdrive::Drive::new(upload, ids);
+        Self::with_backend(api, auth, Backend::Drive(drive), "Google Drive")
+    }
+
+    /// Upload `bytes` to `path` through an upload session (OneDrive,
+    /// Google Drive). `url`: the session to resume, if any; set to the new
+    /// session's address as soon as there is one, so a failed upload can
+    /// be resumed later. Returns the new version tag.
+    pub fn upload_session(
+        &self,
+        path: &str,
+        bytes: &[u8],
+        cond: Precondition,
+        url: &mut Option<String>,
+        progress: Progress,
+    ) -> Result<Option<String>, Error> {
+        match &self.backend {
+            Backend::Graph => self.graph_upload_session(path, bytes, cond, url, progress),
+            Backend::Drive(d) => d.upload_session(self, path, bytes, cond, url, progress),
+            Backend::Dav => Err(Error::Protocol("WebDAV has no upload sessions".into())),
+        }
+    }
+
+    /// The same client without credentials (pre-authorised addresses:
+    /// Graph's download and upload-session URLs refuse a token).
+    pub(crate) fn anonymous(&self) -> Client {
+        Client {
+            auth: Auth::None,
+            ..self.clone()
+        }
+    }
+
+    /// A JSON API request (Graph, Drive). `429` and `503` (throttling) are
+    /// tried again after the server's `Retry-After`, three times at most.
+    pub(crate) fn api_send(
+        &self,
+        make: &dyn Fn() -> http::request::Builder,
+        body: &[u8],
+    ) -> Result<Reply, Error> {
+        let mut tries = 0u32;
+        loop {
+            let r = self.send(make(), body)?;
+            if matches!(r.status, 429 | 503) && tries < 3 {
+                tries += 1;
+                let wait = r.retry_after.unwrap_or(1 << tries).min(30);
+                log::info!("{} asks to wait {wait} s (HTTP {})", self.base, r.status);
+                std::thread::sleep(Duration::from_secs(wait));
+                continue;
+            }
+            return Ok(r);
+        }
+    }
+
+    /// Whether the drive takes WebDAV locks (OneDrive and Google Drive
+    /// don't offer them to apps: saves are guarded by versions only).
+    pub fn has_locks(&self) -> bool {
+        matches!(self.backend, Backend::Dav)
+    }
+
+    /// Files at least this big go through a resumable upload.
+    pub fn resumable_min(&self) -> usize {
+        match self.backend {
+            // Graph's single PUT is meant for small files.
+            Backend::Graph => graph::SESSION_MIN,
+            _ => chunked::RESUMABLE_MIN,
         }
     }
 
@@ -590,6 +711,11 @@ impl Client {
 
     /// The children of a folder (depth 1), without the folder itself.
     pub fn list(&self, dir: &str) -> Result<Vec<Entry>, Error> {
+        match &self.backend {
+            Backend::Dav => {}
+            Backend::Graph => return self.graph_list(dir),
+            Backend::Drive(d) => return d.list(self, dir),
+        }
         let mut dir = dir.trim_end_matches('/').to_string();
         dir.push('/');
         let mut all = self.propfind(&dir, 1)?;
@@ -602,6 +728,11 @@ impl Client {
 
     /// One file's or folder's properties (depth 0).
     pub fn stat(&self, path: &str) -> Result<Entry, Error> {
+        match &self.backend {
+            Backend::Dav => {}
+            Backend::Graph => return self.graph_stat(path),
+            Backend::Drive(d) => return d.stat(self, path),
+        }
         self.propfind(path, 0)?
             .into_iter()
             .next()
@@ -653,6 +784,11 @@ impl Client {
 
     /// One `GET`, without retrying `425 Too Early`.
     pub fn try_get(&self, path: &str) -> Result<Fetched, Error> {
+        match &self.backend {
+            Backend::Dav => {}
+            Backend::Graph => return self.graph_get(path),
+            Backend::Drive(d) => return d.get(self, path),
+        }
         let r = self.send(self.request("GET", path), &[])?;
         if r.status != 200 {
             return Err(r.error());
@@ -690,6 +826,11 @@ impl Client {
         lock: Option<&LockToken>,
         progress: Progress,
     ) -> Result<Option<String>, Error> {
+        match &self.backend {
+            Backend::Dav => {}
+            Backend::Graph => return self.graph_put(path, bytes, cond, progress),
+            Backend::Drive(d) => return d.put(self, path, bytes, cond, progress),
+        }
         // Nextcloud keeps this and reports it in `oc:checksums`, so a later
         // check can tell "same content, new ETag" without a download.
         let mut req = self
@@ -722,6 +863,9 @@ impl Client {
     /// `owner` is shown to others who find the file locked (servers that
     /// know the account show its name instead).
     pub fn lock(&self, path: &str, timeout: Duration, owner: &str) -> Result<LockToken, Error> {
+        if !self.has_locks() {
+            return Err(no_locks());
+        }
         let body = format!(
             r#"<?xml version="1.0" encoding="utf-8"?>
 <d:lockinfo xmlns:d="DAV:"><d:lockscope><d:exclusive/></d:lockscope><d:locktype><d:write/></d:locktype><d:owner>{}</d:owner></d:lockinfo>"#,
@@ -757,6 +901,9 @@ impl Client {
         token: &LockToken,
         timeout: Duration,
     ) -> Result<(), Error> {
+        if !self.has_locks() {
+            return Err(no_locks());
+        }
         let req = self
             .request("LOCK", path)
             .header("if", format!("(<{}>)", token.0))
@@ -769,6 +916,9 @@ impl Client {
     }
 
     pub fn unlock(&self, path: &str, token: &LockToken) -> Result<(), Error> {
+        if !self.has_locks() {
+            return Ok(());
+        }
         let req = self
             .request("UNLOCK", path)
             .header("lock-token", format!("<{}>", token.0));
@@ -782,6 +932,9 @@ impl Client {
     /// Who holds the lock on `path`, if anyone: the account id when the
     /// server says it, and the lock's owner text.
     pub fn lock_holder(&self, path: &str) -> Result<Option<LockOwner>, Error> {
+        if !self.has_locks() {
+            return Ok(None);
+        }
         const BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:prop><d:lockdiscovery/><nc:lock-owner-displayname/><nc:lock-owner/></d:prop></d:propfind>"#;
         let text = self.propfind_raw(path, 0, BODY)?;
@@ -797,6 +950,9 @@ impl Client {
     /// (Nextcloud OCS, OpenCloud Graph; often admin-only). `None` when the
     /// server doesn't tell this user.
     pub fn display_name(&self, user: &str) -> Option<String> {
+        if !self.has_locks() {
+            return None;
+        }
         let origin = self.origin();
         let enc = percent_encode(user);
         let searches = [
@@ -856,6 +1012,9 @@ impl Client {
     /// Who holds the lock on `path`, if anyone (best effort: Nextcloud's
     /// display name, else the lock's `owner`).
     pub fn lock_owner(&self, path: &str) -> Result<Option<String>, Error> {
+        if !self.has_locks() {
+            return Ok(None);
+        }
         const BODY: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:nc="http://nextcloud.org/ns"><d:prop><d:lockdiscovery/><nc:lock-owner-displayname/><nc:lock-owner/></d:prop></d:propfind>"#;
         let text = self.propfind_raw(path, 0, BODY)?;
@@ -864,6 +1023,11 @@ impl Client {
 
     /// Create a folder. An existing one (405) is fine.
     pub fn mkcol(&self, path: &str) -> Result<(), Error> {
+        match &self.backend {
+            Backend::Dav => {}
+            Backend::Graph => return self.graph_mkdir(path),
+            Backend::Drive(d) => return d.mkdir(self, path),
+        }
         let r = self.send(self.request("MKCOL", path), &[])?;
         match r.status {
             201 | 405 => Ok(()),
@@ -872,11 +1036,24 @@ impl Client {
     }
 
     pub fn delete(&self, path: &str) -> Result<(), Error> {
+        match &self.backend {
+            Backend::Dav => {}
+            Backend::Graph => return self.graph_delete(path),
+            Backend::Drive(d) => return d.delete(self, path),
+        }
         let r = self.send(self.request("DELETE", path), &[])?;
         match r.status {
             200 | 204 | 404 => Ok(()),
             _ => Err(r.error()),
         }
+    }
+}
+
+/// What `lock` says on a drive without WebDAV locks.
+fn no_locks() -> Error {
+    Error::Http {
+        status: 501,
+        body: "this drive doesn't offer locks".into(),
     }
 }
 
@@ -931,6 +1108,10 @@ struct Reply {
     tus: bool,
     upload_offset: Option<u64>,
     location: Option<String>,
+    /// `Range` (Google's resumable uploads: what the server has).
+    range: Option<String>,
+    /// `Retry-After` in seconds (throttling).
+    retry_after: Option<u64>,
     bytes: Vec<u8>,
 }
 
@@ -949,6 +1130,8 @@ impl Reply {
         let tus = header("tus-resumable").is_some() || header("tus-version").is_some();
         let upload_offset = header("upload-offset").and_then(|o| o.trim().parse().ok());
         let location = header("location");
+        let range = header("range");
+        let retry_after = header("retry-after").and_then(|v| v.trim().parse().ok());
         let mut bytes = Vec::new();
         resp.into_body()
             .into_reader()
@@ -962,6 +1145,8 @@ impl Reply {
             tus,
             upload_offset,
             location,
+            range,
+            retry_after,
             bytes,
         })
     }
@@ -981,6 +1166,11 @@ impl Reply {
     fn error(self) -> Error {
         status_error(self.status, &self.bytes)
     }
+
+    /// The body as JSON (Graph, Drive replies).
+    fn json(&self) -> Result<serde_json::Value, Error> {
+        serde_json::from_slice(&self.bytes).map_err(|e| Error::Protocol(format!("JSON reply: {e}")))
+    }
 }
 
 fn status_error(status: u16, body: &[u8]) -> Error {
@@ -999,7 +1189,7 @@ fn status_error(status: u16, body: &[u8]) -> Error {
 
 /// Percent-encode one path segment: everything but RFC 3986 unreserved
 /// characters and a few sub-delims servers accept unencoded.
-fn percent_encode(seg: &str) -> String {
+pub(crate) fn percent_encode(seg: &str) -> String {
     let mut out = String::with_capacity(seg.len());
     for b in seg.bytes() {
         match b {

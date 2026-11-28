@@ -1,0 +1,15 @@
+[package]
+name = "kantor_script"
+description = "Scripting core for macros: a host-neutral object layer (values, IDispatch-style objects, host callbacks) and a VBA interpreter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+# UserForm designs (`kantor_vba::forms`): what a form module's controls are.
+kantor_vba.workspace = true

@@ -34,6 +34,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # OneDrive and Google Drive sign-in (docs/cloud-providers.md): repository
+  # variables, compiled in; unset hides the providers in Cloud Accounts.
+  KANTOR_MS_CLIENT_ID: ${{ vars.KANTOR_MS_CLIENT_ID }}
+  KANTOR_GOOGLE_CLIENT_ID: ${{ vars.KANTOR_GOOGLE_CLIENT_ID }}
+  KANTOR_GOOGLE_CLIENT_SECRET: ${{ secrets.KANTOR_GOOGLE_CLIENT_SECRET }}
 
 jobs:
   build:
@@ -44,7 +49,8 @@ jobs:
         include:
           # Linux builds run in AlmaLinux 9 (glibc 2.34): the binaries then run on Ubuntu
           # 22.04+, Debian 12+ and RHEL 9+, not only on what the runner has (24.04, glibc 2.39).
-          - { arch: aarch64, os: ubuntu-24.04-arm, container: "almalinux:9" }
+          # Thin LTO: the arm runner ran out of memory linking with fat LTO (2026-11-28).
+          - { arch: aarch64, os: ubuntu-24.04-arm, container: "almalinux:9", lto: thin }
           - { arch: x86_64, os: ubuntu-24.04, container: "almalinux:9" }
           - { arch: aarch64, os: macos-15, platform: macos }
           - { arch: x86_64, os: windows-latest, platform: windows, winarch: x64 }
@@ -79,6 +85,8 @@ jobs:
           echo "KANTOR_BUILD=$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S)" >> "$GITHUB_ENV"
       - if: ${{ !(runner.os == 'macOS' && inputs.universal) }}
         run: cargo build --release -p kantor
+        env:
+          CARGO_PROFILE_RELEASE_LTO: ${{ matrix.lto || 'fat' }}
       - if: runner.os == 'Windows'
         run: cargo build --release -p kantor_console
       - name: Package

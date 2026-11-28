@@ -18,7 +18,10 @@ mod closing;
 mod cloud;
 mod doc;
 mod home;
+mod macro_books;
 mod naming;
+mod notes;
+mod notices;
 mod opening;
 mod palette;
 mod panels;
@@ -60,6 +63,8 @@ pub enum AppKind {
     Slides,
     /// The PDF viewer (opens files; there is no new PDF).
     Pdf,
+    /// Markdown notes.
+    Notes,
 }
 
 impl AppKind {
@@ -75,6 +80,7 @@ impl AppKind {
             // and OpenDocument .odp/.otp (Save writes a .pptx copy).
             "pptx" | "ppt" | "pps" | "pot" | "odp" | "otp" => Some(Self::Slides),
             "pdf" => Some(Self::Pdf),
+            "md" | "markdown" => Some(Self::Notes),
             _ => None,
         }
     }
@@ -86,6 +92,7 @@ impl AppKind {
             Self::Sheets => t.sheets,
             Self::Slides => t.slides,
             Self::Pdf => t.danger,
+            Self::Notes => t.info,
         }
     }
 
@@ -95,6 +102,7 @@ impl AppKind {
             Self::Sheets => "Sheets",
             Self::Slides => "Slides",
             Self::Pdf => "PDF",
+            Self::Notes => "Notes",
         }
     }
 }
@@ -143,10 +151,9 @@ pub struct Workspace {
     /// Paparan AI's chat panel, once opened (kept while hidden).
     chat: Option<chat::ChatDock>,
     message: SharedString,
-    /// A short-lived status-bar message shown over any document's (agent
-    /// edits, "copied"); see `Workspace::notice`.
-    notice: Option<SharedString>,
-    notice_id: u64,
+    /// The status bar's own message, shown over any document's (agent
+    /// edits, "copied", cloud saves); see `Workspace::notice`.
+    notices: notices::Notices,
     /// Counts "Saving…" waits before a close; Cancel moves it on so the
     /// running wait doesn't close (see `closing`).
     save_wait: u64,
@@ -168,6 +175,9 @@ pub struct Workspace {
     /// The focus when the window last rendered: a change (a gpui-kit menu
     /// opening or closing) redraws once more for `overlay::menu_shield`.
     last_focus: Option<FocusHandle>,
+    /// A close waiting for a workbook's `Workbook_BeforeClose` (see
+    /// `macro_books`).
+    pending_close: Option<closing::Closing>,
 }
 
 impl Workspace {
@@ -188,8 +198,7 @@ impl Workspace {
             ai: None,
             chat: None,
             message: SharedString::default(),
-            notice: None,
-            notice_id: 0,
+            notices: notices::Notices::default(),
             save_wait: 0,
             logo: Arc::new(Image::from_bytes(ImageFormat::Svg, LOGO_SVG.to_vec())),
             focus: cx.focus_handle(),
@@ -202,6 +211,7 @@ impl Workspace {
             recovery: recovery::Recovery::default(),
             cloud: cloud::Cloud::default(),
             last_focus: None,
+            pending_close: None,
         };
         let ws = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
@@ -313,6 +323,7 @@ impl Workspace {
                 cx.subscribe_in(e, window, move |ws, _, event, window, cx| match event {
                     sheets_ui::SheetsEvent::Close => ws.remove_doc(id, window, cx),
                     sheets_ui::SheetsEvent::Notice(text) => ws.notice(text.clone(), cx),
+                    other => ws.sheets_macro_event(id, other, window, cx),
                 }),
             ],
             DocView::Docs(e) => vec![
@@ -346,6 +357,20 @@ impl Workspace {
                         if let Some((_, pane)) = ws.find_path(path, cx) {
                             ws.set_read_only(pane, Some(read_only::ReadOnly::SignedVersion), cx);
                         }
+                    }
+                }),
+            ],
+            DocView::Notes(e) => vec![
+                cx.observe_in(e, window, move |ws, _, window, cx| {
+                    on_change(ws, window, cx)
+                }),
+                // A linked note or document opens in a tab; conversions.
+                cx.subscribe_in(e, window, move |ws, view, event, window, cx| match event {
+                    notes_ui::NotesEvent::Open(path) => {
+                        ws.open_paths(None, vec![path.clone()], window, cx)
+                    }
+                    notes_ui::NotesEvent::Export(kind) => {
+                        ws.export_note(view.clone(), *kind, window, cx)
                     }
                 }),
             ],
@@ -585,6 +610,22 @@ impl Workspace {
         }
     }
 
+    /// Run `f` if the focused document is a note.
+    fn with_notes(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        f: impl FnOnce(&mut notes_ui::NotesView, &mut Window, &mut Context<notes_ui::NotesView>),
+    ) {
+        if let Some(DocView::Notes(view)) = self.focused_view() {
+            view.update(cx, |v, cx| f(v, window, cx));
+        }
+    }
+
+    fn new_note(&mut self, _: &NewNote, window: &mut Window, cx: &mut Context<Self>) {
+        self.launch(AppKind::Notes, None, window, cx);
+    }
+
     fn new_spreadsheet(&mut self, _: &NewSpreadsheet, window: &mut Window, cx: &mut Context<Self>) {
         self.launch(AppKind::Sheets, None, window, cx);
     }
@@ -613,6 +654,9 @@ impl Workspace {
         self.with_slides(window, cx, |v, w, cx| v.print_doc(w, cx));
         self.with_sheets_any(window, cx, |v, w, cx| v.print_doc(w, cx));
         self.with_pdf(window, cx, |v, w, cx| v.print_doc(w, cx));
+        if let Some(DocView::Notes(view)) = self.focused_view() {
+            self.print_note(view, window, cx);
+        }
     }
 
     fn open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut Context<Self>) {
@@ -971,6 +1015,17 @@ impl Render for Workspace {
             .id("workspace")
             .key_context(WORKSPACE)
             .track_focus(&self.focus)
+            // An error in the status bar stays until the user does something.
+            .capture_key_down(cx.listener(|ws, _: &KeyDownEvent, _, cx| {
+                if ws.notices.user_action() {
+                    cx.notify();
+                }
+            }))
+            .capture_any_mouse_down(cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                if ws.notices.user_action() {
+                    cx.notify();
+                }
+            }))
             .on_action(cx.listener(Self::toggle_palette))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::palette_up))
@@ -978,8 +1033,10 @@ impl Render for Workspace {
             .on_action(cx.listener(Self::new_spreadsheet))
             .on_action(cx.listener(Self::new_document))
             .on_action(cx.listener(Self::new_presentation))
+            .on_action(cx.listener(Self::new_note))
             .on_action(cx.listener(Self::open_file))
             .on_action(cx.listener(Self::open_from_cloud))
+            .on_action(cx.listener(Self::save_to_cloud))
             .on_action(cx.listener(Self::open_cloud_accounts))
             .on_action(cx.listener(Self::sync_now))
             .on_action(cx.listener(Self::print))

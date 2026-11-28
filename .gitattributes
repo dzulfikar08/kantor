@@ -3,6 +3,8 @@
 *.der binary
 *.p12 binary
 *.ttf binary
+*.bin binary
+*.xlsm binary
 # Generated files compared byte for byte in tests.
 docs/slides-deck.schema.json text eol=lf
 docs/sheets-json.schema.json text eol=lf

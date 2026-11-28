@@ -25,6 +25,8 @@ pub const USAGE: &str = "usage: kantor convert [options] INPUT OUTPUT\n\
     \n\
     Supported conversions:\n\
     \x20 .docx                                      -> .pdf\n\
+    \x20 .md .markdown (notes)                      -> .docx .pdf .pptx (a slide\n\
+    \x20                                               per heading)\n\
     \x20 .docx .rtf .doc .odt                       -> .png (one picture per page, or\n\
     \x20                                               one contact sheet)\n\
     \x20 .rtf .doc .dot (Word 97-2003) .odt .ott    -> .docx .pdf\n\
@@ -157,6 +159,8 @@ enum Kind {
     SheetsToPng,
     /// A document's pages as PNG pictures.
     DocsToPng,
+    /// A Markdown note to `.docx`, `.pdf` or `.pptx`.
+    Note,
 }
 
 /// Which converter handles `input` → `output`, or why none does.
@@ -171,6 +175,9 @@ fn kind(input: &Path, output: &Path) -> Result<Kind, Usage> {
     };
     if i == "docx" && o == "pdf" {
         return Ok(Kind::DocxToPdf);
+    }
+    if matches!(i.as_str(), "md" | "markdown") && matches!(o.as_str(), "docx" | "pdf" | "pptx") {
+        return Ok(Kind::Note);
     }
     if matches!(i.as_str(), "docx" | "rtf" | "doc" | "dot" | "odt" | "ott") && o == "png" {
         return Ok(Kind::DocsToPng);
@@ -496,6 +503,7 @@ fn convert(
         Kind::SlidesToPng => slides_to_png(input, output, opts, pw),
         Kind::SheetsToPng => sheets_to_png(input, output, opts, pw),
         Kind::DocsToPng => docs_to_png(input, output, opts, pw),
+        Kind::Note => note(input, output),
     }
 }
 
@@ -553,6 +561,28 @@ fn docx_to_pdf(
         if pages == 1 { "" } else { "s" },
         size(bytes.len())
     ))
+}
+
+/// A Markdown note as a Word document, a PDF or a deck.
+fn note(input: &Path, output: &Path) -> Result<String> {
+    use crate::agent::notes_convert;
+    let text = notes_convert::read_note(input)?;
+    let stem = input
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let dir = input
+        .canonicalize()
+        .ok()
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let bytes = match ext(output).as_str() {
+        "docx" => notes_convert::to_docx(&text, &stem, &dir)?,
+        "pdf" => notes_convert::to_pdf(&text, &stem, &dir)?,
+        _ => notes_convert::to_pptx(&text, &stem, &dir)?,
+    };
+    kantor_core::fsx::write_atomic(output, &bytes)?;
+    Ok(size(bytes.len()))
 }
 
 fn import_notes(input: &Path, doc: &docs_engine::Document) {
@@ -919,6 +949,10 @@ mod tests {
 
     #[std::prelude::v1::test]
     fn unsupported_pairs_are_named() {
+        for out in ["n.docx", "n.pdf", "n.pptx"] {
+            assert_eq!(kind(Path::new("n.md"), Path::new(out)).unwrap(), Kind::Note);
+        }
+        assert!(kind(Path::new("n.md"), Path::new("n.xlsx")).is_err());
         assert_eq!(
             kind(Path::new("a.xlsx"), Path::new("a.pdf")).unwrap(),
             Kind::SheetsToPdf

@@ -276,6 +276,24 @@ pub(crate) struct Context<'a> {
     /// Write a macro-enabled workbook (`.xlsm`), macros or not: Excel
     /// refuses an `.xlsm` whose workbook part is an `.xlsx` one.
     pub macro_enabled: bool,
+    /// The JavaScript and Python scripts to write in place of the
+    /// original's (`None`: the original's, as they are).
+    pub scripts: Option<&'a [crate::scripts::Script]>,
+    /// The VBA project as edited in Kantor (`None`: the original's).
+    pub vba: Option<&'a VbaSave>,
+}
+
+/// A VBA project edited in Kantor, to save in place of the original's.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct VbaSave {
+    /// `vbaProject.bin`; `None`: the project was removed.
+    pub bytes: Option<std::sync::Arc<Vec<u8>>>,
+    /// The workbook's code name (`<workbookPr codeName>`), when the project
+    /// has a module for it.
+    pub workbook_code_name: Option<String>,
+    /// `(sheet name, code name)`: code names to give worksheets that have
+    /// none, so their document modules belong to them.
+    pub sheet_code_names: Vec<(String, String)>,
 }
 
 /// A chart sheet to save (see `crate::chart_sheet`).
@@ -604,7 +622,8 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
     // The original's macros, put back in the end (a save as `.xlsm`).
     let vba_source = if ctx.keep_macros { original } else { None };
     let done = |bytes: Vec<u8>, mut notes: Vec<String>, added: Vec<AddedPivot>| {
-        let bytes = match with_macros(&bytes, vba_source, ctx.macro_enabled) {
+        let edited = if ctx.keep_macros { ctx.vba } else { None };
+        let bytes = match with_macros(&bytes, vba_source, ctx.macro_enabled, edited) {
             Ok(Some(with)) => {
                 notes.retain(|n| !n.contains("vbaProject"));
                 with
@@ -614,6 +633,16 @@ pub(crate) fn finish(ironcalc: Vec<u8>, original: Option<&[u8]>, ctx: &Context) 
                 bytes
             }
             Ok(None) => bytes,
+        };
+        let bytes = match ctx.scripts {
+            Some(scripts) => match with_scripts(&bytes, scripts) {
+                Ok(with) => with,
+                Err(e) => {
+                    notes.push(format!("the scripts are not saved: {e}"));
+                    bytes
+                }
+            },
+            None => bytes,
         };
         let tables = Package::read(&bytes)
             .map(|p| {
@@ -1219,6 +1248,13 @@ pub(crate) fn has_macros(bytes: &[u8]) -> bool {
     vba_project(bytes).ok().flatten().is_some()
 }
 
+/// The bytes of the VBA project part (`xl/vbaProject.bin`) in `bytes` (an
+/// `.xlsx`/`.xlsm` package), if it has one.
+pub(crate) fn vba_project_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+    let (_, part, orig) = vba_project(bytes).ok().flatten()?;
+    orig.get(&part).ok().flatten()
+}
+
 /// The original's VBA project: its relationship (from the workbook) and
 /// its part name.
 fn vba_project(bytes: &[u8]) -> Result<Option<(Rel, String, Original<'_>)>, String> {
@@ -1249,21 +1285,47 @@ fn vba_project(bytes: &[u8]) -> Result<Option<(Rel, String, Original<'_>)>, Stri
 /// didn't run them in; with `enabled`, a macro-enabled workbook even without
 /// one. The project's digital signature is not kept: the workbook changed.
 /// `Ok(None)`: nothing to change.
+///
+/// `edited`, a project edited in Kantor, goes in place of the original's
+/// when the workbook is macro-enabled (`enabled`, or an original with
+/// macros): an autosave of a plain `.xlsx` leaves it out.
 fn with_macros(
     bytes: &[u8],
     original: Option<&[u8]>,
     enabled: bool,
+    edited: Option<&VbaSave>,
 ) -> Result<Option<Vec<u8>>, String> {
     let vba = match original {
         Some(o) => vba_project(o)?,
         None => None,
     };
-    if vba.is_none() && !enabled {
+    let edited = edited.filter(|_| enabled || vba.is_some());
+    if vba.is_none() && !enabled && edited.is_none() {
         return Ok(None);
     }
     let mut pkg = Package::read(bytes)?;
-    if let Some((rel, vba_part, orig)) = vba {
-        add_vba(&mut pkg, &rel, &vba_part, &orig)?;
+    match (edited, vba) {
+        (Some(edit), vba) => {
+            if let Some(data) = &edit.bytes {
+                let (kind, part, code_name) = match &vba {
+                    Some((rel, part, orig)) => {
+                        (rel.kind.clone(), part.clone(), workbook_code_name(orig)?)
+                    }
+                    None => (
+                        VBA_PROJECT_REL.to_owned(),
+                        "xl/vbaProject.bin".to_owned(),
+                        None,
+                    ),
+                };
+                let code_name = edit.workbook_code_name.clone().or(code_name);
+                add_vba_data(&mut pkg, &kind, &part, data.as_ref().clone(), code_name)?;
+                set_sheet_code_names(&mut pkg, &edit.sheet_code_names)?;
+            }
+            // A removed project: nothing to add (a macro-enabled
+            // original's package stays macro-enabled, as its name says).
+        }
+        (None, Some((rel, vba_part, orig))) => add_vba(&mut pkg, &rel, &vba_part, &orig)?,
+        (None, None) => {}
     }
     let types = pkg
         .text(CONTENT_TYPES)?
@@ -1278,22 +1340,90 @@ fn with_macros(
     Ok(Some(pkg.write()?))
 }
 
-/// Put the VBA project `vba_part` of `orig` (linked by `rel`) into `pkg`,
-/// with the workbook's code name.
-fn add_vba(pkg: &mut Package, rel: &Rel, vba_part: &str, orig: &Original) -> Result<(), String> {
-    let data = orig
-        .get(vba_part)?
-        .ok_or("the VBA project part is missing")?;
-    // The workbook's code name, which the project's ThisWorkbook module goes by.
-    let code_name = orig.text(&rel_source_workbook(orig)?)?.and_then(|xml| {
+const VBA_PROJECT_REL: &str = "http://schemas.microsoft.com/office/2006/relationships/vbaProject";
+
+/// The workbook's code name in `orig`, which the project's ThisWorkbook
+/// module goes by.
+fn workbook_code_name(orig: &Original) -> Result<Option<String>, String> {
+    Ok(orig.text(&rel_source_workbook(orig)?)?.and_then(|xml| {
         let doc = Document::parse(&xml).ok()?;
         let pr = doc
             .root_element()
             .children()
             .find(|c| is_main(*c, "workbookPr"))?;
         pr.attribute("codeName").map(str::to_owned)
-    });
+    }))
+}
 
+/// Put the VBA project `vba_part` of `orig` (linked by `rel`) into `pkg`,
+/// with the workbook's code name.
+fn add_vba(pkg: &mut Package, rel: &Rel, vba_part: &str, orig: &Original) -> Result<(), String> {
+    let data = orig
+        .get(vba_part)?
+        .ok_or("the VBA project part is missing")?;
+    let code_name = workbook_code_name(orig)?;
+    add_vba_data(pkg, &rel.kind, vba_part, data, code_name)
+}
+
+/// Give the worksheets of `pkg` named in `names` (`(sheet name, code
+/// name)`) their code names, where they have none.
+fn set_sheet_code_names(pkg: &mut Package, names: &[(String, String)]) -> Result<(), String> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
+    let (_, _, _, sheets) =
+        workbook_sheets(&root_rels, &|p: &str| Ok(pkg.text(p)?.map(str::to_owned)))?;
+    for s in sheets.iter().filter(|s| matches!(s.kind, SheetKind::Work)) {
+        let Some((_, code)) = names.iter().find(|(n, _)| *n == s.name) else {
+            continue;
+        };
+        let Some(xml) = pkg.text(&s.part)?.map(str::to_owned) else {
+            continue;
+        };
+        let doc = Document::parse(&xml).map_err(|e| format!("{}: {e}", s.part))?;
+        let root = doc.root_element();
+        let edit = match root.children().find(|c| is_main(*c, "sheetPr")) {
+            Some(pr) if pr.attribute("codeName").is_some() => None,
+            Some(pr) => {
+                let at = pr.range().start + "<sheetPr".len();
+                xml[pr.range().start..]
+                    .starts_with("<sheetPr")
+                    .then(|| (at..at, format!(" codeName=\"{}\"", esc_attr(code))))
+            }
+            None => {
+                // CT_Worksheet: sheetPr comes first.
+                let at = match root.children().find(|c| c.is_element()) {
+                    Some(first) => first.range().start,
+                    None => {
+                        root.range().start
+                            + start_tag_end(&xml[root.range().start..]).ok_or("bad worksheet")?
+                    }
+                };
+                Some((
+                    at..at,
+                    format!("<sheetPr codeName=\"{}\"/>", esc_attr(code)),
+                ))
+            }
+        };
+        if let Some(edit) = edit {
+            let new = apply_edits(&xml, vec![edit]);
+            drop(doc);
+            pkg.set(&s.part, new.into_bytes());
+        }
+    }
+    Ok(())
+}
+
+/// Put VBA project `data` into `pkg` as part `vba_part` (relationship type
+/// `rel_kind`), with the workbook's code name.
+fn add_vba_data(
+    pkg: &mut Package,
+    rel_kind: &str,
+    vba_part: &str,
+    data: Vec<u8>,
+    code_name: Option<String>,
+) -> Result<(), String> {
     let root_rels = parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?;
     let wb = root_rels
         .iter()
@@ -1308,7 +1438,7 @@ fn add_vba(pkg: &mut Package, rel: &Rel, vba_part: &str, orig: &Original) -> Res
     let id = IdAlloc::new(&wb_rels).next();
     wb_rels.push(Rel {
         id,
-        kind: rel.kind.clone(),
+        kind: rel_kind.to_owned(),
         target: relative(&wb, vba_part),
         external: false,
     });
@@ -1381,6 +1511,181 @@ fn rel_source_workbook(orig: &Original) -> Result<String, String> {
         .find(|r| r.short_kind() == "officeDocument" && !r.external)
         .and_then(|r| resolve("", &r.target))
         .ok_or_else(|| "no workbook part".to_owned())
+}
+
+// ------------------------------------------------------------------ scripts
+
+const CUSTOM_XML_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml";
+const CUSTOM_XML_PROPS_REL: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXmlProps";
+const CUSTOM_XML_PROPS_CT: &str =
+    "application/vnd.openxmlformats-officedocument.customXmlProperties+xml";
+/// The `itemID` of the scripts part's properties (fixed: a save writes the
+/// same bytes for the same scripts).
+const SCRIPTS_ITEM_ID: &str = "{6B1C5E2A-4F0D-4C3B-9A7E-2D8F1B0C5A31}";
+
+/// The workbook part of `pkg`.
+fn workbook_part(pkg: &Package) -> Result<String, String> {
+    parse_rels(pkg.text("_rels/.rels")?.ok_or("no _rels/.rels")?)?
+        .iter()
+        .find(|r| r.short_kind() == "officeDocument" && !r.external)
+        .and_then(|r| resolve("", &r.target))
+        .ok_or_else(|| "no workbook part".to_owned())
+}
+
+/// The JavaScript and Python scripts stored in `bytes` (an `.xlsx`/`.xlsm`
+/// package), see [`crate::scripts`]. Empty when it has none.
+pub(crate) fn read_scripts(bytes: &[u8]) -> Result<Vec<crate::scripts::Script>, String> {
+    let orig = Original::new(bytes)?;
+    let wb = rel_source_workbook(&orig)?;
+    let Some(xml) = orig.text(&rels_part(&wb))? else {
+        return Ok(Vec::new());
+    };
+    for r in parse_rels(&xml)? {
+        if r.external || r.short_kind() != "customXml" {
+            continue;
+        }
+        let Some(part) = resolve(&wb, &r.target) else {
+            continue;
+        };
+        let Some(text) = orig.text(&part)? else {
+            continue;
+        };
+        if let Some(found) = crate::scripts::from_xml(&text) {
+            return found;
+        }
+    }
+    Ok(Vec::new())
+}
+
+/// `bytes` with its scripts part replaced by one holding `scripts` (none
+/// when `scripts` is empty).
+fn with_scripts(bytes: &[u8], scripts: &[crate::scripts::Script]) -> Result<Vec<u8>, String> {
+    let mut pkg = Package::read(bytes)?;
+    let wb = workbook_part(&pkg)?;
+    let wb_rels_part = rels_part(&wb);
+    let mut wb_rels = match pkg.text(&wb_rels_part)? {
+        Some(x) => parse_rels(x)?,
+        None => Vec::new(),
+    };
+    let mut types = pkg
+        .text(CONTENT_TYPES)?
+        .ok_or("no content types")?
+        .to_owned();
+    // The old scripts part, with its properties.
+    let mut gone = Vec::new();
+    wb_rels.retain(|r| {
+        if r.external || r.short_kind() != "customXml" {
+            return true;
+        }
+        let Some(part) = resolve(&wb, &r.target) else {
+            return true;
+        };
+        let ours = pkg
+            .text(&part)
+            .ok()
+            .flatten()
+            .is_some_and(crate::scripts::is_scripts_part);
+        if ours {
+            gone.push(part);
+        }
+        !ours
+    });
+    for part in gone {
+        let item_rels = rels_part(&part);
+        if let Some(x) = pkg.text(&item_rels)? {
+            for r in parse_rels(x)? {
+                if let Some(props) = resolve(&part, &r.target).filter(|_| !r.external) {
+                    pkg.remove(&props);
+                    types = remove_override(&types, &props)?;
+                }
+            }
+        }
+        pkg.remove(&item_rels);
+        pkg.remove(&part);
+        types = remove_override(&types, &part)?;
+    }
+    if !scripts.is_empty() {
+        let n = (1..)
+            .find(|n| {
+                !pkg.has(&format!("customXml/item{n}.xml"))
+                    && !pkg.has(&format!("customXml/itemProps{n}.xml"))
+            })
+            .unwrap_or(1);
+        let item = format!("customXml/item{n}.xml");
+        let props = format!("customXml/itemProps{n}.xml");
+        pkg.set(&item, crate::scripts::to_xml(scripts).into_bytes());
+        pkg.set(
+            &props,
+            format!(
+                "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"no\"?>\n<ds:datastoreItem ds:itemID=\"{SCRIPTS_ITEM_ID}\" xmlns:ds=\"http://schemas.openxmlformats.org/officeDocument/2006/customXml\"><ds:schemaRefs><ds:schemaRef ds:uri=\"{}\"/></ds:schemaRefs></ds:datastoreItem>",
+                crate::scripts::NAMESPACE
+            )
+            .into_bytes(),
+        );
+        pkg.set(
+            &rels_part(&item),
+            write_rels(&[Rel {
+                id: "rId1".into(),
+                kind: CUSTOM_XML_PROPS_REL.into(),
+                target: relative(&item, &props),
+                external: false,
+            }])
+            .into_bytes(),
+        );
+        let id = IdAlloc::new(&wb_rels).next();
+        wb_rels.push(Rel {
+            id,
+            kind: CUSTOM_XML_REL.into(),
+            target: relative(&wb, &item),
+            external: false,
+        });
+        let ct = ContentTypes::parse(&types)?;
+        let mut add = String::new();
+        if ct.of(&item).is_none() {
+            add.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"application/xml\"/>",
+                esc_attr(&item)
+            ));
+        }
+        if ct.of(&props) != Some(CUSTOM_XML_PROPS_CT) {
+            add.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{CUSTOM_XML_PROPS_CT}\"/>",
+                esc_attr(&props)
+            ));
+        }
+        if ct.of(&rels_part(&item)).is_none() {
+            add.push_str(&format!(
+                "<Override PartName=\"/{}\" ContentType=\"{RELS_CT}\"/>",
+                esc_attr(&rels_part(&item))
+            ));
+        }
+        let at = types.rfind("</Types>").ok_or("content types not closed")?;
+        types.insert_str(at, &add);
+    }
+    pkg.set(&wb_rels_part, write_rels(&wb_rels).into_bytes());
+    pkg.set(CONTENT_TYPES, types.into_bytes());
+    pkg.write()
+}
+
+/// `types` without the `<Override>` of `part`.
+fn remove_override(types: &str, part: &str) -> Result<String, String> {
+    let doc = Document::parse(types).map_err(|e| e.to_string())?;
+    let found = doc
+        .root_element()
+        .children()
+        .filter(|n| n.is_element() && n.tag_name().name() == "Override")
+        .find(|n| {
+            n.attribute("PartName")
+                .map(|p| p.strip_prefix('/').unwrap_or(p))
+                .is_some_and(|p| p.eq_ignore_ascii_case(part))
+        })
+        .map(|n| n.range());
+    Ok(match found {
+        Some(r) => apply_edits(types, vec![(r, String::new())]),
+        None => types.to_owned(),
+    })
 }
 
 // ------------------------------------------------------------------ packages
@@ -2497,6 +2802,8 @@ pub(crate) struct DrawingSource {
     pub targets: HashMap<String, (String, String)>,
     /// Chart and picture parts the drawing links to, by name.
     pub parts: HashMap<String, Vec<u8>>,
+    /// Macros of the sheet's form controls, by shape id (`cNvPr id`).
+    pub controls: HashMap<u32, String>,
 }
 
 /// What [`drawing_sources`] reads from a package.
@@ -2667,12 +2974,121 @@ fn sheet_drawing(orig: &Original<'_>, s: &SheetEntry) -> Option<DrawingSource> {
         }
         targets.insert(r.id.clone(), (r.short_kind().to_owned(), t));
     }
+    let controls = control_macros(orig, s, &sheet_rels);
     Some(DrawingSource {
         sheet_id: s.sheet_id,
         xml,
         targets,
         parts,
+        controls,
     })
+}
+
+/// The macros of a sheet's form controls (buttons), by shape id: the
+/// sheet's `<control shapeId><controlPr macro>`, else the legacy VML
+/// shape's `<x:FmlaMacro>`. Only read when the sheet has controls.
+fn control_macros(orig: &Original<'_>, s: &SheetEntry, rels: &[Rel]) -> HashMap<u32, String> {
+    let mut out = HashMap::new();
+    if !rels.iter().any(|r| r.short_kind() == "ctrlProp") {
+        return out;
+    }
+    if let Ok(Some(sheet)) = orig.text(&s.part) {
+        let mut rest = sheet.as_str();
+        while let Some(at) = find_tag(rest, "control") {
+            rest = &rest[at..];
+            let end = rest.find("</control>").unwrap_or(rest.len());
+            let block = &rest[..end];
+            let start_tag = &block[..block.find('>').unwrap_or(block.len())];
+            if let Some(id) = tag_attr(start_tag, "shapeId").and_then(|v| v.parse().ok())
+                && let Some(pr) = find_tag(block, "controlPr")
+            {
+                let pr = &block[pr..];
+                let pr = &pr[..pr.find('>').unwrap_or(pr.len())];
+                if let Some(m) = tag_attr(pr, "macro").filter(|m| !m.is_empty()) {
+                    out.insert(id, unescape_xml(&m));
+                }
+            }
+            rest = &rest[end.max(1)..];
+        }
+    }
+    let vml = rels
+        .iter()
+        .filter(|r| r.short_kind() == "vmlDrawing" && !r.external)
+        .filter_map(|r| resolve(&s.part, &r.target));
+    for part in vml {
+        let Ok(Some(text)) = orig.text(&part) else {
+            continue;
+        };
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("<v:shape ") {
+            rest = &rest[at..];
+            let end = rest.find("</v:shape>").unwrap_or(rest.len());
+            let block = &rest[..end];
+            let start_tag = &block[..block.find('>').unwrap_or(block.len())];
+            let id = tag_attr(start_tag, "o:spid")
+                .or_else(|| tag_attr(start_tag, "id"))
+                .and_then(|v| v.rsplit(['s', 'S']).next()?.parse::<u32>().ok());
+            if let Some(id) = id
+                && let Some(m) = block.find("<x:FmlaMacro>")
+            {
+                let m = &block[m + "<x:FmlaMacro>".len()..];
+                if let Some(e) = m.find("</x:FmlaMacro>") {
+                    let name = unescape_xml(m[..e].trim());
+                    if !name.is_empty() {
+                        out.entry(id).or_insert(name);
+                    }
+                }
+            }
+            rest = &rest[end.max(1)..];
+        }
+    }
+    out
+}
+
+/// Where the next start tag `name` (any prefix) is in `xml`.
+fn find_tag(xml: &str, name: &str) -> Option<usize> {
+    let mut from = 0;
+    while let Some(i) = xml[from..].find('<') {
+        let at = from + i;
+        let tag = &xml[at + 1..];
+        let local = tag
+            .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .next()
+            .unwrap_or_default();
+        let local = local.rsplit(':').next().unwrap_or_default();
+        if local == name {
+            return Some(at);
+        }
+        from = at + 1;
+    }
+    None
+}
+
+/// The value of attribute `name` in start tag `tag`.
+fn tag_attr(tag: &str, name: &str) -> Option<String> {
+    let mut rest = tag;
+    while let Some(i) = rest.find(name) {
+        let ok = rest[..i].ends_with(char::is_whitespace);
+        let after = rest[i + name.len()..].trim_start();
+        if ok && let Some(v) = after.strip_prefix('=') {
+            let v = v.trim_start();
+            let q = v.chars().next()?;
+            if q == '"' || q == '\'' {
+                let end = v[1..].find(q)?;
+                return Some(v[1..1 + end].to_owned());
+            }
+        }
+        rest = &rest[i + name.len()..];
+    }
+    None
+}
+
+fn unescape_xml(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
 }
 
 /// The bytes of part `name` of package `bytes`.
@@ -7568,6 +7984,8 @@ mod tests {
             slicers: &SlicerPlan::default(),
             keep_macros: false,
             macro_enabled: false,
+            scripts: None,
+            vba: None,
         };
         let done = finish(out, original, &ctx);
         assert_eq!(package_problems(&done.bytes), Vec::<String>::new());
@@ -8129,5 +8547,23 @@ mod tests {
         keep_theme(&mut pkg, &original).unwrap();
         assert!(pkg.get("xl/media/image2.png") == again.get("xl/media/image2.png"));
         assert_eq!(problems_of(&pkg), Vec::<String>::new());
+    }
+
+    #[test]
+    fn form_control_macros_are_found() {
+        let sheet = r#"<worksheet><mc:AlternateContent><mc:Choice Requires="x14"><controls><mc:AlternateContent><mc:Choice Requires="x14"><control shapeId="1025" r:id="rId3" name="Button 1"><controlPr defaultSize="0" print="0" autoFill="0" autoPict="0" macro="[0]!Macro1"><anchor/></controlPr></control></mc:Choice></mc:AlternateContent></controls></mc:Choice></mc:AlternateContent></worksheet>"#;
+        let at = super::find_tag(sheet, "control").unwrap();
+        let tag = &sheet[at..at + sheet[at..].find('>').unwrap()];
+        assert_eq!(super::tag_attr(tag, "shapeId").as_deref(), Some("1025"));
+        let pr = super::find_tag(&sheet[at..], "controlPr").unwrap() + at;
+        let tag = &sheet[pr..pr + sheet[pr..].find('>').unwrap()];
+        assert_eq!(super::tag_attr(tag, "macro").as_deref(), Some("[0]!Macro1"));
+        // `controls` isn't `control`; `spid` isn't `id`.
+        assert!(super::find_tag("<controls>", "control").is_none());
+        assert_eq!(
+            super::tag_attr(r#"<v:shape o:spid="_x0000_s1025""#, "id"),
+            None
+        );
+        assert_eq!(super::unescape_xml("a&amp;b &quot;c&quot;"), "a&b \"c\"");
     }
 }

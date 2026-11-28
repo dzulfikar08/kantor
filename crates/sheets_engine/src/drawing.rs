@@ -301,6 +301,9 @@ pub(crate) struct Object {
     /// A shape's pictures (a group's `xdr:pic`s): `r:embed` id, image
     /// extension and bytes; `None` when one can't be found.
     media: Option<Vec<MediaItem>>,
+    /// The macro assigned to it (`macro="[0]!Macro1"` on the object, or a
+    /// form control's `controlPr macro` / VML `x:FmlaMacro`), as written.
+    macro_name: Option<String>,
 }
 
 /// An object on a sheet as it is now.
@@ -974,6 +977,7 @@ fn read_objects(
     targets: &HashMap<String, (String, String)>,
     parts: HashMap<String, Vec<u8>>,
     line_styles: &[String],
+    controls: &HashMap<u32, String>,
 ) -> Vec<Object> {
     let doc = match Document::parse(xml) {
         Ok(d) => d,
@@ -1067,6 +1071,11 @@ fn read_objects(
             namespaces: namespaces.clone(),
             alternate,
             media,
+            macro_name: object_element(a)
+                .and_then(|o| o.attribute("macro"))
+                .filter(|m| !m.trim().is_empty())
+                .map(str::to_owned)
+                .or_else(|| controls.get(&id?).cloned()),
         });
     }
     // Objects are edited by their id: a chart of the newer types keeps
@@ -1135,7 +1144,7 @@ impl Drawings {
         let line_styles = theme_line_styles(src.theme.as_deref());
         let mut sheets = HashMap::new();
         for d in src.drawings {
-            let objects = read_objects(&d.xml, &d.targets, d.parts, &line_styles);
+            let objects = read_objects(&d.xml, &d.targets, d.parts, &line_styles, &d.controls);
             if !objects.is_empty() {
                 sheets.insert(d.sheet_id, objects);
             }
@@ -1152,7 +1161,7 @@ impl Drawings {
                 bundle: Arc::new(c.bundle),
                 objects: c
                     .drawing
-                    .map(|d| read_objects(&d.xml, &d.targets, d.parts, &line_styles))
+                    .map(|d| read_objects(&d.xml, &d.targets, d.parts, &line_styles, &d.controls))
                     .unwrap_or_default(),
                 print: crate::print::chart_sheet_print(c.xml.as_deref().unwrap_or_default()),
                 tab: c.xml.as_deref().and_then(chart_sheet_tab),
@@ -1191,7 +1200,7 @@ impl Drawings {
         );
         let mut parts = HashMap::new();
         parts.insert(new.chart_part.clone(), new.chart_xml.clone().into_bytes());
-        let objects = read_objects(&new.drawing_xml, &targets, parts, &[]);
+        let objects = read_objects(&new.drawing_xml, &targets, parts, &[], &HashMap::new());
         self.chart_sheets.push(ChartSheet {
             name: new.name,
             state: None,
@@ -1496,6 +1505,17 @@ impl Workbook {
         let mut out = xml.to_owned();
         out.replace_range(range, &esc);
         Some(out)
+    }
+
+    /// The macro assigned to an object of the opened file (a button, a
+    /// shape with Assign Macro), as written (`[0]!Macro1`).
+    pub fn drawing_macro(&self, key: DrawingKey) -> Option<String> {
+        self.drawings
+            .sheets
+            .get(&key.sheet_id)?
+            .get(key.index)?
+            .macro_name
+            .clone()
     }
 
     fn file_drawings(&self, sheet_id: u32) -> Vec<Drawing> {

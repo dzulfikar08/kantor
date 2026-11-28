@@ -107,7 +107,7 @@ impl std::fmt::Debug for TokenSource {
     }
 }
 
-fn agent() -> ureq::Agent {
+pub(crate) fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .http_status_as_error(false)
         .max_redirects(5)
@@ -139,7 +139,10 @@ fn get_json(url: &str) -> Result<(u16, serde_json::Value), Error> {
 }
 
 /// POST a form: `(status, JSON body)`.
-fn post_form(url: &str, form: &[(&str, &str)]) -> Result<(u16, serde_json::Value), Error> {
+pub(crate) fn post_form(
+    url: &str,
+    form: &[(&str, &str)],
+) -> Result<(u16, serde_json::Value), Error> {
     let body = form_body(form);
     let mut resp = agent()
         .post(url)
@@ -305,6 +308,13 @@ pub struct Loopback {
     pub redirect_uri: String,
 }
 
+impl Loopback {
+    /// The listener's port.
+    pub fn port(&self) -> u16 {
+        self.listener.local_addr().map_or(0, |a| a.port())
+    }
+}
+
 /// What the page in the browser says once the sign-in is done.
 #[derive(Debug, Clone)]
 pub struct DonePage {
@@ -353,10 +363,11 @@ impl Loopback {
         let until = Instant::now() + timeout;
         loop {
             if cancel.load(Ordering::Relaxed) {
-                return Err(Error::Protocol("sign-in cancelled".into()));
+                return Err(Error::Cancelled);
             }
+            // The browser page was closed or left: the user gave up.
             if Instant::now() > until {
-                return Err(Error::Protocol("sign-in timed out".into()));
+                return Err(Error::Cancelled);
             }
             match self.listener.accept() {
                 Ok((stream, _)) => {
@@ -386,11 +397,7 @@ fn answer(mut stream: TcpStream, state: &str, page: &DonePage) -> Option<Result<
     let get = |k: &str| params.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
     let result = if let Some(err) = get("error") {
         let desc = get("error_description").unwrap_or_default();
-        Some(Err(Error::Protocol(
-            format!("the sign-in was refused: {err} {desc}")
-                .trim()
-                .to_owned(),
-        )))
+        Some(Err(refusal(&err, &desc)))
     } else if let Some(code) = get("code") {
         if get("state").as_deref() == Some(state) {
             Some(Ok(code))
@@ -420,6 +427,20 @@ fn answer(mut stream: TcpStream, state: &str, page: &DonePage) -> Option<Result<
     );
     let _ = stream.flush();
     result
+}
+
+/// An `error=` reply from the authorization endpoint. `access_denied` is
+/// the user declining (Google's Cancel on the consent page, Microsoft's
+/// "No" or closing its account picker), so a cancel, not a failure.
+fn refusal(err: &str, desc: &str) -> Error {
+    if err == "access_denied" {
+        return Error::Cancelled;
+    }
+    Error::Protocol(
+        format!("the sign-in was refused: {err} {desc}")
+            .trim()
+            .to_owned(),
+    )
 }
 
 fn html_escape(s: &str) -> String {
@@ -460,7 +481,7 @@ fn token_error(status: u16, json: &serde_json::Value) -> Error {
     }
 }
 
-fn tokens_from(status: u16, json: serde_json::Value) -> Result<Tokens, Error> {
+pub(crate) fn tokens_from(status: u16, json: serde_json::Value) -> Result<Tokens, Error> {
     if status != 200 {
         return Err(token_error(status, &json));
     }
@@ -497,14 +518,26 @@ pub fn exchange_code(
 
 /// A new access token from a refresh token.
 pub fn refresh(ep: &Endpoints, client_id: &str, refresh_token: &str) -> Result<Tokens, Error> {
-    let (status, json) = post_form(
-        &ep.token_endpoint,
-        &[
-            ("grant_type", "refresh_token"),
-            ("refresh_token", refresh_token),
-            ("client_id", client_id),
-        ],
-    )?;
+    refresh_with_secret(ep, client_id, None, refresh_token)
+}
+
+/// [`refresh`] for a client that has a (non-secret) client secret, like
+/// Google's desktop clients.
+pub fn refresh_with_secret(
+    ep: &Endpoints,
+    client_id: &str,
+    client_secret: Option<&str>,
+    refresh_token: &str,
+) -> Result<Tokens, Error> {
+    let mut form = vec![
+        ("grant_type", "refresh_token"),
+        ("refresh_token", refresh_token),
+        ("client_id", client_id),
+    ];
+    if let Some(s) = client_secret {
+        form.push(("client_secret", s));
+    }
+    let (status, json) = post_form(&ep.token_endpoint, &form)?;
     refresh_reply(status, json)
 }
 
@@ -726,7 +759,7 @@ pub fn device_wait(
         let wake = Instant::now() + interval;
         while Instant::now() < wake {
             if cancel.load(Ordering::Relaxed) {
-                return Err(Error::Protocol("sign-in cancelled".into()));
+                return Err(Error::Cancelled);
             }
             std::thread::sleep(Duration::from_millis(100));
         }
@@ -748,9 +781,7 @@ pub fn device_wait(
         match json["error"].as_str() {
             Some("authorization_pending") => {}
             Some("slow_down") => interval += Duration::from_secs(5),
-            Some("access_denied") => {
-                return Err(Error::Protocol("the sign-in was refused".into()));
-            }
+            Some("access_denied") => return Err(Error::Cancelled),
             Some("expired_token") => {
                 return Err(Error::Protocol("the code expired; start again".into()));
             }
@@ -841,6 +872,8 @@ pub struct TokenSource {
     issuer: String,
     endpoints: Mutex<Option<Endpoints>>,
     client_id: String,
+    /// Google desktop clients send one (it isn't secret in a desktop app).
+    client_secret: Option<String>,
     held: Mutex<Held>,
     persist: Box<dyn Fn(&str) + Send + Sync>,
     /// The provider refused the refresh token: sign in again.
@@ -858,6 +891,7 @@ impl TokenSource {
             issuer: endpoints.issuer.clone(),
             endpoints: Mutex::new(Some(endpoints)),
             client_id,
+            client_secret: None,
             held: Mutex::new(Held {
                 refresh: refresh_token,
                 access: None,
@@ -879,6 +913,7 @@ impl TokenSource {
             issuer,
             endpoints: Mutex::new(None),
             client_id,
+            client_secret: None,
             held: Mutex::new(Held {
                 refresh: refresh_token,
                 access: None,
@@ -906,6 +941,12 @@ impl TokenSource {
             .unwrap_or_else(|e| e.into_inner())
             .refresh
             .clone()
+    }
+
+    /// Send `secret` as the client secret when refreshing.
+    pub fn with_client_secret(mut self, secret: Option<String>) -> Self {
+        self.client_secret = secret.filter(|s| !s.is_empty());
+        self
     }
 
     /// Start with the access token of a fresh sign-in.
@@ -946,7 +987,12 @@ impl BearerSource for TokenSource {
         }
         let endpoints = self.endpoints()?;
         let start = Instant::now();
-        let refreshed = refresh(&endpoints, &self.client_id, &h.refresh);
+        let refreshed = refresh_with_secret(
+            &endpoints,
+            &self.client_id,
+            self.client_secret.as_deref(),
+            &h.refresh,
+        );
         log::debug!(
             "oidc token refresh: {} after {:.2} s",
             if refreshed.is_ok() { "ok" } else { "failed" },
@@ -1181,39 +1227,67 @@ mod tests {
         assert!(f.starts_with("HTTP/1.1 404"));
         assert!(ok.starts_with("HTTP/1.1 200") && ok.contains("signed in"));
 
-        // Another request's state, or a refusal, is an error.
-        let lb = Loopback::bind().unwrap();
-        let port = lb
-            .redirect_uri
-            .trim_start_matches("http://127.0.0.1:")
-            .trim_end_matches('/')
-            .to_owned();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(150));
-            let mut s = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
-            write!(s, "GET /?error=access_denied&state=xyz HTTP/1.1\r\n\r\n").unwrap();
-        });
-        assert!(
+        // The browser's reply to `path`, as the listener reads it.
+        let reply = |path: &'static str| {
+            let lb = Loopback::bind().unwrap();
+            let port = lb
+                .redirect_uri
+                .trim_start_matches("http://127.0.0.1:")
+                .trim_end_matches('/')
+                .to_owned();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(150));
+                let mut s = TcpStream::connect(format!("127.0.0.1:{port}")).unwrap();
+                write!(s, "GET {path} HTTP/1.1\r\n\r\n").unwrap();
+            });
             lb.wait_for_code(
                 "xyz",
                 Duration::from_secs(10),
-                &cancel,
-                &DonePage::default()
+                &AtomicBool::new(false),
+                &DonePage::default(),
             )
-            .is_err()
-        );
-        // Cancelled.
+        };
+        // Declining consent is a cancel, not a failure.
+        assert!(matches!(
+            reply("/?error=access_denied&state=xyz"),
+            Err(Error::Cancelled)
+        ));
+        assert!(matches!(
+            reply("/?error=access_denied&error_subcode=cancel&state=xyz"),
+            Err(Error::Cancelled)
+        ));
+        // Another request's state, or the provider failing, is an error.
+        assert!(matches!(
+            reply("/?state=other&code=abc"),
+            Err(Error::Protocol(_))
+        ));
+        assert!(matches!(
+            reply("/?error=server_error&state=xyz"),
+            Err(Error::Protocol(_))
+        ));
+        // Cancelled in Kantor.
         let lb = Loopback::bind().unwrap();
         cancel.store(true, Ordering::Relaxed);
-        assert!(
+        assert!(matches!(
             lb.wait_for_code(
                 "xyz",
                 Duration::from_secs(10),
                 &cancel,
                 &DonePage::default()
-            )
-            .is_err()
-        );
+            ),
+            Err(Error::Cancelled)
+        ));
+        // The browser page closed: nothing comes back before the timeout.
+        let lb = Loopback::bind().unwrap();
+        assert!(matches!(
+            lb.wait_for_code(
+                "xyz",
+                Duration::from_millis(200),
+                &AtomicBool::new(false),
+                &DonePage::default()
+            ),
+            Err(Error::Cancelled)
+        ));
     }
 
     #[test]

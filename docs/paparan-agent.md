@@ -166,6 +166,7 @@ can be read but not overwritten.
 | `list_files`, `read_file`, `write_file`, `replace_in_file` | files; PNG/JPEG come back as pictures |
 | `build` | JSON → .pptx/.docx/.xlsx, then `check` and the contact sheet (the skills' `build.sh`); a sheet's `csv` key copies a CSV's rows, so the model doesn't retype the user's data |
 | `check`, `list`, `edit`, `schema` | as `kantor slides|docs|sheets …`; `edit` takes the ops inline |
+| `macros` | a workbook's VBA macros, as `kantor sheets macros`: modules, procedures, code on request (read, never run) |
 | `look` | contact sheet or pages as pictures (at most 4), saved under `shots/` |
 | `convert` | `kantor convert` (PDF copies, CSV ↔ xlsx, .doc → .docx, …) |
 | `read_skill_file`, `finish` | the loop's own |

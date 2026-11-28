@@ -9,6 +9,70 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.28.0] - 2026-11-28
+
+### Added
+
+- **Notes**, a Markdown editor and viewer (`.md`, `.markdown`): *New Note* (start screen, palette), Open, *Open with*
+  Kantor, drops, recent files, autosave and recovery copies like the other apps. Live preview as Obsidian's: each line
+  is drawn formatted (headings, bold, italic, strikethrough, inline code, links, bullets and numbers, task check boxes
+  you can click, quotes, rules, code blocks, tables as grids, pictures from relative paths) with its Markdown hidden,
+  and the lines the caret is on show as typed. *Source Mode* shows every line as typed, *Reading View* (`Ctrl E`)
+  formats every line and isn't editable. The file is the document: an unedited note saves byte for byte (line endings,
+  byte-order mark and last line break kept), and edits change only what was typed. `Ctrl B` / `Ctrl I` / `Ctrl K` (with a selection; else it
+  is the palette) wrap the selection, Enter continues lists, quotes and task lists (and ends an empty item), Tab and Shift+Tab indent
+  list items, a pasted or dropped picture is saved in `attachments/` next to the note and linked, Find & Replace,
+  undo, input methods. *Save as Word Document…*, *Save Note as PDF…* and *Make Slides from Note…* (a slide per
+  heading) build through Kantor's own document and deck builders; `kantor convert note.md note.docx|pdf|pptx` does
+  the same without a window, and the MCP server reads and edits open notes (`notes_read`, `notes_write`,
+  `notes_replace`).
+- **Macro Editor** in Sheets (Alt+F11, *Macro Editor* in the palette, *Edit* in the Macros dialog): the workbook's
+  modules on the left (ThisWorkbook, sheets, modules, class modules, UserForm code, JavaScript), code with colours,
+  line numbers, undo and Find on the right. Insert, rename and remove modules; **F5** runs the Sub the cursor is in;
+  code that doesn't compile is listed with its line and doesn't run. Saving a `.xlsx` with new VBA offers `.xlsm` as
+  Excel does. Code you type yourself runs without Enable Content; a file that arrived with macros still asks first.
+- VBA **events**: `Workbook_Open`, `BeforeSave`, `BeforeClose`, `Worksheet_Change`, `SelectionChange`,
+  `BeforeDoubleClick`, `BeforeRightClick`, `Activate`/`Deactivate` and more, `WithEvents`/`RaiseEvent`,
+  `Application.OnTime` and `Application.Run`. Module variables keep their values between runs, as in Excel.
+- **UserForms**: forms saved by Excel show as real dialogs (text boxes, combo and list boxes, check boxes, option
+  buttons, frames, buttons, labels) with their event code, modal or modeless.
+- More of Excel's objects for macros: charts, shapes and pictures, pivot tables, tables (`ListObjects`), comments,
+  hyperlinks, data validation, conditional formats, page setup and page breaks, `ExportAsFixedFormat` to PDF,
+  `Workbooks.Open`/`Add`/`SaveAs`/`Close`, `AutoFit` measured with the cells' fonts, single border edges with
+  `xlNone`. A macro that reads or writes a file outside the workbook's folder asks first.
+- **JavaScript macros** on the same objects (`ActiveSheet.range("A1").value = 5`), kept inside the workbook (also in
+  a plain `.xlsx`), listed and run like VBA macros, with the same Enable Content, Stop and one-step undo.
+  `kantor sheets macros add FILE report.js` adds one. (Python scripts are kept and listed, but don't run yet.)
+
+### Fixed
+
+- A macro writing one formula over several cells (`Range("B14:D14").Formula = "=SUM(B2:B13)"`) moves its relative
+  references per cell, as Excel does.
+
+## [0.27.0] - 2026-11-27
+
+### Added
+
+- Sheets runs VBA macros. A workbook with macros opens with them off and a bar says so; **Enable Content**
+  turns them on for that window. **Macros** (View ▸ Macros…, Alt+F8) lists them with their code, and **Run**
+  runs one: `Range`, `Cells`, `Worksheets`, `Offset`, `End(xlUp)`, copy and paste, Find/Replace, Sort,
+  AutoFilter, formatting and `WorksheetFunction` work, a whole run undoes with one Undo, MsgBox and InputBox are
+  real dialogs, a long run can be stopped, and an error shows Excel's "Run-time error" message with the line.
+  Buttons and shapes with a macro assigned run it on click, and VBA functions used in cells (`=MyTax(A2)`)
+  calculate while macros are on (`#NAME?` while off, as in Excel). Not yet: events such as `Workbook_Open`,
+  UserForms, other workbooks.
+- `kantor sheets macros FILE` lists a workbook's macros and prints their code; `kantor sheets macros run FILE
+  --macro NAME --out OUT.xlsm` runs one. The MCP `sheets_macros` and Paparan AI `macros` tools read macros
+  but never run them.
+- Cloud: OneDrive and Google Drive accounts, Save to Cloud, and cloud autosave.
+
+### Fixed
+
+- REGEXTEST, REGEXEXTRACT and REGEXREPLACE take Excel's optional arguments (`case_sensitivity`,
+  `return_mode`, `occurrence`), accept lookahead, lookbehind and backreferences, and work over ranges, so
+  `FILTER(A:A, REGEXTEST(A:A, "^INV-"))` works. REGEXEXTRACT's default mode gives the whole match, as Excel does.
+- Formulas calling a function Kantor doesn't know keep the name's case (`=MyTax` no longer becomes `=mytax`).
+
 ## [0.26.2] - 2026-11-27
 
 ### Fixed
@@ -2548,7 +2612,9 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.26.2...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.28.0...HEAD
+[0.28.0]: https://github.com/dzulfikar08/kantor/compare/v0.27.0...v0.28.0
+[0.27.0]: https://github.com/dzulfikar08/kantor/compare/v0.26.2...v0.27.0
 [0.26.2]: https://github.com/dzulfikar08/kantor/compare/v0.26.1...v0.26.2
 [0.26.1]: https://github.com/dzulfikar08/kantor/compare/v0.26.0...v0.26.1
 [0.26.0]: https://github.com/dzulfikar08/kantor/compare/v0.25.2...v0.26.0

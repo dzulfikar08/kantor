@@ -701,12 +701,27 @@ checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
 name = "bit-set"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08807e080ed7f9d5433fa9b275196cfc35414f66a0c79d864dc51a0d825231a3"
+dependencies = [
+ "bit-vec 0.8.0",
+]
+
+[[package]]
+name = "bit-set"
 version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09ec2f926cc3060f09db9ebc5b52823d85268d24bb917e472c0c4bea35780a7d"
 dependencies = [
- "bit-vec",
+ "bit-vec 0.9.1",
 ]
+
+[[package]]
+name = "bit-vec"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e764a1d40d510daf35e07be9eb06e75770908c27d411ee6c92109c9840eaaf7"
 
 [[package]]
 name = "bit-vec"
@@ -1709,7 +1724,7 @@ dependencies = [
 
 [[package]]
 name = "docs_engine"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1729,7 +1744,7 @@ dependencies = [
 
 [[package]]
 name = "docs_layout"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "gpui-pre",
  "gpui-pre-wgpu",
@@ -1742,7 +1757,7 @@ dependencies = [
 
 [[package]]
 name = "docs_pdf"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1764,7 +1779,7 @@ dependencies = [
 
 [[package]]
 name = "docs_ui"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2066,6 +2081,17 @@ dependencies = [
  "rayon-core",
  "smallvec",
  "zune-inflate",
+]
+
+[[package]]
+name = "fancy-regex"
+version = "0.20.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a2e16b9a584b602f1e0e5e22c30ca0906786088c27500653e432d086def8b53"
+dependencies = [
+ "bit-set 0.8.0",
+ "regex-automata",
+ "regex-syntax",
 ]
 
 [[package]]
@@ -3331,6 +3357,8 @@ version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash",
 ]
 
@@ -3985,6 +4013,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "csv",
+ "fancy-regex",
  "js-sys",
  "rand 0.10.3",
  "regex",
@@ -4151,7 +4180,7 @@ dependencies = [
 
 [[package]]
 name = "kantor"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -4179,6 +4208,8 @@ dependencies = [
  "kantor_ui",
  "kantor_update",
  "log",
+ "notes_engine",
+ "notes_ui",
  "pdf_engine",
  "pdf_ui",
  "ring",
@@ -4186,6 +4217,7 @@ dependencies = [
  "serde_json",
  "sheets_engine",
  "sheets_pdf",
+ "sheets_script",
  "sheets_ui",
  "signal-hook",
  "slides_engine",
@@ -4198,7 +4230,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_acp"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "futures",
  "log",
@@ -4210,7 +4242,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_ai"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "apple-native-keyring-store",
  "base64 0.22.1",
@@ -4228,7 +4260,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_cloud"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -4250,11 +4282,11 @@ dependencies = [
 
 [[package]]
 name = "kantor_console"
-version = "0.26.2"
+version = "0.28.0"
 
 [[package]]
 name = "kantor_core"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "log",
@@ -4266,7 +4298,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_crypt"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "aes 0.9.4",
  "aes-gcm",
@@ -4286,7 +4318,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_esign"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "base64 0.22.1",
  "kantor_ai",
@@ -4304,7 +4336,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_keystore"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "kantor_core",
  "libloading",
@@ -4314,11 +4346,11 @@ dependencies = [
 
 [[package]]
 name = "kantor_mem"
-version = "0.26.2"
+version = "0.28.0"
 
 [[package]]
 name = "kantor_merge"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4334,7 +4366,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_metafile"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -4345,14 +4377,14 @@ dependencies = [
 
 [[package]]
 name = "kantor_numfmt"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "chrono",
 ]
 
 [[package]]
 name = "kantor_ooxml"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "quick-xml 0.41.0",
@@ -4361,7 +4393,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_pdf"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "calamine",
  "image",
@@ -4374,7 +4406,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_sandbox"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "base64 0.22.1",
  "kantor_core",
@@ -4386,8 +4418,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "kantor_script"
+version = "0.28.0"
+dependencies = [
+ "kantor_vba",
+]
+
+[[package]]
+name = "kantor_script_js"
+version = "0.28.0"
+dependencies = [
+ "kantor_script",
+ "rquickjs",
+]
+
+[[package]]
 name = "kantor_spell"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "kantor_core",
  "log",
@@ -4398,7 +4445,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_theme"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -4408,7 +4455,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_ui"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "gpui-kit",
  "gpui-pre-macos",
@@ -4427,7 +4474,7 @@ dependencies = [
 
 [[package]]
 name = "kantor_update"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "base64 0.22.1",
  "kantor_core",
@@ -4438,6 +4485,14 @@ dependencies = [
  "tempfile",
  "ureq",
  "zip 9.4.1",
+]
+
+[[package]]
+name = "kantor_vba"
+version = "0.28.0"
+dependencies = [
+ "cfb",
+ "encoding_rs",
 ]
 
 [[package]]
@@ -4953,7 +5008,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a616d2fb8c89516ac2723a581f69d6c18576046bed761bd6b305e5618e6ae130"
 dependencies = [
  "arrayvec",
- "bit-set",
+ "bit-set 0.10.0",
  "bitflags 2.13.2",
  "cfg-if",
  "cfg_aliases",
@@ -5048,6 +5103,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b11ce00d2594068e8a27c9146fdc5cf9f3ac38eb42c7cd34d05fea618873ac9f"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "notes_engine"
+version = "0.28.0"
+dependencies = [
+ "pulldown-cmark",
+ "unicode-segmentation",
+]
+
+[[package]]
+name = "notes_ui"
+version = "0.28.0"
+dependencies = [
+ "anyhow",
+ "gpui-kit",
+ "gpui-pre-wgpu",
+ "imagesize 0.14.0",
+ "kantor_core",
+ "kantor_ui",
+ "notes_engine",
 ]
 
 [[package]]
@@ -5589,7 +5665,7 @@ dependencies = [
 
 [[package]]
 name = "office_fidelity"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5852,7 +5928,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_engine"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "aes 0.8.4",
  "cbc 0.1.2",
@@ -5873,7 +5949,7 @@ dependencies = [
 
 [[package]]
 name = "pdf_ui"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "async-channel",
@@ -6245,6 +6321,17 @@ checksum = "4488a4a36b9a4ba6b9334a32a39971f77c1436ec82c38707bce707699cc3bbcb"
 dependencies = [
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "pulldown-cmark"
+version = "0.13.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3db2be46835f013dd3f4fa7f5f7402c537787b54ebb6fe2b94bbdd7e2669bb7b"
+dependencies = [
+ "bitflags 2.13.2",
+ "memchr",
+ "unicase",
 ]
 
 [[package]]
@@ -6742,6 +6829,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "relative-path"
+version = "2.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38540a682c6e9bca04a8bca9e5ec5a6ba168dfbb04c9998fe517a9befb92eb68"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "renderdoc-sys"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6826,6 +6922,35 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9da7f59328b09405b181fee1018925fad50f157afb43c0c0f5c522c256dd5907"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "rquickjs"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0a22bf72f515cc4189dd7c63d016f6de92a11eee98ddf7dd64794198f6eb34e"
+dependencies = [
+ "rquickjs-core",
+]
+
+[[package]]
+name = "rquickjs-core"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6657979a24d543e5fc66f32cef2f47ca82ce8eb55cec5f7d59a12b7b570bbf24"
+dependencies = [
+ "hashbrown 0.17.1",
+ "relative-path",
+ "rquickjs-sys",
+]
+
+[[package]]
+name = "rquickjs-sys"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cee271d0eeba64f0915b846cb7ae02e16faf3dfdffdca91731101d9d30fe3423"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -7348,7 +7473,7 @@ dependencies = [
 
 [[package]]
 name = "sheets_engine"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "calamine",
@@ -7364,6 +7489,7 @@ dependencies = [
  "kantor_metafile",
  "kantor_numfmt",
  "kantor_ooxml",
+ "kantor_vba",
  "log",
  "roxmltree 0.21.2",
  "serde_json",
@@ -7374,7 +7500,7 @@ dependencies = [
 
 [[package]]
 name = "sheets_pdf"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7395,7 +7521,7 @@ dependencies = [
 
 [[package]]
 name = "sheets_scene"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "docs_layout",
  "kantor_ooxml",
@@ -7406,8 +7532,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "sheets_script"
+version = "0.28.0"
+dependencies = [
+ "kantor_script",
+ "kantor_script_js",
+ "log",
+ "sheets_engine",
+ "sheets_pdf",
+ "sheets_scene",
+ "tempfile",
+ "zip 9.4.1",
+]
+
+[[package]]
 name = "sheets_ui"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "docs_ui",
@@ -7417,12 +7557,14 @@ dependencies = [
  "kantor_core",
  "kantor_mem",
  "kantor_ooxml",
+ "kantor_script",
  "kantor_spell",
  "kantor_ui",
  "log",
  "sheets_engine",
  "sheets_pdf",
  "sheets_scene",
+ "sheets_script",
  "slides_engine",
  "slides_scene",
  "slides_ui",
@@ -7560,7 +7702,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slides_engine"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "cfb",
@@ -7577,7 +7719,7 @@ dependencies = [
 
 [[package]]
 name = "slides_pdf"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "docs_layout",
@@ -7593,7 +7735,7 @@ dependencies = [
 
 [[package]]
 name = "slides_scene"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "base64 0.22.1",
  "docs_engine",
@@ -7610,7 +7752,7 @@ dependencies = [
 
 [[package]]
 name = "slides_ui"
-version = "0.26.2"
+version = "0.28.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9053,8 +9195,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "14c018fce9b6270aa203c2fdd56f3cce996713534bd757e4ea58c8560b121f14"
 dependencies = [
  "arrayvec",
- "bit-set",
- "bit-vec",
+ "bit-set 0.10.0",
+ "bit-vec 0.9.1",
  "bitflags 2.13.2",
  "bytemuck",
  "cfg_aliases",
@@ -9126,7 +9268,7 @@ dependencies = [
  "android_system_properties",
  "arrayvec",
  "ash",
- "bit-set",
+ "bit-set 0.10.0",
  "bitflags 2.13.2",
  "block2 0.6.2",
  "bytemuck",

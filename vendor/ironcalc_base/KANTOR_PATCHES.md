@@ -935,6 +935,70 @@ theme's), `alignment.indent` (0-250 steps) and `alignment.text_rotation`
 
 Tests: Kantor's `crates/sheets_engine/tests/author.rs`.
 
+## 36. Regex functions with Excel's arguments
+
+Why: upstream's REGEXTEST, REGEXEXTRACT and REGEXREPLACE lacked Excel's
+optional arguments (a formula using them was `#ERROR!`), REGEXEXTRACT's
+default mode gave the first capture group where Excel gives the whole match,
+and the `regex` crate rejects lookaround and backreferences, which Excel's
+PCRE2 accepts. They also read one value, so `REGEXTEST(A2:A100, …)` inside
+FILTER did not work.
+
+What: `functions/text/regex_functions.rs` is rewritten on `fancy-regex`
+(new dependency in `Cargo.toml`): `case_sensitivity` on all three,
+REGEXEXTRACT `return_mode` 0/1/2 (1 and 2 give a row; a group that took no
+part is empty text), REGEXREPLACE `occurrence` (n-th, or -n-th from the end)
+with `$n` references read as Excel does (`$1a` is group 1 then "a"). Every
+argument can be a range or array and the result is element-wise
+(`common.rs` `text_arg`/`broadcast_text`); a REGEXEXTRACT element with
+several results is `#CALC!`. Each pattern compiles once per formula.
+`expressions/parser/static_analysis.rs`: the new argument counts and
+element-wise results.
+
+Left as is: PCRE2 details `fancy-regex` reads differently (`\d`, `\w` and
+`\b` are Unicode, and `$` matches only at the very end, not before a
+final line break).
+
+Tests: `test/text_functions/fn_regex.rs`, run in CI by `ci.yml`
+(`cargo test --manifest-path vendor/ironcalc_base/Cargo.toml --lib -- regex kantor_udf test_defined_names`).
+
+## 37. User functions and formulas evaluated without a cell
+
+Why: a workbook's VBA `Public Function`s are used in cell formulas
+(`=MyTax(A2)`); with macros enabled Excel evaluates them, with macros off
+they show `#NAME?`. Kantor's macros (`crates/sheets_script`) also evaluate
+`WorksheetFunction.Sum(...)` and `Evaluate("...")` with the engine's
+functions, without writing a cell.
+
+What: the new file `kantor_udf.rs`: the trait `KantorUserFunctions` (`call(name,
+args) -> Option<KantorValue>`, `None` for a name it doesn't define), set with
+`Model::kantor_set_user_functions` / `UserModel::kantor_set_user_functions`
+(a new `Model` field `kantor_udfs`, `None` in both constructors). In
+`model.rs`, a `NamedFunctionKind` call that is neither bound by LET nor a LAMBDA
+defined name asks the user functions before giving `#NAME?`; its arguments are
+evaluated in the cell's context, ranges read cell by cell (so they are
+dependencies like any read; ranges over 65 536 cells are clipped to the used
+area). The formula text is untouched, so files save as they were: in
+`expressions/parser/stringify.rs` a call to a name that isn't bound by LET
+keeps the case it was written in (upstream lowercased it: `=MyTax(A2)` became
+`=mytax(A2)`; `test/user_model/test_defined_names.rs` expects the case now).
+`Model::kantor_evaluate_formula` parses and evaluates a formula in a cell's
+context without storing it (stored values only, like conditional formatting's
+`cf_evaluate`), a range result coming back as its values;
+`Model::kantor_cell_value` reads one cell's value with errors by name, and
+`UserModel::kantor_copy_selection_to` copies the selected area and pastes it at
+a cell (VBA's `Range.Copy Destination:=…`; the clipboard's data is private).
+
+`KantorUserFunctions::call_with` (default: `call`) is what the engine calls:
+each argument comes as a `KantorArg` with, for a reference, the range it names
+(`KantorRangeRef`: sheet, 1-based top-left, size), and the calling cell, so VBA
+functions get `Range` objects and `Application.Caller`.
+`UserModel::kantor_history_changes` sums up the top diff lists of the undo (or
+redo) stack as a `KantorChanges` (§16): the cells an edit, undo or redo changed,
+for `Worksheet_Change`.
+
+Tests: `test/test_kantor_udf.rs`; Kantor's `crates/sheets_script/tests`.
+
 ## Updating or dropping
 
 Upstream: https://github.com/ironcalc/IronCalc. Drop this copy (remove the

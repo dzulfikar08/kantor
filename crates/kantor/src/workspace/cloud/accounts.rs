@@ -1,6 +1,7 @@
 //! Cloud Accounts: add a WebDAV account (server, user name, app password,
-//! or the organisation's single sign-on), test it, sign in again, remove
-//! it. The password or the sign-in's refresh token goes to the OS keychain
+//! or the organisation's single sign-on), a Microsoft OneDrive or a Google
+//! Drive account (browser sign-in), test it, sign in again, remove it. The
+//! password or the sign-in's refresh token goes to the OS keychain
 //! (`kantor_ai::keys::CLOUD`), never to settings.toml.
 
 use gpui_kit::assets::IconName;
@@ -16,15 +17,19 @@ use kantor_ui::metrics::*;
 use kantor_ui::tokens;
 
 use super::jobs;
-use super::sso::{self, SsoRequest, SsoStep};
+use super::oauth;
+use super::sso::{self, SignInError, SsoRequest, SsoStep};
 use super::widgets::{CLOUD_PANEL, ClosePanel, Status, card, field, footer, note, status_line};
 use super::{PanelEvent, remote_for};
+use kantor_cloud::oauth::Provider;
 
 /// How a new account signs in.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Mode {
     AppPassword,
     Sso,
+    /// OneDrive or Google Drive.
+    Oauth(Provider),
 }
 
 pub struct AccountsPanel {
@@ -256,9 +261,42 @@ impl AccountsPanel {
         self.busy = true;
         self.status = Status::Busy(t("Finding where to sign in…").into());
         let again_id = again.as_ref().map(|a| a.id.clone());
+        self.run_sign_in(
+            again_id,
+            move |step: &dyn Fn(SsoStep)| sso::sign_in(req, &cancel, step),
+            cx,
+        );
+    }
+
+    /// Sign in to OneDrive or Google Drive in the browser, for a new
+    /// account or `again` for an existing one.
+    fn oauth_sign_in(&mut self, p: Provider, again: Option<CloudAccount>, cx: &mut Context<Self>) {
+        let cancel = sso::Cancel::default();
+        self.cancel = Some(cancel.clone());
+        self.device_code = None;
+        self.busy = true;
+        self.status = Status::Busy(t("Waiting for you to sign in in the browser…").into());
+        let again_id = again.as_ref().map(|a| a.id.clone());
+        self.run_sign_in(
+            again_id,
+            move |step: &dyn Fn(SsoStep)| oauth::sign_in(p, again, &cancel, step),
+            cx,
+        );
+    }
+
+    /// Run a sign-in on a worker thread, then keep the account it made
+    /// (in place of `again_id`'s, when signing in again).
+    fn run_sign_in(
+        &mut self,
+        again_id: Option<String>,
+        job: impl FnOnce(&dyn Fn(SsoStep)) -> Result<(CloudAccount, KeyLocation), SignInError>
+        + Send
+        + 'static,
+        cx: &mut Context<Self>,
+    ) {
         jobs::spawn(
             cx,
-            move |step: &dyn Fn(SsoStep)| sso::sign_in(req, &cancel, step),
+            job,
             |this: &mut Self, step, cx| {
                 match step {
                     SsoStep::OpenBrowser(url) => {
@@ -282,10 +320,18 @@ impl AccountsPanel {
             },
             move |this: &mut Self, r, cx| {
                 this.busy = false;
-                this.cancel = None;
+                // Taken already when the user pressed Cancel here.
+                let cancelled_here = this.cancel.take().is_none();
                 this.device_code = None;
                 match r {
-                    Err(e) => this.status = Status::Error(e),
+                    Err(SignInError::Failed(e)) => this.status = Status::Error(e),
+                    Err(SignInError::Cancelled) => {
+                        this.status = if cancelled_here {
+                            Status::None
+                        } else {
+                            Status::Busy(t("Sign-in cancelled. Nothing was changed.").into())
+                        }
+                    }
                     Ok((account, location)) => {
                         let mut settings = Settings::load();
                         let old = again_id.unwrap_or_else(|| account.id.clone());
@@ -338,12 +384,14 @@ impl AccountsPanel {
             return;
         }
         self.accounts = settings.cloud.accounts;
-        let sso = removed.as_ref().is_some_and(CloudAccount::is_sso);
+        let sso = removed.as_ref().is_some_and(|a| a.is_sso() || a.is_oauth());
         jobs::spawn(
             cx,
             move |_: &dyn Fn(())| {
-                if let Some(a) = removed.filter(CloudAccount::is_sso) {
-                    sso::sign_out(&a);
+                match removed {
+                    Some(a) if a.is_oauth() => oauth::sign_out(&a),
+                    Some(a) if a.is_sso() => sso::sign_out(&a),
+                    _ => {}
                 }
                 CLOUD.delete(&id)
             },
@@ -391,6 +439,9 @@ fn test(account: &CloudAccount, password: Option<String>) -> Status {
                 _ => "items in the top folder",
             }
         )),
+        Err(kantor_cloud::Error::Auth(_)) if account.is_oauth() => {
+            Status::Error(sso::ended_message(account))
+        }
         Err(kantor_cloud::Error::Auth(_)) => Status::Error(
             tr(
                 "The server refused the user name or app password.",
@@ -482,14 +533,16 @@ impl Render for AccountsPanel {
                                     .text_size(FONT_CAPTION)
                                     .text_color(t.fg_dim)
                                     .truncate()
-                                    .child(if a.is_sso() {
+                                    .child(if let Some(p) = a.provider_name() {
+                                        p.to_owned()
+                                    } else if a.is_sso() {
                                         tf("Single sign-on · {}", &[&a.dav_root()])
                                     } else {
                                         a.dav_root()
                                     }),
                             ),
                     )
-                    .when(a.is_sso(), |row| {
+                    .when(a.is_sso() || a.is_oauth(), |row| {
                         let again = a.clone();
                         row.child(
                             Button::new(("cloud-sso-again", i))
@@ -497,9 +550,12 @@ impl Render for AccountsPanel {
                                 .small()
                                 .label(i18n::t("Sign in again"))
                                 .disabled(self.busy)
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    this.sso_sign_in(false, Some(again.clone()), cx)
-                                })),
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| match oauth::provider(&again) {
+                                        Some(p) => this.oauth_sign_in(p, Some(again.clone()), cx),
+                                        None => this.sso_sign_in(false, Some(again.clone()), cx),
+                                    },
+                                )),
                         )
                     })
                     .child(
@@ -573,10 +629,37 @@ impl Render for AccountsPanel {
                                 this.status = Status::None;
                                 cx.notify();
                             })),
-                    ),
+                    )
+                    .children(oauth::available().into_iter().enumerate().map(|(ix, p)| {
+                        Button::new(("cloud-mode-oauth", ix))
+                            .small()
+                            .map(|b| {
+                                if self.mode == Mode::Oauth(p) {
+                                    b.primary()
+                                } else {
+                                    b.ghost()
+                                }
+                            })
+                            .label(p.name())
+                            .disabled(self.busy)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.mode = Mode::Oauth(p);
+                                this.status = Status::None;
+                                cx.notify();
+                            }))
+                    })),
             )
-            .child(field(tr("Server", "Server"), Input::new(&self.server), cx));
+            .when(!matches!(self.mode, Mode::Oauth(_)), |b| {
+                b.child(field(tr("Server", "Server"), Input::new(&self.server), cx))
+            });
         let body = match self.mode {
+            Mode::Oauth(p) => body.child(note(
+                match p {
+                    Provider::OneDrive => i18n::t("Sign in with your Microsoft account (personal, work or school) in the browser. Kantor can then open and save the files in your OneDrive. The sign-in is kept in the system keychain; no password is stored."),
+                    Provider::GoogleDrive => i18n::t("Sign in with your Google account in the browser. Kantor only gets the files it creates or opens, not the rest of your Drive; new files go in a “Kantor” folder. The sign-in is kept in the system keychain; no password is stored."),
+                },
+                cx,
+            )),
             Mode::AppPassword => body
                 .child(field(tr("User name", "Nama pengguna"), Input::new(&self.user), cx))
                 .child(
@@ -633,7 +716,7 @@ impl Render for AccountsPanel {
         };
         // Single sign-on has three buttons in the footer: its messages go
         // above them at full width rather than in a narrow column beside.
-        let status_above = self.mode == Mode::Sso;
+        let status_above = self.mode != Mode::AppPassword;
         let body = body.when(status_above, |b| b.children(status_line(&self.status, cx)));
 
         div()
@@ -683,6 +766,31 @@ impl Render for AccountsPanel {
                                         ),
                                 )
                             })
+                            .when_some(
+                                match self.mode {
+                                    Mode::Oauth(p) if self.cancel.is_none() => Some(p),
+                                    _ => None,
+                                },
+                                |f, p| {
+                                    f.child(
+                                        Button::new("cloud-oauth-sign-in")
+                                            .primary()
+                                            .small()
+                                            .label(match p {
+                                                Provider::OneDrive => {
+                                                    i18n::t("Sign in with Microsoft")
+                                                }
+                                                Provider::GoogleDrive => {
+                                                    i18n::t("Sign in with Google")
+                                                }
+                                            })
+                                            .disabled(self.busy)
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                this.oauth_sign_in(p, None, cx)
+                                            })),
+                                    )
+                                },
+                            )
                             .when(self.mode == Mode::Sso && self.cancel.is_none(), |f| {
                                 f.child(
                                     Button::new("cloud-sso-device")

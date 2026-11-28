@@ -1537,7 +1537,8 @@ pub fn run_ops(book: &mut Workbook, ops: &Value, base: Option<&Path>) -> Result<
     Ok(out)
 }
 
-/// The reading tools `sheets_list` and `sheets_check` with MCP arguments.
+/// The reading tools `sheets_list`, `sheets_check` and `sheets_macros`
+/// with MCP arguments.
 pub fn read_tool(book: &Workbook, tool: &str, args: &Value) -> Result<Value> {
     let sheet = match args.get("sheet") {
         Some(Value::String(s)) => Some(s.clone()),
@@ -1573,6 +1574,7 @@ pub fn read_tool(book: &Workbook, tool: &str, args: &Value) -> Result<Value> {
             };
             Ok(super::sheets_check::check(book, only).json())
         }
+        "sheets_macros" => super::sheets_macros::json(book, &super::sheets_macros::opts_from(args)),
         other => bail!("unknown tool {other}"),
     }
 }

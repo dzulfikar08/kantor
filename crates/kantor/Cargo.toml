@@ -41,11 +41,15 @@ kantor_theme.workspace = true
 kantor_ui.workspace = true
 kantor_update.workspace = true
 log.workspace = true
+notes_engine.workspace = true
+notes_ui.workspace = true
 pdf_ui.workspace = true
 # `kantor pdf verify`: the signature checker.
 pdf_engine.workspace = true
 serde_json.workspace = true
 sheets_engine.workspace = true
+# `kantor sheets macros run`: macros run headless.
+sheets_script.workspace = true
 sheets_pdf.workspace = true
 sheets_ui.workspace = true
 slides_engine.workspace = true

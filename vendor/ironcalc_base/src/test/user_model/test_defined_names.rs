@@ -210,7 +210,8 @@ fn rename_defined_name_operations() {
 
     assert_eq!(
         model.get_cell_content(0, 3, 1),
-        Ok("=baddunction(-respuesta)".to_string())
+        // KANTOR PATCH (§37): an unknown function keeps its case.
+        Ok("=badDunction(-respuesta)".to_string())
     );
 
     // A defined name with the same name but different scope

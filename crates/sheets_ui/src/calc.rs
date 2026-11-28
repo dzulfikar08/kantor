@@ -58,6 +58,8 @@ pub(crate) enum Job {
     Calculating,
     /// An edit IronCalc follows with a recalculation in any mode (fill).
     Editing(&'static str),
+    /// A macro running (see `macro_run`): its name.
+    Macro(String),
 }
 
 impl Job {
@@ -66,6 +68,7 @@ impl Job {
             Job::Opening { name, .. } => tf("Opening {}…", &[name]),
             Job::Calculating => tf("Calculating {}…", &[&doc]),
             Job::Editing(what) => tf("{} and recalculating {}…", &[&i18n::t_dyn(what), &doc]),
+            Job::Macro(name) => tf("Running macro {}…", &[name]),
         }
     }
 }
@@ -73,11 +76,69 @@ impl Job {
 /// What the view asks of the workspace.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SheetsEvent {
-    /// Close this pane (opening was cancelled).
+    /// Close this pane (opening was cancelled; a macro closed its workbook).
     Close,
     /// Something the user should see even if the status bar is elsewhere
     /// (a save failed).
     Notice(String),
+    /// A macro asks for the other workbooks open in the window
+    /// (`Workbooks`): send them (not this pane's).
+    ListBooks(Handoff<std::sync::mpsc::Sender<Vec<sheets_script::OtherBook>>>),
+    /// A macro wants the workbook of pane `id`: send it, taken out of that
+    /// pane with [`SheetsView::lend_to_macro`] (`None` when it can't be).
+    LendBook {
+        id: u64,
+        reply: Handoff<std::sync::mpsc::Sender<Option<Workbook>>>,
+    },
+    /// A lent workbook comes back to pane `id`
+    /// ([`SheetsView::macro_returned`]); `close`: the macro closed it.
+    ReturnBook {
+        id: u64,
+        book: Handoff<Workbook>,
+        close: bool,
+    },
+    /// A workbook a macro opened or added: show it in a new tab
+    /// ([`SheetsView::from_book`]).
+    OpenBook(Handoff<Workbook>),
+    /// `Workbook_BeforeClose` let the close go on: ask to close again.
+    RetryClose,
+    /// `Workbook_BeforeClose` cancelled the close.
+    CloseCancelled,
+}
+
+/// Something handed over with an event (a workbook, a reply channel):
+/// whoever handles the event takes it.
+pub struct Handoff<T>(std::sync::Arc<std::sync::Mutex<Option<T>>>);
+
+impl<T> Handoff<T> {
+    pub fn new(value: T) -> Handoff<T> {
+        Handoff(std::sync::Arc::new(std::sync::Mutex::new(Some(value))))
+    }
+
+    /// The value, the first time.
+    pub fn take(&self) -> Option<T> {
+        self.0.lock().ok()?.take()
+    }
+}
+
+impl<T> Clone for Handoff<T> {
+    fn clone(&self) -> Self {
+        Handoff(self.0.clone())
+    }
+}
+
+impl<T> PartialEq for Handoff<T> {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl<T> Eq for Handoff<T> {}
+
+impl<T> std::fmt::Debug for Handoff<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Handoff")
+    }
 }
 
 impl EventEmitter<SheetsEvent> for SheetsView {}
@@ -198,6 +259,7 @@ impl SheetsView {
                 self.load_selected_into_formula(window, cx);
                 let path = self.path(cx);
                 self.web_after_open(path, cx);
+                self.macros_after_open(window, cx);
             }
             Err(err) => {
                 log::error!("{err:#}");
@@ -229,7 +291,7 @@ impl SheetsView {
     /// F9: recalculate every formula. Big workbooks recalculate in the
     /// background while the pane waits.
     pub fn calculate_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.busy.is_some() {
+        if self.busy.is_some() || self.macros.run.is_some() || self.macros.lent {
             return;
         }
         if self.editing.is_some() {
@@ -240,13 +302,19 @@ impl SheetsView {
         self.run_book_job(
             Job::Calculating,
             |book| book.recalculate(),
-            |this, (), took, _, _| {
+            |this, (), took, window, cx| {
                 this.status = match took {
                     Some(t) => {
                         tf("Calculated in {} s", &[&format!("{:.1}", t.as_secs_f32())]).into()
                     }
                     None => i18n::t("Calculated").into(),
                 };
+                let sheet = this.grid_sheet(cx);
+                this.queue_macro_events(
+                    vec![sheets_script::Event::Calculate { sheet }],
+                    window,
+                    cx,
+                );
             },
             window,
             cx,
@@ -376,6 +444,7 @@ impl SheetsView {
     fn calc_mode_status(&self, cx: &App) -> Option<String> {
         match self.busy.as_ref().map(|b| &b.what) {
             Some(Job::Opening { .. }) => return None,
+            Some(Job::Macro(_)) => return Some(i18n::t("Running a macro…").into()),
             Some(_) => return Some(i18n::t("Calculating…").into()),
             None => {}
         }
@@ -412,6 +481,7 @@ impl SheetsView {
             Job::Calculating | Job::Editing(_) => {
                 tf("{} s · editing resumes when it is done", &[&secs])
             }
+            Job::Macro(_) => tf("{} s · Esc or Stop ends it", &[&secs]),
         };
         let cancel = matches!(busy.what, Job::Opening { .. }).then(|| {
             Button::new("sheets-cancel-open")
@@ -420,6 +490,13 @@ impl SheetsView {
                 .small()
                 .on_click(cx.listener(|this, _, _, cx| this.cancel_open(cx)))
         });
+        let stop = matches!(busy.what, Job::Macro(_)).then(|| {
+            Button::new("sheets-stop-macro")
+                .label(i18n::t("Stop"))
+                .small()
+                .on_click(cx.listener(|this, _, _, cx| this.stop_macro(cx)))
+        });
+        let is_macro = matches!(busy.what, Job::Macro(_));
         // The spinner's animation redraws the view every frame, which also
         // moves the time on.
         Some(
@@ -448,6 +525,8 @@ impl SheetsView {
                         .child(detail),
                 )
                 .children(cancel)
+                .children(stop)
+                .when(is_macro, |pane| self.macro_busy_keys(pane, cx))
                 .into_any_element(),
         )
     }

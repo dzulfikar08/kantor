@@ -44,6 +44,11 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
+  # OneDrive and Google Drive sign-in (docs/cloud-providers.md): repository
+  # variables, compiled in; unset hides the providers in Cloud Accounts.
+  KANTOR_MS_CLIENT_ID: ${{ vars.KANTOR_MS_CLIENT_ID }}
+  KANTOR_GOOGLE_CLIENT_ID: ${{ vars.KANTOR_GOOGLE_CLIENT_ID }}
+  KANTOR_GOOGLE_CLIENT_SECRET: ${{ secrets.KANTOR_GOOGLE_CLIENT_SECRET }}
 
 jobs:
   check:
@@ -89,8 +94,10 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - { arch: aarch64, os: ubuntu-24.04-arm }
-          - { arch: x86_64, os: ubuntu-24.04 }
+          # The arm runner's fat-LTO link of the kantor binary ran out of memory (rustc
+          # SIGKILL, 2026-11-28): thin LTO there.
+          - { arch: aarch64, os: ubuntu-24.04-arm, lto: thin }
+          - { arch: x86_64, os: ubuntu-24.04, lto: fat }
     runs-on: ${{ matrix.os }}
     # AlmaLinux 9 sets the glibc baseline (2.34) for the tarballs and AppImages: Ubuntu 22.04+,
     # Debian 12+, RHEL 9+.
@@ -102,6 +109,7 @@ jobs:
       VERSION: ${{ needs.check.outputs.version }}
       NAME: kantor-${{ needs.check.outputs.version }}-${{ matrix.arch }}-linux
       APPIMAGE: Kantor-${{ needs.check.outputs.version }}-${{ matrix.arch }}.AppImage
+      CARGO_PROFILE_RELEASE_LTO: ${{ matrix.lto }}
     steps:
       - run: dnf install -y -q git-core
       - uses: actions/checkout@v4

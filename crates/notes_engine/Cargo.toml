@@ -1,0 +1,16 @@
+[package]
+name = "notes_engine"
+description = "Kantor Notes: the Markdown text buffer, parser with source ranges, live-preview line model and editing commands (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+# CommonMark + GFM (tables, task lists, strikethrough, wiki links) with
+# source offsets (MIT). No HTML output: the default features are off.
+pulldown-cmark = { version = "0.13", default-features = false }
+unicode-segmentation = "1"
+
+[lints]
+workspace = true

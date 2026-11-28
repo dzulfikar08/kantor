@@ -44,13 +44,13 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Open File…"),
-        detail: ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .odt, .odp, .xls, .ppt",
+        detail: ".xlsx, .docx, .pptx, .pdf, .md, .csv, .ods, .odt, .odp, .xls, .ppt",
         keys: "Ctrl O",
         run: |ws, window, cx| ws.open_file(&OpenFile, window, cx),
     },
     Command {
         title: tk("Open from Cloud…"),
-        detail: tk("Nextcloud, OpenCloud or any WebDAV drive"),
+        detail: tk("OneDrive, Google Drive, Nextcloud, OpenCloud or any WebDAV drive"),
         keys: "",
         run: |ws, window, cx| ws.open_from_cloud(&OpenFromCloud, window, cx),
     },
@@ -62,7 +62,7 @@ pub(super) const COMMANDS: &[Command] = &[
     },
     Command {
         title: tk("Cloud Accounts…"),
-        detail: tk("Add, test or remove a WebDAV account"),
+        detail: tk("Add, test or remove a cloud account"),
         keys: "",
         run: |ws, window, cx| ws.open_cloud_accounts(&CloudAccounts, window, cx),
     },
@@ -99,6 +99,12 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: tk("Current document"),
         keys: "Ctrl Shift S",
         run: |ws, window, cx| ws.with_active(window, cx, |v, w, cx| v.save_as(w, cx)),
+    },
+    Command {
+        title: tk("Save to Cloud…"),
+        detail: tk("Upload this document to OneDrive, Google Drive or a WebDAV drive"),
+        keys: "",
+        run: |ws, window, cx| ws.save_to_cloud(&SaveToCloud, window, cx),
     },
     Command {
         title: tk("Export as PDF…"),
@@ -1067,6 +1073,20 @@ pub(super) const COMMANDS: &[Command] = &[
         },
     },
     Command {
+        title: tk("Macros…"),
+        detail: tk("Sheets · the workbook's VBA modules and procedures, shown but not run"),
+        keys: "Alt+F8",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.macros_doc(w, cx)),
+    },
+    Command {
+        title: tk("Macro Editor"),
+        detail: tk("Sheets · Visual Basic editor: write, paste and run VBA and JavaScript macros"),
+        keys: "Alt+F11",
+        run: |ws, window, cx| {
+            ws.with_sheets(window, cx, |v, w, cx| v.open_macro_editor(None, w, cx))
+        },
+    },
+    Command {
         title: tk("Page Break Preview"),
         detail: tk("Sheets · show where the pages break; drag the breaks and the print area"),
         keys: "",
@@ -1951,6 +1971,9 @@ pub(super) const COMMANDS: &[Command] = &[
         keys: "Ctrl =",
         run: |ws, window, cx| {
             ws.with_pdf(window, cx, |v, _, cx| v.zoom_step(true, None, cx));
+            ws.with_notes(window, cx, |v, _, cx| {
+                v.zoom_by(kantor_ui::metrics::ZOOM_STEP, cx)
+            });
             ws.with_docs(window, cx, |v, _, cx| {
                 v.zoom_by(kantor_ui::metrics::ZOOM_STEP, cx)
             });
@@ -1963,6 +1986,9 @@ pub(super) const COMMANDS: &[Command] = &[
         keys: "Ctrl -",
         run: |ws, window, cx| {
             ws.with_pdf(window, cx, |v, _, cx| v.zoom_step(false, None, cx));
+            ws.with_notes(window, cx, |v, _, cx| {
+                v.zoom_by(1.0 / kantor_ui::metrics::ZOOM_STEP, cx)
+            });
             ws.with_docs(window, cx, |v, _, cx| {
                 v.zoom_by(1.0 / kantor_ui::metrics::ZOOM_STEP, cx)
             });
@@ -1995,6 +2021,7 @@ pub(super) const COMMANDS: &[Command] = &[
         keys: "Ctrl 0",
         run: |ws, window, cx| {
             ws.with_docs(window, cx, |v, _, cx| v.set_zoom(1.0, cx));
+            ws.with_notes(window, cx, |v, _, cx| v.set_zoom(1.0, cx));
             ws.with_pdf(window, cx, |v, _, cx| {
                 v.set_zoom(pdf_ui::Zoom::Percent(1.0), None, cx)
             });
@@ -2252,6 +2279,68 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Slides",
         keys: "Ctrl Alt N",
         run: |ws, window, cx| ws.new_presentation(&NewPresentation, window, cx),
+    },
+    Command {
+        title: tk("New Note"),
+        detail: "Notes",
+        keys: "",
+        run: |ws, window, cx| ws.new_note(&NewNote, window, cx),
+    },
+    Command {
+        title: tk("Reading View"),
+        detail: tk("Notes · the note formatted, not editable"),
+        keys: "Ctrl E",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| {
+                let m = if v.mode() == notes_ui::Mode::Reading {
+                    notes_ui::Mode::Live
+                } else {
+                    notes_ui::Mode::Reading
+                };
+                v.set_mode(m, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Source Mode"),
+        detail: tk("Notes · every line as typed"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| {
+                let m = if v.mode() == notes_ui::Mode::Source {
+                    notes_ui::Mode::Live
+                } else {
+                    notes_ui::Mode::Source
+                };
+                v.set_mode(m, cx)
+            })
+        },
+    },
+    Command {
+        title: tk("Save as Word Document…"),
+        detail: tk("Notes · a .docx made from the note"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| v.export(notes_ui::Export::Word, cx))
+        },
+    },
+    Command {
+        title: tk("Save Note as PDF…"),
+        detail: tk("Notes · a PDF made from the note"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| v.export(notes_ui::Export::Pdf, cx))
+        },
+    },
+    Command {
+        title: tk("Make Slides from Note…"),
+        detail: tk("Notes · a .pptx deck, one slide per heading"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_notes(window, cx, |v, _, cx| {
+                v.export(notes_ui::Export::Slides, cx)
+            })
+        },
     },
     Command {
         title: tk("New Slide"),
@@ -3252,9 +3341,10 @@ mod tests {
                 "Sheets",
                 "Docs",
                 "Slides",
+                "Notes",
                 "Omarchy, Ghostty",
                 "SF Pro, Inter, …",
-                ".xlsx, .docx, .pptx, .pdf, .csv, .ods, .odt, .odp, .xls, .ppt",
+                ".xlsx, .docx, .pptx, .pdf, .md, .csv, .ods, .odt, .odp, .xls, .ppt",
             ];
             if !same.contains(&c.detail) {
                 assert!(indonesian(c.detail).is_some(), "detail {:?}", c.detail);

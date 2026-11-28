@@ -931,8 +931,15 @@ fn stringify(
             };
             format!("{x}^{y}")
         }
-        NamedFunctionKind { name, args, id: _ } => format_function(
-            &name.to_lowercase(),
+        // KANTOR PATCH (user functions, §37): a call to a name that isn't
+        // bound by LET (a VBA function, a LAMBDA name) keeps its case, as
+        // Excel writes it.
+        NamedFunctionKind { name, args, id } => format_function(
+            &if id.is_some() {
+                name.to_lowercase()
+            } else {
+                name.clone()
+            },
             args,
             context,
             displace_data,

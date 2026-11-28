@@ -77,6 +77,8 @@ pub mod kantor_web {
 }
 // KANTOR PATCH (row heights)
 pub mod kantor_rows;
+// KANTOR PATCH (user functions, §37)
+pub mod kantor_udf;
 pub mod links;
 mod merged_cells;
 mod model;

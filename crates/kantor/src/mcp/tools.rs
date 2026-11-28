@@ -79,7 +79,7 @@ const SPECS: &[Spec] = &[
         "new_document",
         "New document",
         "Create a new, untitled document in a new tab and bring it to front.",
-        || json!({"kind": {"type": "string", "enum": ["sheets", "docs", "slides"]}}),
+        || json!({"kind": {"type": "string", "enum": ["sheets", "docs", "slides", "notes"]}}),
         &["kind"],
         false,
     ),
@@ -112,6 +112,43 @@ const SPECS: &[Spec] = &[
         || json!({"document": document()}),
         &[],
         true,
+    ),
+    // ── Notes ──────────────────────────────────────────────────────────────
+    (
+        "notes_read",
+        "Read a note",
+        "Read a Markdown note (kind notes): its whole text as in the file, its headings with line numbers (from 1), its name and path.",
+        || json!({"document": document()}),
+        &[],
+        true,
+    ),
+    (
+        "notes_write",
+        "Rewrite a note",
+        "Replace a note's whole text with `text` (Markdown). Only the part that differs changes; the note keeps its line endings. One undo step; the user saves.",
+        || {
+            json!({
+                "document": document(),
+                "text": {"type": "string", "description": "The note's new Markdown text."},
+            })
+        },
+        &["text"],
+        false,
+    ),
+    (
+        "notes_replace",
+        "Replace text in a note",
+        "Replace `find` (exact text, case-sensitive) with `replace` in a note: every occurrence, or only the first with all=false. One undo step; returns how many were replaced.",
+        || {
+            json!({
+                "document": document(),
+                "find": {"type": "string"},
+                "replace": {"type": "string"},
+                "all": {"type": "boolean", "default": true},
+            })
+        },
+        &["find", "replace"],
+        false,
     ),
     // ── Sheets ─────────────────────────────────────────────────────────────
     (
@@ -274,6 +311,21 @@ const SPECS: &[Spec] = &[
                 "document": document(),
                 "path": {"type": "string", "description": "Absolute path of a workbook to check without opening it (~ allowed); instead of document."},
                 "sheet": {"type": ["string", "integer"], "description": "Only this sheet."},
+            })
+        },
+        &[],
+        true,
+    ),
+    (
+        "sheets_macros",
+        "Read a workbook's macros",
+        "A workbook's macros (its VBA project, as `kantor sheets macros`): the modules (standard, class, document such as ThisWorkbook or Sheet1, UserForm), each one's procedures (Sub, Function, Property; private or public, with arguments or not, `macro`: what Excel's Macros dialog lists; line numbers in the module's code) and the project's references. `module` adds that module's code; `code: true` every module's. This tool never runs macros (only the user does, in Kantor Sheets or with `kantor sheets macros run`): use this to explain what a macro does, or to do its work with formulas and sheets_edit tools instead. The open workbook (`document`) or a file (`path`); `has_macros` is false for workbooks without a project.",
+        || {
+            json!({
+                "document": document(),
+                "path": {"type": "string", "description": "Absolute path of a workbook (.xlsm) to read without opening it (~ allowed); instead of document."},
+                "module": {"type": "string", "description": "A module's name (Module1, ThisWorkbook…): its code is included."},
+                "code": {"type": "boolean", "description": "Include every module's code."},
             })
         },
         &[],

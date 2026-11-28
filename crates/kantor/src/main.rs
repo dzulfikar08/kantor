@@ -1,4 +1,4 @@
-//! Kantor: one binary for Docs, Sheets, Slides and the PDF viewer.
+//! Kantor: one binary for Docs, Sheets, Slides, the PDF viewer and Notes.
 //!
 //! ```text
 //! kantor                    open the Home screen
@@ -44,7 +44,7 @@ struct Args {
     files: Vec<PathBuf>,
 }
 
-const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
+const USAGE: &str = "usage: kantor [--docs | --sheets | --slides | --notes] [FILE...]\n\
     \x20      kantor mcp [--no-launch] [--print-config]\n\
     \x20      kantor pdf <tool> [options]\n\
     \x20      kantor convert [options] INPUT OUTPUT\n\
@@ -57,7 +57,7 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides] [FILE...]\n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
     Docs opens .docx (and imports .rtf, .doc and .odt), Sheets .xlsx/.csv/.ods,\n\
     Slides .pptx (and imports .ppt and .odp),\n\
-    and .pdf files open in the PDF viewer (see plan.md).\n\
+    .pdf files open in the PDF viewer and .md notes in Notes (see plan.md).\n\
     `kantor mcp` lets AI agents edit the open documents (kantor mcp --help).\n\
     `kantor pdf` merges, splits, rotates, watermarks and numbers PDFs (kantor pdf --help).\n\
     `kantor convert` converts .docx to .pdf and between spreadsheet formats\n\
@@ -87,6 +87,7 @@ fn parse_args() -> Result<Args> {
             Some("--docs") => app = Some(AppKind::Docs),
             Some("--sheets") => app = Some(AppKind::Sheets),
             Some("--slides") => app = Some(AppKind::Slides),
+            Some("--notes") => app = Some(AppKind::Notes),
             Some(s) if s.starts_with('-') => bail!("unknown option {s}\n\n{USAGE}"),
             // A launcher that passes URLs (`%U`) sends file:// ones.
             Some(s) if s.contains("://") => match open_files::path_from_url(s) {
@@ -194,6 +195,7 @@ fn main() {
         docs_ui::init(cx);
         slides_ui::init(cx);
         pdf_ui::init(cx);
+        notes_ui::init(cx);
 
         ai::init(cx);
         workspace::init_cloud_panels(cx);

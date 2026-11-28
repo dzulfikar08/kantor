@@ -45,6 +45,11 @@ mod preserve;
 mod print;
 mod recovery;
 mod rows;
+mod script_formats;
+mod script_links;
+mod script_pivots;
+mod script_protection;
+mod script_tables;
 mod shape_edit;
 pub mod shape_format;
 mod sheet_tabs;
@@ -121,6 +126,10 @@ pub mod check;
 pub mod format;
 pub mod formula;
 pub mod grid;
+pub mod script;
+pub mod script_charts;
+pub mod script_shapes;
+pub mod scripts;
 pub mod tsv;
 pub mod web;
 
@@ -281,6 +290,8 @@ pub use format::{
 pub use grid::{Fill, FillDirection, RangeStats, Step};
 pub use hide::Unhidden;
 pub use icons::IconPath;
+/// VBA projects (`Workbook::vba_project`).
+pub use kantor_vba as vba;
 pub use look::CellLook;
 pub use notes::NoteClip;
 pub use numfmt::Display;
@@ -368,6 +379,12 @@ pub struct Workbook {
     /// The password the file was opened with: `.xlsx` saves are encrypted
     /// with it (see `kantor_crypt`).
     password: Option<String>,
+    /// JavaScript and Python scripts set in Kantor (`None`: the file's, see
+    /// [`scripts`]).
+    scripts: Option<Vec<scripts::Script>>,
+    /// The VBA project as edited in Kantor (`None`: the file's;
+    /// `Some(None)`: removed), see [`Workbook::set_vba_project`].
+    vba: Option<Option<std::sync::Arc<Vec<u8>>>>,
 }
 
 /// See [`Workbook::cached`].
@@ -700,6 +717,8 @@ impl Workbook {
             cf_x14: Default::default(),
             custom_lists: Vec::new(),
             password: None,
+            scripts: None,
+            vba: None,
         })
     }
 
@@ -990,6 +1009,8 @@ impl Workbook {
             cf_x14,
             custom_lists: Vec::new(),
             password: None,
+            scripts: None,
+            vba: None,
         };
         book.apply_read_panes(&panes);
         book.set_saved_pictures(pictures);
@@ -1074,11 +1095,120 @@ impl Workbook {
     /// `.xlsm` keeps and a save as `.xlsx` drops (as Excel warns). Reads the
     /// file the workbook was opened from or last saved to.
     pub fn has_macros(&self) -> bool {
+        if let Some(edited) = &self.vba {
+            return edited.is_some();
+        }
         self.origin
             .xlsx
             .as_ref()
             .and_then(|s| s.bytes().ok())
             .is_some_and(|b| preserve::has_macros(&b))
+    }
+
+    /// The workbook's VBA project, read from the file it was opened from or
+    /// last saved to (the project a save as `.xlsm` keeps). `None`: no
+    /// macros; `Some(Err)`: a project Kantor can't read (opening and saving
+    /// the workbook don't depend on it: the project is kept byte for byte).
+    /// Parsed on each call: callers keep what they need.
+    pub fn vba_project(&self) -> Option<Result<kantor_vba::VbaProject, String>> {
+        if let Some(edited) = &self.vba {
+            let bytes = edited.as_ref()?;
+            return Some(kantor_vba::VbaProject::read(bytes).map_err(|e| e.to_string()));
+        }
+        let bytes = self.origin_bytes()?;
+        let project = preserve::vba_project_bytes(&bytes)?;
+        Some(kantor_vba::VbaProject::read(&project).map_err(|e| e.to_string()))
+    }
+
+    /// The workbook's JavaScript and Python scripts (see [`scripts`]): the
+    /// ones set with [`Workbook::set_scripts`], else the ones of the file it
+    /// was opened from or last saved to. Unlike VBA they are kept in `.xlsx`
+    /// and `.xlsm` alike.
+    pub fn scripts(&self) -> Result<Vec<scripts::Script>, String> {
+        if let Some(s) = &self.scripts {
+            return Ok(s.clone());
+        }
+        match self.origin_bytes() {
+            Some(bytes) => preserve::read_scripts(&bytes),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// Whether the workbook has scripts (a file whose scripts can't be read
+    /// counts: it has some).
+    pub fn has_scripts(&self) -> bool {
+        match self.scripts() {
+            Ok(s) => !s.is_empty(),
+            Err(_) => true,
+        }
+    }
+
+    /// Replaces the workbook's scripts (written by the next `.xlsx`/`.xlsm`
+    /// save). Not an undo step; the workbook becomes unsaved.
+    pub fn set_scripts(&mut self, scripts: Vec<scripts::Script>) {
+        self.scripts = Some(scripts);
+        self.history.view_changed = true;
+        self.history.view_changes += 1;
+    }
+
+    /// Replaces the workbook's VBA project (`vbaProject.bin` bytes, e.g.
+    /// from [`kantor_vba::VbaProject::with_modules`]; `None` removes it).
+    /// A save as `.xlsm` writes it, giving worksheets without a code name
+    /// the names of the project's document modules (in sheet order, as
+    /// macros map them). Not an undo step; the workbook becomes unsaved.
+    pub fn set_vba_project(&mut self, bytes: Option<Vec<u8>>) {
+        self.vba = Some(bytes.map(std::sync::Arc::new));
+        self.history.view_changed = true;
+        self.history.view_changes += 1;
+    }
+
+    /// Whether the VBA project was changed in Kantor since the workbook
+    /// was opened.
+    pub fn vba_edited(&self) -> bool {
+        self.vba.is_some()
+    }
+
+    /// What a save writes for a VBA project edited in Kantor.
+    fn vba_save(&self) -> Option<preserve::VbaSave> {
+        let edited = self.vba.as_ref()?;
+        let mut save = preserve::VbaSave {
+            bytes: edited.clone(),
+            ..Default::default()
+        };
+        let Some(bytes) = edited else {
+            return Some(save);
+        };
+        let Ok(project) = kantor_vba::VbaProject::read(bytes) else {
+            return Some(save);
+        };
+        let docs: Vec<&kantor_vba::Module> = project
+            .modules()
+            .iter()
+            .filter(|m| m.kind == kantor_vba::ModuleKind::Document)
+            .collect();
+        let is_book = |m: &kantor_vba::Module| {
+            m.name.eq_ignore_ascii_case("ThisWorkbook")
+                || m.attribute("VB_Base")
+                    .is_some_and(|b| b.contains("00020819"))
+        };
+        save.workbook_code_name = docs.iter().find(|m| is_book(m)).map(|m| m.name.clone());
+        // Sheets without a code name take the sheet modules no sheet has,
+        // in order (as `sheets_script` maps them when the file has none).
+        let named = self.sheet_code_names();
+        let mut free = docs
+            .iter()
+            .filter(|m| !is_book(m))
+            .filter(|m| !named.iter().any(|(_, c)| c.eq_ignore_ascii_case(&m.name)));
+        for name in self.sheet_names() {
+            if named.iter().any(|(n, _)| *n == name) {
+                continue;
+            }
+            let Some(m) = free.next() else {
+                break;
+            };
+            save.sheet_code_names.push((name, m.name.clone()));
+        }
+        Some(save)
     }
 
     /// What the last save could not carry over from the original `.xlsx`
@@ -1132,12 +1262,27 @@ impl Workbook {
         if !self.can_undo() {
             return Ok(false);
         }
-        for _ in 0..self.history.undo_steps() {
+        let steps = self.history.undo_steps();
+        // A step made of many edits (a macro run) recalculates once.
+        let pause = steps > 1 && self.calc.mode == CalcMode::Automatic;
+        if pause {
+            self.model.pause_evaluation();
+        }
+        let mut result = Ok(());
+        for _ in 0..steps {
             if !self.model.can_undo() {
                 break;
             }
-            self.model.undo().map_err(|e| anyhow!("undo: {e}"))?;
+            if let Err(e) = self.model.undo() {
+                result = Err(anyhow!("undo: {e}"));
+                break;
+            }
         }
+        if pause {
+            self.model.resume_evaluation();
+            self.model.kantor_evaluate_changes();
+        }
+        result?;
         self.history.undone();
         self.sync_pivot_grids(true);
         Ok(true)
@@ -1148,12 +1293,26 @@ impl Workbook {
         if !self.can_redo() {
             return Ok(false);
         }
-        for _ in 0..self.history.redo_steps() {
+        let steps = self.history.redo_steps();
+        let pause = steps > 1 && self.calc.mode == CalcMode::Automatic;
+        if pause {
+            self.model.pause_evaluation();
+        }
+        let mut result = Ok(());
+        for _ in 0..steps {
             if !self.model.can_redo() {
                 break;
             }
-            self.model.redo().map_err(|e| anyhow!("redo: {e}"))?;
+            if let Err(e) = self.model.redo() {
+                result = Err(anyhow!("redo: {e}"));
+                break;
+            }
         }
+        if pause {
+            self.model.resume_evaluation();
+            self.model.kantor_evaluate_changes();
+        }
+        result?;
         self.history.redone();
         self.sync_pivot_grids(true);
         Ok(true)
@@ -1842,6 +2001,8 @@ impl Workbook {
             // A save as `.xlsx` drops them (see `prepare_save`).
             keep_macros: true,
             macro_enabled: false,
+            scripts: self.scripts.clone(),
+            vba: self.vba_save(),
         }
     }
 }
@@ -1880,6 +2041,10 @@ struct XlsxParts {
     keep_macros: bool,
     /// A macro-enabled workbook (a save as `.xlsm`).
     macro_enabled: bool,
+    /// The scripts set in Kantor (`None`: the original's are carried).
+    scripts: Option<Vec<scripts::Script>>,
+    /// The VBA project edited in Kantor (`None`: the original's is carried).
+    vba: Option<preserve::VbaSave>,
 }
 
 /// IronCalc's `.xlsx` of `model`, with the parts of `original` it doesn't
@@ -1935,6 +2100,8 @@ fn build_xlsx(
         slicers: &parts.slicers,
         keep_macros: parts.keep_macros,
         macro_enabled: parts.macro_enabled,
+        scripts: parts.scripts.as_deref(),
+        vba: parts.vba.as_ref(),
     };
     Ok(preserve::finish(written, original, &ctx))
 }

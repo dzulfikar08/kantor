@@ -29,6 +29,32 @@ pub enum SsoStep {
     Progress(String),
 }
 
+/// Why a sign-in ended without an account.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SignInError {
+    /// The user stopped it (Cancel, declined consent, closed the browser
+    /// page): no error, at most a neutral note.
+    Cancelled,
+    /// A failure to show, in the user's words.
+    Failed(String),
+}
+
+impl From<String> for SignInError {
+    fn from(s: String) -> Self {
+        SignInError::Failed(s)
+    }
+}
+
+impl SignInError {
+    /// A cloud error, worded by `describe` unless the user cancelled.
+    pub fn of(e: &Error, describe: impl FnOnce(&Error) -> String) -> Self {
+        match e {
+            Error::Cancelled => SignInError::Cancelled,
+            e => SignInError::Failed(describe(e)),
+        }
+    }
+}
+
 /// A sign-in's request: the drive, and what the user typed.
 pub struct SsoRequest {
     pub server: String,
@@ -61,7 +87,7 @@ fn origin(server: &str) -> String {
     s
 }
 
-fn done_page() -> DonePage {
+pub(super) fn done_page() -> DonePage {
     DonePage {
         title: "Kantor".into(),
         ok: t("You're signed in. You can close this tab and go back to Kantor.").into(),
@@ -69,8 +95,9 @@ fn done_page() -> DonePage {
     }
 }
 
-fn describe(e: &Error) -> String {
-    match e {
+fn describe(e: &Error) -> SignInError {
+    SignInError::of(e, |e| {
+        match e {
         Error::Auth(_) => t(
             "The drive refused the sign-in. Ask your administrator whether Kantor may use single sign-on on this drive.",
         )
@@ -81,6 +108,7 @@ fn describe(e: &Error) -> String {
         .into(),
         e => tf("Sign-in failed: {}", &[&e.to_string()]),
     }
+    })
 }
 
 /// Sign in and make the account (worker thread). Returns the account and
@@ -89,7 +117,7 @@ pub fn sign_in(
     req: SsoRequest,
     cancel: &AtomicBool,
     step: &dyn Fn(SsoStep),
-) -> Result<(CloudAccount, KeyLocation), String> {
+) -> Result<(CloudAccount, KeyLocation), SignInError> {
     let server = normalize_server(&req.server);
     let origin = origin(&server);
     // Where to sign in: the issuer typed, else what the drive says.
@@ -119,7 +147,8 @@ pub fn sign_in(
             Error::NotFound => t(
                 "This sign-in server has no sign-in with a code. Use the browser sign-in instead.",
             )
-            .to_owned(),
+            .to_owned()
+            .into(),
             e => describe(&e),
         })?
     } else {
@@ -164,6 +193,7 @@ pub fn sign_in(
             issuer: endpoints.issuer.clone(),
             client_id: client_id.clone(),
             dav_url: String::new(),
+            provider: String::new(),
         },
     };
     // The sign-in this one replaces (Sign in again, or the same account
@@ -255,7 +285,8 @@ fn client_id(account: &CloudAccount) -> String {
 /// Whether the account's sign-in has ended this run (the provider refused
 /// its refresh token).
 pub fn ended(account: &CloudAccount) -> bool {
-    account.is_sso() && oidc::source_of(&account.id).is_some_and(|s| s.needs_sign_in())
+    (account.is_sso() || account.is_oauth())
+        && oidc::source_of(&account.id).is_some_and(|s| s.needs_sign_in())
 }
 
 /// What to tell the user when the sign-in has ended.

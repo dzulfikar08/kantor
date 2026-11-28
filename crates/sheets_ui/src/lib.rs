@@ -113,13 +113,20 @@ mod plain_cell;
 pub use notes_ui::NoteCommand;
 pub use page_setup::PageBreakOp;
 pub use sheet_tab_ui::TabCommand;
+mod code_highlight;
+mod macro_events;
+mod macro_form;
+mod macro_run;
+mod macro_thread;
 mod toolbar;
+mod vba_editor;
+mod vba_ui;
 mod web_ui;
 mod zoom;
 pub use web_ui::{toggle_web_formulas, web_formulas_enabled};
 
 pub use ai::AiTarget;
-pub use calc::SheetsEvent;
+pub use calc::{Handoff, SheetsEvent};
 use cell_editor::{CellEditor, EditMode};
 pub use grid_ops::GridCommand;
 use grid_ops::{GridDrag, Header, Span};
@@ -143,7 +150,8 @@ actions!(
         ExtendRight,
         ToggleBold,
         ToggleItalic,
-        ToggleUnderline
+        ToggleUnderline,
+        ShowMacros
     ]
 );
 
@@ -281,6 +289,7 @@ fn opened_status(book: &Workbook) -> String {
 
 /// Register Sheets key bindings. Both Ctrl and Super work (Mac-style Cmd = Super).
 pub fn init(cx: &mut App) {
+    vba_editor::bind_keys(cx);
     // Pivot captions and the like in new content follow the interface language.
     sheets_engine::set_content_translator(kantor_ui::i18n::t);
     // Typed dates follow the system's language as Excel follows the
@@ -298,6 +307,7 @@ pub fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new(kantor_ui::keys::primary("ctrl-s"), Save, ctx),
         KeyBinding::new("super-s", Save, ctx),
+        KeyBinding::new("alt-f8", ShowMacros, ctx),
         KeyBinding::new(kantor_ui::keys::primary("ctrl-shift-s"), SaveAs, ctx),
         KeyBinding::new("super-shift-s", SaveAs, ctx),
         KeyBinding::new(kantor_ui::keys::primary("ctrl-z"), Undo, Some(GRID_CONTEXT)),
@@ -598,13 +608,30 @@ impl TableDelegate for SheetGrid {
         row_ix: usize,
         col_ix: usize,
         menu: PopupMenu,
-        _: &mut Window,
-        _: &mut Context<TableState<Self>>,
+        window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
     ) -> PopupMenu {
         if col_ix == 0 {
             return menu;
         }
         let cell = (row_ix as u32, col_ix as u32 - 1);
+        // `Worksheet_BeforeRightClick`: its Cancel keeps the menu shut.
+        let target = if self.range().contains(cell.0, cell.1) {
+            self.range()
+        } else {
+            CellRange::from_corners(cell, cell)
+        };
+        let sheet = self.sheet;
+        let view = self.view.clone();
+        let book = &mut self.book;
+        let show = view
+            .update(cx, |v, cx| {
+                v.macro_right_click(book, sheet, target, window, cx)
+            })
+            .unwrap_or(true);
+        if !show {
+            return menu;
+        }
         type Run = fn(&mut SheetsView, &mut Window, &mut Context<SheetsView>);
         let clip: [(&str, &str, Run); 3] = [
             ("Cut", "Ctrl+X", SheetsView::cut_doc),
@@ -1606,6 +1633,12 @@ pub struct SheetsView {
     note_clip: Option<(String, sheets_engine::NoteClip)>,
     /// IMAGE and WEBSERVICE downloads (see [`web_ui`]).
     web: web_ui::WebState,
+    /// The workbook's macros and their bar ([`vba_ui`]).
+    macros: vba_ui::MacroState,
+    /// The Macros dialog ([`vba_ui`]).
+    macros_dialog: Option<vba_ui::MacrosDialog>,
+    /// The Macro Editor beside the grid ([`vba_editor`]).
+    macro_editor: Option<vba_editor::MacroEditor>,
     /// The zoom slider and the Zoom dialog ([`zoom`]).
     zoom: zoom::ZoomState,
     _subscriptions: Vec<Subscription>,
@@ -1701,6 +1734,9 @@ impl SheetsView {
             saving: None,
             pending_save: None,
             web: web_ui::WebState::default(),
+            macros: vba_ui::MacroState::default(),
+            macros_dialog: None,
+            macro_editor: None,
             zoom: Default::default(),
             _subscriptions: subscriptions,
         };
@@ -1717,11 +1753,14 @@ impl SheetsView {
 
     /// While opening or recalculating, refuse a command (and say why).
     fn blocked(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.busy.is_some() {
+        // A macro showing a dialog has lent the grid its workbook: edits
+        // wait until it ends.
+        let busy = self.busy.is_some() || self.macros.run.is_some();
+        if busy {
             self.status = i18n::t("Please wait until the workbook is ready").into();
             cx.notify();
         }
-        self.busy.is_some()
+        busy
     }
 
     /// Select a sheet cell in the table (scrolls to it and emits `SelectCell`).
@@ -1775,6 +1814,7 @@ impl SheetsView {
                 if self.editing.is_none() {
                     self.load_selected_into_formula(window, cx);
                 }
+                self.macro_selection_changed(window, cx);
                 cx.notify();
             }
             TableEvent::RightClickedCell(row, col) if *col > 0 => {
@@ -1787,7 +1827,11 @@ impl SheetsView {
             }
             TableEvent::DoubleClickedCell(row, col) if *col > 0 => {
                 self.selected = (*row as u32, *col as u32 - 1);
-                self.start_edit(None, window, cx);
+                // `Worksheet_BeforeDoubleClick` first; it starts the edit
+                // unless cancelled.
+                if !self.macro_double_click(self.selected, window, cx) {
+                    self.start_edit(None, window, cx);
+                }
             }
             TableEvent::ColumnWidthsChanged(widths) => self.save_column_widths(widths, window, cx),
             _ => {}
@@ -2526,10 +2570,12 @@ impl SheetsView {
             }
             self.commit_edit(None, window, cx);
         }
+        let old = self.grid_sheet(cx);
         self.show_sheet(sheet, cx);
         self.select_cell(0, 0, cx);
         self.load_selected_into_formula(window, cx);
         self.focus_grid(window, cx);
+        self.macro_sheet_switched(old, sheet, window, cx);
     }
 
     /// Show chart sheet `k` in place of the grid (an edit in progress is
@@ -2708,6 +2754,11 @@ impl SheetsView {
     fn update_title(&self, window: &mut Window, cx: &mut Context<Self>) {
         let title = self.title(cx);
         window.set_window_title(&title);
+        // Edits, undos and redos end here: macro events look at them
+        // (nothing to do, and no cost, without handlers).
+        if self.macros.wants_after_edit() {
+            cx.defer_in(window, |this, window, cx| this.macro_after_edit(window, cx));
+        }
     }
 
     /// Replace the open workbook with the file at `path` (opened in the
@@ -2722,6 +2773,12 @@ impl SheetsView {
 
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
         if self.blocked(cx) {
+            return;
+        }
+        // Code typed in the Macro Editor is part of what gets saved.
+        self.commit_macro_code(window, cx);
+        // `Workbook_BeforeSave` first; it saves afterwards unless cancelled.
+        if self.macro_before_save(false, window, cx) {
             return;
         }
         // A note being written is part of what gets saved.
@@ -2744,6 +2801,10 @@ impl SheetsView {
     }
 
     fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
+        self.commit_macro_code(window, cx);
+        if self.macro_before_save(true, window, cx) {
+            return;
+        }
         self.commit_note(false, window, cx);
         self.save_as_task(window, cx).detach();
     }
@@ -2767,6 +2828,7 @@ impl SheetsView {
     }
 
     fn save_now_for_close(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Task<bool> {
+        self.commit_macro_code(window, cx);
         if !self.is_dirty(cx) && self.busy.is_none() {
             return Task::ready(true);
         }
@@ -3045,6 +3107,7 @@ impl Render for SheetsView {
         self.apply_pending_chart(window, cx);
         self.sync_web_soon(window, cx);
         let web_bar = self.render_web_bar(cx);
+        let macro_bar = self.render_macro_bar(cx);
         self.sync_chart_panel(window, cx);
         self.sync_shape_panel(window, cx);
         let root = self.editor_actions(v_flex(), cx);
@@ -3062,6 +3125,12 @@ impl Render for SheetsView {
         root.key_context(KEY_CONTEXT)
             .on_action(cx.listener(Self::save))
             .on_action(cx.listener(Self::save_as))
+            .on_action(cx.listener(|this, _: &ShowMacros, w, cx| this.macros_doc(w, cx)))
+            .on_action(
+                cx.listener(|this, _: &vba_editor::ToggleMacroEditor, w, cx| {
+                    this.toggle_macro_editor(w, cx)
+                }),
+            )
             .on_action(cx.listener(|this, _: &fb::OpenFind, w, cx| this.open_find(false, w, cx)))
             .on_action(cx.listener(|this, _: &fb::OpenReplace, w, cx| this.open_find(true, w, cx)))
             .on_action(cx.listener(|this, _: &fb::FindNext, w, cx| this.find_next_doc(true, w, cx)))
@@ -3107,6 +3176,8 @@ impl Render for SheetsView {
             })
             // Excel's security bar for downloads (see `web_ui`).
             .children(web_bar)
+            // Workbooks with macros: disabled until Enable Content (see `vba_ui`).
+            .children(macro_bar)
             // Formula bar: name box + input
             .when(chart_sheet.is_none(), |root| {
                 root.child(
@@ -3168,6 +3239,7 @@ impl Render for SheetsView {
                     let table_panel = self.render_table_panel(cx);
                     let chart_panel = self.render_chart_panel(cx);
                     let shape_panel = self.render_shape_panel(cx);
+                    let macro_editor = self.render_macro_editor(cx);
                     h_flex()
                         .flex_1()
                         .min_h_0()
@@ -3232,6 +3304,7 @@ impl Render for SheetsView {
                         .children(table_panel)
                         .children(chart_panel)
                         .children(shape_panel)
+                        .children(macro_editor)
                 })
             })
             // Sheet tabs
@@ -3254,6 +3327,8 @@ impl Render for SheetsView {
             .children(self.render_alert(cx))
             .children(self.render_sort_panel(cx))
             .children(self.render_custom_lists(cx))
+            .children(self.render_macros_dialog(cx))
+            .children(self.render_macro_dialog(cx))
             .children(self.render_filter_menu(cx))
             .children(self.render_pivot_dialog(cx))
             .children(self.render_page_setup(cx))
