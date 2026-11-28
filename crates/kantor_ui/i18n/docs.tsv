@@ -435,3 +435,33 @@ Less than or equal	Kurang dari atau sama dengan
 Greater than or equal	Lebih dari atau sama dengan
 Is blank	Kosong
 Is not blank	Tidak kosong
+Applies to Zotero and Mendeley citations; Zotero keeps the same setting	Berlaku untuk sitasi Zotero dan Mendeley; Zotero memakai pengaturan yang sama
+Bibliography not inserted: {}	Daftar pustaka tidak disisipkan: {}
+Choose a source to cite	Pilih sumber yang akan dikutip
+Choose the sources in Zotero's window, then press Enter there	Pilih sumbernya di jendela Zotero, lalu tekan Enter di sana
+Citation Style	Gaya Sitasi
+Citation not inserted: {}	Sitasi tidak disisipkan: {}
+Citations not refreshed: {}	Sitasi tidak diperbarui: {}
+Citations refreshed: {} changed, {} kept as edited by hand	Sitasi diperbarui: {} berubah, {} dibiarkan karena diubah manual
+From this document's sources	Dari sumber di dokumen ini
+From your Zotero library	Dari pustaka Zotero Anda
+Import Sources…	Impor Sumber…
+Import sources (.bib, RIS or CSL-JSON)	Impor sumber (.bib, RIS, atau CSL-JSON)
+Insert Citation	Sisipkan Sitasi
+Insert {} sources	Sisipkan {} sumber
+Language of the citations	Bahasa sitasi
+Looking for Zotero…	Mencari Zotero…
+No citation inserted	Tidak ada sitasi yang disisipkan
+No sources yet: import a .bib, RIS or CSL-JSON file, or start Zotero (with its local API on, or Better BibTeX)	Belum ada sumber: impor berkas .bib, RIS, atau CSL-JSON, atau jalankan Zotero (dengan API lokal aktif, atau Better BibTeX)
+Nothing found	Tidak ada yang ditemukan
+Search Zotero: author, title or year	Cari di Zotero: penulis, judul, atau tahun
+Search this document's sources	Cari sumber di dokumen ini
+Searching…	Mencari…
+Sources not imported: {}	Sumber tidak diimpor: {}
+Style not available: {}	Gaya tidak tersedia: {}
+The citations are up to date	Sitasi sudah mutakhir
+This document has no Zotero or Mendeley citations	Dokumen ini tidak punya sitasi Zotero atau Mendeley
+Word's and EndNote's citations are kept as they are: refresh them in Word	Sitasi Word dan EndNote dibiarkan apa adanya: perbarui di Word
+Zotero is running, but its local API is off: tick “Allow other applications on this computer to communicate with Zotero” in Zotero's Settings ▸ Advanced	Zotero berjalan, tetapi API lokalnya mati: centang “Allow other applications on this computer to communicate with Zotero” di Settings ▸ Advanced Zotero
+Zotero: {}	Zotero: {}
+{} sources imported ({} new): Insert Citation… lists them	{} sumber diimpor ({} baru): tampil di Sisipkan Sitasi…

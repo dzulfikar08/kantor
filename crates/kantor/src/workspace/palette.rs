@@ -1613,6 +1613,40 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.update_table_doc(w, cx)),
     },
     Command {
+        title: tk("Insert Citation…"),
+        detail: tk("Docs · from Zotero, or from the sources imported into the document"),
+        keys: "",
+        run: |ws, window, cx| {
+            ws.with_docs(window, cx, |v, w, cx| v.open_citation_dialog_doc(w, cx))
+        },
+    },
+    Command {
+        title: tk("Insert Bibliography"),
+        detail: tk("Docs · the list of every cited source, in the citation style"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.insert_bibliography_doc(w, cx)),
+    },
+    Command {
+        title: tk("Refresh Citations"),
+        detail: tk(
+            "Docs · Zotero and Mendeley citations and the bibliography, in the document's style",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.refresh_citations_doc(w, cx)),
+    },
+    Command {
+        title: tk("Citation Style…"),
+        detail: tk("Docs · APA, IEEE, Harvard, Chicago, Vancouver, MLA; Indonesian or English"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.open_citation_style_doc(w, cx)),
+    },
+    Command {
+        title: tk("Import Sources…"),
+        detail: tk("Docs · a .bib, RIS or CSL-JSON file, to cite without Zotero"),
+        keys: "",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.import_sources_doc(w, cx)),
+    },
+    Command {
         title: tk("Insert Section Break (Next Page)"),
         detail: tk("Docs · a new section with its own page setup, headers and footers"),
         keys: "",

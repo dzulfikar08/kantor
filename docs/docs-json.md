@@ -101,6 +101,7 @@ Top-level keys:
 - `styles`, `palette`, `table`, `callout`, `cover_style`, `labels`: change
   the look (below).
 - `markdown`: `false` reads strings as plain text.
+- `citations`: sources to cite and the citation style (see Citations).
 - `blocks`: the content.
 
 Lengths are points (`12`) or strings with a unit: `"2.5cm"`, `"18mm"`,
@@ -119,6 +120,7 @@ markdown:
 | `[^Source: annual report 2025.]` | a footnote (the note's own text may use markdown) |
 | `{ref:id}` | a cross-reference to the heading, figure or table with that `id` |
 | `{ref:id:page}` / `:text` / `:number` / `:label` / `:full` | its page, its words, its number, "Figure 2", "Figure 2: caption" |
+| `{cite:nugroho2021}`, `{cite:nugroho2021@12;santoso2019}` | a citation of the sources with those keys (`@` a page), in the citation style |
 | `\n` | a line break |
 | `\*`, `\[`, `\{` | the character itself |
 
@@ -132,7 +134,57 @@ A run is a string or an object: `text`, `bold`, `italic`, `underline`,
 `style` (a character style: `Strong`, `Emphasis`, `Code`, or your own),
 `superscript`, `subscript`, `code`, `link`, `footnote`, `ref` with `show`,
 or `field` (any Word field instruction, e.g. `DATE \@ "d MMMM yyyy"`) with
-`result`. Prefer styles to run formatting: `check` counts direct formatting.
+`result`, or `cite` (a key, `"a;b@12"`, or a list of keys) with `page`,
+`prefix` (`"see "`), `suffix` and `author: false` (the year only, for
+"Nugroho (2021) found…" written as `["Nugroho ", {"cite": "nugroho2021",
+"author": false}, " found…"]`). Prefer styles to run formatting: `check`
+counts direct formatting.
+
+## Citations
+
+```json
+{
+  "lang": "id-ID",
+  "citations": {"sources": "pustaka.bib", "style": "apa"},
+  "blocks": [
+    "Media sosial memengaruhi prestasi belajar {cite:nugroho2021@118}.",
+    {"bibliography": "Daftar Pustaka"}
+  ]
+}
+```
+
+- `sources`: a `.bib` (BibTeX or BibLaTeX), `.ris` or CSL-JSON file
+  (relative to the JSON file), a list of them, or CSL-JSON items written
+  in place (each with an `id`). Citations name sources by key: the
+  BibTeX key, the CSL-JSON `id`, RIS's `ID`.
+- `style`: `apa` (APA 7th, the default), `ieee`,
+  `harvard-cite-them-right`, `chicago-author-date`, `vancouver`, `mla`,
+  any other style id hayagriva bundles, or a `.csl` file.
+- `locale`: the citations' language (`id-ID` gives "dkk.", "Diakses";
+  `en-US`…); the default follows `lang`.
+
+Citations and the bibliography are written as Zotero's Word plug-in
+writes them (`ADDIN ZOTERO_ITEM CSL_CITATION` fields with every item's
+data, `ADDIN ZOTERO_BIBL`, the style in Zotero's document preferences), and
+formatted when the document is built: the file keeps working with
+Zotero in Word (Refresh there, or add citations from a Zotero library), and
+`kantor docs citations refresh` formats them again. The sources are also
+kept in the document's own source list, so Insert Citation in Kantor and
+`insert_blocks` can cite them later. A key that isn't among the sources is
+an error.
+
+```sh
+kantor docs citations list thesis.docx            # JSON: style, citations, bibliographies, sources
+kantor docs citations refresh thesis.docx         # Zotero and Mendeley citations + bibliography
+kantor docs citations style thesis.docx ieee --locale en-US -o ieee.docx
+kantor docs citations import thesis.docx more.bib # into the document's source list
+```
+
+`list` reads Zotero, Mendeley Desktop, Mendeley Cite, Word and EndNote
+citations. `refresh` and `style` re-render Zotero and Mendeley ones
+(Mendeley Desktop fields keep Mendeley's style setting); Word's and
+EndNote's are left for Word to format. Citations someone edited by hand in
+Zotero keep their text.
 
 ## Blocks
 
@@ -189,6 +241,10 @@ or a shorthand: `{"h1": "…"}` to `{"h4": "…"}`, `{"p": "…"}`,
 - **toc**, **list_of_figures**, **list_of_tables**: `title` (or `false`),
   `levels`. Placed where they are in the blocks (the top-level `toc` puts
   one after the cover).
+- **bibliography** (or `{"bibliography": "Daftar Pustaka"}`): every cited
+  source in the citation style, under an unnumbered heading (`title`,
+  default `labels.bibliography`: References / Daftar Pustaka; `false` for
+  none), with a hanging indent.
 
 `id`s are on headings and on captioned tables, pictures and charts; two
 blocks can't share one, and a reference to an id that doesn't exist is an
@@ -320,7 +376,7 @@ them; a part Kantor can't edit is skipped.
 | `insert_paragraphs` | `after_index`, `paragraphs` | plain paragraphs with a style or list |
 | `replace_paragraph` | `index`, `text` | one paragraph's text, keeping its style |
 | `delete_paragraphs` | `index`, `count` | paragraphs outside tables |
-| `insert_blocks` | `blocks`, and `after` / `before` (ids), `after_heading`, `before_heading`, `end_of_section` (heading text or number), `at_start`; `preset`, `accent`, `fonts`, `lang` | build-JSON blocks (tables, charts, pictures, lists, callouts, captions, references, footnotes) placed in the document. Styles the document lacks are added from the preset; the document's own heading styles are used. Captions and references are updated. |
+| `insert_blocks` | `blocks`, and `after` / `before` (ids), `after_heading`, `before_heading`, `end_of_section` (heading text or number), `at_start`; `preset`, `accent`, `fonts`, `lang` | build-JSON blocks (tables, charts, pictures, lists, callouts, captions, references, footnotes, `{cite:key}` citations of the document's own sources, a bibliography) placed in the document. Styles the document lacks are added from the preset; the document's own heading styles are used. Captions, references and citations are updated. |
 | `replace_blocks` | `from`, `to` (ids) or `heading`; `blocks` | the range (whole tables) replaced by blocks |
 | `delete_blocks` | `from`, `to` or `heading` | a range, or a heading's whole section |
 | `move_section` | `heading`; `before_heading`, `after_section` or `to_end` | a heading and everything under it (not tracked) |
@@ -334,6 +390,9 @@ them; a part Kantor can't edit is skipped.
 | `update_fields` | | the table of contents, page references, cross-references, caption numbers (F9 on everything) |
 | `set_header`, `set_footer` | `left`, `center`, `right` (tokens as in build), `none`, `section` | a header or footer for every section (or one) |
 | `page_setup` | `size`, `orientation`, `margins`, `header`, `footer`, `section` | page setup of every section (or one) |
+| `list_citations` | `locale` | the citation style, citations (Zotero, Mendeley, Mendeley Cite, Word, EndNote) with their sources, bibliographies and the document's source list, as `kantor docs citations list` |
+| `refresh_citations` | `locale` | Zotero and Mendeley citations and bibliographies formatted again in the document's style |
+| `citation_style` | `style` (`apa`, `ieee`, a CSL style id or a `.csl` file), `locale` | set the style (as Zotero's or Mendeley's document preference) and refresh |
 
 Each tool prints a JSON line with what it did; `saved FILE` ends the run.
 
@@ -385,7 +444,11 @@ PNGs use the same layout). Findings name the paragraph id and the page:
 
 - Floating pictures and text wrapping around them (pictures and charts are
   in line with the text); text boxes; SmartArt; equations.
-- Endnotes, an index, citations and a bibliography.
+- Endnotes and an index.
+- Footnote citation styles (Chicago notes and other note styles): their
+  citations are rendered in the text. Citations inserted into a document
+  that uses Mendeley Desktop fields are Zotero fields (Insert Citation in
+  Kantor writes Mendeley's there).
 - Tracked moves (`move_section` can't be tracked) and tracked style
   definition changes (`restyle` isn't tracked).
 - Inserting a section break with `insert_blocks` (use `page_setup` on an

@@ -309,6 +309,9 @@ pub struct Document {
     /// The password the file was opened with: saves are encrypted with it
     /// (see `kantor_crypt`).
     password: Option<String>,
+    /// Package parts citations changed (custom properties, the source
+    /// list): written on save (see `crate::cite_edit`).
+    pub(crate) cite_parts: Option<Arc<crate::cite_edit::CiteParts>>,
 }
 
 /// Where an imported document came from.
@@ -385,6 +388,7 @@ impl Document {
             mail_merge: None,
             merge_view: None,
             password: None,
+            cite_parts: None,
         }
     }
 
@@ -553,6 +557,7 @@ impl Document {
             mail_merge: read.mail_merge,
             merge_view: None,
             password: None,
+            cite_parts: None,
         };
         let mut paras = std::mem::take(&mut doc.paragraphs);
         crate::float::share_parts(&mut paras, &doc);
@@ -829,6 +834,7 @@ impl Document {
             mail_merge: self.mail_merge.clone(),
             merge_view: None,
             password: self.password.clone(),
+            cite_parts: self.cite_parts.clone(),
         }
     }
 
@@ -1714,6 +1720,8 @@ impl Document {
         self.numbering.added_abstracts.clear();
         self.numbering.added_nums.clear();
         self.comments_modified = false;
+        // Citation parts too.
+        self.cite_parts = None;
         // Written stories are in the package now.
         for st in &mut self.stories {
             st.modified = false;

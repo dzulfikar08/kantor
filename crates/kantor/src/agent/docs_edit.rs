@@ -41,6 +41,9 @@ pub const TOOLS: &[&str] = &[
     "set_header",
     "set_footer",
     "page_setup",
+    "list_citations",
+    "refresh_citations",
+    "citation_style",
 ];
 
 /// Marks the place blocks go while the package is edited.
@@ -343,6 +346,25 @@ impl Session {
                 },
             )?,
             "page_setup" => self.page_setup(&args)?,
+            "list_citations" => {
+                let locale = opt_str(args.as_object().context("args")?, "locale")?;
+                citations_json(self.doc()?, locale)
+            }
+            "refresh_citations" => {
+                let locale =
+                    opt_str(args.as_object().context("args")?, "locale")?.map(str::to_owned);
+                let (_, r) = self.doc()?.refresh_citations(SEL, locale.as_deref())?;
+                refresh_json(&r)
+            }
+            "citation_style" => {
+                let o = args.as_object().context("args")?;
+                let style = super::req_str(&args, "style")?.to_owned();
+                let locale = opt_str(o, "locale")?.map(str::to_owned);
+                let (id, r) = set_citation_style(self.doc()?, &style, locale.as_deref())?;
+                let mut v = refresh_json(&r);
+                v["style"] = json!(id);
+                v
+            }
             other => bail!(
                 "{other} is not a docs editing tool (one of {})",
                 TOOLS.join(", ")
@@ -499,6 +521,8 @@ impl Session {
         let md = opt_bool(o, "markdown")?.unwrap_or(true);
         let after = self.place(args)?;
         let before_len = self.doc()?.len();
+        // `{cite:key}` in the blocks names the document's own sources.
+        let sources = self.doc()?.sources();
         let r = {
             let d = self.doc()?;
             d.insert_paragraphs_untracked(
@@ -525,6 +549,7 @@ impl Session {
             track.as_deref().map(|a| (a, date.as_str())),
         )?;
         w.props = read_props(&w.pkg);
+        w.add_cite_sources(&sources);
         w.collect(&blocks)?;
         for (i, b) in blocks.iter().enumerate() {
             w.block(b).with_context(|| format!("block {}", i + 1))?;
@@ -532,6 +557,7 @@ impl Session {
         let body = w.body_xml();
         let warnings = std::mem::take(&mut w.warnings);
         let needs_update = body.contains("SEQ ") || body.contains("REF ") || body.contains("TOC ");
+        let has_cites = body.contains("ZOTERO_ITEM") || body.contains("ZOTERO_BIBL");
         let mut pkg = finish_edit(w)?;
         let part = pkg.document_part()?;
         let mut xml = pkg.text(&part).context("no document part")?;
@@ -550,6 +576,17 @@ impl Session {
             let mut engine = docs_layout::Engine::new();
             let sel = super::docs_list::span(d, at.min(d.len() - 1), last);
             d.update_fields(sel, &cx, &mut |x| docs_pdf::field_pages(x, &mut engine));
+        }
+        if has_cites {
+            // New citations can renumber the others: render them all, in
+            // the document's style (Zotero's preference written when the
+            // document had none, so its plug-in takes over).
+            let prefs = d.citation_prefs(None);
+            if prefs.from == docs_engine::PrefsFrom::Default {
+                d.set_citation_prefs(&prefs.style, prefs.locale.as_deref());
+            }
+            d.refresh_citations(SEL, None)
+                .context("formatting the citations")?;
         }
         Ok(json!({"paragraphs": [at, last], "notes": warnings}))
     }
@@ -927,6 +964,99 @@ fn apply_run(p: &mut docs_engine::RunProps, rf: &RunFmt, style: Option<&str>) {
     if let Some(s) = style {
         p.style = Some(s.to_owned());
     }
+}
+
+/// What a citation refresh did, as JSON.
+fn refresh_json(r: &docs_engine::RefreshReport) -> Value {
+    json!({
+        "citations": r.citations,
+        "changed": r.changed,
+        "kept_as_edited": r.kept,
+        "bibliographies": r.bibliographies,
+        "word_endnote_left": r.other,
+    })
+}
+
+/// Set the document's citation style (`apa`, a CSL style id, or a `.csl`
+/// file) and language (`None`: keep the document's), and render its
+/// citations in it. Returns the style id written and what changed.
+pub fn set_citation_style(
+    doc: &mut Document,
+    style: &str,
+    locale: Option<&str>,
+) -> Result<(String, docs_engine::RefreshReport)> {
+    let (id, csl) = if style.to_ascii_lowercase().ends_with(".csl") {
+        let s = kantor_cite::load_style(style)?;
+        (s.style.info.id.clone(), Some(s))
+    } else {
+        kantor_cite::load_style(style)?;
+        (kantor_cite::styles::canonical_id(style), None)
+    };
+    let keep = doc.citation_prefs(None).locale;
+    let loc = locale.map(str::to_owned).or(keep);
+    doc.set_citation_prefs(&id, loc.as_deref());
+    let (_, r) = doc.refresh_citations_in(SEL, loc.as_deref(), csl.as_ref())?;
+    Ok((id, r))
+}
+
+/// The document's citations, bibliographies, source list and style
+/// (`kantor docs citations list`, the `list_citations` tool).
+pub fn citations_json(doc: &docs_engine::Document, locale: Option<&str>) -> Value {
+    let prefs = doc.citation_prefs(locale);
+    let at = |a: &docs_engine::CiteAt| match a {
+        docs_engine::CiteAt::Field { begin, .. } => json!({"paragraph": begin.para}),
+        docs_engine::CiteAt::Control { at } => json!({"paragraph": at.para}),
+        docs_engine::CiteAt::Paragraphs { first, last } => {
+            json!({"paragraph": first, "last_paragraph": last})
+        }
+    };
+    let cites: Vec<Value> = doc
+        .citations()
+        .iter()
+        .map(|c| {
+            json!({
+                "source": c.source.name(),
+                "text": c.text,
+                "at": at(&c.at),
+                "edited": c.edited,
+                "items": c.items.iter().map(|i| {
+                    let mut v = json!({"id": i.id, "summary": i.summary()});
+                    if let Some(l) = &i.locator {
+                        v["locator"] = json!(l);
+                    }
+                    if !i.uris.is_empty() {
+                        v["uris"] = json!(i.uris);
+                    }
+                    v
+                }).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let bibs: Vec<Value> = doc
+        .bibliographies()
+        .iter()
+        .map(|b| json!({"source": b.source.name(), "at": at(&b.at)}))
+        .collect();
+    let sources: Vec<Value> = doc
+        .sources()
+        .iter()
+        .map(|s| json!({"id": s.get("id"), "summary": docs_engine::citations::summary(s)}))
+        .collect();
+    json!({
+        "style": {
+            "id": prefs.style,
+            "name": kantor_cite::styles::display_name(&prefs.style),
+            "locale": prefs.locale,
+            "from": match prefs.from {
+                docs_engine::PrefsFrom::Zotero => "zotero",
+                docs_engine::PrefsFrom::Mendeley => "mendeley",
+                docs_engine::PrefsFrom::Default => "default",
+            },
+        },
+        "citations": cites,
+        "bibliographies": bibs,
+        "sources": sources,
+    })
 }
 
 /// Finish a writer that added blocks to a package: its list definitions,
@@ -1488,6 +1618,56 @@ mod tests {
                 .keys()
                 .any(|k| k.starts_with("word/footer") && p.text(k).unwrap().contains("NUMPAGES"))
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn citations_inserted_listed_and_restyled() {
+        let built = super::super::docs_author::build(
+            &json!({
+                "citations": {"sources": [
+                    {"id": "nugroho2021", "type": "article-journal", "title": "Media sosial",
+                     "author": [{"family": "Nugroho", "given": "Adi"}], "issued": {"date-parts": [[2021]]}},
+                    {"id": "santoso2019", "type": "book", "title": "Metodologi",
+                     "author": [{"family": "Santoso", "given": "Budi"}], "issued": {"date-parts": [[2019]]}}
+                ], "locale": "en-US"},
+                "blocks": [{"h1": "One"}, "First {cite:nugroho2021}.", {"type": "bibliography"}]
+            }),
+            None,
+        )
+        .unwrap();
+        let doc = Document::from_read(docs_engine::docx::read(built.bytes).unwrap(), None);
+        let mut s = Session::from_doc(doc, None, None).unwrap();
+        // Blocks cite the document's own sources.
+        s.run(
+            "insert_blocks",
+            &json!({"after_heading": "One", "blocks": ["Before {cite:santoso2019}."]}),
+        )
+        .unwrap();
+        let l = s.run("list_citations", &json!({})).unwrap();
+        assert_eq!(l["style"]["from"], "zotero", "{l}");
+        let cites = l["citations"].as_array().unwrap();
+        assert_eq!(cites.len(), 2, "{l}");
+        assert_eq!(cites[0]["text"], "(Santoso, 2019)");
+        assert_eq!(cites[1]["text"], "(Nugroho, 2021)");
+        assert_eq!(l["sources"].as_array().unwrap().len(), 2);
+        assert_eq!(l["bibliographies"].as_array().unwrap().len(), 1);
+        // A key that isn't a source.
+        assert!(
+            s.run(
+                "insert_blocks",
+                &json!({"at_start": true, "blocks": ["{cite:nobody}"]})
+            )
+            .is_err()
+        );
+        // IEEE numbers by first citation.
+        let r = s.run("citation_style", &json!({"style": "ieee"})).unwrap();
+        assert_eq!(r["style"], "http://www.zotero.org/styles/ieee");
+        let l = s.run("list_citations", &json!({})).unwrap();
+        assert_eq!(l["citations"][0]["text"], "[1]", "{l}");
+        assert_eq!(l["citations"][1]["text"], "[2]", "{l}");
+        let r = s.run("refresh_citations", &json!({})).unwrap();
+        assert_eq!(r["changed"], 0, "{r}");
+        assert!(TOOLS.contains(&"citation_style"));
     }
 
     #[std::prelude::v1::test]

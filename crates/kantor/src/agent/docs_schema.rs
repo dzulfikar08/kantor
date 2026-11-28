@@ -30,7 +30,7 @@ fn color() -> Value {
 
 fn text() -> Value {
     json!({
-        "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+        "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, {cite:key}, {cite:key1;key2@12}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, cite, page, prefix, suffix, author}.",
         "anyOf": [{"type": "string"}, {"type": "array", "items": {"anyOf": [{"type": "string"}, r("run")]}}]
     })
 }
@@ -52,7 +52,12 @@ fn run() -> Value {
             "ref": {"type": "string", "description": "A cross-reference to the heading, figure or table with this id (a REF / PAGEREF field)."},
             "show": {"type": "string", "enum": ["number", "text", "page", "label", "full"], "description": "number: the heading's number (2.3); text: its words; page: its page; label: \"Figure 2\"; full: \"Figure 2: caption\". Default: number for numbered headings, text for others, label for figures and tables."},
             "field": {"type": "string", "description": "A Word field instruction, e.g. DATE \\@ \"d MMMM yyyy\"."},
-            "result": {"type": "string", "description": "What the field shows until updated."}
+            "result": {"type": "string", "description": "What the field shows until updated."},
+            "cite": {"description": "A citation (a Zotero field, formatted in the citation style when built) of the sources with these keys (`citations.sources`): \"key\", \"key1;key2@12\" (@ a page) or [\"key1\", \"key2\"].", "anyOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]},
+            "page": {"type": ["string", "integer"], "description": "With cite: the page or pages of the last source, e.g. \"12-15\"."},
+            "prefix": {"type": "string", "description": "With cite: text before the citation inside it, e.g. \"see \"."},
+            "suffix": {"type": "string", "description": "With cite: text after it inside it."},
+            "author": {"type": "boolean", "description": "With cite: false leaves the author's name out (\"Nugroho (2021)\" written as Nugroho {cite} in the text)."}
         }
     })
 }
@@ -306,6 +311,15 @@ fn blocks_defs() -> Vec<(&'static str, Value)> {
                 &[],
             ),
         ),
+        (
+            "bibliography",
+            block_of(
+                "bibliography",
+                "The bibliography of every cited source, in the citation style (a Zotero bibliography field), under an unnumbered heading (labels.bibliography: References / Daftar Pustaka).",
+                json!({"title": {"anyOf": [{"type": "string"}, {"type": "boolean"}]}, "id": {"type": "string"}}),
+                &[],
+            ),
+        ),
     ]
 }
 
@@ -318,7 +332,7 @@ fn defs() -> Map<String, Value> {
     d.insert("page".into(), page());
     let blocks = blocks_defs();
     let mut any: Vec<Value> = vec![json!({"type": "string", "description": "A paragraph."})];
-    any.push(json!({"type": "object", "description": "A shorthand: {\"h1\"…\"h4\": text}, {\"p\": text}, {\"bullets\": […]}, {\"numbers\": […]} (with id, numbered, style… beside it).",
+    any.push(json!({"type": "object", "description": "A shorthand: {\"h1\"…\"h4\": text}, {\"p\": text}, {\"bullets\": […]}, {\"numbers\": […]}, {\"bibliography\": title} (with id, numbered, style… beside it).",
         "minProperties": 1, "not": {"required": ["type"]}}));
     for (name, v) in blocks {
         any.push(r(name));
@@ -345,10 +359,10 @@ pub fn document() -> Value {
         "footer": r("header_footer"),
         "page": r("page"),
         "labels": {"type": "object", "additionalProperties": false, "properties": {
-            "figure": {"type": "string"}, "table": {"type": "string"}, "contents": {"type": "string"}, "figures": {"type": "string"}, "tables": {"type": "string"}}},
+            "figure": {"type": "string"}, "table": {"type": "string"}, "contents": {"type": "string"}, "figures": {"type": "string"}, "tables": {"type": "string"}, "bibliography": {"type": "string"}}},
         "numbered_headings": {"type": "boolean"},
         "first_page_header": {"type": "boolean", "description": "false: no header or footer on the body's first page (letters)."},
-        "markdown": {"type": "boolean", "description": "Read **bold**, *italic*, [link](url), [^note], {ref:id} in strings (default true)."},
+        "markdown": {"type": "boolean", "description": "Read **bold**, *italic*, [link](url), [^note], {ref:id}, {cite:key} in strings (default true)."},
         "properties": {"type": "object", "additionalProperties": false, "properties": {
             "title": {"type": "string"}, "subject": {"type": "string"}, "author": {"type": "string"}, "company": {"type": "string"},
             "keywords": {"type": "string"}, "description": {"type": "string"},
@@ -358,6 +372,10 @@ pub fn document() -> Value {
             "meta": {"description": "[[label, value], …] lines, e.g. [[\"Prepared for\", \"PT Example\"]].", "anyOf": [{"type": "array"}, {"type": "object"}]},
             "note": text(), "logo": {"type": "string"}, "logo_width": width()}},
         "toc": {"description": "true or {title, levels}: a table of contents after the cover.", "anyOf": [{"type": "boolean"}, {"type": "object", "additionalProperties": false, "properties": {"title": {"type": "string"}, "levels": {"type": "integer", "minimum": 1, "maximum": 4}}}]},
+        "citations": {"type": "object", "additionalProperties": false, "description": "Sources to cite with {cite:key}, and the citation style. Citations are Zotero fields: the file keeps working with Zotero's Word plug-in.", "properties": {
+            "sources": {"description": "A .bib (BibTeX/BibLaTeX), .ris or CSL-JSON file (relative to the JSON file), a list of them, or a list of CSL-JSON items (each with an id).", "anyOf": [{"type": "string"}, {"type": "array"}, {"type": "object"}]},
+            "style": {"type": "string", "description": "apa (default), ieee, harvard-cite-them-right, chicago-author-date, vancouver, modern-language-association, another CSL style id, or a .csl file."},
+            "locale": {"type": "string", "description": "The citations' language: id-ID (dkk., Diakses), en-US… Default: from lang."}}},
         "blocks": {"type": "array", "items": r("block")},
     });
     json!({
@@ -380,9 +398,16 @@ mod tests {
     fn the_schema_file_is_current() {
         let file = include_str!("../../../../docs/docs-json.schema.json");
         let now = serde_json::to_string_pretty(&document()).unwrap() + "\n";
+        let first = file
+            .lines()
+            .zip(now.lines())
+            .enumerate()
+            .find(|(_, (a, b))| a != b)
+            .map(|(i, (a, b))| format!("line {}: file {a:?}, now {b:?}", i + 1));
         assert!(
             file == now,
-            "docs/docs-json.schema.json is out of date: run `kantor docs schema > docs/docs-json.schema.json`"
+            "docs/docs-json.schema.json is out of date: run `kantor docs schema > docs/docs-json.schema.json` ({})",
+            first.unwrap_or_else(|| "lengths differ".into())
         );
     }
 

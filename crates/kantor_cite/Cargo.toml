@@ -1,0 +1,23 @@
+[package]
+name = "kantor_cite"
+description = "Citations for Kantor Docs: CSL formatting (hayagriva), .bib/RIS/CSL-JSON import, Zotero's local connector (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+log.workspace = true
+serde_json.workspace = true
+# Typst's CSL engine (MIT OR Apache-2.0): the archive bundles the CSL styles
+# and locales (CC BY-SA 3.0 data), csl-json reads Zotero's and Mendeley's
+# item data as it is.
+hayagriva = { version = "0.10", default-features = false, features = ["archive", "csl-json"] }
+# BibLaTeX / BibTeX import (MIT OR Apache-2.0; the version hayagriva uses).
+biblatex = "0.12"
+# Zotero's local connector on 127.0.0.1:23119 (plain HTTP).
+ureq.workspace = true
+
+[lints]
+workspace = true

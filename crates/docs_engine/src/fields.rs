@@ -244,7 +244,7 @@ fn simple_holds(paras: &[Paragraph], s: &FieldSpan) -> bool {
 
 /// A complex field's start for `instr` (with a separator when it will
 /// have a result).
-fn complex_begin(instr: &str, result: bool) -> FieldMark {
+pub(crate) fn complex_begin(instr: &str, result: bool) -> FieldMark {
     match FieldMark::begin(instr) {
         FieldMark::Begin {
             instr,
@@ -262,7 +262,7 @@ fn complex_begin(instr: &str, result: bool) -> FieldMark {
 }
 
 /// Swap the object at `pos` for `o` (same run formatting, link, change).
-fn replace_mark(paras: &mut [Paragraph], pos: Position, o: Object) {
+pub(crate) fn replace_mark(paras: &mut [Paragraph], pos: Position, o: Object) {
     let p = &mut paras[pos.para];
     let i = p.split_run_at(pos.offset);
     if let Some(run) = p.runs.get_mut(i) {
@@ -688,7 +688,7 @@ impl Props {
 }
 
 /// `custom.xml`'s properties: name and text value.
-fn custom_props(src: &str) -> Vec<(String, String)> {
+pub(crate) fn custom_props(src: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut r = quick_xml::Reader::from_str(src);
     let mut name: Option<String> = None;
@@ -718,6 +718,23 @@ fn custom_props(src: &str) -> Vec<(String, String)> {
             Ok(quick_xml::events::Event::Text(t)) if name.is_some() && depth > 0 => {
                 if let (Some(last), Ok(s)) = (out.last_mut(), t.xml10_content()) {
                     last.1.push_str(&s);
+                }
+            }
+            // `&lt;` and the like (Zotero's preferences are escaped XML).
+            Ok(quick_xml::events::Event::GeneralRef(g)) if name.is_some() && depth > 0 => {
+                if let Some(last) = out.last_mut() {
+                    if let Ok(Some(c)) = g.resolve_char_ref() {
+                        last.1.push(c);
+                    } else {
+                        last.1.push_str(match &*g as &[u8] {
+                            b"amp" => "&",
+                            b"lt" => "<",
+                            b"gt" => ">",
+                            b"quot" => "\"",
+                            b"apos" => "'",
+                            _ => "",
+                        });
+                    }
                 }
             }
             Ok(quick_xml::events::Event::Eof) | Err(_) => break,

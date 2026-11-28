@@ -16,6 +16,8 @@
 
 pub mod address;
 pub mod agent;
+pub mod citations;
+pub mod cite_edit;
 mod code_track;
 pub mod columns;
 mod comment_thread;
@@ -51,6 +53,8 @@ mod track;
 mod track_table;
 pub mod xml;
 
+pub use citations::{Bibliography, Citation, CiteAt, CiteItem, CiteSource};
+pub use cite_edit::{CitePrefs, PrefsFrom, RefreshReport};
 pub use columns::{COLUMN_BREAK, Column, ColumnPreset, Columns, ColumnsApply};
 pub use document::{
     Document, LINE_BREAK, NewMedia, PAGE_BREAK, PageGeometry, SaveJob, SavedJob, Splice, Toggle,

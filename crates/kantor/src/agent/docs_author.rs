@@ -9,7 +9,7 @@
 //! (the table of contents gets its page numbers) and saves it; the zip is
 //! written with fixed times, so the same JSON gives the same bytes.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, anyhow, bail};
@@ -43,6 +43,7 @@ pub fn doc_keys() -> Vec<&'static str> {
         "toc",
         "blocks",
         "markdown",
+        "citations",
     ];
     v.extend_from_slice(LOOK_KEYS);
     v
@@ -63,6 +64,7 @@ pub const BLOCK_TYPES: &[&str] = &[
     "toc",
     "list_of_figures",
     "list_of_tables",
+    "bibliography",
 ];
 
 const PARA_KEYS: &[&str] = &[
@@ -247,6 +249,11 @@ pub fn normalize(v: &Value) -> Result<Map<String, Value>> {
             return Ok(o);
         }
     }
+    if let Some(t) = o.remove("bibliography") {
+        o.insert("type".into(), json!("bibliography"));
+        o.insert("title".into(), t);
+        return Ok(o);
+    }
     if o.contains_key("text") {
         o.insert("type".into(), json!("paragraph"));
         return Ok(o);
@@ -358,6 +365,12 @@ pub struct Writer<'a> {
     style_map: HashMap<String, String>,
     /// What `{pages}` counts with.
     pages_field: PagesField,
+    /// Sources citations point at, by key (`citations.sources`; in edits,
+    /// the document's own source list).
+    pub cites: BTreeMap<String, Value>,
+    /// Citations written: their Zotero ids are made from it (the same JSON
+    /// gives the same file).
+    cite_n: u64,
 }
 
 /// The field behind the `{pages}` header/footer token.
@@ -438,6 +451,8 @@ impl<'a> Writer<'a> {
             charts: 0,
             style_map: HashMap::new(),
             pages_field: PagesField::All,
+            cites: BTreeMap::new(),
+            cite_n: 0,
         }
     }
 
@@ -887,9 +902,141 @@ impl<'a> Writer<'a> {
                     let rpr = fmt.xml();
                     x.push_str(&self.field(instr, result, &rpr));
                 }
+                Piece::Cite {
+                    keys,
+                    prefix,
+                    suffix,
+                    no_author,
+                    fmt,
+                } => {
+                    let rpr = fmt.xml();
+                    let instr = self.cite_instr(keys, prefix, suffix, *no_author)?;
+                    // The text comes from the style when the document is
+                    // finished (Refresh Citations).
+                    let shown = format!(
+                        "({})",
+                        keys.iter()
+                            .map(|k| k.0.as_str())
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    );
+                    x.push_str(&self.field(&instr, &shown, &rpr));
+                }
             }
         }
         Ok(x)
+    }
+
+    /// Make `items` (CSL-JSON with an `id`) citable by their ids.
+    pub fn add_cite_sources(&mut self, items: &[Value]) {
+        for it in items {
+            if let Some(id) = it.get("id") {
+                let key = match id {
+                    Value::String(s) => s.clone(),
+                    v => v.to_string(),
+                };
+                self.cites.insert(key, it.clone());
+            }
+        }
+    }
+
+    /// A Zotero citation field's instruction for sources `keys`.
+    fn cite_instr(
+        &mut self,
+        keys: &[(String, Option<String>)],
+        prefix: &Option<String>,
+        suffix: &Option<String>,
+        no_author: bool,
+    ) -> Result<String> {
+        let mut items = Vec::new();
+        let n = keys.len();
+        for (i, (key, loc)) in keys.iter().enumerate() {
+            let Some(data) = self.cites.get(key) else {
+                let known: Vec<&str> = self.cites.keys().take(8).map(String::as_str).collect();
+                if known.is_empty() {
+                    bail!(
+                        "a citation names \"{key}\", but there are no sources: add `citations`: {{\"sources\": \"refs.bib\"}}"
+                    );
+                }
+                bail!(
+                    "a citation names \"{key}\", which isn't among the sources (they have {}{})",
+                    known.join(", "),
+                    if self.cites.len() > known.len() {
+                        ", …"
+                    } else {
+                        ""
+                    }
+                );
+            };
+            let mut it = docs_engine::CiteItem::new(data.clone());
+            it.id = key.clone();
+            if let Some(l) = loc {
+                it.locator = Some(l.clone());
+                it.label = Some("page".into());
+            }
+            if i == 0 {
+                it.prefix = prefix.clone();
+            }
+            if i + 1 == n {
+                it.suffix = suffix.clone();
+            }
+            it.suppress_author = no_author;
+            items.push(it);
+        }
+        self.cite_n += 1;
+        let id = docs_engine::cite_edit::random_id(
+            0x5EED_C17E ^ self.cite_n.wrapping_mul(0x9E37_79B9_7F4A_7C15),
+            8,
+        );
+        let json = json!({
+            "citationID": id,
+            "properties": {"formattedCitation": "", "plainCitation": "", "noteIndex": 0},
+            "citationItems": docs_engine::citations::csl_citation_items(&items),
+            "schema": docs_engine::citations::CSL_CITATION_SCHEMA,
+        });
+        Ok(format!("ADDIN ZOTERO_ITEM CSL_CITATION {json}"))
+    }
+
+    /// A bibliography: a heading (`title`, unnumbered) and Zotero's
+    /// bibliography field, filled in when the document is finished.
+    fn bibliography(&mut self, o: &Map<String, Value>) -> Result<()> {
+        object(
+            &Value::Object(o.clone()),
+            "a bibliography",
+            &["type", "title", "id"],
+        )?;
+        let title = match get(o, "title") {
+            None | Some(Value::Bool(true)) | Some(Value::Null) => {
+                Some(self.look.labels.bibliography.clone())
+            }
+            Some(Value::Bool(false)) => None,
+            Some(Value::String(t)) => Some(t.clone()),
+            Some(_) => bail!("a bibliography's `title` is text, or false for none"),
+        };
+        if let Some(t) = title {
+            let mut h = Map::new();
+            h.insert("type".into(), json!("heading"));
+            h.insert("level".into(), json!(1));
+            h.insert("text".into(), json!(t));
+            h.insert("numbered".into(), json!(false));
+            if let Some(id) = get(o, "id") {
+                h.insert("id".into(), id.clone());
+            }
+            self.heading(&h)?;
+        }
+        let instr = r#"ADDIN ZOTERO_BIBL {"uncited":[],"omitted":[],"custom":[]} CSL_BIBLIOGRAPHY"#;
+        let c = self.field(instr, "", "");
+        // A hanging indent, as Zotero's bibliography paragraphs have.
+        self.para(
+            None,
+            ParaFmt {
+                indent: Some(720),
+                first_line: Some(-720),
+                ..ParaFmt::default()
+            },
+            c,
+        );
+        Ok(())
     }
 
     /// The runs of JSON paragraph text.
@@ -1021,6 +1168,7 @@ impl<'a> Writer<'a> {
             }
             "section" => self.section(o),
             "toc" | "list_of_figures" | "list_of_tables" => self.toc(o, ty),
+            "bibliography" => self.bibliography(o),
             _ => unreachable!(),
         }
     }
@@ -2510,6 +2658,10 @@ pub fn build(json: &Value, base: Option<&Path>) -> Result<Built> {
     let look = Look::read(&look_json(o)?, &lang)?;
     let props = Props::read(o.get("properties"))?;
     let md = opt_bool(o, "markdown")?.unwrap_or(true);
+    let cite = get(o, "citations")
+        .map(|c| cite_setup(c, base, &lang, json))
+        .transpose()
+        .context("citations")?;
     let blocks: Vec<Map<String, Value>> = match get(o, "blocks") {
         None => Vec::new(),
         Some(Value::Array(a)) => {
@@ -2538,6 +2690,9 @@ pub fn build(json: &Value, base: Option<&Path>) -> Result<Built> {
         props.clone(),
         nums,
     );
+    if let Some(c) = &cite {
+        w.add_cite_sources(&c.sources);
+    }
     w.collect(&blocks)?;
 
     // Front matter: the cover and the table of contents, unnumbered, no
@@ -2691,7 +2846,7 @@ pub fn build(json: &Value, base: Option<&Path>) -> Result<Built> {
     }
     let warnings = std::mem::take(&mut w.warnings);
     let now = props.now();
-    let (mut bytes, pages) = finish(pkg.to_bytes()?, now)?;
+    let (mut bytes, pages) = finish_with(pkg.to_bytes()?, now, cite.as_ref())?;
     if w.pages_field == PagesField::LastPage {
         bytes = fill_last_page(bytes)?;
     }
@@ -2702,13 +2857,115 @@ pub fn build(json: &Value, base: Option<&Path>) -> Result<Built> {
     })
 }
 
+/// What a document's `citations` says: its sources, style and language.
+pub struct CiteSetup {
+    /// The style id written into the document (Zotero's preference).
+    pub style: String,
+    /// A `.csl` file's style (else the id is looked up).
+    pub csl: Option<kantor_cite::CslStyle>,
+    pub locale: String,
+    /// CSL-JSON items, each with an `id` (the key citations use).
+    pub sources: Vec<Value>,
+    /// For Zotero's session id: the same JSON gives the same file.
+    pub seed: u64,
+}
+
+/// Read `citations`: `{"sources": "refs.bib" | ["a.bib", …] | [CSL-JSON
+/// items], "style": "apa" | id | "file.csl", "locale": "id-ID"}`.
+fn cite_setup(v: &Value, base: Option<&Path>, lang: &str, all: &Value) -> Result<CiteSetup> {
+    let o = object(v, "`citations`", &["sources", "style", "locale"])?;
+    let path = |p: &str| -> PathBuf {
+        let p = PathBuf::from(p);
+        match base {
+            Some(b) if p.is_relative() => b.join(p),
+            _ => p,
+        }
+    };
+    let mut sources = Vec::new();
+    let add_value = |v: &Value, sources: &mut Vec<Value>| -> Result<()> {
+        match v {
+            Value::String(p) => {
+                let items = kantor_cite::import::read_file(&path(p))?;
+                sources.extend(items);
+            }
+            Value::Object(m) if m.contains_key("items") => {
+                sources.extend(kantor_cite::import::from_csl_json(&v.to_string())?);
+            }
+            Value::Object(m) => {
+                if !m.contains_key("id") {
+                    bail!("a source needs an `id` (the key citations use)");
+                }
+                sources.push(v.clone());
+            }
+            _ => bail!("`sources` lists files (.bib, .ris, .json) or CSL-JSON items"),
+        }
+        Ok(())
+    };
+    match get(o, "sources") {
+        None => {}
+        Some(Value::Array(a)) => {
+            for v in a {
+                add_value(v, &mut sources)?;
+            }
+        }
+        Some(v) => add_value(v, &mut sources)?,
+    }
+    let style_arg = opt_str(o, "style")?.unwrap_or("apa").trim().to_owned();
+    let (style, csl) = if style_arg.to_ascii_lowercase().ends_with(".csl") {
+        let file = path(&style_arg);
+        let s = kantor_cite::load_style(&file.to_string_lossy())?;
+        (s.style.info.id.clone(), Some(s))
+    } else {
+        kantor_cite::load_style(&style_arg)?;
+        (kantor_cite::styles::canonical_id(&style_arg), None)
+    };
+    let locale = opt_str(o, "locale")?.map(str::to_owned).unwrap_or_else(|| {
+        if lang.to_ascii_lowercase().starts_with("id") {
+            "id-ID".to_owned()
+        } else {
+            lang.to_owned()
+        }
+    });
+    // FNV-1a over the document's JSON.
+    let mut seed: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in all.to_string().bytes() {
+        seed ^= u64::from(b);
+        seed = seed.wrapping_mul(0x0100_0000_01b3);
+    }
+    Ok(CiteSetup {
+        style,
+        csl,
+        locale,
+        sources,
+        seed,
+    })
+}
+
 /// Open `bytes` in the docs engine, update every field from Kantor's
 /// layout (tables of contents, page references, cross-references,
-/// captions), save; returns the file and its page count.
-pub fn finish(bytes: Vec<u8>, now: chrono::NaiveDateTime) -> Result<(Vec<u8>, usize)> {
+/// captions), save; returns the file and its page count. With `cite`,
+/// citations are rendered first (the style written as Zotero's document
+/// preference, the sources kept as the document's source list).
+pub fn finish_with(
+    bytes: Vec<u8>,
+    now: chrono::NaiveDateTime,
+    cite: Option<&CiteSetup>,
+) -> Result<(Vec<u8>, usize)> {
     let read = docs_engine::docx::read(bytes).context("reading the document back")?;
     let mut doc = docs_engine::Document::from_read(read, None);
     let mut engine = docs_layout::Engine::new();
+    if let Some(c) = cite {
+        doc.set_citation_prefs_seeded(&c.style, Some(&c.locale), Some(c.seed));
+        if !c.sources.is_empty() {
+            doc.add_sources(c.sources.clone());
+        }
+        doc.refresh_citations_in(
+            docs_engine::Selection::default(),
+            Some(&c.locale),
+            c.csl.as_ref(),
+        )
+        .context("formatting the citations")?;
+    }
     update_all_fields(&mut doc, &mut engine, now);
     let out = doc.to_docx_bytes()?;
     let pages = docs_pdf::lay_out(&doc, &mut engine).paged.pages.len();
@@ -3042,5 +3299,79 @@ mod tests {
             kantor_core::fonts::metric_substitute("Courier New"),
             Some("Liberation Mono")
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn citations_from_a_bib_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("pustaka.bib"),
+            r"@article{nugroho2021,
+  author = {Nugroho, Adi},
+  title = {Pengaruh media sosial terhadap prestasi belajar},
+  journal = {Jurnal Pendidikan Indonesia},
+  year = {2021}, volume = {10}, pages = {115--130}
+}
+@book{santoso2019,
+  author = {Santoso, Budi and Wijaya, Citra},
+  title = {Metodologi penelitian kuantitatif},
+  publisher = {Penerbit Andi}, year = {2019}
+}",
+        )
+        .unwrap();
+        let doc = json!({
+            "lang": "id-ID",
+            "citations": {"sources": "pustaka.bib"},
+            "blocks": [
+                {"h1": "Pendahuluan"},
+                "Media sosial berpengaruh {cite:nugroho2021@118;santoso2019}.",
+                ["Menurut Santoso ", {"cite": "santoso2019", "author": false}, ", metode ini umum."],
+                {"bibliography": true}
+            ]
+        });
+        let a = build(&doc, Some(dir.path())).unwrap();
+        let b = build(&doc, Some(dir.path())).unwrap();
+        assert_eq!(a.bytes, b.bytes, "the same JSON gives the same bytes");
+        let read = docs_engine::docx::read(a.bytes.clone()).unwrap();
+        let d = docs_engine::Document::from_read(read, None);
+        let cites = d.citations();
+        assert_eq!(cites.len(), 2);
+        assert!(
+            cites
+                .iter()
+                .all(|c| c.source == docs_engine::CiteSource::Zotero)
+        );
+        assert!(
+            cites[0].text.contains("Nugroho, 2021") && cites[0].text.contains("118"),
+            "{}",
+            cites[0].text
+        );
+        assert!(
+            cites[1].text.contains("2019") && !cites[1].text.contains("Santoso"),
+            "{}",
+            cites[1].text
+        );
+        assert_eq!(d.bibliographies().len(), 1);
+        let prefs = d.citation_prefs(None);
+        assert_eq!(prefs.from, docs_engine::PrefsFrom::Zotero);
+        assert_eq!(prefs.style, "http://www.zotero.org/styles/apa");
+        assert_eq!(prefs.locale.as_deref(), Some("id-ID"));
+        assert_eq!(d.sources().len(), 2);
+        let text: Vec<String> = (0..d.len())
+            .map(|i| d.paragraph(i).text.replace(docs_engine::OBJECT, ""))
+            .collect();
+        assert!(text.iter().any(|t| t == "Daftar Pustaka"), "{text:?}");
+        assert!(
+            text.iter().any(|t| t.starts_with("Nugroho, A. (2021).")),
+            "{text:?}"
+        );
+
+        // An unknown key says which keys there are.
+        let bad = json!({
+            "citations": {"sources": "pustaka.bib"},
+            "blocks": ["{cite:nobody2020}"]
+        });
+        let e = format!("{:#}", build(&bad, Some(dir.path())).unwrap_err());
+        assert!(e.contains("nobody2020") && e.contains("nugroho2021"), "{e}");
     }
 }

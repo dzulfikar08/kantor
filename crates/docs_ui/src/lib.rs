@@ -21,6 +21,7 @@ extern crate gpui_kit as gpui;
 
 mod agent;
 mod ai;
+mod cite_menu;
 mod code_inline;
 mod columns_menu;
 mod field_menu;
@@ -594,6 +595,8 @@ pub struct DocsView {
     part: Option<part::PartSession>,
     /// The field code, Insert Field, Bookmark or Cross-reference popover.
     field_menu: Option<field_menu::FieldMenu>,
+    /// The Insert Citation or Citation Style popover.
+    cite_menu: Option<cite_menu::CiteMenu>,
     /// The Mailings bar (mail merge), when shown.
     mailings: Option<mailings::Mailings>,
     /// `KANTOR_PERF` timings (see [`perf`]).
@@ -719,6 +722,7 @@ impl DocsView {
             painter,
             part: None,
             field_menu: None,
+            cite_menu: None,
             mailings: None,
             perf,
             review_memo: RefCell::default(),
@@ -3334,6 +3338,11 @@ impl Render for DocsView {
                     cx.notify();
                     return;
                 }
+                if this.cite_menu.take().is_some() {
+                    this.focus(w, cx);
+                    cx.notify();
+                    return;
+                }
                 if this.part.is_some() {
                     match this.part_target() {
                         Some(part::PartTarget::Note { .. }) => this.leave_note_to_reference(w, cx),
@@ -3450,6 +3459,7 @@ impl Render for DocsView {
             .children(self.render_split_menu(cx))
             .children(self.render_text_box_menu(cx))
             .children(self.render_field_menu(cx))
+            .children(self.render_cite_menu(cx))
             .children(self.render_recipients(cx))
             .children(self.render_address_dialog(cx))
     }

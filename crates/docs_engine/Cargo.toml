@@ -27,6 +27,12 @@ chrono.workspace = true
 # Code pages of imported .rtf files.
 encoding_rs.workspace = true
 tempfile.workspace = true
+# Citation data in Zotero and Mendeley fields (CSL JSON); Mendeley Cite
+# keeps it base64-encoded in content control tags.
+serde_json.workspace = true
+base64.workspace = true
+# CSL formatting, reference imports (see docs/decisions/0007-citations.md).
+kantor_cite.workspace = true
 
 [lints]
 workspace = true
