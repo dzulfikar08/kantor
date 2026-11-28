@@ -171,6 +171,34 @@ export const en = {
       'No installer? Get the portable zip for <a href="{dl}/Kantor-x64.zip">x64</a> or <a href="{dl}/Kantor-arm64.zip">Arm</a>, unzip it anywhere and open <strong>kantor.exe</strong>.',
   },
 
+  navThesis: "Thesis",
+  thesis: {
+    h2: "For your thesis: PLS-SEM in Sheets, citations in Docs",
+    lede:
+      "Run the structural model for your results chapter next to the survey data, and keep your Zotero or Mendeley citations working while you write. Both are part of the free app and work offline on Windows, Mac and Linux.",
+    shot: "pls",
+    shotAlt:
+      "Kantor Sheets with a PLS-SEM model tab. The path diagram shows construct X pointing to Y directly and through a mediator M, with ten indicators on M laid out in two staggered rows. The loadings sit on the indicator links, the paths show coefficients with bootstrap p values in brackets, and the significant paths are drawn in green. Below the diagram, the results pane lists reliability and convergent validity for each construct.",
+    shotCaption:
+      "A mediation model after a bootstrap: loadings, path coefficients with p values and R² on the diagram, the tables below it.",
+    plsH3: "PLS-SEM, drawn the way SmartPLS draws it",
+    pls: [
+      ["Draw the model", "Select the questionnaire data, drag the item columns onto the canvas to make constructs, then draw the paths. Reflective or formative constructs, PLS or consistent PLS (PLSc)."],
+      ["Bootstrap", "5,000 subsamples by default, on every processor core, with a progress bar and a Stop button. t and p values, one- or two-tailed, with percentile and BCa intervals."],
+      ["Every table chapter 4 needs", "Loadings, Cronbach's alpha, rho_A, composite reliability, AVE, Fornell-Larcker, HTMT, cross-loadings, VIF, R², f², indirect effects, SRMR and NFI. Values outside the usual thresholds (Hair et al.) are marked."],
+      ["A report to start from", "Export an APA-style report in Indonesian or English (.docx) or every table as .xlsx, or insert the tables as a new sheet. The model is saved inside the workbook."],
+      ["Ask Paparan AI to explain", 'Explain results hands the model, the data and the results to <a href="#paparan">Paparan AI</a>, which writes the discussion of the results (paid, and optional).'],
+    ],
+    plsCheck:
+      "Checked against SmartPLS 4's own output for 14 textbook models: the numbers match to the three decimals SmartPLS prints. There's no limit on the number of respondents.",
+    citeH3: "Citations that still work in Word",
+    cite: [
+      "Docs opens a thesis written with Zotero, Mendeley, Mendeley Cite, Word or EndNote with its citations intact, and saves it so your plug-in still works when you go back to Word.",
+      "With Zotero open, <strong>Insert Citation</strong> and <strong>Insert Bibliography</strong> add new ones. <strong>Citation Style</strong> switches the whole document between APA, IEEE, Harvard, Chicago, Vancouver, MLA and about 80 other styles, in Indonesian or English.",
+      "No Zotero? Import a .bib, RIS or CSL-JSON file into the document and cite from that.",
+    ],
+  },
+
   navPaparan: "Paparan AI",
   pap: {
     h2: "Let Paparan AI make the deck, document or workbook",
@@ -237,6 +265,8 @@ export const en = {
     "Excel: macros in .xlsm workbooks are kept when you save (Kantor doesn't run them, and says so); saving as .xlsx warns that they'll be left out, as Excel does. Pivot tables can be created, rearranged, grouped, refreshed and deleted, with calculated fields and items (items named by position too), Show Values As, filters (several per field when the pivot allows it) and styles.",
     "OpenDocument (.ods): charts are brought in as column, bar, line, area, pie, doughnut, scatter, radar, bubble and stock charts; freehand shapes, groups (with the charts inside them), hatched fills (as patterns) and form controls come in too (controls are drawn, not run).",
     "Excel: charts can be inserted (column, bar, line, pie, area, scatter) and changed in a Chart panel, including charts that came with the file (combo charts with a secondary axis, 3-D charts and the Office 2016 types too); chart sheets are shown, printed and edited (their chart in the Chart panel; Rename, Delete, Move or Copy, Tab Color, Hide and Unhide from the tab), and Move Chart puts a chart on its own chart sheet and back, keeping its data link and user shapes; shapes, text boxes and groups (with the charts inside them) are shown, printed and added (a text box and a few common shapes), and their text, fill (also a picture or a pattern), outline and shadow can be changed (Format Shape); 3-D effects are drawn approximately, and text with fields or equations is shown but not edited. Sparklines (line, column and win/loss) are shown and printed but can't be made or changed yet.",
+    "PLS-SEM: PLSpredict, IPMA, multigroup analysis, moderation with interaction terms and higher-order constructs aren't there yet.",
+    "Citations: Word and EndNote citations are kept and listed but not restyled, footnote styles put the citation in the text, and punctuation can differ slightly from Zotero's own output, so Refresh Citations runs only when you ask.",
     "PowerPoint: chart data (series and categories inserted, deleted or reordered anywhere) is edited in a panel, not on the slide; SmartArt text can be edited and its shapes moved and resized; its layout can be changed to a list, process, cycle, hierarchy, Venn, matrix, pyramid or picture layout, and items added and removed in those layouts, with Organization Chart assistants and hanging layouts (some SmartArt shows as a plain box); map charts list their values when their map data is in a form Kantor can't read, and the series of the newer chart types (waterfall, treemap…) can't be added or removed (their data can be edited).",
   ],
   reportH3: "Found a file that Kantor gets wrong?",
@@ -418,6 +448,34 @@ export const id = {
       'Tidak mau pakai installer? Unduh zip portabel untuk <a href="{dl}/Kantor-x64.zip">x64</a> atau <a href="{dl}/Kantor-arm64.zip">Arm</a>, ekstrak di mana saja, lalu buka <strong>kantor.exe</strong>.',
   },
 
+  navThesis: "Skripsi",
+  thesis: {
+    h2: "Untuk skripsi: PLS-SEM di Sheets, sitasi di Docs",
+    lede:
+      "Olah model struktural untuk Bab 4 langsung di samping data kuesioner, dan sitasi Zotero atau Mendeley Anda tetap berfungsi selama menulis. Keduanya bagian dari aplikasi gratis ini dan jalan tanpa internet di Windows, Mac, dan Linux.",
+    shot: "pls-id",
+    shotAlt:
+      "Kantor Sheets dengan tab model PLS-SEM. Diagram jalurnya menunjukkan konstruk X menuju Y secara langsung dan lewat mediator M, dengan sepuluh indikator M tersusun dalam dua baris berselang-seling. Nilai loading ada di garis indikator, jalur menampilkan koefisien dengan nilai p bootstrap dalam kurung, dan jalur yang signifikan berwarna hijau. Di bawah diagram, panel hasil menampilkan reliabilitas dan validitas konvergen tiap konstruk.",
+    shotCaption:
+      "Model mediasi setelah bootstrap: loading, koefisien jalur dengan nilai p, dan R² di diagram, tabelnya di bawah.",
+    plsH3: "PLS-SEM dengan diagram jalur seperti di SmartPLS",
+    pls: [
+      ["Gambar modelnya", "Pilih data kuesioner, seret kolom item ke kanvas untuk membuat konstruk, lalu tarik jalurnya. Konstruk reflektif atau formatif, PLS atau PLS konsisten (PLSc)."],
+      ["Bootstrap", "Bawaannya 5.000 subsampel, memakai semua inti prosesor, lengkap dengan bilah kemajuan dan tombol Berhenti. Nilai t dan p satu atau dua arah, dengan interval persentil dan BCa."],
+      ["Semua tabel untuk Bab 4", "Loading, Cronbach's alpha, rho_A, reliabilitas komposit, AVE, Fornell-Larcker, HTMT, cross-loading, VIF, R², f², efek tidak langsung, SRMR, dan NFI. Nilai yang di luar batas lazim (Hair dkk.) langsung ditandai."],
+      ["Laporan sebagai titik awal", "Ekspor laporan gaya APA dalam Bahasa Indonesia atau Inggris (.docx) atau semua tabel sebagai .xlsx, atau sisipkan tabelnya ke lembar kerja baru. Modelnya ikut tersimpan di dalam buku kerja."],
+      ["Minta Paparan AI menjelaskan", 'Tombol Jelaskan hasil mengirim model, data, dan hasilnya ke <a href="#paparan">Paparan AI</a>, yang lalu menuliskan pembahasan hasilnya (berbayar, dan tidak wajib).'],
+    ],
+    plsCheck:
+      "Sudah dicocokkan dengan keluaran SmartPLS 4 untuk 14 model dari buku teks: angkanya sama sampai tiga desimal yang dicetak SmartPLS. Jumlah responden tidak dibatasi.",
+    citeH3: "Sitasi yang tetap jalan di Word",
+    cite: [
+      "Docs membuka skripsi yang ditulis dengan Zotero, Mendeley, Mendeley Cite, Word, atau EndNote tanpa merusak sitasinya, lalu menyimpannya sehingga plug-in Anda tetap jalan saat kembali ke Word.",
+      "Selama Zotero terbuka, <strong>Sisipkan Sitasi</strong> dan <strong>Sisipkan Daftar Pustaka</strong> menambahkan yang baru. <strong>Gaya Sitasi</strong> mengganti gaya seluruh dokumen ke APA, IEEE, Harvard, Chicago, Vancouver, MLA, atau sekitar 80 gaya lain, dalam Bahasa Indonesia atau Inggris.",
+      "Tidak pakai Zotero? Impor berkas .bib, RIS, atau CSL-JSON ke dokumen, lalu kutip dari situ.",
+    ],
+  },
+
   navPaparan: "Paparan AI",
   pap: {
     h2: "Biar Paparan AI yang membuat paparan, dokumen, atau buku kerjanya",
@@ -484,6 +542,8 @@ export const id = {
     "Excel: makro di buku kerja .xlsm tetap tersimpan saat Anda menyimpan (Kantor tidak menjalankannya, dan memberi tahu Anda); menyimpan sebagai .xlsx memperingatkan bahwa makro akan dibuang, seperti di Excel. Pivot table bisa dibuat, disusun ulang, dikelompokkan, di-refresh, dan dihapus, lengkap dengan calculated field dan calculated item (item juga bisa disebut menurut posisinya), Show Values As, filter (beberapa per bidang bila pivot mengizinkannya), dan gaya.",
     "OpenDocument (.ods): grafik ikut terbuka sebagai grafik kolom, batang, garis, area, pai, donat, sebar, radar, gelembung, dan saham; bentuk gambar tangan bebas, grup bentuk (beserta grafik di dalamnya), isian arsir (sebagai pola), dan kontrol formulir juga ikut terbuka (kontrol hanya digambar, tidak dijalankan).",
     "Excel: grafik bisa disisipkan (kolom, batang, garis, pai, area, sebar) dan diubah lewat panel Grafik, termasuk grafik bawaan file (juga grafik kombinasi dengan sumbu sekunder, grafik 3-D, dan jenis Office 2016); chart sheet sudah ditampilkan, dicetak, dan bisa diubah (grafiknya lewat panel Grafik; Ganti Nama, Hapus, Pindah atau Salin, Warna Tab, Sembunyikan, dan Tampilkan dari tabnya), dan Pindahkan Grafik memindahkan grafik ke chart sheet sendiri dan sebaliknya, dengan tautan data dan bentuk penggunanya; bentuk (shape), kotak teks, dan grup (beserta grafik di dalamnya) sudah ditampilkan, dicetak, dan bisa ditambahkan (kotak teks dan beberapa bentuk umum), dan teks, isian (juga gambar atau pola), garis tepi, serta bayangannya bisa diubah (Format Bentuk); efek 3-D digambar secara mendekati, dan teks dengan bidang atau persamaan ditampilkan tetapi tidak bisa diedit. Sparkline (garis, kolom, dan menang/kalah) ditampilkan dan dicetak, tetapi belum bisa dibuat atau diubah.",
+    "PLS-SEM: PLSpredict, IPMA, analisis multigrup, moderasi dengan suku interaksi, dan konstruk orde tinggi belum tersedia.",
+    "Sitasi: sitasi Word dan EndNote tetap tersimpan dan terdaftar tetapi gayanya tidak diubah, gaya catatan kaki menaruh sitasi di dalam teks, dan tanda bacanya bisa sedikit berbeda dari keluaran Zotero sendiri, jadi Perbarui Sitasi hanya berjalan saat Anda memintanya.",
     "PowerPoint: data grafik (termasuk menyisipkan, menghapus, atau mengurutkan ulang seri dan kategori di posisi mana pun) diedit lewat panel, bukan langsung di slide; teks SmartArt bisa diedit dan bentuknya bisa dipindah serta diubah ukurannya; tata letaknya bisa diubah ke daftar, proses, siklus, hierarki, Venn, matriks, piramida, atau tata letak gambar, dan item bisa ditambah atau dihapus pada tata letak tersebut, termasuk asisten dan tata letak menggantung pada Bagan Organisasi (sebagian SmartArt tampil sebagai kotak polos); grafik peta menampilkan daftar nilainya bila data petanya tersimpan dalam bentuk yang belum bisa dibaca Kantor, dan seri jenis grafik baru (waterfall, treemap…) belum bisa ditambah atau dihapus (datanya bisa diedit).",
   ],
   reportH3: "Menemukan file yang salah tampil di Kantor?",

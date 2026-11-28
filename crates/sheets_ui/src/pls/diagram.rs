@@ -402,7 +402,7 @@ impl Diagram {
                     };
                     return (name.clone(), rect);
                 }
-                let outer = staggered && i % 2 == 1;
+                let outer = staggered && !i.is_multiple_of(2);
                 let i = i as f64;
                 let (x, y) = match side {
                     Side::Left | Side::Right => {
@@ -467,7 +467,7 @@ impl Diagram {
             .is_some_and(|n| self.indicator_moved(n));
         let t = if !Self::staggered(c) || moved || len < 60.0 {
             0.5
-        } else if index % 2 == 0 {
+        } else if index.is_multiple_of(2) {
             22.0 / len
         } else {
             1.0 - 22.0 / len

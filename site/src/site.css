@@ -157,7 +157,7 @@ code { font-family: var(--mono); font-size: 0.92em; }
 .lang-short { display: none; }
 
 @media (max-width: 46rem) {
-  .nav-gh { display: none; }
+  .nav-gh, .nav-thesis { display: none; }
 }
 @media (max-width: 30rem) {
   .nav-limits { display: none; }
@@ -498,6 +498,45 @@ h2 {
 }
 .copy:hover { background: color-mix(in srgb, var(--fg) 6%, var(--surface)); }
 .copy-status { margin-top: 0.4rem; font-size: 0.88rem; color: var(--fg-muted); min-height: 1.4em; }
+
+/* ---------- Thesis: PLS-SEM and citations ----------
+   Sits before the downloads on the chrome band's opposite (plain bg), reusing the Paparan
+   head and shot styles. Each half carries its app's colour bar (Sheets green, Docs blue),
+   the same marker the app cards use. */
+.thesis { padding-block: clamp(3rem, 7vw, 5rem); border-top: 1px solid var(--border); }
+.thesis-grid {
+  margin-top: clamp(2.5rem, 6vw, 3.5rem);
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+  gap: 2.5rem 4rem;
+}
+.thesis-grid h3 { font-size: 1.2rem; font-weight: 650; }
+.thesis-grid h3::before {
+  content: "";
+  display: block;
+  width: 1.5rem;
+  height: 3px;
+  margin-bottom: 0.75rem;
+  border-radius: 2px;
+  background: var(--app);
+}
+.thesis-list { margin: 1rem 0 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem 2rem; }
+.thesis-list dt { font-weight: 650; }
+.thesis-list dd { margin: 0.3rem 0 0; color: var(--fg-muted); }
+.thesis-check {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.95rem;
+}
+.thesis-cite p { margin-top: 0.75rem; color: var(--fg-muted); }
+.thesis-cite p:first-of-type { margin-top: 1rem; color: var(--fg); }
+@media (max-width: 52rem) {
+  .thesis-grid { grid-template-columns: minmax(0, 1fr); gap: 2.25rem; }
+}
+@media (max-width: 36rem) {
+  .thesis-list { grid-template-columns: minmax(0, 1fr); }
+}
 
 /* ---------- Paparan AI ----------
    The paid AI gets its own section after the downloads, so Kantor stays the lead. Requests
