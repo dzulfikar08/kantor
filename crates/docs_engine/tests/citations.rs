@@ -585,6 +585,12 @@ fn citations_inserted_as_zotero_fields() {
         shown(&doc, 1)
     );
     assert!(shown(&doc, 2).starts_with("Santoso, B., & Wijaya, C. (2019)."));
+    // Every entry with a half-inch hanging indent (no Bibliography style
+    // in a new document), as Zotero's plug-ins give them.
+    for i in [1, 2] {
+        let ind = doc.paragraph(i).props.indent;
+        assert_eq!((ind.left, ind.first), (Some(720), Some(-720)), "{i}");
+    }
 
     // IEEE: a new first citation shifts the numbers.
     doc.set_citation_prefs("http://www.zotero.org/styles/ieee", Some("en-US"));
