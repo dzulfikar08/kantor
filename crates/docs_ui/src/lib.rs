@@ -2166,6 +2166,7 @@ impl DocsView {
                 let side = o.whole[2].max(o.whole[3]);
                 if let Some(data) = self.screen_picture_of(&img.rel_id, side, cx) {
                     if shown {
+                        let full = self.picture_full_size(&img.rel_id);
                         let pic = floats::inline_pic(
                             &self.painter,
                             &mut self.turned_images,
@@ -2173,6 +2174,7 @@ impl DocsView {
                             &img,
                             o.whole,
                             data,
+                            full,
                             window,
                         );
                         out.insert((o.para, o.index), pic);
@@ -2204,6 +2206,7 @@ impl DocsView {
                         &img,
                         o.whole,
                         data,
+                        None,
                         window,
                     );
                     out.insert((o.para, o.index), pic);
@@ -2253,6 +2256,7 @@ impl DocsView {
                     let side = o.whole[2].max(o.whole[3]);
                     let bytes = l.doc(&self.doc).image_bytes(&img.rel_id);
                     if let Some(data) = self.screen_picture_from(&key, side, bytes.clone(), cx) {
+                        let full = self.picture_full_size(&key);
                         let pic = floats::inline_pic(
                             &self.painter,
                             &mut self.turned_images,
@@ -2260,6 +2264,7 @@ impl DocsView {
                             &img,
                             o.whole,
                             data,
+                            full,
                             window,
                         );
                         out.insert((l.key(), o.para, o.index), pic);
@@ -2290,6 +2295,7 @@ impl DocsView {
                             &img,
                             o.whole,
                             data,
+                            None,
                             window,
                         );
                         out.insert((l.key(), o.para, o.index), pic);

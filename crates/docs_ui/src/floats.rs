@@ -1304,7 +1304,9 @@ impl DocsView {
                     Some(t) => t.clone(),
                     None => {
                         let cut = shape.as_deref();
-                        let Some(t) = turn_image(&data, *rot, *flip, *image, *clip, cut) else {
+                        let full = self.picture_full_size(&base_key);
+                        let Some(t) = turn_image(&data, full, *rot, *flip, *image, *clip, cut)
+                        else {
                             continue;
                         };
                         if self.turned_images.len() >= 24 {
@@ -1424,6 +1426,7 @@ pub(crate) struct InlinePic {
 /// Inline picture `img` decoded as `data` (cached as `key`), drawn into
 /// `whole`: cut to its shape and turned as it's drawn (cut images cached
 /// in `turned`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn inline_pic(
     painter: &docs_pdf::floats::Painter,
     turned: &mut HashMap<String, Arc<RenderImage>>,
@@ -1431,6 +1434,7 @@ pub(crate) fn inline_pic(
     img: &docs_engine::Image,
     whole: [f32; 4],
     data: Arc<RenderImage>,
+    full: Option<(u32, u32)>,
     window: &mut Window,
 ) -> InlinePic {
     let look = img
@@ -1444,7 +1448,8 @@ pub(crate) fn inline_pic(
     let cut = match turned.get(&pk) {
         Some(t) => t.clone(),
         None => {
-            let Some(t) = turn_image(&data, l.rot, l.flip, whole, whole, l.shape.as_deref()) else {
+            let cut = l.shape.as_deref();
+            let Some(t) = turn_image(&data, full, l.rot, l.flip, whole, whole, cut) else {
                 return InlinePic { data, look: None };
             };
             if turned.len() >= 24 {
@@ -1617,8 +1622,10 @@ const CUT_MIN: f32 = 800.0;
 /// `shape` (page px, before flipping and turning; anti-aliased), flipped,
 /// then turned `rot` degrees clockwise, into the box around the turned one
 /// (nearest pixel; the corners stay transparent).
+#[allow(clippy::too_many_arguments)]
 fn turn_image(
     img: &RenderImage,
+    full: Option<(u32, u32)>,
     rot: f32,
     (flip_h, flip_v): (bool, bool),
     image: [f32; 4],
@@ -1635,7 +1642,10 @@ fn turn_image(
     let (w0, h0) = (clip[2].max(1e-3), clip[3].max(1e-3));
     // As many pixels as the picture has (a cut one enough for a smooth
     // edge), at most TURNED_MAX on a side.
-    let own = (sw as f32 * kw).max(sh as f32 * kh);
+    // (Of the picture's own size: a copy decoded smaller is sampled
+    // into a box as large.)
+    let (ow, oh) = full.unwrap_or((sw, sh));
+    let own = (ow as f32 * kw).max(oh as f32 * kh);
     let want = if shape.is_some() {
         own.max(CUT_MIN)
     } else {

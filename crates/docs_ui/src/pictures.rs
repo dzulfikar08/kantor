@@ -45,6 +45,8 @@ struct Job {
 struct Ready {
     img: Arc<RenderImage>,
     side: u32,
+    /// The picture's own size (px).
+    full: (u32, u32),
     used: Instant,
 }
 
@@ -87,7 +89,7 @@ fn image_bytes(img: &RenderImage) -> usize {
 
 /// `bytes` (PNG or JPEG) decoded with no side longer than `side` px (as
 /// GPUI wants it: BGRA).
-fn decode(bytes: &[u8], side: u32) -> Option<(Arc<RenderImage>, u32)> {
+fn decode(bytes: &[u8], side: u32) -> Option<(Arc<RenderImage>, u32, (u32, u32))> {
     let img = image::load_from_memory(bytes).ok()?;
     let (w, h) = (img.width(), img.height());
     // Small ones (logos, icons) at their own size: little to save, and
@@ -110,7 +112,7 @@ fn decode(bytes: &[u8], side: u32) -> Option<(Arc<RenderImage>, u32)> {
         px.0.swap(0, 2);
     }
     let img = Arc::new(RenderImage::new(vec![image::Frame::new(rgba)]));
-    Some((img, if scaled { side } else { u32::MAX }))
+    Some((img, if scaled { side } else { u32::MAX }, (w, h)))
 }
 
 impl DocsView {
@@ -209,10 +211,11 @@ impl DocsView {
                     let p = &mut this.pictures;
                     p.running -= 1;
                     p.loading.remove(&key);
-                    if let Some((img, side)) = img {
+                    if let Some((img, side, full)) = img {
                         let new = Ready {
                             img,
                             side,
+                            full,
                             used: Instant::now(),
                         };
                         if let Some(old) = p.ready.insert(key.clone(), new) {
@@ -228,6 +231,13 @@ impl DocsView {
             })
             .detach();
         }
+    }
+
+    /// The own size (px) of decoded picture `key`: turned and cut copies
+    /// are made as large as from the full picture, so their edges fall as
+    /// they did.
+    pub(crate) fn picture_full_size(&self, key: &str) -> Option<(u32, u32)> {
+        self.pictures.ready.get(key).map(|r| r.full)
     }
 
     /// Whether picture `key` is decoded by [`Self::screen_picture_from`]
@@ -343,16 +353,17 @@ mod tests {
 
     #[std::prelude::v1::test]
     fn decodes_at_the_size_shown() {
-        let (img, side) = decode(&png(1200, 600), 100).unwrap();
+        let (img, side, full) = decode(&png(1200, 600), 100).unwrap();
         let size = img.size(0);
         assert_eq!((size.width.0, size.height.0, side), (100, 50, 100));
+        assert_eq!(full, (1200, 600));
         // Small ones stay as they are.
-        let (img, side) = decode(&png(400, 200), 100).unwrap();
+        let (img, side, _) = decode(&png(400, 200), 100).unwrap();
         assert_eq!((img.size(0).width.0, side), (400, u32::MAX));
         // BGRA, as GPUI wants it.
         assert_eq!(&img.as_bytes(0).unwrap()[..4], &[30, 20, 10, 255]);
         // Smaller than asked for: its own size, never decoded again.
-        let (img, side) = decode(&png(400, 200), 1000).unwrap();
+        let (img, side, _) = decode(&png(400, 200), 1000).unwrap();
         assert_eq!((img.size(0).width.0, side), (400, u32::MAX));
     }
 }
