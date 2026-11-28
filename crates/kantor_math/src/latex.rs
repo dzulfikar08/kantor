@@ -417,7 +417,7 @@ impl Parser {
                 }
                 Ok(normalize(self.command(&name, start)?))
             }
-            Some(c) if matches!(c, '}' | '&' | '^' | '_') => self.err("missing argument"),
+            Some('}' | '&' | '^' | '_') => self.err("missing argument"),
             Some(c) => {
                 self.i += 1;
                 let c = if c == '-' { '−' } else { c };

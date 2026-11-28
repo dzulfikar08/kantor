@@ -655,7 +655,16 @@ fn parse_para(p: Node, cx: &ParseCtx, locked: &mut Option<String>) -> TextPara {
                         .filter_map(|t| t.text())
                         .collect(),
                 };
-                push_run(&mut para, &t.replace(['\n', '\r'], " "), props);
+                let t = t.replace(['\n', '\r'], " ");
+                let start = para.text.len();
+                push_run(&mut para, &t, props);
+                // Drawn as math over its linear text.
+                if let Some(m) = math
+                    && !t.is_empty()
+                {
+                    para.maths
+                        .push((start..start + t.len(), Arc::from(raw(src, m))));
+                }
             }
             (_, other) => {
                 if locked.is_none() {

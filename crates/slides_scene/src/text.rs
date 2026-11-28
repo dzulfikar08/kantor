@@ -92,6 +92,22 @@ pub fn layout_paragraphs(t: &RenderText) -> Vec<docs_layout::Paragraph> {
                     family: Some(docs_engine::font_stack(&r.font)),
                 })
                 .collect();
+            // Equations: drawn in a box where their linear text starts,
+            // the text itself hidden.
+            for (range, xml) in &p.maths {
+                if range.start >= lp.text.len() {
+                    continue;
+                }
+                lp.objects.push(docs_layout::InlineObject {
+                    index: range.start,
+                    kind: docs_layout::ObjectKind::Math,
+                    width: 0.0,
+                    height: 0.0,
+                    label: String::new(),
+                });
+                lp.maths.push((range.start, xml.clone()));
+                lp.hidden.push(range.clone());
+            }
             lp
         })
         .collect()
@@ -121,6 +137,7 @@ fn layout_key(paras: &[docs_layout::Paragraph], width: f32) -> u64 {
             m.style.family.hash(&mut h);
             (m.style.bold, m.style.italic).hash(&mut h);
         }
+        p.maths.hash(&mut h);
         for s in &p.spans {
             s.range.hash(&mut h);
             (s.bold, s.italic, s.underline).hash(&mut h);

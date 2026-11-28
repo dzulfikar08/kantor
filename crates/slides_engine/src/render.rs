@@ -4,6 +4,7 @@
 //! written to the file.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use docs_engine::Rgb;
 
@@ -283,6 +284,7 @@ pub(crate) fn render_paras_with(
                 space_before_pt: 0.0,
                 space_after_pt: 0.0,
                 line: None,
+                maths: p.maths.clone(),
             };
             // Empty paragraphs show their bullet only while editing.
             let shown = shown.filter(|_| has_text || prompts);
@@ -393,6 +395,9 @@ pub struct RenderPara {
     pub space_after_pt: f32,
     /// `None` = single.
     pub line: Option<LineSpacing>,
+    /// Equations drawn in place of their linear text (see
+    /// [`crate::TextPara::maths`]).
+    pub maths: Vec<(Range<usize>, Arc<str>)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -695,6 +700,7 @@ impl Presentation {
                     space_before_pt: 0.0,
                     space_after_pt: 0.0,
                     line: None,
+                    maths: Vec::new(),
                 };
                 apply_para_style(&mut para, &st, shown, true, scale, bp.line_reduction);
                 vec![para]

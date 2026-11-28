@@ -1388,7 +1388,7 @@ impl<'a> Ctx<'a> {
         let align = move |j: usize| -> f32 {
             if !aligned {
                 0.5
-            } else if j % 2 == 0 {
+            } else if j.is_multiple_of(2) {
                 1.0
             } else {
                 0.0
@@ -1516,7 +1516,7 @@ impl<'a> Ctx<'a> {
     fn group_chr(&mut self, chr: char, top: bool, body: &[Node], st: St) -> B {
         let base = self.row(body, st);
         let bw = base.w;
-        let mut g = match self.stretch(chr, bw, false, st) {
+        let g = match self.stretch(chr, bw, false, st) {
             Some(b) => b,
             None => self.char_box(chr, st),
         };

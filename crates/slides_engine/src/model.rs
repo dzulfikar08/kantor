@@ -313,6 +313,9 @@ pub struct TextPara {
     pub props: ParaProps,
     /// Raw `a:endParaRPr`, written back as is.
     pub end: Option<Arc<str>>,
+    /// Equations: the byte range of their linear text in `text`, and
+    /// their OMML (`m:oMathPara` / `m:oMath`), drawn in place of the text.
+    pub maths: Vec<(Range<usize>, Arc<str>)>,
 }
 
 impl Default for TextPara {
@@ -336,6 +339,7 @@ impl TextPara {
             text,
             props: ParaProps::default(),
             end: None,
+            maths: Vec::new(),
         }
     }
 
@@ -446,6 +450,7 @@ impl TextPara {
             runs,
             props: self.props.clone(),
             end: self.end.clone(),
+            maths: Vec::new(),
         };
         right.normalize();
         self.normalize();
