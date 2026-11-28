@@ -367,6 +367,7 @@ function page(t, other) {
         <li><a href="${GH}">${t.footSource}</a></li>
         <li><a href="${GH}/blob/main/CHANGELOG.md">${t.footChangelog}</a></li>
         <li><a href="${GH}/blob/main/LICENSE">${t.footLicense}</a></li>
+        <li><a href="${t.lang === "id" ? "/id/privacy/" : "/privacy/"}">${t.footPrivacy}</a></li>
         <li><a href="${other.path}" hreflang="${other.lang}" lang="${other.lang}">${t.switchLang}</a></li>
       </ul>
       <p class="by">${t.footBy} <a href="https://paparanai.id">Paparan AI</a></p>
@@ -405,6 +406,92 @@ writeFileSync(
 `,
 );
 
+// Privacy page (/privacy/, /id/privacy/): English from the repo's PRIVACY.md, Indonesian from
+// src/privacy-id.md. Google's OAuth consent screen links here. Only the Markdown those two files
+// use: a # heading, paragraphs, a numbered list with nested "-" items, **bold**, *italic*,
+// `code`, [links](...) and <https://...>.
+function inline(s) {
+  const esc = (x) => x.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  const href = (u) => (/^[a-z]+:/.test(u) ? u : `${GH}/blob/main/${u}`);
+  const codes = [];
+  s = s.replace(/`([^`]+)`/g, (_, c) => `\u0000${codes.push(esc(c)) - 1}\u0000`);
+  s = s.replace(/<(https?:\/\/[^>]+)>/g, (_, u) => `[${u}](${u})`);
+  s = esc(s)
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t, u) => `<a href="${href(u)}">${t}</a>`)
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/(^|[\s(])(https:\/\/[^\s<)]+[^\s<).,])/g, '$1<a href="$2">$2</a>');
+  return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${codes[i]}</code>`);
+}
+function markdown(md) {
+  const out = [];
+  let title = "";
+  const blocks = md.trim().split(/\n\s*\n/);
+  for (const b of blocks) {
+    const lines = b.split("\n");
+    if (lines[0].startsWith("# ")) {
+      title = lines[0].slice(2).trim();
+      out.push(`<h1>${inline(title)}</h1>`);
+    } else if (/^\d+\. /.test(lines[0])) {
+      // Items start at column 0 ("1. "); nested items at "   - "; anything else continues the
+      // current item or sub-item.
+      const items = [];
+      for (const l of lines) {
+        if (/^\d+\. /.test(l)) items.push({ text: l.replace(/^\d+\. /, ""), subs: [] });
+        else if (/^\s+- /.test(l)) items.at(-1).subs.push(l.replace(/^\s+- /, ""));
+        else {
+          const it = items.at(-1);
+          if (it.subs.length) it.subs[it.subs.length - 1] += " " + l.trim();
+          else it.text += " " + l.trim();
+        }
+      }
+      out.push(
+        `<ol>${items
+          .map(
+            (it) =>
+              `<li>${inline(it.text)}${
+                it.subs.length ? `<ul>${it.subs.map((s) => `<li>${inline(s)}</li>`).join("")}</ul>` : ""
+              }</li>`,
+          )
+          .join("")}</ol>`,
+      );
+    } else out.push(`<p>${inline(lines.map((l) => l.trim()).join(" "))}</p>`);
+  }
+  return { title, html: out.join("\n") };
+}
+const privacy = [
+  { lang: "en", path: "/privacy/", md: readFileSync(join(root, "..", "PRIVACY.md"), "utf8"), home: "/", back: "Kantor home page", other: "/id/privacy/", otherName: "Bahasa Indonesia" },
+  { lang: "id", path: "/id/privacy/", md: readFileSync(join(root, "src", "privacy-id.md"), "utf8"), home: "/id/", back: "Halaman utama Kantor", other: "/privacy/", otherName: "English" },
+];
+for (const p of privacy) {
+  const { title, html } = markdown(p.md);
+  mkdirSync(join(dist, ...p.path.split("/").filter(Boolean)), { recursive: true });
+  writeFileSync(
+    join(dist, ...p.path.split("/").filter(Boolean), "index.html"),
+    `<!doctype html>
+<html lang="${p.lang}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${title}: Kantor</title>
+  <link rel="canonical" href="${SITE}${p.path}">
+  <link rel="alternate" hreflang="en" href="${SITE}/privacy/">
+  <link rel="alternate" hreflang="id" href="${SITE}/id/privacy/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="${css}">
+</head>
+<body>
+  <main id="main" class="wrap prose">
+    <p class="foot-brand"><a href="${p.home}"><img src="/favicon.svg" width="28" height="28" alt="">Kantor</a></p>
+${html}
+    <p><a href="${p.home}">${p.back}</a> · <a href="${p.other}" lang="${p.lang === "en" ? "id" : "en"}">${p.otherName}</a></p>
+  </main>
+</body>
+</html>
+`,
+  );
+}
+
 // Every key in `en` must have an Indonesian counterpart.
 // Nested objects too (pap, shots, win...), so a new English string can't ship without its
 // Indonesian one.
@@ -422,7 +509,7 @@ function missingKeys(a, b, at = "") {
 const missing = missingKeys(en, id);
 if (missing.length) throw new Error(`id is missing: ${missing.join(", ")}`);
 // Copy rule: no em dashes anywhere in the output.
-for (const f of ["index.html", "id/index.html"]) {
+for (const f of ["index.html", "id/index.html", "privacy/index.html", "id/privacy/index.html"]) {
   if (readFileSync(join(dist, f), "utf8").includes("\u2014")) throw new Error(`em dash in ${f}`);
 }
 console.log(`built ${dist}`);
