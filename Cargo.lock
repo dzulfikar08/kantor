@@ -4346,6 +4346,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kantor_math"
+version = "0.28.1"
+dependencies = [
+ "roxmltree 0.21.2",
+ "ttf-parser",
+]
+
+[[package]]
 name = "kantor_mem"
 version = "0.28.1"
 

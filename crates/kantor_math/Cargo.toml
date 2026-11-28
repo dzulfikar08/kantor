@@ -1,0 +1,16 @@
+[package]
+name = "kantor_math"
+description = "Equations: one model for Office Math (OMML), LaTeX, the linear format and Typst, laid out with an OpenType MATH font (no GPUI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+roxmltree.workspace = true
+# MATH table, glyph metrics and size variants (already in the tree via fontdb and pdf_ui).
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }

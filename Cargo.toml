@@ -56,6 +56,7 @@ kantor_crypt = { path = "crates/kantor_crypt" }
 kantor_spell = { path = "crates/kantor_spell" }
 kantor_mem = { path = "crates/kantor_mem" }
 kantor_merge = { path = "crates/kantor_merge" }
+kantor_math = { path = "crates/kantor_math" }
 kantor_metafile = { path = "crates/kantor_metafile" }
 kantor_numfmt = { path = "crates/kantor_numfmt" }
 kantor_ooxml = { path = "crates/kantor_ooxml" }

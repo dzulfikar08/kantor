@@ -61,7 +61,7 @@ fn main() {
     let fonts: Vec<Font> = Font::iter(Bytes::new(data)).collect();
     let book = FontBook::from_fonts(&fonts);
     let id = RootedPath::new(VirtualRoot::Project, VirtualPath::new("main.typ").unwrap()).intern();
-    let src = "#set page(width: auto, height: auto, margin: 0pt)\n#set text(font: \"New Computer Modern Math\")\n$ x = (-b plus.minus sqrt(b^2 - 4 a c)) / (2 a) $\n$ sum_(i=1)^n i^2 $";
+    let src = "#set page(width: auto, height: auto, margin: 0pt)\n#set text(font: \"STIX Two Math\")\n$ x = (-b plus.minus sqrt(b^2 - 4 a c)) / (2 a) $\n$ sum_(i=1)^n i^2 $";
     let w = W {
         lib: LazyHash::new(Library::default()),
         book: LazyHash::new(book),
