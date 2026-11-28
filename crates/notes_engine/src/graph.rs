@@ -28,8 +28,8 @@ pub struct Forces {
 impl Default for Forces {
     fn default() -> Self {
         Self {
-            link_distance: 60.,
-            charge: -140.,
+            link_distance: 80.,
+            charge: -260.,
             charge_max_distance: 900.,
             gravity: 0.045,
             velocity_decay: 0.4,

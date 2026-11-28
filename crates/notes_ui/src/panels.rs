@@ -205,10 +205,11 @@ impl NotesView {
     }
 
     pub fn toggle_files(&mut self, cx: &mut Context<Self>) {
+        let had = self.vault.is_some();
         if !self.ensure_vault(cx) {
             return;
         }
-        self.left = if self.left == LeftPanel::Files {
+        self.left = if had && self.left == LeftPanel::Files {
             LeftPanel::Hidden
         } else {
             LeftPanel::Files

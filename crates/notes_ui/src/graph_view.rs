@@ -108,7 +108,7 @@ impl GraphState {
         let h = (r[3] - r[1]).max(1.) + margin * 2.;
         let z = (f32::from(b.size.width) / w)
             .min(f32::from(b.size.height) / h)
-            .clamp(0.15, 2.);
+            .clamp(0.15, 1.6);
         self.zoom = z;
         let mid = [(r[0] + r[2]) / 2., (r[1] + r[3]) / 2.];
         self.pan = point(px(-mid[0] * z), px(-mid[1] * z));
@@ -453,7 +453,7 @@ impl NotesView {
                     }
                     // Dots, then names.
                     let show_all_labels = zoom >= 0.75 && pos.len() <= 600;
-                    let text_size = px((11. * zoom.clamp(0.8, 1.4)).round());
+                    let text_size = px((11. * zoom.clamp(0.85, 1.1)).round());
                     for (i, p) in pos.iter().enumerate() {
                         let s = at(*p);
                         if s.x < bounds.left() - px(80.)
