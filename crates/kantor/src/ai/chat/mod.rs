@@ -141,6 +141,29 @@ impl ChatPanel {
         self.input.update(cx, |s, cx| s.focus(window, cx));
     }
 
+    /// Type `prompt` and attach `files` (a document job), leaving the
+    /// sending to the user. A running job keeps running: the text waits in
+    /// the box.
+    pub fn prefill(
+        &mut self,
+        prompt: &str,
+        files: Vec<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.chat.started() {
+            self.kind = JobKind::Document;
+            self.kind_auto = false;
+        }
+        self.attach(files, cx);
+        let text = prompt.to_owned();
+        self.input.update(cx, |s, cx| {
+            s.set_value(text, window, cx);
+            s.focus(window, cx);
+        });
+        cx.notify();
+    }
+
     /// The scripted model for showing the panel without a provider.
     fn script() -> Option<PathBuf> {
         std::env::var_os(script::SCRIPT_ENV)

@@ -172,7 +172,7 @@ pub fn from_xml(xml: &str) -> Option<Result<Vec<Script>, String>> {
 /// XML text (or an attribute value) for `s`. Carriage returns are kept as
 /// `&#13;` (an XML reader turns a raw CR LF into LF); characters XML 1.0
 /// can't hold become U+FFFD.
-fn escape(s: &str, attr: bool) -> String {
+pub(crate) fn escape(s: &str, attr: bool) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

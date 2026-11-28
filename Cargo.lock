@@ -4204,6 +4204,7 @@ dependencies = [
  "kantor_esign",
  "kantor_merge",
  "kantor_pdf",
+ "kantor_pls",
  "kantor_sandbox",
  "kantor_theme",
  "kantor_ui",
@@ -4215,6 +4216,7 @@ dependencies = [
  "pdf_ui",
  "ring",
  "roxmltree 0.21.2",
+ "serde",
  "serde_json",
  "sheets_engine",
  "sheets_pdf",
@@ -4403,6 +4405,16 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "kantor_pls"
+version = "0.28.0"
+dependencies = [
+ "rand_chacha 0.9.0",
+ "rayon",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -7558,10 +7570,12 @@ dependencies = [
  "kantor_core",
  "kantor_mem",
  "kantor_ooxml",
+ "kantor_pls",
  "kantor_script",
  "kantor_spell",
  "kantor_ui",
  "log",
+ "serde_json",
  "sheets_engine",
  "sheets_pdf",
  "sheets_scene",

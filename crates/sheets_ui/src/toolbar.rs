@@ -556,6 +556,29 @@ pub(crate) fn render(active: &Active, compact: bool, cx: &mut Context<SheetsView
             .tooltip(i18n::t("PivotTable"))
             .dropdown_menu(move |menu, _, _| pivot_items(menu, &pivot_view)),
     );
+    // Data ▸ PLS-SEM: structural equation models on survey data.
+    let pls_view = cx.entity().downgrade();
+    row = row.child(
+        Button::new("pls-menu")
+            .ghost()
+            .xsmall()
+            .icon(Lucide::Network)
+            .dropdown_caret(true)
+            .tooltip(i18n::t("PLS-SEM"))
+            .dropdown_menu(move |menu, _, _| {
+                let (a, b) = (pls_view.clone(), pls_view.clone());
+                menu.item(
+                    PopupMenuItem::new(i18n::t("PLS-SEM…")).on_click(move |_, w, cx| {
+                        let _ = a.update(cx, |v, cx| v.pls_new_doc(w, cx));
+                    }),
+                )
+                .item(PopupMenuItem::new(i18n::t("Open PLS-SEM Model…")).on_click(
+                    move |_, w, cx| {
+                        let _ = b.update(cx, |v, cx| v.pls_open_model_doc(w, cx));
+                    },
+                ))
+            }),
+    );
     // Review > Spelling.
     let spell_view = cx.entity().downgrade();
     row = row.child(separator(cx)).child(

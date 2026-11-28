@@ -67,7 +67,7 @@ impl Workspace {
                 }
             }
             SheetsEvent::CloseCancelled => self.pending_close = None,
-            SheetsEvent::Close | SheetsEvent::Notice(_) => {}
+            SheetsEvent::Close | SheetsEvent::Notice(_) | SheetsEvent::ExplainPls { .. } => {}
         }
     }
 

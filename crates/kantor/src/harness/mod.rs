@@ -964,6 +964,38 @@ impl DocTools {
         Ok(ToolOutput::ok(text).with_images(images))
     }
 
+    /// `pls`: PLS-SEM on a data file in the work folder.
+    fn pls(&self, args: &Value) -> Result<ToolOutput> {
+        let mut a = args.clone();
+        let data = self.existing(args, "data")?;
+        a["data"] = json!(data);
+        if let Some(m) = args.get("model").and_then(Value::as_str) {
+            a["model"] = json!(self.existing(&json!({"model": m}), "model")?);
+        }
+        for key in ["report", "workbook", "results_json"] {
+            if let Some(p) = args.get(key).and_then(Value::as_str) {
+                let path = self.resolve(p)?;
+                self.writable(&path)?;
+                a[key] = json!(path);
+            }
+        }
+        a["overwrite"] = json!(true);
+        if args.get("check").and_then(Value::as_bool) == Some(true) {
+            let model = crate::agent::pls::model_from(&a["model"], Some(&self.root))?;
+            let opts = crate::agent::pls::Settings::from_args(&a)?.options(&model)?;
+            let sheet = crate::agent::pls::sheet_arg(&a);
+            let loaded = crate::agent::pls::read_data(
+                &data,
+                sheet.as_deref(),
+                args.get("range").and_then(Value::as_str),
+            )?;
+            let out = crate::agent::pls::check_json(&loaded, &model, &opts);
+            return Ok(ToolOutput::ok(serde_json::to_string(&out)?));
+        }
+        let out = crate::agent::pls::run_tool(&a, Some(&self.root))?;
+        Ok(ToolOutput::ok(serde_json::to_string(&out)?))
+    }
+
     fn convert(&self, args: &Value) -> Result<ToolOutput> {
         let input = self.existing(args, "input")?;
         let output = self.file_arg(args, "output")?;
@@ -1138,6 +1170,28 @@ impl Tools for DocTools {
                 ),
             ),
             ToolSpec::new(
+                "pls",
+                "PLS-SEM (as SmartPLS): estimate a model of constructs measured by survey items on a data file and get reliability, validity, path coefficients, R², effects, model fit and, with bootstrap, t and p values; flags values outside the usual thresholds. Optionally writes an APA-style .docx report (lang en or id) and a results .xlsx. `check: true` only checks the model against the data.",
+                params(
+                    json!({
+                        "model": json!({"type": ["object", "string"], "description": "{constructs: [{name, indicators: [column names], type: reflective|composite}], paths: [[from, to], ...]}, or a JSON file holding it"}),
+                        "data": s("The data file (.xlsx, .csv…): column names in the first row"),
+                        "sheet": s("The data's sheet (default: the first)"),
+                        "range": s("Cells to read, e.g. A1:K300 (default: the used area)"),
+                        "algorithm": json!({"type": "string", "enum": ["pls", "plsc"]}),
+                        "bootstrap": i("Bootstrap subsamples: 5000 for final results, 0 for none"),
+                        "seed": i("Bootstrap seed (default 1)"),
+                        "missing": json!({"type": "string", "enum": ["listwise", "mean"]}),
+                        "missing_value": json!({"type": "number", "description": "A number meaning missing, e.g. -99"}),
+                        "report": s("A .docx report to write"),
+                        "workbook": s("A .xlsx of all results to write"),
+                        "lang": json!({"type": "string", "enum": ["en", "id"]}),
+                        "check": b("Only check the model against the data"),
+                    }),
+                    &["model", "data"],
+                ),
+            ),
+            ToolSpec::new(
                 "convert",
                 "Convert a file as `kantor convert IN OUT`: .pptx/.docx/.xlsx to PDF, CSV/.xls/.ods to .xlsx, .xlsx to CSV, .doc/.odt to .docx, .ppt to .pptx.",
                 params(
@@ -1195,6 +1249,7 @@ impl Tools for DocTools {
             "schema" => self.schema(args),
             "look" => self.look(args),
             "convert" => self.convert(args),
+            "pls" => self.pls(args),
             other => Err(anyhow!("there is no tool {other}")),
         };
         r.unwrap_or_else(|e| ToolOutput::error(format!("{e:#}")))

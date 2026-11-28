@@ -1,0 +1,2816 @@
+{
+ "_source": "SmartPLS 4 reference values from the openpls-engine validation supplement (J. Jacobsen, 2026, https://doi.org/10.5281/zenodo.20511533, CC BY 4.0), printed by SmartPLS to three decimals. Datasets: the same supplement ($KANTOR_PLS_SMARTPLS).",
+ "cases": [
+  {
+   "name": "01-corporate-reputation-simple",
+   "title": "1 Simple model",
+   "dataset": "datasets/corporate-reputation/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "COMP",
+      "indicators": [
+       "comp_1",
+       "comp_2",
+       "comp_3"
+      ]
+     },
+     {
+      "name": "CUSA",
+      "indicators": [
+       "cusa"
+      ]
+     },
+     {
+      "name": "CUSL",
+      "indicators": [
+       "cusl_1",
+       "cusl_2",
+       "cusl_3"
+      ]
+     },
+     {
+      "name": "LIKE",
+      "indicators": [
+       "like_1",
+       "like_2",
+       "like_3"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "COMP",
+      "CUSA"
+     ],
+     [
+      "LIKE",
+      "CUSA"
+     ],
+     [
+      "COMP",
+      "CUSL"
+     ],
+     [
+      "LIKE",
+      "CUSL"
+     ],
+     [
+      "CUSA",
+      "CUSL"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing": "mean",
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.074,
+     "dULS": 0.301,
+     "dG": 0.147,
+     "nfi": 0.82,
+     "chiSquare": 317.049
+    },
+    "innerSummary": {
+     "COMP": {
+      "ave": 0.681,
+      "cAlpha": 0.776,
+      "rhoA": 0.832,
+      "rhoC": 0.865
+     },
+     "LIKE": {
+      "ave": 0.747,
+      "cAlpha": 0.831,
+      "rhoA": 0.836,
+      "rhoC": 0.899
+     },
+     "CUSA": {
+      "rSquared": 0.295,
+      "rSquaredAdj": 0.29,
+      "bic": -103.517,
+      "ave": 1.0,
+      "cAlpha": 1.0,
+      "rhoA": 1.0,
+      "rhoC": 1.0
+     },
+     "CUSL": {
+      "rSquared": 0.562,
+      "rSquaredAdj": 0.558,
+      "bic": -261.654,
+      "ave": 0.748,
+      "cAlpha": 0.831,
+      "rhoA": 0.839,
+      "rhoC": 0.899
+     }
+    },
+    "paths": {
+     "COMP->CUSA": 0.162,
+     "LIKE->CUSA": 0.424,
+     "COMP->CUSL": 0.009,
+     "LIKE->CUSL": 0.342,
+     "CUSA->CUSL": 0.504
+    },
+    "loadings": {
+     "comp_1": 0.858,
+     "comp_2": 0.798,
+     "comp_3": 0.818,
+     "cusa": 1.0,
+     "cusl_1": 0.833,
+     "cusl_2": 0.917,
+     "cusl_3": 0.843,
+     "like_1": 0.879,
+     "like_2": 0.87,
+     "like_3": 0.843
+    },
+    "htmt": {
+     "COMP:CUSA": 0.465,
+     "COMP:CUSL": 0.532,
+     "COMP:LIKE": 0.78,
+     "CUSA:CUSL": 0.755,
+     "CUSA:LIKE": 0.577,
+     "CUSL:LIKE": 0.737
+    },
+    "vifOuter": {
+     "comp_1": 1.397,
+     "comp_2": 1.787,
+     "comp_3": 1.888,
+     "cusl_1": 1.802,
+     "cusl_2": 2.564,
+     "cusl_3": 1.933,
+     "like_1": 1.945,
+     "like_2": 2.0,
+     "like_3": 1.811
+    },
+    "fSquared": {
+     "COMP->CUSA": 0.022,
+     "COMP->CUSL": 0.0,
+     "CUSA->CUSL": 0.41,
+     "LIKE->CUSA": 0.149,
+     "LIKE->CUSL": 0.136
+    }
+   }
+  },
+  {
+   "name": "02-corporate-reputation-extended",
+   "title": "2 Extended model",
+   "dataset": "datasets/corporate-reputation/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "ATTR",
+      "indicators": [
+       "attr_1",
+       "attr_2",
+       "attr_3"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "COMP",
+      "indicators": [
+       "comp_1",
+       "comp_2",
+       "comp_3"
+      ]
+     },
+     {
+      "name": "CSOR",
+      "indicators": [
+       "csor_1",
+       "csor_2",
+       "csor_3",
+       "csor_4",
+       "csor_5"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "CUSA",
+      "indicators": [
+       "cusa"
+      ]
+     },
+     {
+      "name": "CUSL",
+      "indicators": [
+       "cusl_1",
+       "cusl_2",
+       "cusl_3"
+      ]
+     },
+     {
+      "name": "LIKE",
+      "indicators": [
+       "like_1",
+       "like_2",
+       "like_3"
+      ]
+     },
+     {
+      "name": "PERF",
+      "indicators": [
+       "perf_1",
+       "perf_2",
+       "perf_3",
+       "perf_4",
+       "perf_5"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "QUAL",
+      "indicators": [
+       "qual_1",
+       "qual_2",
+       "qual_3",
+       "qual_4",
+       "qual_5",
+       "qual_6",
+       "qual_7",
+       "qual_8"
+      ],
+      "type": "composite"
+     }
+    ],
+    "paths": [
+     [
+      "ATTR",
+      "COMP"
+     ],
+     [
+      "ATTR",
+      "LIKE"
+     ],
+     [
+      "CSOR",
+      "COMP"
+     ],
+     [
+      "CSOR",
+      "LIKE"
+     ],
+     [
+      "PERF",
+      "COMP"
+     ],
+     [
+      "PERF",
+      "LIKE"
+     ],
+     [
+      "QUAL",
+      "COMP"
+     ],
+     [
+      "QUAL",
+      "LIKE"
+     ],
+     [
+      "COMP",
+      "CUSA"
+     ],
+     [
+      "LIKE",
+      "CUSA"
+     ],
+     [
+      "COMP",
+      "CUSL"
+     ],
+     [
+      "LIKE",
+      "CUSL"
+     ],
+     [
+      "CUSA",
+      "CUSL"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing": "mean",
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.057,
+     "nfi": 0.844
+    },
+    "innerSummary": {
+     "ATTR": {},
+     "CSOR": {},
+     "PERF": {},
+     "QUAL": {},
+     "COMP": {
+      "rSquared": 0.631
+     },
+     "LIKE": {
+      "rSquared": 0.558
+     },
+     "CUSA": {
+      "rSquared": 0.292,
+      "ave": 1.0,
+      "cAlpha": 1.0,
+      "rhoA": 1.0,
+      "rhoC": 1.0
+     },
+     "CUSL": {
+      "rSquared": 0.562
+     }
+    },
+    "paths": {
+     "ATTR->COMP": 0.086,
+     "ATTR->LIKE": 0.167,
+     "CSOR->COMP": 0.059,
+     "CSOR->LIKE": 0.178,
+     "PERF->COMP": 0.295,
+     "PERF->LIKE": 0.117,
+     "QUAL->COMP": 0.43,
+     "QUAL->LIKE": 0.38,
+     "COMP->CUSA": 0.146,
+     "COMP->CUSL": 0.006,
+     "LIKE->CUSA": 0.436,
+     "LIKE->CUSL": 0.344,
+     "CUSA->CUSL": 0.505
+    },
+    "loadings": {
+     "attr_1": 0.754,
+     "attr_2": 0.506,
+     "attr_3": 0.891,
+     "comp_1": 0.824,
+     "comp_2": 0.821,
+     "comp_3": 0.844,
+     "csor_1": 0.771,
+     "csor_2": 0.571,
+     "csor_3": 0.838,
+     "csor_4": 0.617,
+     "csor_5": 0.848,
+     "cusa": 1.0,
+     "cusl_1": 0.833,
+     "cusl_2": 0.917,
+     "cusl_3": 0.843,
+     "like_1": 0.88,
+     "like_2": 0.869,
+     "like_3": 0.844,
+     "perf_1": 0.846,
+     "perf_2": 0.69,
+     "perf_3": 0.573,
+     "perf_4": 0.717,
+     "perf_5": 0.638,
+     "qual_1": 0.741,
+     "qual_2": 0.57,
+     "qual_3": 0.749,
+     "qual_4": 0.664,
+     "qual_5": 0.787,
+     "qual_6": 0.856,
+     "qual_7": 0.722,
+     "qual_8": 0.627
+    },
+    "weights": {
+     "attr_1": 0.414,
+     "attr_2": 0.201,
+     "attr_3": 0.658,
+     "comp_1": 0.469,
+     "comp_2": 0.365,
+     "comp_3": 0.372,
+     "csor_1": 0.306,
+     "csor_2": 0.037,
+     "csor_3": 0.406,
+     "csor_4": 0.08,
+     "csor_5": 0.416,
+     "cusa": 1.0,
+     "cusl_1": 0.369,
+     "cusl_2": 0.42,
+     "cusl_3": 0.365,
+     "like_1": 0.419,
+     "like_2": 0.374,
+     "like_3": 0.363,
+     "perf_1": 0.468,
+     "perf_2": 0.177,
+     "perf_3": 0.194,
+     "perf_4": 0.34,
+     "perf_5": 0.199,
+     "qual_1": 0.202,
+     "qual_2": 0.041,
+     "qual_3": 0.106,
+     "qual_4": -0.005,
+     "qual_5": 0.16,
+     "qual_6": 0.398,
+     "qual_7": 0.229,
+     "qual_8": 0.19
+    }
+   }
+  },
+  {
+   "name": "03a-redundancy-attr",
+   "title": "3a Redundancy analysis ATTR",
+   "dataset": "datasets/corporate-reputation/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "ATTR_F",
+      "indicators": [
+       "attr_1",
+       "attr_2",
+       "attr_3"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "ATTR_G",
+      "indicators": [
+       "attr_global"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "ATTR_F",
+      "ATTR_G"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing": "mean",
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.0,
+     "dULS": 0.0,
+     "dG": 0.0,
+     "nfi": 1.0,
+     "chiSquare": 0.0
+    },
+    "innerSummary": {
+     "ATTR_G": {
+      "rSquared": 0.764,
+      "rSquaredAdj": 0.763,
+      "bic": -486.152
+     },
+     "ATTR_F": {}
+    },
+    "paths": {
+     "ATTR_F->ATTR_G": 0.874
+    },
+    "weights": {
+     "attr_1": 0.573,
+     "attr_2": 0.176,
+     "attr_3": 0.523,
+     "attr_global": 1.0
+    },
+    "loadings": {
+     "attr_1": 0.849,
+     "attr_2": 0.49,
+     "attr_3": 0.817,
+     "attr_global": 1.0
+    },
+    "vifOuter": {
+     "attr_1": 1.275,
+     "attr_2": 1.129,
+     "attr_3": 1.264,
+     "attr_global": 1.0
+    },
+    "fSquared": {
+     "ATTR_F->ATTR_G": 3.239
+    },
+    "iterations": 3
+   }
+  },
+  {
+   "name": "03b-redundancy-csor",
+   "title": "3b Redundancy analysis CSOR",
+   "dataset": "datasets/corporate-reputation/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "CSOR_F",
+      "indicators": [
+       "csor_1",
+       "csor_2",
+       "csor_3",
+       "csor_4",
+       "csor_5"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "CSOR_G",
+      "indicators": [
+       "csor_global"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "CSOR_F",
+      "CSOR_G"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing": "mean",
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {},
+    "innerSummary": {
+     "CSOR_G": {},
+     "CSOR_F": {}
+    },
+    "paths": {
+     "CSOR_F->CSOR_G": 0.857
+    },
+    "pathBootstrap": {
+     "CSOR_F->CSOR_G": {
+      "mean": 0.859,
+      "stdError": 0.016,
+      "tValue": 54.979,
+      "pValue": 0.0,
+      "ciLow": 0.825,
+      "ciHigh": 0.887
+     }
+    },
+    "weights": {
+     "csor_1": 0.459,
+     "csor_2": 0.187,
+     "csor_3": 0.295,
+     "csor_4": -0.018,
+     "csor_5": 0.335,
+     "csor_global": 1.0
+    },
+    "weightsBootstrap": {
+     "csor_1": {
+      "mean": 0.457,
+      "stdError": 0.055,
+      "tValue": 8.367,
+      "pValue": 0.0,
+      "ciLow": 0.351,
+      "ciHigh": 0.568
+     },
+     "csor_2": {
+      "mean": 0.189,
+      "stdError": 0.062,
+      "tValue": 3.025,
+      "pValue": 0.003,
+      "ciLow": 0.071,
+      "ciHigh": 0.307
+     },
+     "csor_3": {
+      "mean": 0.293,
+      "stdError": 0.055,
+      "tValue": 5.327,
+      "pValue": 0.0,
+      "ciLow": 0.183,
+      "ciHigh": 0.396
+     },
+     "csor_4": {
+      "mean": -0.017,
+      "stdError": 0.053,
+      "tValue": 0.34,
+      "pValue": 0.734,
+      "ciLow": -0.118,
+      "ciHigh": 0.085,
+      "note": "not significant (t<1.96)"
+     },
+     "csor_5": {
+      "mean": 0.335,
+      "stdError": 0.058,
+      "tValue": 5.784,
+      "pValue": 0.0,
+      "ciLow": 0.212,
+      "ciHigh": 0.439
+     }
+    },
+    "loadings": {
+     "csor_1": 0.847,
+     "csor_2": 0.649,
+     "csor_3": 0.777,
+     "csor_4": 0.56,
+     "csor_5": 0.809,
+     "csor_global": 1.0
+    },
+    "loadingsBootstrap": {
+     "csor_1": {
+      "mean": 0.842,
+      "stdError": 0.028,
+      "tValue": 30.01,
+      "pValue": 0.0,
+      "ciLow": 0.782,
+      "ciHigh": 0.894
+     },
+     "csor_2": {
+      "mean": 0.648,
+      "stdError": 0.043,
+      "tValue": 15.001,
+      "pValue": 0.0,
+      "ciLow": 0.56,
+      "ciHigh": 0.725
+     },
+     "csor_3": {
+      "mean": 0.772,
+      "stdError": 0.034,
+      "tValue": 22.547,
+      "pValue": 0.0,
+      "ciLow": 0.701,
+      "ciHigh": 0.833
+     },
+     "csor_4": {
+      "mean": 0.558,
+      "stdError": 0.049,
+      "tValue": 11.385,
+      "pValue": 0.0,
+      "ciLow": 0.457,
+      "ciHigh": 0.651
+     },
+     "csor_5": {
+      "mean": 0.806,
+      "stdError": 0.027,
+      "tValue": 29.538,
+      "pValue": 0.0,
+      "ciLow": 0.748,
+      "ciHigh": 0.853
+     }
+    }
+   }
+  },
+  {
+   "name": "03c-redundancy-perf",
+   "title": "3c Redundancy analysis PERF",
+   "dataset": "datasets/corporate-reputation/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "PERF_F",
+      "indicators": [
+       "perf_1",
+       "perf_2",
+       "perf_3",
+       "perf_4",
+       "perf_5"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "PERF_G",
+      "indicators": [
+       "perf_global"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "PERF_F",
+      "PERF_G"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing": "mean",
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.0,
+     "dULS": 0.0,
+     "dG": 0.0,
+     "nfi": 1.0,
+     "chiSquare": 0.0
+    },
+    "innerSummary": {
+     "PERF_G": {
+      "rSquared": 0.657,
+      "rSquaredAdj": 0.656
+     },
+     "PERF_F": {}
+    },
+    "paths": {
+     "PERF_F->PERF_G": 0.811
+    },
+    "weights": {
+     "perf_1": 0.148,
+     "perf_2": 0.291,
+     "perf_3": 0.261,
+     "perf_4": 0.39,
+     "perf_5": 0.328,
+     "perf_global": 1.0
+    },
+    "loadings": {
+     "perf_1": 0.682,
+     "perf_2": 0.738,
+     "perf_3": 0.61,
+     "perf_4": 0.749,
+     "perf_5": 0.711,
+     "perf_global": 1.0
+    },
+    "fSquared": {
+     "PERF_F->PERF_G": 1.919
+    }
+   }
+  },
+  {
+   "name": "03d-redundancy-qual",
+   "title": "3d Redundancy analysis QUAL",
+   "dataset": "datasets/corporate-reputation/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "QUAL_F",
+      "indicators": [
+       "qual_1",
+       "qual_2",
+       "qual_3",
+       "qual_4",
+       "qual_5",
+       "qual_6",
+       "qual_7",
+       "qual_8"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "QUAL_G",
+      "indicators": [
+       "qual_global"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "QUAL_F",
+      "QUAL_G"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing": "mean",
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.0,
+     "dULS": 0.0,
+     "dG": 0.0,
+     "chiSquare": 0.0,
+     "nfi": 1.0
+    },
+    "innerSummary": {
+     "QUAL_G": {
+      "rSquared": 0.648,
+      "rSquaredAdj": 0.647,
+      "bic": -348.085
+     }
+    },
+    "paths": {
+     "QUAL_F->QUAL_G": 0.805
+    },
+    "loadings": {
+     "qual_1": 0.799,
+     "qual_2": 0.585,
+     "qual_3": 0.804,
+     "qual_4": 0.635,
+     "qual_5": 0.785,
+     "qual_6": 0.797,
+     "qual_7": 0.633,
+     "qual_8": 0.665,
+     "qual_global": 1.0
+    },
+    "weights": {
+     "qual_1": 0.303,
+     "qual_2": 0.031,
+     "qual_3": 0.257,
+     "qual_4": -0.041,
+     "qual_5": 0.17,
+     "qual_6": 0.268,
+     "qual_7": 0.091,
+     "qual_8": 0.232,
+     "qual_global": 1.0
+    },
+    "htmt": {},
+    "vifOuter": {
+     "qual_1": 1.806,
+     "qual_2": 1.632,
+     "qual_3": 2.269,
+     "qual_4": 1.957,
+     "qual_5": 2.201,
+     "qual_6": 2.008,
+     "qual_7": 1.623,
+     "qual_8": 1.362,
+     "qual_global": 1.0
+    },
+    "fSquared": {
+     "QUAL_F->QUAL_G": 1.837
+    },
+    "iterations": 3
+   }
+  },
+  {
+   "name": "09-corporate-reputation-advanced",
+   "title": "Corporate reputation model",
+   "dataset": "datasets/corporate-reputation/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "ATTR",
+      "indicators": [
+       "attr_1",
+       "attr_2",
+       "attr_3"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "COMP",
+      "indicators": [
+       "comp_1",
+       "comp_2",
+       "comp_3"
+      ]
+     },
+     {
+      "name": "CSOR",
+      "indicators": [
+       "csor_1",
+       "csor_2",
+       "csor_3",
+       "csor_4",
+       "csor_5"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "CUSA",
+      "indicators": [
+       "cusa"
+      ]
+     },
+     {
+      "name": "CUSL",
+      "indicators": [
+       "cusl_1",
+       "cusl_2",
+       "cusl_3"
+      ]
+     },
+     {
+      "name": "LIKE",
+      "indicators": [
+       "like_1",
+       "like_2",
+       "like_3"
+      ]
+     },
+     {
+      "name": "PERF",
+      "indicators": [
+       "perf_1",
+       "perf_2",
+       "perf_3",
+       "perf_4",
+       "perf_5"
+      ],
+      "type": "composite"
+     },
+     {
+      "name": "QUAL",
+      "indicators": [
+       "qual_1",
+       "qual_2",
+       "qual_3",
+       "qual_4",
+       "qual_5",
+       "qual_6",
+       "qual_7",
+       "qual_8"
+      ],
+      "type": "composite"
+     }
+    ],
+    "paths": [
+     [
+      "ATTR",
+      "COMP"
+     ],
+     [
+      "ATTR",
+      "LIKE"
+     ],
+     [
+      "COMP",
+      "CUSA"
+     ],
+     [
+      "COMP",
+      "CUSL"
+     ],
+     [
+      "CSOR",
+      "COMP"
+     ],
+     [
+      "CSOR",
+      "LIKE"
+     ],
+     [
+      "CUSA",
+      "CUSL"
+     ],
+     [
+      "LIKE",
+      "CUSA"
+     ],
+     [
+      "LIKE",
+      "CUSL"
+     ],
+     [
+      "PERF",
+      "COMP"
+     ],
+     [
+      "PERF",
+      "LIKE"
+     ],
+     [
+      "QUAL",
+      "COMP"
+     ],
+     [
+      "QUAL",
+      "LIKE"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing": "mean",
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.053,
+     "dULS": 1.394,
+     "dG": 0.468,
+     "chiSquare": 894.538,
+     "nfi": 0.845
+    },
+    "innerSummary": {
+     "LIKE": {
+      "rSquared": 0.558,
+      "rSquaredAdj": 0.552,
+      "cAlpha": 0.831,
+      "rhoA": 0.836,
+      "rhoC": 0.899,
+      "ave": 0.747,
+      "bic": -252.378
+     },
+     "CUSA": {
+      "rSquared": 0.292,
+      "rSquaredAdj": 0.288,
+      "bic": -102.206
+     },
+     "COMP": {
+      "rSquared": 0.631,
+      "rSquaredAdj": 0.627,
+      "cAlpha": 0.776,
+      "rhoA": 0.786,
+      "rhoC": 0.869,
+      "ave": 0.688,
+      "bic": -314.622
+     },
+     "CUSL": {
+      "rSquared": 0.562,
+      "rSquaredAdj": 0.558,
+      "cAlpha": 0.831,
+      "rhoA": 0.839,
+      "rhoC": 0.899,
+      "ave": 0.748,
+      "bic": -261.602
+     }
+    },
+    "paths": {
+     "ATTR->COMP": 0.086,
+     "ATTR->LIKE": 0.167,
+     "COMP->CUSA": 0.146,
+     "COMP->CUSL": 0.006,
+     "CSOR->COMP": 0.059,
+     "CSOR->LIKE": 0.178,
+     "CUSA->CUSL": 0.505,
+     "LIKE->CUSA": 0.436,
+     "LIKE->CUSL": 0.344,
+     "PERF->COMP": 0.295,
+     "PERF->LIKE": 0.117,
+     "QUAL->COMP": 0.43,
+     "QUAL->LIKE": 0.38
+    },
+    "loadings": {
+     "attr_1": 0.754,
+     "attr_2": 0.506,
+     "attr_3": 0.891,
+     "comp_1": 0.824,
+     "comp_2": 0.821,
+     "comp_3": 0.844,
+     "csor_1": 0.771,
+     "csor_2": 0.571,
+     "csor_3": 0.838,
+     "csor_4": 0.617,
+     "csor_5": 0.848,
+     "cusa": 1.0,
+     "cusl_1": 0.833,
+     "cusl_2": 0.917,
+     "cusl_3": 0.843,
+     "like_1": 0.88,
+     "like_2": 0.869,
+     "like_3": 0.844,
+     "perf_1": 0.846,
+     "perf_2": 0.69,
+     "perf_3": 0.573,
+     "perf_4": 0.717,
+     "perf_5": 0.638,
+     "qual_1": 0.741,
+     "qual_2": 0.57,
+     "qual_3": 0.749,
+     "qual_4": 0.664,
+     "qual_5": 0.787,
+     "qual_6": 0.856,
+     "qual_7": 0.722,
+     "qual_8": 0.627
+    },
+    "weights": {
+     "attr_1": 0.414,
+     "attr_2": 0.201,
+     "attr_3": 0.658,
+     "comp_1": 0.469,
+     "comp_2": 0.365,
+     "comp_3": 0.372,
+     "csor_1": 0.306,
+     "csor_2": 0.037,
+     "csor_3": 0.406,
+     "csor_4": 0.08,
+     "csor_5": 0.416,
+     "cusa": 1.0,
+     "cusl_1": 0.369,
+     "cusl_2": 0.42,
+     "cusl_3": 0.365,
+     "like_1": 0.419,
+     "like_2": 0.374,
+     "like_3": 0.363,
+     "perf_1": 0.468,
+     "perf_2": 0.177,
+     "perf_3": 0.194,
+     "perf_4": 0.34,
+     "perf_5": 0.199,
+     "qual_1": 0.202,
+     "qual_2": 0.041,
+     "qual_3": 0.106,
+     "qual_4": -0.005,
+     "qual_5": 0.16,
+     "qual_6": 0.398,
+     "qual_7": 0.229,
+     "qual_8": 0.19
+    },
+    "htmt": {
+     "COMP:CUSA": 0.465,
+     "COMP:CUSL": 0.532,
+     "CUSA:CUSL": 0.755,
+     "COMP:LIKE": 0.78,
+     "CUSA:LIKE": 0.577,
+     "CUSL:LIKE": 0.737
+    },
+    "vifOuter": {
+     "attr_1": 1.275,
+     "attr_2": 1.129,
+     "attr_3": 1.264,
+     "comp_1": 1.397,
+     "comp_2": 1.787,
+     "comp_3": 1.888,
+     "csor_1": 1.56,
+     "csor_2": 1.487,
+     "csor_3": 1.735,
+     "csor_4": 1.556,
+     "csor_5": 1.712,
+     "cusa": 1.0,
+     "cusl_1": 1.802,
+     "cusl_2": 2.564,
+     "cusl_3": 1.933,
+     "like_1": 1.945,
+     "like_2": 2.0,
+     "like_3": 1.811,
+     "perf_1": 1.56,
+     "perf_2": 1.506,
+     "perf_3": 1.229,
+     "perf_4": 1.316,
+     "perf_5": 1.331,
+     "qual_1": 1.806,
+     "qual_2": 1.632,
+     "qual_3": 2.269,
+     "qual_4": 1.957,
+     "qual_5": 2.201,
+     "qual_6": 2.008,
+     "qual_7": 1.623,
+     "qual_8": 1.362
+    },
+    "fSquared": {
+     "ATTR->COMP": 0.009,
+     "ATTR->LIKE": 0.03,
+     "COMP->CUSA": 0.018,
+     "COMP->CUSL": 0.0,
+     "CSOR->COMP": 0.005,
+     "CSOR->LIKE": 0.035,
+     "CUSA->CUSL": 0.412,
+     "LIKE->CUSA": 0.159,
+     "LIKE->CUSL": 0.138,
+     "PERF->COMP": 0.082,
+     "PERF->LIKE": 0.011,
+     "QUAL->COMP": 0.143,
+     "QUAL->LIKE": 0.094
+    },
+    "iterations": 9
+   }
+  },
+  {
+   "name": "10-ecsi",
+   "title": "ECSI - PLS-SEM",
+   "dataset": "datasets/ecsi/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "CUEX",
+      "indicators": [
+       "CUEX1",
+       "CUEX2",
+       "CUEX3"
+      ]
+     },
+     {
+      "name": "CUSA",
+      "indicators": [
+       "CUSA1",
+       "CUSA2",
+       "CUSA3"
+      ]
+     },
+     {
+      "name": "CUSCO",
+      "indicators": [
+       "CUSCO"
+      ]
+     },
+     {
+      "name": "CUSL",
+      "indicators": [
+       "CUSL1",
+       "CUSL2",
+       "CUSL3"
+      ]
+     },
+     {
+      "name": "IMAG",
+      "indicators": [
+       "IMAG1",
+       "IMAG2",
+       "IMAG3",
+       "IMAG4",
+       "IMAG5"
+      ]
+     },
+     {
+      "name": "PERQ",
+      "indicators": [
+       "PERQ1",
+       "PERQ2",
+       "PERQ3",
+       "PERQ4",
+       "PERQ5",
+       "PERQ6",
+       "PERQ7"
+      ]
+     },
+     {
+      "name": "PERV",
+      "indicators": [
+       "PERV1",
+       "PERV2"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "CUEX",
+      "CUSA"
+     ],
+     [
+      "CUEX",
+      "PERQ"
+     ],
+     [
+      "CUEX",
+      "PERV"
+     ],
+     [
+      "CUSA",
+      "CUSCO"
+     ],
+     [
+      "CUSA",
+      "CUSL"
+     ],
+     [
+      "CUSCO",
+      "CUSL"
+     ],
+     [
+      "IMAG",
+      "CUEX"
+     ],
+     [
+      "IMAG",
+      "CUSA"
+     ],
+     [
+      "IMAG",
+      "CUSL"
+     ],
+     [
+      "PERQ",
+      "CUSA"
+     ],
+     [
+      "PERQ",
+      "PERV"
+     ],
+     [
+      "PERV",
+      "CUSA"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.075,
+     "dULS": 1.693,
+     "dG": 0.649,
+     "chiSquare": 918.073,
+     "nfi": 0.691
+    },
+    "innerSummary": {
+     "PERV": {
+      "rSquared": 0.345,
+      "rSquaredAdj": 0.34,
+      "cAlpha": 0.824,
+      "rhoA": 0.855,
+      "rhoC": 0.918,
+      "ave": 0.848,
+      "bic": -90.324
+     },
+     "CUEX": {
+      "rSquared": 0.255,
+      "rSquaredAdj": 0.252,
+      "cAlpha": 0.452,
+      "rhoA": 0.462,
+      "rhoC": 0.733,
+      "ave": 0.48,
+      "bic": -63.531
+     },
+     "PERQ": {
+      "rSquared": 0.31,
+      "rSquaredAdj": 0.307,
+      "cAlpha": 0.877,
+      "rhoA": 0.884,
+      "rhoC": 0.905,
+      "ave": 0.577,
+      "bic": -82.714
+     },
+     "CUSCO": {
+      "rSquared": 0.279,
+      "rSquaredAdj": 0.276,
+      "bic": -71.687
+     },
+     "CUSA": {
+      "rSquared": 0.681,
+      "rSquaredAdj": 0.676,
+      "cAlpha": 0.779,
+      "rhoA": 0.789,
+      "rhoC": 0.871,
+      "ave": 0.693,
+      "bic": -259.097
+     },
+     "IMAG": {
+      "cAlpha": 0.723,
+      "rhoA": 0.74,
+      "rhoC": 0.819,
+      "ave": 0.478
+     },
+     "CUSL": {
+      "rSquared": 0.457,
+      "rSquaredAdj": 0.45,
+      "cAlpha": 0.472,
+      "rhoA": 0.746,
+      "rhoC": 0.722,
+      "ave": 0.517,
+      "bic": -131.552
+     }
+    },
+    "paths": {
+     "CUEX->CUSA": 0.063,
+     "CUEX->PERQ": 0.557,
+     "CUEX->PERV": 0.05,
+     "CUSA->CUSCO": 0.528,
+     "CUSA->CUSL": 0.485,
+     "CUSCO->CUSL": 0.067,
+     "IMAG->CUEX": 0.505,
+     "IMAG->CUSA": 0.179,
+     "IMAG->CUSL": 0.196,
+     "PERQ->CUSA": 0.512,
+     "PERQ->PERV": 0.558,
+     "PERV->CUSA": 0.195
+    },
+    "loadings": {
+     "CUEX1": 0.771,
+     "CUEX2": 0.691,
+     "CUEX3": 0.608,
+     "CUSA1": 0.792,
+     "CUSA2": 0.847,
+     "CUSA3": 0.857,
+     "CUSCO": 1.0,
+     "CUSL1": 0.82,
+     "CUSL2": 0.202,
+     "CUSL3": 0.915,
+     "IMAG1": 0.745,
+     "IMAG2": 0.599,
+     "IMAG3": 0.576,
+     "IMAG4": 0.769,
+     "IMAG5": 0.744,
+     "PERQ1": 0.803,
+     "PERQ2": 0.638,
+     "PERQ3": 0.784,
+     "PERQ4": 0.769,
+     "PERQ5": 0.755,
+     "PERQ6": 0.775,
+     "PERQ7": 0.78,
+     "PERV1": 0.902,
+     "PERV2": 0.94
+    },
+    "weights": {
+     "CUEX1": 0.521,
+     "CUEX2": 0.474,
+     "CUEX3": 0.446,
+     "CUSA1": 0.365,
+     "CUSA2": 0.383,
+     "CUSA3": 0.451,
+     "CUSCO": 1.0,
+     "CUSL1": 0.461,
+     "CUSL2": 0.114,
+     "CUSL3": 0.654,
+     "IMAG1": 0.301,
+     "IMAG2": 0.26,
+     "IMAG3": 0.218,
+     "IMAG4": 0.329,
+     "IMAG5": 0.325,
+     "PERQ1": 0.213,
+     "PERQ2": 0.145,
+     "PERQ3": 0.2,
+     "PERQ4": 0.179,
+     "PERQ5": 0.179,
+     "PERQ6": 0.179,
+     "PERQ7": 0.215,
+     "PERV1": 0.479,
+     "PERV2": 0.604
+    },
+    "htmt": {
+     "CUEX:CUSA": 0.865,
+     "CUEX:CUSCO": 0.383,
+     "CUSA:CUSCO": 0.588,
+     "CUEX:CUSL": 0.77,
+     "CUSA:CUSL": 0.957,
+     "CUSCO:CUSL": 0.561,
+     "CUEX:IMAG": 0.888,
+     "CUSA:IMAG": 0.91,
+     "CUSCO:IMAG": 0.545,
+     "CUSL:IMAG": 0.867,
+     "CUEX:PERQ": 0.878,
+     "CUSA:PERQ": 0.954,
+     "CUSCO:PERQ": 0.564,
+     "CUSL:PERQ": 0.759,
+     "IMAG:PERQ": 0.929,
+     "CUEX:PERV": 0.589,
+     "CUSA:PERV": 0.741,
+     "CUSCO:PERV": 0.387,
+     "CUSL:PERV": 0.797,
+     "IMAG:PERV": 0.652,
+     "PERQ:PERV": 0.673
+    },
+    "vifOuter": {
+     "CUEX1": 1.161,
+     "CUEX2": 1.121,
+     "CUEX3": 1.05,
+     "CUSA1": 1.505,
+     "CUSA2": 1.762,
+     "CUSA3": 1.644,
+     "CUSCO": 1.0,
+     "CUSL1": 1.415,
+     "CUSL2": 1.01,
+     "CUSL3": 1.427,
+     "IMAG1": 1.468,
+     "IMAG2": 1.225,
+     "IMAG3": 1.259,
+     "IMAG4": 1.51,
+     "IMAG5": 1.403,
+     "PERQ1": 2.027,
+     "PERQ2": 1.491,
+     "PERQ3": 2.105,
+     "PERQ4": 2.013,
+     "PERQ5": 1.823,
+     "PERQ6": 2.003,
+     "PERQ7": 2.006,
+     "PERV1": 1.962,
+     "PERV2": 1.962
+    },
+    "fSquared": {
+     "CUEX->CUSA": 0.008,
+     "CUEX->PERQ": 0.449,
+     "CUEX->PERV": 0.003,
+     "CUSA->CUSCO": 0.387,
+     "CUSA->CUSL": 0.204,
+     "CUSCO->CUSL": 0.006,
+     "IMAG->CUEX": 0.342,
+     "IMAG->CUSA": 0.042,
+     "IMAG->CUSL": 0.036,
+     "PERQ->CUSA": 0.289,
+     "PERQ->PERV": 0.329,
+     "PERV->CUSA": 0.077
+    },
+    "iterations": 7
+   }
+  },
+  {
+   "name": "11-acsi-modified",
+   "title": "ACSI (modified) - PLS-SEM",
+   "dataset": "datasets/acsi/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "CUSA",
+      "indicators": [
+       "CONFIRM",
+       "IDEAL",
+       "SATIS"
+      ]
+     },
+     {
+      "name": "PERQ",
+      "indicators": [
+       "CUSTOMQ",
+       "OVERALLQ",
+       "WRONGQ"
+      ]
+     },
+     {
+      "name": "CUEX",
+      "indicators": [
+       "CUSTOMX",
+       "OVERALLX",
+       "WRONGX"
+      ]
+     },
+     {
+      "name": "PERV",
+      "indicators": [
+       "PQ",
+       "QP"
+      ]
+     },
+     {
+      "name": "CUSL",
+      "indicators": [
+       "REPUR"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "CUEX",
+      "CUSA"
+     ],
+     [
+      "CUEX",
+      "PERQ"
+     ],
+     [
+      "CUEX",
+      "PERV"
+     ],
+     [
+      "CUSA",
+      "CUSL"
+     ],
+     [
+      "PERQ",
+      "CUSA"
+     ],
+     [
+      "PERQ",
+      "PERV"
+     ],
+     [
+      "PERV",
+      "CUSA"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing": "mean",
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.064,
+     "dULS": 0.318,
+     "dG": 0.217,
+     "chiSquare": 11111.776,
+     "nfi": 0.883
+    },
+    "innerSummary": {
+     "PERV": {
+      "rSquared": 0.619,
+      "rSquaredAdj": 0.619,
+      "cAlpha": 0.942,
+      "rhoA": 0.944,
+      "rhoC": 0.972,
+      "ave": 0.945,
+      "bic": -7920.106
+     },
+     "CUEX": {
+      "cAlpha": 0.765,
+      "rhoA": 0.813,
+      "rhoC": 0.865,
+      "ave": 0.683
+     },
+     "PERQ": {
+      "rSquared": 0.459,
+      "rSquaredAdj": 0.459,
+      "cAlpha": 0.872,
+      "rhoA": 0.901,
+      "rhoC": 0.922,
+      "ave": 0.798,
+      "bic": -5042.245
+     },
+     "CUSA": {
+      "rSquared": 0.82,
+      "rSquaredAdj": 0.819,
+      "cAlpha": 0.913,
+      "rhoA": 0.918,
+      "rhoC": 0.945,
+      "ave": 0.852,
+      "bic": -14071.827
+     },
+     "CUSL": {
+      "rSquared": 0.665,
+      "rSquaredAdj": 0.665,
+      "bic": -9005.119
+     }
+    },
+    "paths": {
+     "CUEX->CUSA": 0.029,
+     "CUEX->PERQ": 0.677,
+     "CUEX->PERV": 0.065,
+     "CUSA->CUSL": 0.816,
+     "PERQ->CUSA": 0.454,
+     "PERQ->PERV": 0.741,
+     "PERV->CUSA": 0.483
+    },
+    "loadings": {
+     "CONFIRM": 0.908,
+     "CUSTOMQ": 0.943,
+     "CUSTOMX": 0.906,
+     "IDEAL": 0.921,
+     "OVERALLQ": 0.935,
+     "OVERALLX": 0.864,
+     "PQ": 0.971,
+     "QP": 0.974,
+     "REPUR": 1.0,
+     "SATIS": 0.94,
+     "WRONGQ": 0.794,
+     "WRONGX": 0.694
+    },
+    "weights": {
+     "CONFIRM": 0.339,
+     "CUSTOMQ": 0.406,
+     "CUSTOMX": 0.486,
+     "IDEAL": 0.357,
+     "OVERALLQ": 0.407,
+     "OVERALLX": 0.399,
+     "PQ": 0.501,
+     "QP": 0.527,
+     "REPUR": 1.0,
+     "SATIS": 0.387,
+     "WRONGQ": 0.298,
+     "WRONGX": 0.31
+    },
+    "htmt": {
+     "CUEX:CUSA": 0.714,
+     "CUEX:CUSL": 0.583,
+     "CUSA:CUSL": 0.852,
+     "CUEX:PERQ": 0.816,
+     "CUSA:PERQ": 0.944,
+     "CUSL:PERQ": 0.798,
+     "CUEX:PERV": 0.653,
+     "CUSA:PERV": 0.921,
+     "CUSL:PERV": 0.781,
+     "PERQ:PERV": 0.856
+    },
+    "vifOuter": {
+     "CONFIRM": 2.853,
+     "CUSTOMQ": 4.203,
+     "CUSTOMX": 2.097,
+     "IDEAL": 3.167,
+     "OVERALLQ": 3.972,
+     "OVERALLX": 1.988,
+     "PQ": 4.832,
+     "QP": 4.832,
+     "REPUR": 1.0,
+     "SATIS": 3.624,
+     "WRONGQ": 1.676,
+     "WRONGX": 1.288
+    },
+    "fSquared": {
+     "CUEX->CUSA": 0.003,
+     "CUEX->PERQ": 0.848,
+     "CUEX->PERV": 0.006,
+     "CUSA->CUSL": 1.989,
+     "PERQ->CUSA": 0.348,
+     "PERQ->PERV": 0.78,
+     "PERV->CUSA": 0.493
+    },
+    "iterations": 7
+   }
+  },
+  {
+   "name": "12-tam",
+   "title": "TAM - PLS-SEM",
+   "dataset": "datasets/tam/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "ATU",
+      "indicators": [
+       "ATT1",
+       "ATT2",
+       "ATT3",
+       "ATT4",
+       "ATT5"
+      ]
+     },
+     {
+      "name": "BI",
+      "indicators": [
+       "BI1",
+       "BI2",
+       "BI3"
+      ]
+     },
+     {
+      "name": "PEOU",
+      "indicators": [
+       "EOU1",
+       "EOU2",
+       "EOU3",
+       "EOU4",
+       "EOU5"
+      ]
+     },
+     {
+      "name": "USE",
+      "indicators": [
+       "USE1",
+       "USE2",
+       "USE3",
+       "USE4"
+      ]
+     },
+     {
+      "name": "PU",
+      "indicators": [
+       "USEF1",
+       "USEF2",
+       "USEF3",
+       "USEF4",
+       "USEF5"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "ATU",
+      "BI"
+     ],
+     [
+      "ATU",
+      "USE"
+     ],
+     [
+      "BI",
+      "USE"
+     ],
+     [
+      "PEOU",
+      "ATU"
+     ],
+     [
+      "PEOU",
+      "PU"
+     ],
+     [
+      "PU",
+      "ATU"
+     ],
+     [
+      "PU",
+      "BI"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.05,
+     "dULS": 0.625,
+     "dG": 0.264,
+     "chiSquare": 1950.41,
+     "nfi": 0.877
+    },
+    "innerSummary": {
+     "BI": {
+      "rSquared": 0.243,
+      "rSquaredAdj": 0.242,
+      "cAlpha": 0.825,
+      "rhoA": 0.848,
+      "rhoC": 0.894,
+      "ave": 0.738,
+      "bic": -311.703
+     },
+     "PEOU": {
+      "cAlpha": 0.87,
+      "rhoA": 0.875,
+      "rhoC": 0.906,
+      "ave": 0.658
+     },
+     "PU": {
+      "rSquared": 0.198,
+      "rSquaredAdj": 0.198,
+      "cAlpha": 0.906,
+      "rhoA": 0.906,
+      "rhoC": 0.93,
+      "ave": 0.727,
+      "bic": -249.953
+     },
+     "ATU": {
+      "rSquared": 0.196,
+      "rSquaredAdj": 0.194,
+      "cAlpha": 0.936,
+      "rhoA": 0.939,
+      "rhoC": 0.951,
+      "ave": 0.796,
+      "bic": -238.726
+     },
+     "USE": {
+      "rSquared": 0.115,
+      "rSquaredAdj": 0.114,
+      "cAlpha": 0.74,
+      "rhoA": 0.746,
+      "rhoC": 0.837,
+      "ave": 0.563,
+      "bic": -125.547
+     }
+    },
+    "paths": {
+     "ATU->BI": 0.172,
+     "ATU->USE": 0.272,
+     "BI->USE": 0.134,
+     "PEOU->ATU": 0.253,
+     "PEOU->PU": 0.445,
+     "PU->ATU": 0.267,
+     "PU->BI": 0.401
+    },
+    "loadings": {
+     "ATT1": 0.9,
+     "ATT2": 0.905,
+     "ATT3": 0.897,
+     "ATT4": 0.88,
+     "ATT5": 0.878,
+     "BI1": 0.855,
+     "BI2": 0.831,
+     "BI3": 0.89,
+     "EOU1": 0.765,
+     "EOU2": 0.827,
+     "EOU3": 0.863,
+     "EOU4": 0.809,
+     "EOU5": 0.789,
+     "USE1": 0.801,
+     "USE2": 0.761,
+     "USE3": 0.771,
+     "USE4": 0.662,
+     "USEF1": 0.808,
+     "USEF2": 0.847,
+     "USEF3": 0.88,
+     "USEF4": 0.866,
+     "USEF5": 0.86
+    },
+    "weights": {
+     "ATT1": 0.237,
+     "ATT2": 0.239,
+     "ATT3": 0.232,
+     "ATT4": 0.216,
+     "ATT5": 0.195,
+     "BI1": 0.439,
+     "BI2": 0.296,
+     "BI3": 0.425,
+     "EOU1": 0.227,
+     "EOU2": 0.254,
+     "EOU3": 0.27,
+     "EOU4": 0.258,
+     "EOU5": 0.221,
+     "USE1": 0.361,
+     "USE2": 0.329,
+     "USE3": 0.342,
+     "USE4": 0.297,
+     "USEF1": 0.234,
+     "USEF2": 0.23,
+     "USEF3": 0.236,
+     "USEF4": 0.237,
+     "USEF5": 0.235
+    },
+    "htmt": {
+     "ATU:BI": 0.362,
+     "ATU:PEOU": 0.409,
+     "BI:PEOU": 0.647,
+     "ATU:PU": 0.412,
+     "BI:PU": 0.526,
+     "PEOU:PU": 0.5,
+     "ATU:USE": 0.379,
+     "BI:USE": 0.271,
+     "PEOU:USE": 0.405,
+     "PU:USE": 0.275
+    },
+    "vifOuter": {
+     "ATT1": 3.641,
+     "ATT2": 3.901,
+     "ATT3": 3.356,
+     "ATT4": 3.834,
+     "ATT5": 3.866,
+     "BI1": 1.646,
+     "BI2": 2.02,
+     "BI3": 2.171,
+     "EOU1": 1.748,
+     "EOU2": 2.062,
+     "EOU3": 2.419,
+     "EOU4": 1.958,
+     "EOU5": 1.871,
+     "USE1": 1.771,
+     "USE2": 1.67,
+     "USE3": 1.538,
+     "USE4": 1.352,
+     "USEF1": 2.005,
+     "USEF2": 2.407,
+     "USEF3": 2.898,
+     "USEF4": 2.74,
+     "USEF5": 2.525
+    },
+    "fSquared": {
+     "ATU->BI": 0.034,
+     "ATU->USE": 0.075,
+     "BI->USE": 0.018,
+     "PEOU->ATU": 0.064,
+     "PEOU->PU": 0.247,
+     "PU->ATU": 0.071,
+     "PU->BI": 0.182
+    },
+    "iterations": 7
+   }
+  },
+  {
+   "name": "13-utaut",
+   "title": "UTAUT - PLS-SEM",
+   "dataset": "datasets/utaut/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "BI",
+      "indicators": [
+       "BI1",
+       "BI2",
+       "BI3"
+      ]
+     },
+     {
+      "name": "EE",
+      "indicators": [
+       "EE1",
+       "EE2",
+       "EE3",
+       "EE4"
+      ]
+     },
+     {
+      "name": "FC",
+      "indicators": [
+       "FC1",
+       "FC2",
+       "FC3"
+      ]
+     },
+     {
+      "name": "PE",
+      "indicators": [
+       "PE1",
+       "PE2",
+       "PE3",
+       "PE4"
+      ]
+     },
+     {
+      "name": "SI",
+      "indicators": [
+       "SN1",
+       "SN2",
+       "SN3"
+      ]
+     },
+     {
+      "name": "USE",
+      "indicators": [
+       "USE1",
+       "USE2",
+       "USE3",
+       "USE4"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "BI",
+      "USE"
+     ],
+     [
+      "EE",
+      "BI"
+     ],
+     [
+      "FC",
+      "USE"
+     ],
+     [
+      "PE",
+      "BI"
+     ],
+     [
+      "SI",
+      "BI"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.085,
+     "dULS": 1.665,
+     "dG": 0.408,
+     "chiSquare": 1767.244,
+     "nfi": 0.758
+    },
+    "innerSummary": {
+     "EE": {
+      "cAlpha": 0.857,
+      "rhoA": 0.86,
+      "rhoC": 0.903,
+      "ave": 0.699
+     },
+     "PE": {
+      "cAlpha": 0.854,
+      "rhoA": 0.859,
+      "rhoC": 0.902,
+      "ave": 0.698
+     },
+     "BI": {
+      "rSquared": 0.353,
+      "rSquaredAdj": 0.35,
+      "cAlpha": 0.535,
+      "rhoA": 0.532,
+      "rhoC": 0.763,
+      "ave": 0.517,
+      "bic": -288.775
+     },
+     "SI": {
+      "cAlpha": 0.925,
+      "rhoA": 0.927,
+      "rhoC": 0.953,
+      "ave": 0.87
+     },
+     "FC": {
+      "cAlpha": 0.577,
+      "rhoA": 0.567,
+      "rhoC": 0.769,
+      "ave": 0.527
+     },
+     "USE": {
+      "rSquared": 0.25,
+      "rSquaredAdj": 0.248,
+      "cAlpha": 0.761,
+      "rhoA": 0.765,
+      "rhoC": 0.848,
+      "ave": 0.583,
+      "bic": -189.367
+     }
+    },
+    "paths": {
+     "BI->USE": 0.375,
+     "EE->BI": 0.362,
+     "FC->USE": 0.198,
+     "PE->BI": 0.215,
+     "SI->BI": 0.208
+    },
+    "loadings": {
+     "BI1": 0.731,
+     "BI2": 0.704,
+     "BI3": 0.723,
+     "EE1": 0.835,
+     "EE2": 0.823,
+     "EE3": 0.834,
+     "EE4": 0.853,
+     "FC1": 0.739,
+     "FC2": 0.722,
+     "FC3": 0.716,
+     "PE1": 0.792,
+     "PE2": 0.881,
+     "PE3": 0.888,
+     "PE4": 0.775,
+     "SN1": 0.936,
+     "SN2": 0.947,
+     "SN3": 0.915,
+     "USE1": 0.806,
+     "USE2": 0.767,
+     "USE3": 0.777,
+     "USE4": 0.701
+    },
+    "weights": {
+     "BI1": 0.42,
+     "BI2": 0.478,
+     "BI3": 0.493,
+     "EE1": 0.306,
+     "EE2": 0.336,
+     "EE3": 0.276,
+     "EE4": 0.28,
+     "FC1": 0.6,
+     "FC2": 0.37,
+     "FC3": 0.405,
+     "PE1": 0.264,
+     "PE2": 0.306,
+     "PE3": 0.318,
+     "PE4": 0.308,
+     "SN1": 0.353,
+     "SN2": 0.341,
+     "SN3": 0.379,
+     "USE1": 0.356,
+     "USE2": 0.315,
+     "USE3": 0.333,
+     "USE4": 0.305
+    },
+    "htmt": {
+     "BI:EE": 0.735,
+     "BI:FC": 0.786,
+     "EE:FC": 0.599,
+     "BI:PE": 0.642,
+     "EE:PE": 0.501,
+     "FC:PE": 0.434,
+     "BI:SI": 0.521,
+     "EE:SI": 0.27,
+     "FC:SI": 0.317,
+     "PE:SI": 0.361,
+     "BI:USE": 0.725,
+     "EE:USE": 0.362,
+     "FC:USE": 0.536,
+     "PE:USE": 0.248,
+     "SI:USE": 0.068
+    },
+    "vifOuter": {
+     "BI1": 1.207,
+     "BI2": 1.118,
+     "BI3": 1.132,
+     "EE1": 2.023,
+     "EE2": 1.756,
+     "EE3": 2.09,
+     "EE4": 2.351,
+     "FC1": 1.045,
+     "FC2": 1.524,
+     "FC3": 1.504,
+     "PE1": 1.822,
+     "PE2": 2.71,
+     "PE3": 2.707,
+     "PE4": 1.568,
+     "SN1": 4.337,
+     "SN2": 4.884,
+     "SN3": 2.804,
+     "USE1": 1.774,
+     "USE2": 1.691,
+     "USE3": 1.569,
+     "USE4": 1.411
+    },
+    "fSquared": {
+     "BI->USE": 0.146,
+     "EE->BI": 0.163,
+     "FC->USE": 0.041,
+     "PE->BI": 0.054,
+     "SI->BI": 0.059
+    },
+    "iterations": 9
+   }
+  },
+  {
+   "name": "14-oi",
+   "title": "OI - PLS-SEM",
+   "dataset": "datasets/oi/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "Affective _Commitment (Joy)",
+      "indicators": [
+       "ac_joy1",
+       "ac_joy2",
+       "ac_joy3",
+       "ac_joy4"
+      ]
+     },
+     {
+      "name": "Affective _Commitment (Love)",
+      "indicators": [
+       "ac_love1",
+       "ac_love2",
+       "ac_love3"
+      ]
+     },
+     {
+      "name": "Organizational_Identification",
+      "indicators": [
+       "org_ident1",
+       "org_ident2",
+       "org_ident3",
+       "org_ident4",
+       "org_ident5",
+       "org_ident6"
+      ]
+     },
+     {
+      "name": "Organizational_Prestige",
+      "indicators": [
+       "org_pre1",
+       "org_pre2",
+       "org_pre3",
+       "org_pre4",
+       "org_pre5",
+       "org_pre6",
+       "org_pre7",
+       "org_pre8"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "Organizational_Identification",
+      "Affective _Commitment (Joy)"
+     ],
+     [
+      "Organizational_Identification",
+      "Affective _Commitment (Love)"
+     ],
+     [
+      "Organizational_Prestige",
+      "Organizational_Identification"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.07,
+     "dULS": 1.13,
+     "dG": 0.492,
+     "chiSquare": 835.389,
+     "nfi": 0.759
+    },
+    "innerSummary": {
+     "Affective _Commitment (Joy)": {
+      "rSquared": 0.377,
+      "rSquaredAdj": 0.375,
+      "cAlpha": 0.766,
+      "rhoA": 0.774,
+      "rhoC": 0.851,
+      "ave": 0.589,
+      "bic": -133.839
+     },
+     "Affective _Commitment (Love)": {
+      "rSquared": 0.167,
+      "rSquaredAdj": 0.165,
+      "cAlpha": 0.642,
+      "rhoA": 0.67,
+      "rhoC": 0.804,
+      "ave": 0.579,
+      "bic": -45.451
+     },
+     "Organizational_Identification": {
+      "rSquared": 0.131,
+      "rSquaredAdj": 0.128,
+      "cAlpha": 0.854,
+      "rhoA": 0.863,
+      "rhoC": 0.892,
+      "ave": 0.581,
+      "bic": -32.467
+     },
+     "Organizational_Prestige": {
+      "cAlpha": 0.92,
+      "rhoA": 0.923,
+      "rhoC": 0.934,
+      "ave": 0.64
+     }
+    },
+    "paths": {
+     "Organizational_Identification->Affective _Commitment (Joy)": 0.614,
+     "Organizational_Identification->Affective _Commitment (Love)": -0.409,
+     "Organizational_Prestige->Organizational_Identification": 0.362
+    },
+    "loadings": {
+     "ac_joy1": 0.743,
+     "ac_joy2": 0.788,
+     "ac_joy3": 0.822,
+     "ac_joy4": 0.711,
+     "ac_love1": 0.792,
+     "ac_love2": 0.664,
+     "ac_love3": 0.817,
+     "org_ident1": 0.786,
+     "org_ident2": 0.758,
+     "org_ident3": 0.636,
+     "org_ident4": 0.822,
+     "org_ident5": 0.812,
+     "org_ident6": 0.746,
+     "org_pre1": 0.773,
+     "org_pre2": 0.828,
+     "org_pre3": 0.779,
+     "org_pre4": 0.794,
+     "org_pre5": 0.794,
+     "org_pre6": 0.848,
+     "org_pre7": 0.785,
+     "org_pre8": 0.798
+    },
+    "weights": {
+     "ac_joy1": 0.294,
+     "ac_joy2": 0.327,
+     "ac_joy3": 0.369,
+     "ac_joy4": 0.309,
+     "ac_love1": 0.449,
+     "ac_love2": 0.325,
+     "ac_love3": 0.524,
+     "org_ident1": 0.216,
+     "org_ident2": 0.211,
+     "org_ident3": 0.193,
+     "org_ident4": 0.255,
+     "org_ident5": 0.242,
+     "org_ident6": 0.19,
+     "org_pre1": 0.142,
+     "org_pre2": 0.164,
+     "org_pre3": 0.17,
+     "org_pre4": 0.131,
+     "org_pre5": 0.157,
+     "org_pre6": 0.179,
+     "org_pre7": 0.158,
+     "org_pre8": 0.147
+    },
+    "htmt": {
+     "Affective _Commitment (Joy):Affective _Commitment (Love)": 0.641,
+     "Affective _Commitment (Joy):Organizational_Identification": 0.753,
+     "Affective _Commitment (Love):Organizational_Identification": 0.527,
+     "Affective _Commitment (Joy):Organizational_Prestige": 0.467,
+     "Affective _Commitment (Love):Organizational_Prestige": 0.263,
+     "Organizational_Identification:Organizational_Prestige": 0.408
+    },
+    "vifOuter": {
+     "ac_joy1": 1.469,
+     "ac_joy2": 1.587,
+     "ac_joy3": 1.636,
+     "ac_joy4": 1.335,
+     "ac_love1": 1.321,
+     "ac_love2": 1.213,
+     "ac_love3": 1.262,
+     "org_ident1": 1.976,
+     "org_ident2": 1.749,
+     "org_ident3": 1.357,
+     "org_ident4": 2.334,
+     "org_ident5": 2.338,
+     "org_ident6": 1.745,
+     "org_pre1": 2.635,
+     "org_pre2": 3.013,
+     "org_pre3": 2.713,
+     "org_pre4": 2.789,
+     "org_pre5": 3.343,
+     "org_pre6": 3.125,
+     "org_pre7": 3.178,
+     "org_pre8": 2.56
+    },
+    "fSquared": {
+     "Organizational_Identification->Affective _Commitment (Joy)": 0.605,
+     "Organizational_Identification->Affective _Commitment (Love)": 0.201,
+     "Organizational_Prestige->Organizational_Identification": 0.151
+    },
+    "iterations": 8
+   }
+  },
+  {
+   "name": "15-oi-variations",
+   "title": "OI - Organizational identification",
+   "dataset": "datasets/oi-variations/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "ACJ",
+      "indicators": [
+       "ac_joy1",
+       "ac_joy2",
+       "ac_joy3",
+       "ac_joy4"
+      ]
+     },
+     {
+      "name": "ACL",
+      "indicators": [
+       "ac_love1",
+       "ac_love2",
+       "ac_love3"
+      ]
+     },
+     {
+      "name": "OI",
+      "indicators": [
+       "org_ident1",
+       "org_ident2",
+       "org_ident3",
+       "org_ident4",
+       "org_ident5",
+       "org_ident6"
+      ]
+     },
+     {
+      "name": "OP",
+      "indicators": [
+       "org_pre1",
+       "org_pre2",
+       "org_pre3",
+       "org_pre4",
+       "org_pre5",
+       "org_pre6",
+       "org_pre7",
+       "org_pre8"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "OI",
+      "ACJ"
+     ],
+     [
+      "OI",
+      "ACL"
+     ],
+     [
+      "OP",
+      "OI"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.07,
+     "dULS": 1.13,
+     "dG": 0.492,
+     "chiSquare": 835.389,
+     "nfi": 0.759
+    },
+    "innerSummary": {
+     "OP": {
+      "cAlpha": 0.92,
+      "rhoA": 0.923,
+      "rhoC": 0.934,
+      "ave": 0.64
+     },
+     "OI": {
+      "rSquared": 0.131,
+      "rSquaredAdj": 0.128,
+      "cAlpha": 0.854,
+      "rhoA": 0.863,
+      "rhoC": 0.892,
+      "ave": 0.581,
+      "bic": -32.467
+     },
+     "ACL": {
+      "rSquared": 0.167,
+      "rSquaredAdj": 0.165,
+      "cAlpha": 0.642,
+      "rhoA": 0.67,
+      "rhoC": 0.804,
+      "ave": 0.579,
+      "bic": -45.451
+     },
+     "ACJ": {
+      "rSquared": 0.377,
+      "rSquaredAdj": 0.375,
+      "cAlpha": 0.766,
+      "rhoA": 0.774,
+      "rhoC": 0.851,
+      "ave": 0.589,
+      "bic": -133.839
+     }
+    },
+    "paths": {
+     "OI->ACJ": 0.614,
+     "OI->ACL": -0.409,
+     "OP->OI": 0.362
+    },
+    "loadings": {
+     "ac_joy1": 0.743,
+     "ac_joy2": 0.788,
+     "ac_joy3": 0.822,
+     "ac_joy4": 0.711,
+     "ac_love1": 0.792,
+     "ac_love2": 0.664,
+     "ac_love3": 0.817,
+     "org_ident1": 0.786,
+     "org_ident2": 0.758,
+     "org_ident3": 0.636,
+     "org_ident4": 0.822,
+     "org_ident5": 0.812,
+     "org_ident6": 0.746,
+     "org_pre1": 0.773,
+     "org_pre2": 0.828,
+     "org_pre3": 0.779,
+     "org_pre4": 0.794,
+     "org_pre5": 0.794,
+     "org_pre6": 0.848,
+     "org_pre7": 0.785,
+     "org_pre8": 0.798
+    },
+    "weights": {
+     "ac_joy1": 0.294,
+     "ac_joy2": 0.327,
+     "ac_joy3": 0.369,
+     "ac_joy4": 0.309,
+     "ac_love1": 0.449,
+     "ac_love2": 0.325,
+     "ac_love3": 0.524,
+     "org_ident1": 0.216,
+     "org_ident2": 0.211,
+     "org_ident3": 0.193,
+     "org_ident4": 0.255,
+     "org_ident5": 0.242,
+     "org_ident6": 0.19,
+     "org_pre1": 0.142,
+     "org_pre2": 0.164,
+     "org_pre3": 0.17,
+     "org_pre4": 0.131,
+     "org_pre5": 0.157,
+     "org_pre6": 0.179,
+     "org_pre7": 0.158,
+     "org_pre8": 0.147
+    },
+    "htmt": {
+     "ACJ:ACL": 0.641,
+     "ACJ:OI": 0.753,
+     "ACL:OI": 0.527,
+     "ACJ:OP": 0.467,
+     "ACL:OP": 0.263,
+     "OI:OP": 0.408
+    },
+    "vifOuter": {
+     "ac_joy1": 1.469,
+     "ac_joy2": 1.587,
+     "ac_joy3": 1.636,
+     "ac_joy4": 1.335,
+     "ac_love1": 1.321,
+     "ac_love2": 1.213,
+     "ac_love3": 1.262,
+     "org_ident1": 1.976,
+     "org_ident2": 1.749,
+     "org_ident3": 1.357,
+     "org_ident4": 2.334,
+     "org_ident5": 2.338,
+     "org_ident6": 1.745,
+     "org_pre1": 2.635,
+     "org_pre2": 3.013,
+     "org_pre3": 2.713,
+     "org_pre4": 2.789,
+     "org_pre5": 3.343,
+     "org_pre6": 3.125,
+     "org_pre7": 3.178,
+     "org_pre8": 2.56
+    },
+    "fSquared": {
+     "OI->ACJ": 0.605,
+     "OI->ACL": 0.201,
+     "OP->OI": 0.151
+    },
+    "iterations": 8
+   }
+  },
+  {
+   "name": "18-employee-retention",
+   "title": "MDA book ER - PLS-SEM",
+   "dataset": "datasets/employee-retention/data.txt",
+   "model": {
+    "constructs": [
+     {
+      "name": "AC",
+      "indicators": [
+       "AC1",
+       "AC2",
+       "AC3",
+       "AC4"
+      ]
+     },
+     {
+      "name": "EP",
+      "indicators": [
+       "EP1",
+       "EP2",
+       "EP3",
+       "EP4"
+      ]
+     },
+     {
+      "name": "JS",
+      "indicators": [
+       "JS1",
+       "JS2",
+       "JS3",
+       "JS4",
+       "JS5"
+      ]
+     },
+     {
+      "name": "OC",
+      "indicators": [
+       "OC1",
+       "OC2",
+       "OC3",
+       "OC4"
+      ]
+     },
+     {
+      "name": "SI",
+      "indicators": [
+       "SI1",
+       "SI2",
+       "SI3",
+       "SI4"
+      ]
+     }
+    ],
+    "paths": [
+     [
+      "AC",
+      "JS"
+     ],
+     [
+      "AC",
+      "OC"
+     ],
+     [
+      "EP",
+      "JS"
+     ],
+     [
+      "EP",
+      "OC"
+     ],
+     [
+      "JS",
+      "OC"
+     ],
+     [
+      "JS",
+      "SI"
+     ],
+     [
+      "OC",
+      "SI"
+     ]
+    ]
+   },
+   "options": {
+    "algorithm": "pls",
+    "weighting": "path",
+    "max_iterations": 3000,
+    "missing": "mean",
+    "missing_value": -99
+   },
+   "reference": {
+    "modelFit": {
+     "srmr": 0.051,
+     "dULS": 0.612,
+     "dG": 0.216,
+     "chiSquare": 516.253,
+     "nfi": 0.884
+    },
+    "innerSummary": {
+     "SI": {
+      "rSquared": 0.229,
+      "rSquaredAdj": 0.225,
+      "cAlpha": 0.889,
+      "rhoA": 0.899,
+      "rhoC": 0.923,
+      "ave": 0.75,
+      "bic": -87.075
+     },
+     "JS": {
+      "rSquared": 0.045,
+      "rSquaredAdj": 0.04,
+      "cAlpha": 0.844,
+      "rhoA": 0.856,
+      "rhoC": 0.888,
+      "ave": 0.614,
+      "bic": -1.298
+     },
+     "EP": {
+      "cAlpha": 0.857,
+      "rhoA": 0.869,
+      "rhoC": 0.903,
+      "ave": 0.7
+     },
+     "AC": {
+      "cAlpha": 0.894,
+      "rhoA": 0.911,
+      "rhoC": 0.926,
+      "ave": 0.757
+     },
+     "OC": {
+      "rSquared": 0.226,
+      "rSquaredAdj": 0.22,
+      "cAlpha": 0.832,
+      "rhoA": 0.887,
+      "rhoC": 0.886,
+      "ave": 0.663,
+      "bic": -79.584
+     }
+    },
+    "paths": {
+     "AC->JS": 0.006,
+     "AC->OC": 0.168,
+     "EP->JS": 0.21,
+     "EP->OC": 0.378,
+     "JS->OC": 0.095,
+     "JS->SI": 0.125,
+     "OC->SI": 0.439
+    },
+    "loadings": {
+     "AC1": 0.865,
+     "AC2": 0.854,
+     "AC3": 0.876,
+     "AC4": 0.885,
+     "EP1": 0.771,
+     "EP2": 0.868,
+     "EP3": 0.834,
+     "EP4": 0.869,
+     "JS1": 0.782,
+     "JS2": 0.796,
+     "JS3": 0.759,
+     "JS4": 0.763,
+     "JS5": 0.817,
+     "OC1": 0.676,
+     "OC2": 0.9,
+     "OC3": 0.776,
+     "OC4": 0.884,
+     "SI1": 0.864,
+     "SI2": 0.897,
+     "SI3": 0.81,
+     "SI4": 0.892
+    },
+    "weights": {
+     "AC1": 0.271,
+     "AC2": 0.238,
+     "AC3": 0.289,
+     "AC4": 0.349,
+     "EP1": 0.243,
+     "EP2": 0.337,
+     "EP3": 0.294,
+     "EP4": 0.316,
+     "JS1": 0.221,
+     "JS2": 0.249,
+     "JS3": 0.256,
+     "JS4": 0.225,
+     "JS5": 0.323,
+     "OC1": 0.175,
+     "OC2": 0.394,
+     "OC3": 0.28,
+     "OC4": 0.35,
+     "SI1": 0.288,
+     "SI2": 0.307,
+     "SI3": 0.239,
+     "SI4": 0.316
+    },
+    "htmt": {
+     "AC:EP": 0.257,
+     "AC:JS": 0.066,
+     "EP:JS": 0.244,
+     "AC:OC": 0.275,
+     "EP:OC": 0.495,
+     "JS:OC": 0.209,
+     "AC:SI": 0.31,
+     "EP:SI": 0.569,
+     "JS:SI": 0.232,
+     "OC:SI": 0.501
+    },
+    "vifOuter": {
+     "AC1": 2.415,
+     "AC2": 2.412,
+     "AC3": 2.512,
+     "AC4": 2.334,
+     "EP1": 1.716,
+     "EP2": 2.148,
+     "EP3": 2.026,
+     "EP4": 2.274,
+     "JS1": 1.813,
+     "JS2": 1.828,
+     "JS3": 1.622,
+     "JS4": 1.698,
+     "JS5": 1.763,
+     "OC1": 1.465,
+     "OC2": 2.486,
+     "OC3": 1.623,
+     "OC4": 2.411,
+     "SI1": 2.404,
+     "SI2": 2.849,
+     "SI3": 1.987,
+     "SI4": 2.647
+    },
+    "fSquared": {
+     "AC->JS": 0.0,
+     "AC->OC": 0.034,
+     "EP->JS": 0.044,
+     "EP->OC": 0.168,
+     "JS->OC": 0.011,
+     "JS->SI": 0.02,
+     "OC->SI": 0.242
+    },
+    "iterations": 7
+   }
+  }
+ ]
+}

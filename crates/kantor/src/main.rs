@@ -52,6 +52,7 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides | --notes] [FIL
     \x20      kantor docs <build|list|check|edit|schema|merge> ...\n\
     \x20      kantor sheets <build|list|edit|check|schema> ...\n\
     \x20      kantor sheets merge TEMPLATE.xlsx DATA -o DIR [options]\n\
+    \x20      kantor pls <run|check|schema> --model MODEL.json --data DATA ...\n\
     \x20      kantor agent run --skill DIR --dir DIR --model ID --base-url URL PROMPT\n\
     \n\
     Kantor is a native office suite. With no arguments it opens the Home screen.\n\
@@ -67,6 +68,7 @@ const USAGE: &str = "usage: kantor [--docs | --sheets | --slides | --notes] [FIL
     `kantor sheets` builds, edits, lists and checks workbooks from JSON (kantor sheets --help).\n\
     `kantor docs merge`, `kantor slides merge` and `kantor sheets merge` fill a template\n\
     in once per row of a workbook or CSV file (mail merge; add --help).\n\
+    `kantor pls` runs PLS-SEM (as SmartPLS does) on survey data (kantor pls --help).\n\
     `kantor agent run` lets a model make decks, documents and workbooks in one folder\n\
     with these tools, following a skill (kantor agent --help).";
 
@@ -116,7 +118,7 @@ fn main() {
         && let Some(cmd) = std::env::args().nth(1).filter(|a| {
             matches!(
                 a.as_str(),
-                "pdf" | "convert" | "slides" | "docs" | "sheets" | "agent"
+                "pdf" | "convert" | "slides" | "docs" | "sheets" | "agent" | "pls"
             )
         })
     {
@@ -157,6 +159,11 @@ fn main() {
         let args: Vec<_> = std::env::args_os().skip(3).collect();
         std::process::exit(cli::merge::main(app, &args));
     }
+    if raw.first().map(String::as_str) == Some("pls") {
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+        let args: Vec<_> = std::env::args_os().skip(2).collect();
+        std::process::exit(cli::pls::main(&args));
+    }
     if raw.first().map(String::as_str) == Some("agent") {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
         let args: Vec<_> = std::env::args_os().skip(2).collect();
@@ -192,6 +199,10 @@ fn main() {
         kantor_ui::perf::watch_main_thread(cx);
         kantor_ui::find_bar::init(cx);
         sheets_ui::init(cx);
+        cx.set_global(sheets_ui::pls::PlsHooks {
+            write: agent::pls::write_for_ui,
+            summary: agent::pls::summary_text,
+        });
         docs_ui::init(cx);
         slides_ui::init(cx);
         pdf_ui::init(cx);

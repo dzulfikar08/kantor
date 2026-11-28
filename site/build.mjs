@@ -63,6 +63,38 @@ function picture(name, alt, first, sizes = "(min-width: 1180px) 1100px, calc(100
         </picture>`;
 }
 
+// The thesis section: PLS-SEM in Sheets (with its screenshot) and citations in Docs.
+function thesis(t) {
+  const h = t.thesis;
+  return `<section class="thesis" id="thesis" aria-labelledby="thesis-h" tabindex="-1">
+      <div class="wrap">
+        <div class="pap-head">
+          <h2 id="thesis-h">${h.h2}</h2>
+          <p class="pap-lede">${h.lede}</p>
+        </div>
+        <figure class="pap-shot">
+          <div class="window">
+          ${picture(h.shot, h.shotAlt, false)}
+          </div>
+          <figcaption class="caption">${h.shotCaption}</figcaption>
+        </figure>
+        <div class="thesis-grid">
+          <div class="thesis-pls app-sheets">
+            <h3>${h.plsH3}</h3>
+            <dl class="thesis-list">
+              ${h.pls.map(([dt, dd]) => `<div><dt>${dt}</dt><dd>${dd}</dd></div>`).join("\n              ")}
+            </dl>
+            <p class="thesis-check">${h.plsCheck}</p>
+          </div>
+          <div class="thesis-cite app-docs">
+            <h3>${h.citeH3}</h3>
+            ${h.cite.map((p) => `<p>${p}</p>`).join("\n            ")}
+          </div>
+        </div>
+      </div>
+    </section>`;
+}
+
 // The Paparan AI section: what it does, examples, how to start, price, privacy.
 function paparan(t) {
   const p = t.pap;
@@ -233,6 +265,7 @@ function page(t, other) {
       <nav aria-label="${t.navLabel}">
         <ul class="nav">
           <li><a href="#download">${t.navDownload}</a></li>
+          <li class="nav-thesis"><a href="#thesis">${t.navThesis}</a></li>
           <li class="nav-pap"><a href="#paparan">${t.navPaparan}</a></li>
           <li class="nav-limits"><a href="#limits">${t.navLimits}</a></li>
           <li class="nav-gh"><a href="${GH}">${t.navSource}</a></li>
@@ -298,6 +331,8 @@ function page(t, other) {
         </dl>
       </div>
     </section>
+
+    ${thesis(t)}
 
     <section class="download" id="download" aria-labelledby="dl-h" tabindex="-1">
       <div class="wrap">

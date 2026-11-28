@@ -376,6 +376,26 @@ pub fn mail_merge(args: &Value) -> Result<Value, String> {
     go().map_err(|e| format!("{e:#}"))
 }
 
+/// `pls_run` with `check: true`: a model against a data file.
+fn pls_check(args: &Value) -> Result<Value, String> {
+    let go = || -> anyhow::Result<Value> {
+        use anyhow::Context as _;
+        let pls = crate::agent::pls::Settings::from_args(args)?;
+        let model =
+            crate::agent::pls::model_from(args.get("model").context("`model` is required")?, None)?;
+        let opts = pls.options(&model)?;
+        let data = crate::agent::path_arg(crate::agent::req_str(args, "data")?)?;
+        let sheet = crate::agent::pls::sheet_arg(args);
+        let loaded = crate::agent::pls::read_data(
+            &data,
+            sheet.as_deref(),
+            crate::agent::opt_str(args, "range")?,
+        )?;
+        Ok(crate::agent::pls::check_json(&loaded, &model, &opts))
+    };
+    go().map_err(|e| format!("{e:#}"))
+}
+
 /// `slides_check` with a `path`: check the file without the app.
 fn check_file(args: &Value) -> Result<Value, String> {
     let go = || -> anyhow::Result<Value> {
@@ -395,6 +415,12 @@ impl Backend for AppClient {
     fn call(&mut self, tool: &str, args: Value) -> Result<Value, String> {
         if tool == "mail_merge" {
             return mail_merge(&args);
+        }
+        if tool == "pls_run" {
+            if args.get("check").and_then(Value::as_bool) == Some(true) {
+                return pls_check(&args);
+            }
+            return crate::agent::pls::run_tool(&args, None).map_err(|e| format!("{e:#}"));
         }
         if tool == "slides_check" && args.get("path").is_some_and(|p| !p.is_null()) {
             return check_file(&args);

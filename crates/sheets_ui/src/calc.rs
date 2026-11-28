@@ -104,6 +104,12 @@ pub enum SheetsEvent {
     RetryClose,
     /// `Workbook_BeforeClose` cancelled the close.
     CloseCancelled,
+    /// A PLS-SEM model's Explain results: open Paparan AI's chat with this
+    /// prompt and these files (the model, its data, the results) attached.
+    ExplainPls {
+        prompt: String,
+        files: Vec<std::path::PathBuf>,
+    },
 }
 
 /// Something handed over with an event (a workbook, a reply channel):

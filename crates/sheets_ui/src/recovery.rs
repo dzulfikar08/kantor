@@ -71,6 +71,10 @@ impl SheetsView {
         else {
             return Task::ready(Err(anyhow!("no file")));
         };
+        // Autosaving a CSV would drop the PLS-SEM models.
+        if self.drops_pls_models(&path, cx) {
+            return Task::ready(Err(anyhow!("not autosaved")));
+        }
         let Some(done) = self.start_save(path, true, window, cx) else {
             return Task::ready(Err(anyhow!("not autosaved")));
         };

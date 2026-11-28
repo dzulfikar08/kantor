@@ -169,6 +169,7 @@ can be read but not overwritten.
 | `macros` | a workbook's VBA macros, as `kantor sheets macros`: modules, procedures, code on request (read, never run) |
 | `look` | contact sheet or pages as pictures (at most 4), saved under `shots/` |
 | `convert` | `kantor convert` (PDF copies, CSV ↔ xlsx, .doc → .docx, …) |
+| `pls` | PLS-SEM as `kantor pls run` / `check` on a data file in the folder: a compact summary with rule-of-thumb flags, optionally a .docx report and a results .xlsx ([pls-json.md](pls-json.md)) |
 | `read_skill_file`, `finish` | the loop's own |
 
 The tools call the same Rust functions as the CLI, in process.

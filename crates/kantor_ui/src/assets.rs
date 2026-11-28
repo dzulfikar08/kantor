@@ -138,6 +138,8 @@ icon_assets!(
         Code,
         TextQuote,
         NotebookPen,
+        // Sheets: PLS-SEM model tab
+        Save,
     ]
 );
 

@@ -37,6 +37,8 @@ kantor_merge.workspace = true
 # File access in the App Sandbox (store build; no-ops elsewhere).
 kantor_sandbox.workspace = true
 kantor_pdf.workspace = true
+# `kantor pls` and the MCP tool `pls_run`: PLS-SEM.
+kantor_pls.workspace = true
 kantor_theme.workspace = true
 kantor_ui.workspace = true
 kantor_update.workspace = true
@@ -46,6 +48,7 @@ notes_ui.workspace = true
 pdf_ui.workspace = true
 # `kantor pdf verify`: the signature checker.
 pdf_engine.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sheets_engine.workspace = true
 # `kantor sheets macros run`: macros run headless.

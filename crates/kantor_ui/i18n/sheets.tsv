@@ -1377,3 +1377,188 @@ Run-time error '{}': {}	Kesalahan run-time '{}': {}
 Line {}: {}	Baris {}: {}
 Line {}: Kantor doesn't run this yet: {}	Baris {}: Kantor belum menjalankan ini: {}
 Remove {} and its code?	Hapus {} beserta kodenya?
+# PLS-SEM: model tab, diagram, results
+PLS-SEM	PLS-SEM
+Measurement	Model pengukuran
+Discriminant validity	Validitas diskriminan
+Structural model	Model struktural
+Model fit	Kecocokan model
+Mean	Rata-rata
+p (one-tailed)	p (satu arah)
+p (two-tailed)	p (dua arah)
+Reflective	Reflektif
+Formative (Mode B)	Formatif (Mode B)
+Composite (Mode A)	Komposit (Mode A)
+Construct	Konstruk
+Indicator	Indikator
+Loading	Loading
+Weight	Bobot
+Outer loadings and weights	Outer loading dan bobot
+Flagged: reflective loadings below 0.708, VIF of 5 or more; after a bootstrap, p values at or above the significance level (the loading's for reflective constructs, the weight's for formative ones).	Ditandai: loading reflektif di bawah 0,708, VIF 5 atau lebih; setelah bootstrap, nilai p sama dengan atau di atas taraf signifikansi (p loading untuk konstruk reflektif, p bobot untuk konstruk formatif).
+Reliability and convergent validity	Reliabilitas dan validitas konvergen
+Cronbach's alpha	Cronbach's alpha
+Flagged: alpha, rho_A or rho_C below 0.70, rho_C above 0.95, AVE below 0.50. Formative constructs have no reliability.	Ditandai: alpha, rho_A atau rho_C di bawah 0,70, rho_C di atas 0,95, AVE di bawah 0,50. Konstruk formatif tidak memiliki reliabilitas.
+Fornell–Larcker criterion	Kriteria Fornell–Larcker
+The square root of each construct's AVE (diagonal) should exceed its correlations with the other constructs; flagged where it doesn't.	Akar kuadrat AVE setiap konstruk (diagonal) harus lebih besar daripada korelasinya dengan konstruk lain; ditandai bila tidak.
+Heterotrait–monotrait ratio (HTMT)	Rasio heterotrait–monotrait (HTMT)
+Flagged: above 0.85 (0.90 is the limit for conceptually similar constructs).	Ditandai: di atas 0,85 (batas 0,90 untuk konstruk yang mirip secara konseptual).
+HTMT confidence intervals	Interval kepercayaan HTMT
+Constructs	Konstruk
+Upper bound (one-sided)	Batas atas (satu sisi)
+Discriminant validity holds when the one-sided upper bound is below 0.90 (flagged at 0.85 or more).	Validitas diskriminan terpenuhi bila batas atas satu sisi di bawah 0,90 (ditandai pada 0,85 atau lebih).
+Cross-loadings	Cross-loading
+Each indicator should load highest on its own construct; flagged where another construct's loading is as high.	Setiap indikator harus memiliki loading tertinggi pada konstruknya sendiri; ditandai bila loading pada konstruk lain sama tinggi.
+Path	Jalur
+Coefficient	Koefisien
+Path coefficients	Koefisien jalur
+f² of 0.02, 0.15 and 0.35 are small, medium and large effects. Flagged: inner VIF of 5 or more; after a bootstrap, p values at or above the significance level.	f² sebesar 0,02, 0,15 dan 0,35 berarti efek kecil, sedang dan besar. Ditandai: inner VIF 5 atau lebih; setelah bootstrap, nilai p sama dengan atau di atas taraf signifikansi.
+Adjusted R²	R² disesuaikan
+Coefficient of determination (R²)	Koefisien determinasi (R²)
+R² of 0.25, 0.50 and 0.75 are weak, moderate and substantial (Hair et al.).	R² sebesar 0,25, 0,50 dan 0,75 berarti lemah, moderat dan substansial (Hair dkk.).
+Effect	Efek
+Specific indirect effects	Efek tidak langsung spesifik
+Total indirect effects	Total efek tidak langsung
+Total effects	Total efek
+Measure	Ukuran
+Saturated model	Model jenuh
+Estimated model	Model estimasi
+Flagged: SRMR of 0.08 or more.	Ditandai: SRMR 0,08 atau lebih.
+Estimation	Estimasi
+Setting	Pengaturan
+Consistent PLS (PLSc)	PLS konsisten (PLSc)
+Centroid	Sentroid
+Factorial	Faktorial
+Algorithm	Algoritma
+Weighting scheme	Skema pembobotan
+Cases used	Kasus yang dipakai
+Rows left out (missing values)	Baris dikeluarkan (data hilang)
+Missing values replaced	Data hilang yang diganti
+Iterations	Iterasi
+Converged	Konvergen
+Bootstrap subsamples	Subsampel bootstrap
+Subsamples that failed	Subsampel yang gagal
+Seed	Seed
+Warnings	Peringatan
+A construct needs a name	Konstruk perlu nama
+There is already a construct called {}	Sudah ada konstruk bernama {}
+There is no construct {}	Tidak ada konstruk {}
+Check or drag indicators first	Centang atau seret indikator terlebih dahulu
+A construct can't point to itself	Konstruk tidak bisa menunjuk dirinya sendiri
+That path is already there	Jalur itu sudah ada
+That path would close a loop: PLS-SEM models must be recursive	Jalur itu akan membentuk putaran: model PLS-SEM harus rekursif
+Bootstrap subsamples must be a whole number from 10 to 100000	Subsampel bootstrap harus bilangan bulat dari 10 sampai 100000
+The seed must be a whole number	Seed harus bilangan bulat
+The missing value code must be a number, such as -99	Kode data hilang harus berupa angka, misalnya -99
+The data range {}!{} isn't in this workbook	Rentang data {}!{} tidak ada di buku kerja ini
+The model can't be estimated: {}	Model tidak dapat diestimasi: {}
+ · text read as missing values in {}	 · teks dibaca sebagai data hilang di {}
+Bootstrapping…	Menjalankan bootstrap…
+Bootstrap done: {} subsamples, {} cases	Bootstrap selesai: {} subsampel, {} kasus
+Calculated on {} cases in {} iterations	Dihitung pada {} kasus dalam {} iterasi
+see the warnings under Model fit	lihat peringatan di Kecocokan model
+Stopped	Dihentikan
+The estimation failed: {}	Estimasi gagal: {}
+Stopping…	Menghentikan…
+Model saved as {}	Model disimpan sebagai {}
+Can't save the model: {}	Tidak dapat menyimpan model: {}
+Calculate the model first	Hitung model terlebih dahulu
+Reports can't be written here	Laporan tidak dapat ditulis di sini
+Writing…	Menulis…
+Can't write {}: {}	Tidak dapat menulis {}: {}
+Write the interpretation of these PLS-SEM results for the results chapter of a thesis: the measurement model (reliability, convergent and discriminant validity), the structural model (path coefficients with one-tailed p values, R², f², indirect effects) and model fit, with the usual thresholds. model.json is the model, data.csv its data and results.json the results; the pls tool can estimate it again.	Tuliskan interpretasi hasil PLS-SEM ini untuk Bab 4 (hasil dan pembahasan) skripsi: model pengukuran (reliabilitas, validitas konvergen dan diskriminan), model struktural (koefisien jalur dengan nilai p satu arah, R², f², efek tidak langsung) dan kecocokan model, dengan batas-batas yang lazim. model.json adalah modelnya, data.csv datanya dan results.json hasilnya; alat pls dapat mengestimasinya lagi.
+Write the interpretation of these PLS-SEM results for the results chapter of a thesis: the measurement model (reliability, convergent and discriminant validity), the structural model (path coefficients with two-tailed p values, R², f², indirect effects) and model fit, with the usual thresholds. model.json is the model, data.csv its data and results.json the results; the pls tool can estimate it again.	Tuliskan interpretasi hasil PLS-SEM ini untuk Bab 4 (hasil dan pembahasan) skripsi: model pengukuran (reliabilitas, validitas konvergen dan diskriminan), model struktural (koefisien jalur dengan nilai p dua arah, R², f², efek tidak langsung) dan kecocokan model, dengan batas-batas yang lazim. model.json adalah modelnya, data.csv datanya dan results.json hasilnya; alat pls dapat mengestimasinya lagi.
+Sent to Paparan AI: press Enter in the chat to start	Dikirim ke Paparan AI: tekan Enter di obrolan untuk mulai
+Can't write the files for Paparan AI: {}	Tidak dapat menulis berkas untuk Paparan AI: {}
+The data is now {}!{}	Data sekarang {}!{}
+Select the data with its header row on a worksheet first	Pilih data beserta baris judulnya di lembar kerja terlebih dahulu
+Calculate	Hitung
+Estimate the model (PLS algorithm)	Estimasi model (algoritma PLS)
+Bootstrap	Bootstrap
+Estimate with bootstrap standard errors, t and p values	Estimasi dengan galat baku, nilai t dan p bootstrap
+Auto layout: left to right by path depth	Tata letak otomatis: kiri ke kanan menurut kedalaman jalur
+Undo (Ctrl+Z)	Urungkan (Ctrl+Z)
+Redo (Ctrl+Y)	Ulangi (Ctrl+Y)
+Save the model as .json	Simpan model sebagai .json
+Explain results	Jelaskan hasil
+Ask Paparan AI to write the interpretation	Minta Paparan AI menulis interpretasinya
+Export	Ekspor
+Report in English (.docx)	Laporan berbahasa Inggris (.docx)
+Report in Indonesian (.docx)	Laporan berbahasa Indonesia (.docx)
+All results (.xlsx)	Semua hasil (.xlsx)
+ · {} cases	 · {} kasus
+{} indicators	{} indikator
+Use the selected cells	Pakai sel yang dipilih
+Take the data (header row first) from the selection on the worksheet	Ambil data (baris judul di atas) dari pilihan di lembar kerja
+Indicators · check or drag onto the diagram	Indikator · centang atau seret ke diagram
+Create construct	Buat konstruk
+Drag indicators here (or check them and press Create construct) to make a construct	Seret indikator ke sini (atau centang lalu tekan Buat konstruk) untuk membuat konstruk
+Shift+drag from one construct to another, or drag the ● of the selected one, to draw a path	Shift+seret dari satu konstruk ke konstruk lain, atau seret ● pada konstruk terpilih, untuk menggambar jalur
+Drag a construct or an indicator box to move it; right-click a construct to put its indicators on another side	Seret konstruk atau kotak indikator untuk memindahkannya; klik kanan konstruk untuk memindahkan indikatornya ke sisi lain
+Ctrl+wheel or pinch zooms; drag the background to pan	Ctrl+roda tetikus atau cubit untuk zoom; seret latar untuk menggeser tampilan
+Del removes the selection; double-click a construct to rename it	Del menghapus yang dipilih; klik dua kali konstruk untuk mengganti namanya
+Diagram	Diagram
+Indicators	Indikator
+Fit to view	Muat di layar
+Zoom out (Ctrl+wheel)	Perkecil (Ctrl+roda tetikus)
+Zoom in (Ctrl+wheel)	Perbesar (Ctrl+roda tetikus)
+Indicators on the left	Indikator di kiri
+Indicators on the right	Indikator di kanan
+Indicators above	Indikator di atas
+Indicators below	Indikator di bawah
+Indicators placed automatically	Indikator diatur otomatis
+Put moved indicators back	Kembalikan indikator yang dipindah
+Auto layout	Tata letak otomatis
+Indicator {} of {} is not a column of the data	Indikator {} pada {} bukan kolom data
+Indicator {} measures both {} and {} (only higher-order models repeat indicators)	Indikator {} mengukur {} sekaligus {} (indikator hanya diulang pada model orde tinggi)
+{} has {} missing values ({}% of rows)	{} punya {} data hilang ({}% baris)
+Deleting rows with missing values leaves out {} of {} rows	Menghapus baris berdata hilang membuang {} dari {} baris
+{} usable rows: too few to estimate the model	Hanya {} baris yang bisa dipakai: terlalu sedikit untuk mengestimasi model
+{} has the same value in every row	{} bernilai sama di semua baris
+{} rows is fewer than ten times the {} arrows pointing at {} ({} needed by the 10-times rule; a power analysis is the better guide)	{} baris kurang dari sepuluh kali {} panah yang menuju {} (aturan 10 kali meminta {}; analisis power lebih tepat sebagai acuan)
+The indicators of {} are perfectly collinear (Mode B can't weight them)	Indikator {} kolinear sempurna (Mode B tidak bisa memberi bobot)
+{} of formative {} has a VIF of {} (above 5: collinear)	{} pada konstruk formatif {} punya VIF {} (di atas 5: kolinear)
+The model has no constructs	Model belum punya konstruk
+A construct has no name	Ada konstruk tanpa nama
+Construct {} is defined twice	Konstruk {} didefinisikan dua kali
+{} is a higher-order construct; these aren't estimated yet	{} adalah konstruk orde tinggi; jenis ini belum bisa diestimasi
+Construct {} has no indicators	Konstruk {} belum punya indikator
+Indicator {} is listed twice in {}	Indikator {} tercantum dua kali di {}
+Path {} → {}: there is no construct {}	Jalur {} → {}: tidak ada konstruk {}
+Construct {} has a path to itself	Konstruk {} punya jalur ke dirinya sendiri
+Paths {} → {} and back make the model non-recursive	Jalur {} → {} dan sebaliknya membuat model tidak rekursif
+Construct {} has no structural paths: connect it to another construct	Konstruk {} belum punya jalur struktural: hubungkan ke konstruk lain
+The structural model has a cycle through {} (PLS-SEM needs a recursive model)	Model struktural membentuk putaran lewat {} (PLS-SEM butuh model rekursif)
+The algorithm did not converge in {} iterations	Algoritma tidak konvergen dalam {} iterasi
+rho_A of {} is above 1 (an inadmissible PLSc solution)	rho_A {} di atas 1 (solusi PLSc yang tidak layak)
+A corrected construct correlation is above 1 in absolute value (an inadmissible PLSc solution)	Ada korelasi konstruk terkoreksi yang nilai mutlaknya di atas 1 (solusi PLSc yang tidak layak)
+The consistent loading of {} is above 1 (a Heywood case)	Loading konsisten {} di atas 1 (kasus Heywood)
+{} of {} bootstrap subsamples could not be estimated and were left out	{} dari {} subsampel bootstrap tidak bisa diestimasi dan tidak diikutkan
+Formative	Formatif
+Mode A: the construct causes its indicators	Mode A: konstruk menyebabkan indikatornya
+Mode B: the indicators form the construct	Mode B: indikator membentuk konstruk
+Remove from the construct	Keluarkan dari konstruk
+Add the checked indicators	Tambahkan indikator yang dicentang
+Delete construct	Hapus konstruk
+Delete path	Hapus jalur
+Test type	Jenis uji
+Two-tailed	Dua arah
+One-tailed	Satu arah
+Significance level	Taraf signifikansi
+Missing values	Data hilang
+Delete rows	Hapus baris
+Mean replacement	Ganti dengan rata-rata
+Missing value code (optional, e.g. -99)	Kode data hilang (opsional, mis. -99)
+The model changed: calculate again	Model berubah: hitung lagi
+Insert as new sheet	Sisipkan sebagai lembar baru
+Hide the results	Sembunyikan hasil
+Show the results	Tampilkan hasil
+Copy table	Salin tabel
+Select the survey data with its header row (one column per indicator), then choose PLS-SEM… again	Pilih data survei beserta baris judulnya (satu kolom per indikator), lalu pilih PLS-SEM… lagi
+Open a PLS-SEM model (.json)	Buka model PLS-SEM (.json)
+Can't open the model: {}	Tidak dapat membuka model: {}
+Select the model's data with its header row first, then open the model	Pilih data model beserta baris judulnya terlebih dahulu, lalu buka modelnya
+Model deleted	Model dihapus
+PLS Results	Hasil PLS
+Inserted the results	Hasil disisipkan
+Delete Model	Hapus Model
+This file type can't keep PLS-SEM models: save the workbook as .xlsx	Jenis berkas ini tidak bisa menyimpan model PLS-SEM: simpan buku kerjanya sebagai .xlsx
