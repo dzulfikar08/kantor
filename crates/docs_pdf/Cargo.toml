@@ -27,6 +27,8 @@ krilla = { version = "0.8", default-features = false, features = ["raster-images
 flate2 = "1"
 
 [dev-dependencies]
+# Equation tests (tests/equations.rs).
+kantor_math.workspace = true
 # Reads the test variable font's character map.
 skrifa = "0.42"
 kantor_ooxml.workspace = true
