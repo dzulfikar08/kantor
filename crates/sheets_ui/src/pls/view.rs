@@ -1734,18 +1734,31 @@ impl PlsView {
         let empty = self.diagram.model.constructs.is_empty();
         let accent = t_.accent;
         let menu_view = cx.entity().downgrade();
+        let me = cx.entity().downgrade();
         let painter = canvas(
             move |b, window, _| {
                 bounds.set(b);
-                // Fit to view needs this size: draw again, fitted (and once
-                // more if the size changed after the fit).
-                if pending.get() {
-                    window.refresh();
+                // Fit to view needs this size: render again, fitted (and
+                // once more if the size changed after the fit). A refresh
+                // asked for during this draw would be lost, so on the next
+                // frame.
+                let again = if pending.get() {
+                    true
                 } else if let Some(size) = fitted.take()
                     && size != b.size
                 {
                     pending.set(true);
-                    window.refresh();
+                    true
+                } else {
+                    false
+                };
+                if again && b.size.width > px(1.) && b.size.height > px(1.) {
+                    let me = me.clone();
+                    window.on_next_frame(move |_, cx| {
+                        if let Some(me) = me.upgrade() {
+                            me.update(cx, |_, cx| cx.notify());
+                        }
+                    });
                 }
             },
             move |b, _, window, _| {

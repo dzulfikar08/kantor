@@ -200,7 +200,18 @@ impl SheetsView {
         self.pls_add(d, window, cx);
     }
 
-    fn pls_add(&mut self, d: diagram::Diagram, window: &mut Window, cx: &mut Context<Self>) {
+    fn pls_add(&mut self, mut d: diagram::Diagram, window: &mut Window, cx: &mut Context<Self>) {
+        // Tabs keep different names (a model opened twice gets "(2)").
+        let taken: Vec<String> = self.pls_tabs(cx).into_iter().map(|(_, n)| n).collect();
+        if taken.iter().any(|n| n == d.name()) {
+            let base = d.name().to_owned();
+            if let Some(name) = (2..)
+                .map(|k| format!("{base} ({k})"))
+                .find(|n| !taken.contains(n))
+            {
+                d.set_name(&name);
+            }
+        }
         let made = self.pls_make_view(d, window, cx);
         let views = self.pls.views.get_or_insert_with(Vec::new);
         views.push(made);
