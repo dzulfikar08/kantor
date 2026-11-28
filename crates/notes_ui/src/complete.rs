@@ -138,7 +138,7 @@ impl NotesView {
     pub(crate) fn render_completion(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         let p = self.completion.as_ref()?;
         let c = self.caret_pos()?;
-        let t = tokens(cx);
+        let tok = tokens(cx);
         let o = self.origin();
         let vp = self.viewport.get();
         let x = o.x - vp.origin.x + c.at.x;
@@ -152,8 +152,8 @@ impl NotesView {
             .py(SPACE_2)
             .rounded(RADIUS_MD)
             .border_1()
-            .border_color(t.border)
-            .bg(t.elevated)
+            .border_color(tok.border)
+            .bg(tok.elevated)
             .shadow_md()
             .text_size(FONT_BODY)
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
@@ -165,8 +165,8 @@ impl NotesView {
                     .px(SPACE_4)
                     .py(SPACE_1)
                     .cursor_pointer()
-                    .when(on, |d| d.bg(t.selected))
-                    .hover(|s| s.bg(t.hover))
+                    .when(on, |d| d.bg(tok.selected))
+                    .hover(|s| s.bg(tok.hover))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _, _, cx| {
@@ -174,13 +174,18 @@ impl NotesView {
                             this.accept_completion(i, cx);
                         }),
                     )
-                    .child(div().truncate().text_color(t.fg).child(item.label.clone()))
+                    .child(
+                        div()
+                            .truncate()
+                            .text_color(tok.fg)
+                            .child(item.label.clone()),
+                    )
                     .when(item.detail != format!("{}.md", item.label), |d| {
                         d.child(
                             div()
                                 .truncate()
                                 .text_size(FONT_CAPTION)
-                                .text_color(t.fg_dim)
+                                .text_color(tok.fg_dim)
                                 .child(item.detail.clone()),
                         )
                     }),

@@ -362,7 +362,7 @@ impl NotesView {
     pub(crate) fn render_graph(&mut self, cx: &mut Context<Self>) -> AnyElement {
         self.graph_sync(cx);
         self.graph_kick(cx);
-        let t = tokens(cx);
+        let tok = tokens(cx);
         let Some(g) = &self.graph else {
             return div().into_any_element();
         };
@@ -393,7 +393,14 @@ impl NotesView {
         let bounds_cell = g.bounds.clone();
         let count = g.nodes.len();
         let local = g.local;
-        let colors = (t.fg_muted, t.accent, t.border_strong, t.fg, t.fg_dim, t.bg);
+        let colors = (
+            tok.fg_muted,
+            tok.accent,
+            tok.border_strong,
+            tok.fg,
+            tok.fg_dim,
+            tok.bg,
+        );
         let font_family = cx.theme().font_family.clone();
         let entity = cx.entity().downgrade();
         let canvas = canvas(
@@ -446,7 +453,7 @@ impl NotesView {
                     }
                     // Dots, then names.
                     let show_all_labels = zoom >= 0.75 && pos.len() <= 600;
-                    let size = px((11. * zoom.clamp(0.8, 1.4)).round());
+                    let text_size = px((11. * zoom.clamp(0.8, 1.4)).round());
                     for (i, p) in pos.iter().enumerate() {
                         let s = at(*p);
                         if s.x < bounds.left() - px(80.)
@@ -491,11 +498,14 @@ impl NotesView {
                                 underline: None,
                                 strikethrough: None,
                             };
-                            let shaped = window.text_system().shape_line(label, size, &[run], None);
+                            let shaped =
+                                window
+                                    .text_system()
+                                    .shape_line(label, text_size, &[run], None);
                             let x = s.x - shaped.width() / 2.;
                             let _ = shaped.paint(
                                 point(x, s.y + r + px(3.)),
-                                size * 1.3,
+                                text_size * 1.3,
                                 TextAlign::Left,
                                 None,
                                 window,
@@ -516,9 +526,9 @@ impl NotesView {
             .gap(SPACE_2)
             .p(SPACE_2)
             .rounded(RADIUS_MD)
-            .bg(t.elevated)
+            .bg(tok.elevated)
             .border_1()
-            .border_color(t.border)
+            .border_color(tok.border)
             .child(
                 Button::new("notes-graph-all")
                     .label(t("Whole vault"))
@@ -581,7 +591,7 @@ impl NotesView {
                 div()
                     .px(SPACE_2)
                     .text_size(FONT_CAPTION)
-                    .text_color(t.fg_dim)
+                    .text_color(tok.fg_dim)
                     .child(tf("{} notes", &[&count])),
             );
         let close = div()
@@ -603,7 +613,7 @@ impl NotesView {
             .min_h_0()
             .relative()
             .overflow_hidden()
-            .bg(t.bg)
+            .bg(tok.bg)
             .cursor(if hover.is_some() {
                 CursorStyle::PointingHand
             } else {

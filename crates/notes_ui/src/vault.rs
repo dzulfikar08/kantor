@@ -179,7 +179,7 @@ pub(crate) fn write_note(path: &Path, text: &str, bom: bool) -> anyhow::Result<(
         bytes.extend_from_slice("\u{feff}".as_bytes());
     }
     bytes.extend_from_slice(text.as_bytes());
-    kantor_core::fsx::write_atomic(path, &bytes)
+    Ok(kantor_core::fsx::write_atomic(path, &bytes)?)
 }
 
 /// A file's text and whether it had a byte-order mark.

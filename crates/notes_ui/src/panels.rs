@@ -810,7 +810,7 @@ impl NotesView {
             return None;
         }
         let v = self.vault.clone()?;
-        let t = tokens(cx);
+        let tok = tokens(cx);
         let (root_name, loading, count, has_undo) = {
             let s = v.read(cx);
             (
@@ -841,79 +841,78 @@ impl NotesView {
                     }
                 }))
         };
-        let header =
-            v_flex()
-                .flex_none()
-                .gap(SPACE_2)
-                .px(SPACE_4)
-                .pt(SPACE_4)
-                .pb(SPACE_3)
-                .border_b_1()
-                .border_color(t.border)
-                .child(
-                    h_flex()
-                        .gap(SPACE_2)
-                        .child(
-                            gpui_kit::component::Icon::new(Lucide::FolderOpen)
-                                .with_size(ICON_MD)
-                                .text_color(t.fg_muted),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(root_name),
-                        )
-                        .child(
-                            icon_button("notes-vault-new", Lucide::FilePlus, false, cx)
-                                .tip(t("New note"), None)
-                                .on_click(cx.listener(|this, _, _, cx| this.new_vault_note(cx))),
-                        )
-                        .child(
-                            icon_button("notes-vault-rename", Lucide::Pencil, false, cx)
-                                .tip(t("Rename note"), None)
-                                .on_click(
-                                    cx.listener(|this, _, window, cx| this.rename_note(window, cx)),
-                                ),
-                        )
-                        .child(
-                            icon_button("notes-vault-rescan", Lucide::RefreshCw, false, cx)
-                                .tip(t("Read the folder again"), None)
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    if let Some(v) = &this.vault {
-                                        v.update(cx, |s, cx| s.rescan(cx));
-                                    }
-                                })),
-                        ),
-                )
-                .child(
-                    h_flex()
-                        .gap(SPACE_2)
-                        .child(tab(
-                            "notes-tab-files",
-                            t("Files"),
-                            self.left == LeftPanel::Files,
-                            LeftPanel::Files,
-                            cx,
-                        ))
-                        .child(tab(
-                            "notes-tab-search",
-                            t("Search"),
-                            self.left == LeftPanel::Search,
-                            LeftPanel::Search,
-                            cx,
-                        ))
-                        .child(div().flex_1())
-                        .child(div().text_size(FONT_CAPTION).text_color(t.fg_dim).child(
-                            if loading {
-                                t("Reading…").to_owned()
-                            } else {
-                                tf("{} notes", &[&count])
-                            },
-                        )),
-                );
+        let header = v_flex()
+            .flex_none()
+            .gap(SPACE_2)
+            .px(SPACE_4)
+            .pt(SPACE_4)
+            .pb(SPACE_3)
+            .border_b_1()
+            .border_color(tok.border)
+            .child(
+                h_flex()
+                    .gap(SPACE_2)
+                    .child(
+                        gpui_kit::component::Icon::new(Lucide::FolderOpen)
+                            .with_size(ICON_MD)
+                            .text_color(tok.fg_muted),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(root_name),
+                    )
+                    .child(
+                        icon_button("notes-vault-new", Lucide::FilePlus, false, cx)
+                            .tip(t("New note"), None)
+                            .on_click(cx.listener(|this, _, _, cx| this.new_vault_note(cx))),
+                    )
+                    .child(
+                        icon_button("notes-vault-rename", Lucide::Pencil, false, cx)
+                            .tip(t("Rename note"), None)
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.rename_note(window, cx)),
+                            ),
+                    )
+                    .child(
+                        icon_button("notes-vault-rescan", Lucide::RefreshCw, false, cx)
+                            .tip(t("Read the folder again"), None)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(v) = &this.vault {
+                                    v.update(cx, |s, cx| s.rescan(cx));
+                                }
+                            })),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap(SPACE_2)
+                    .child(tab(
+                        "notes-tab-files",
+                        t("Files"),
+                        self.left == LeftPanel::Files,
+                        LeftPanel::Files,
+                        cx,
+                    ))
+                    .child(tab(
+                        "notes-tab-search",
+                        t("Search"),
+                        self.left == LeftPanel::Search,
+                        LeftPanel::Search,
+                        cx,
+                    ))
+                    .child(div().flex_1())
+                    .child(div().text_size(FONT_CAPTION).text_color(tok.fg_dim).child(
+                        if loading {
+                            t("Reading…").to_owned()
+                        } else {
+                            tf("{} notes", &[&count])
+                        },
+                    )),
+            );
         let body = match self.left {
             LeftPanel::Search => self.search_pane(&v, cx),
             _ => self.files_pane(&v, cx),
@@ -923,7 +922,7 @@ impl NotesView {
                 .flex_none()
                 .p(SPACE_3)
                 .border_t_1()
-                .border_color(t.border)
+                .border_color(tok.border)
                 .child(
                     Button::new("notes-undo-rename")
                         .label(t("Undo rename"))
@@ -939,9 +938,9 @@ impl NotesView {
                 .w(LEFT_W)
                 .h_full()
                 .min_h_0()
-                .bg(t.chrome)
+                .bg(tok.chrome)
                 .border_r_1()
-                .border_color(t.border)
+                .border_color(tok.border)
                 .text_size(FONT_BODY)
                 .child(header)
                 .child(body)
@@ -951,7 +950,7 @@ impl NotesView {
     }
 
     fn files_pane(&mut self, v: &Entity<VaultState>, cx: &mut Context<Self>) -> AnyElement {
-        let t = tokens(cx);
+        let tok = tokens(cx);
         let current = self.path.as_deref().and_then(|p| v.read(cx).rel(p));
         // (folder rows and note rows), collected before drawing.
         enum Item {
@@ -1020,8 +1019,8 @@ impl NotesView {
                             .pr(SPACE_4)
                             .gap(SPACE_2)
                             .cursor_pointer()
-                            .text_color(t.fg_muted)
-                            .hover(|s| s.bg(t.hover))
+                            .text_color(tok.fg_muted)
+                            .hover(|s| s.bg(tok.hover))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 if !this.collapsed.remove(&k) {
                                     this.collapsed.insert(k.clone());
@@ -1054,8 +1053,10 @@ impl NotesView {
                             .pr(SPACE_4)
                             .gap(SPACE_2)
                             .cursor_pointer()
-                            .when(here, |d| d.bg(t.selected).text_color(t.fg))
-                            .when(!here, |d| d.text_color(t.fg_muted).hover(|s| s.bg(t.hover)))
+                            .when(here, |d| d.bg(tok.selected).text_color(tok.fg))
+                            .when(!here, |d| {
+                                d.text_color(tok.fg_muted).hover(|s| s.bg(tok.hover))
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_target(path.clone(), None, cx)
                             }))
@@ -1078,7 +1079,7 @@ impl NotesView {
     }
 
     fn search_pane(&mut self, v: &Entity<VaultState>, cx: &mut Context<Self>) -> AnyElement {
-        let t = tokens(cx);
+        let tok = tokens(cx);
         let query = self
             .search_input
             .as_ref()
@@ -1111,7 +1112,7 @@ impl NotesView {
         }
         let data = self.search_cache.as_ref().expect("filled above");
         if !query.trim().is_empty() {
-            col = col.child(div().text_size(FONT_CAPTION).text_color(t.fg_dim).child(
+            col = col.child(div().text_size(FONT_CAPTION).text_color(tok.fg_dim).child(
                 if data.count >= MAX_HITS {
                     tf("{}+ matches", &[&MAX_HITS])
                 } else {
@@ -1129,8 +1130,8 @@ impl NotesView {
                         .rounded(RADIUS_SM)
                         .cursor_pointer()
                         .truncate()
-                        .text_color(t.accent)
-                        .hover(|s| s.bg(t.hover))
+                        .text_color(tok.accent)
+                        .hover(|s| s.bg(tok.hover))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.open_target(path.clone(), None, cx)
                         }))
@@ -1152,7 +1153,7 @@ impl NotesView {
 
     /// Hits grouped by note: the note's name, then a line per hit.
     fn groups_list(&mut self, id: &str, groups: Groups, cx: &mut Context<Self>) -> Div {
-        let t = tokens(cx);
+        let tok = tokens(cx);
         let mut col = v_flex().gap(SPACE_3);
         for (gi, (name, path, rows)) in groups.into_iter().enumerate() {
             let p = path.clone();
@@ -1162,7 +1163,7 @@ impl NotesView {
                     .font_weight(FontWeight::SEMIBOLD)
                     .truncate()
                     .cursor_pointer()
-                    .hover(|s| s.text_color(t.accent))
+                    .hover(|s| s.text_color(tok.accent))
                     .on_click(
                         cx.listener(move |this, _, _, cx| this.open_target(p.clone(), None, cx)),
                     )
@@ -1176,15 +1177,15 @@ impl NotesView {
                         .px(SPACE_3)
                         .py(SPACE_2)
                         .rounded(RADIUS_SM)
-                        .bg(t.surface)
+                        .bg(tok.surface)
                         .text_size(FONT_SMALL)
-                        .text_color(t.fg_muted)
+                        .text_color(tok.fg_muted)
                         .cursor_pointer()
-                        .hover(|s| s.bg(t.hover))
+                        .hover(|s| s.bg(tok.hover))
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.open_target(path.clone(), Some(Jump::Offset(offset)), cx)
                         }))
-                        .child(snippet_text(r.text, r.hit, t.find_match)),
+                        .child(snippet_text(r.text, r.hit, tok.find_match)),
                 );
             }
             col = col.child(g);
@@ -1197,7 +1198,7 @@ impl NotesView {
             return None;
         }
         let v = self.vault.clone()?;
-        let t = tokens(cx);
+        let tok = tokens(cx);
         let rel = self.my_rel(cx).unwrap_or_default();
         let rev = v.read(cx).revision;
         let key = (rev, rel.clone());
@@ -1252,7 +1253,7 @@ impl NotesView {
             col = col.child(
                 div()
                     .text_size(FONT_SMALL)
-                    .text_color(t.fg_dim)
+                    .text_color(tok.fg_dim)
                     .child(t("No notes link here yet.")),
             );
         }
@@ -1270,9 +1271,9 @@ impl NotesView {
                         .id(SharedString::from(format!("notes-broken-{name}")))
                         .px(SPACE_2)
                         .text_size(FONT_SMALL)
-                        .text_color(t.fg_dim)
+                        .text_color(tok.fg_dim)
                         .cursor_pointer()
-                        .hover(|s| s.text_color(t.accent))
+                        .hover(|s| s.text_color(tok.accent))
                         .on_click(cx.listener(move |this, _, _, cx| this.follow_wiki(&n, None, cx)))
                         .child(format!("[[{name}]]")),
                 );
@@ -1285,9 +1286,9 @@ impl NotesView {
                 .w(RIGHT_W)
                 .h_full()
                 .min_h_0()
-                .bg(t.chrome)
+                .bg(tok.chrome)
                 .border_l_1()
-                .border_color(t.border)
+                .border_color(tok.border)
                 .text_size(FONT_BODY)
                 .child(
                     h_flex()
@@ -1295,7 +1296,7 @@ impl NotesView {
                         .px(SPACE_4)
                         .h(CONTROL_LG + SPACE_3)
                         .border_b_1()
-                        .border_color(t.border)
+                        .border_color(tok.border)
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(t("Backlinks")),
                 )
