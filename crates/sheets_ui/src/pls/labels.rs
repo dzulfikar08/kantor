@@ -328,8 +328,12 @@ fn cols(names: &[&str]) -> Vec<String> {
 
 /// `{names..., SE, t, p, CI}` heads after a bootstrap.
 fn boot_cols(f: &Fmt, mut c: Vec<String>) -> Vec<String> {
-    let lo = format!("{}%", trim_pct(f.alpha / 2.0 * 100.0));
-    let hi = format!("{}%", trim_pct(100.0 - f.alpha / 2.0 * 100.0));
+    let pct = |x: f64| {
+        let s = trim_pct(x);
+        if f.comma { s.replace('.', ",") } else { s }
+    };
+    let lo = format!("{}%", pct(f.alpha / 2.0 * 100.0));
+    let hi = format!("{}%", pct(100.0 - f.alpha / 2.0 * 100.0));
     c.extend([
         t("Mean").to_owned(),
         "SE".to_owned(),

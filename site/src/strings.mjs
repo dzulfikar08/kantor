@@ -185,7 +185,7 @@ export const en = {
     pls: [
       ["Draw the model", "Select the questionnaire data, drag the item columns onto the canvas to make constructs, then draw the paths. Reflective or formative constructs, PLS or consistent PLS (PLSc)."],
       ["Bootstrap", "5,000 subsamples by default, on every processor core, with a progress bar and a Stop button. t and p values, one- or two-tailed, with percentile and BCa intervals."],
-      ["Every table chapter 4 needs", "Loadings, Cronbach's alpha, rho_A, composite reliability, AVE, Fornell-Larcker, HTMT, cross-loadings, VIF, R², f², indirect effects, SRMR and NFI. Values outside the usual thresholds (Hair et al.) are marked."],
+      ["Every table your results chapter needs", "Loadings, Cronbach's alpha, rho_A, composite reliability, AVE, Fornell-Larcker, HTMT, cross-loadings, VIF, R², f², indirect effects, SRMR and NFI. Values outside the usual thresholds (Hair et al.) are marked."],
       ["A report to start from", "Export an APA-style report in Indonesian or English (.docx) or every table as .xlsx, or insert the tables as a new sheet. The model is saved inside the workbook."],
       ["Ask Paparan AI to explain", 'Explain results hands the model, the data and the results to <a href="#paparan">Paparan AI</a>, which writes the discussion of the results (paid, and optional).'],
     ],
