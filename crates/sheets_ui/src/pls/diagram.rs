@@ -26,6 +26,8 @@ pub const IND_GAP: f64 = 8.0;
 pub const IND_DIST: f64 = 80.0;
 /// Auto-layout's column and row steps.
 const COL_STEP: f64 = 320.0;
+/// Where new constructs go, column to column.
+const FREE_STEP: f64 = 480.0;
 const ROW_STEP: f64 = 240.0;
 const FIRST_X: f64 = 280.0;
 const FIRST_Y: f64 = 190.0;
@@ -37,10 +39,10 @@ const MAX_UNDO: usize = 200;
 /// would crowd the loadings where the links meet the ellipse).
 pub const STAGGER_FROM: usize = 8;
 /// Staggered: the step from one indicator to the next, the distance
-/// between the two columns, and the extra room before the inner column for
-/// the two columns' loadings.
+/// between the two columns (room for the outer column's loadings between
+/// them), and the extra room before the inner column for its loadings.
 const STAGGER_STEP: f64 = 18.0;
-const STAGGER_OUT: f64 = IND_W + 12.0;
+const STAGGER_OUT: f64 = IND_W + 56.0;
 const STAGGER_ROOM: f64 = 30.0;
 
 /// A rectangle (top-left corner, size).
@@ -458,9 +460,9 @@ impl Diagram {
     }
 
     /// Where an indicator's loading goes on its link: the middle, or, in
-    /// staggered columns, near the box for the inner column and near the
-    /// ellipse for the outer one, so the two columns' numbers don't sit on
-    /// each other.
+    /// staggered columns, just off its box: the inner column's between the
+    /// ellipse and that column, the outer column's between the two columns
+    /// (near the ellipse the links are too close together for numbers).
     pub fn loading_point(&self, c: &Construct, index: usize, rect: &Rect) -> (f64, f64) {
         let (a, b) = self.indicator_link(c, rect);
         let len = (b.0 - a.0).hypot(b.1 - a.1);
@@ -473,7 +475,7 @@ impl Diagram {
         } else if index.is_multiple_of(2) {
             24.0 / len
         } else {
-            1.0 - 24.0 / len
+            28.0 / len
         };
         (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
     }
@@ -562,14 +564,17 @@ impl Diagram {
             .filter(|c| self.layout().positions.contains_key(&c.name))
             .map(|c| self.position(&c.name))
             .collect();
+        // Wider than auto-layout's columns: before there are paths, every
+        // construct has its indicators on the left (two columns of them from
+        // 8 on), and they must not reach the construct before.
         for row in 0..50 {
             for col in 0..4 {
                 let at = (
-                    FIRST_X + col as f64 * COL_STEP,
+                    FIRST_X + col as f64 * FREE_STEP,
                     FIRST_Y + row as f64 * ROW_STEP,
                 );
                 if taken.iter().all(|t| {
-                    (t.0 - at.0).abs() > COL_STEP / 2.0 || (t.1 - at.1).abs() > ROW_STEP / 2.0
+                    (t.0 - at.0).abs() > FREE_STEP / 2.0 || (t.1 - at.1).abs() > ROW_STEP / 2.0
                 }) {
                     return at;
                 }

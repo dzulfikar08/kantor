@@ -906,10 +906,14 @@ impl PlsView {
         self.running = None;
         match r {
             Ok(r) => {
+                let f = self.fmt();
                 let msg = if boot {
                     tf(
                         "Bootstrap done: {} subsamples, {} cases",
-                        &[&r.bootstrap.as_ref().map_or(0, |b| b.samples), &r.n],
+                        &[
+                            &f.count(r.bootstrap.as_ref().map_or(0, |b| b.samples)),
+                            &f.count(r.n),
+                        ],
                     )
                 } else {
                     tf(

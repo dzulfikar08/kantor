@@ -532,14 +532,14 @@ pub fn report_doc(r: &Results, w: &Words, title: Option<&str>) -> Value {
         setup += &if w.id {
             format!(
                 " Signifikansi diuji dengan bootstrapping {} subsampel (seed {}), interval kepercayaan persentil {}%.",
-                b.samples,
+                thousands(b.samples, '.'),
                 b.seed,
                 ((1.0 - b.alpha) * 100.0).round()
             )
         } else {
             format!(
                 " Significance was tested by bootstrapping with {} subsamples (seed {}), with {}% percentile confidence intervals.",
-                b.samples,
+                thousands(b.samples, ','),
                 b.seed,
                 ((1.0 - b.alpha) * 100.0).round()
             )
@@ -1182,8 +1182,28 @@ pub fn summary_text(r: &Results) -> String {
     serde_json::to_string_pretty(&summary(r)).unwrap_or_default()
 }
 
+/// `n` with a thousands separator (`5,000`, or `5.000` in Indonesian).
+fn thousands(n: usize, sep: char) -> String {
+    let digits = n.to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(sep);
+        }
+        out.push(c);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
+    #[std::prelude::v1::test]
+    fn thousands_separators() {
+        assert_eq!(super::thousands(5000, ','), "5,000");
+        assert_eq!(super::thousands(100000, '.'), "100.000");
+        assert_eq!(super::thousands(999, '.'), "999");
+    }
+
     use super::*;
 
     fn fixture() -> std::path::PathBuf {

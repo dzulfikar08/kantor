@@ -42,6 +42,20 @@ impl Fmt {
         }
     }
 
+    /// A whole number with a thousands separator ("5,000", "5.000").
+    pub fn count(&self, n: usize) -> String {
+        let digits = n.to_string();
+        let sep = if self.comma { '.' } else { ',' };
+        let mut out = String::new();
+        for (i, c) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                out.push(sep);
+            }
+            out.push(c);
+        }
+        out
+    }
+
     /// The p value of a bootstrap estimate, one- or two-tailed.
     pub fn p_of(&self, e: &Estimate) -> Option<f64> {
         if self.one_tailed { e.p_one_tailed } else { e.p }
@@ -894,6 +908,9 @@ mod tests {
             ..Fmt::default()
         };
         assert_eq!(id.num(Some(1.5)), "1,500");
+        assert_eq!(id.count(5000), "5.000");
+        assert_eq!(f.count(12345), "12,345");
+        assert_eq!(f.count(150), "150");
         let e = Estimate {
             p: Some(0.04),
             p_one_tailed: Some(0.02),
