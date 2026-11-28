@@ -145,6 +145,7 @@ Can't insert {}: {}	Tidak dapat menyisipkan {}: {}
 Nothing to undo	Tidak ada yang dapat diurungkan
 Nothing to redo	Tidak ada yang dapat diulangi
 Page {} of {} · {}	Halaman {} dari {} · {}
+Page {} of {}, counting… · {}	Halaman {} dari {}, menghitung… · {}
 {} has content Kantor can't keep ({}), so it's saved as a new file; the original stays as it is	{} berisi konten yang tidak dapat dipertahankan Kantor ({}), jadi disimpan sebagai berkas baru; berkas aslinya tetap seperti semula
 Print failed: {}	Gagal mencetak: {}
 Preparing to print {}…	Menyiapkan pencetakan {}…

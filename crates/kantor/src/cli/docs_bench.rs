@@ -83,11 +83,13 @@ pub fn run(file: &Path, keys: usize, verify: bool) -> Result<()> {
     // What the view does on opening a long document: its first pages,
     // and the whole of it on other threads.
     let t = Instant::now();
-    let first = docs_pdf::LayoutCache::default().relayout_prefix(&doc, &mut engine, 400);
+    let mut prefix = docs_pdf::LayoutCache::default();
+    let first = prefix.relayout_prefix(&doc, &mut engine, 400);
     println!(
-        "first pages only: {:.1} ms, {} pages",
+        "first pages only: {:.1} ms, {} pages (estimated in all: {})",
         ms(t),
-        first.paged.pages.len()
+        first.paged.pages.len(),
+        prefix.estimate.unwrap_or(0)
     );
     engine.fonts.source_cache.make_shared();
     let fonts = engine.fonts.clone();

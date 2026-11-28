@@ -205,11 +205,7 @@ impl LayoutCache {
         let (laid, _) = self.full(doc, engine, Some(limit), None);
         self.last = None;
         self.outcome = Outcome::Prefix;
-        self.estimate = Some(crate::pages::estimate_pages(
-            doc,
-            limit,
-            laid.paged.pages.len(),
-        ));
+        self.estimate = Some(crate::pages::estimate_pages(doc, limit, &laid.paged));
         laid
     }
 

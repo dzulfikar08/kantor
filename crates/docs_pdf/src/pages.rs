@@ -1118,7 +1118,7 @@ pub(crate) fn lay_out_body(
     // Each page's header and footer, numbers filled in (laying out the
     // start of a document: the number of pages it should have).
     let total = if cut < doc.len() {
-        estimate_pages(doc, cut, paged.pages.len())
+        estimate_pages(doc, cut, &paged)
     } else {
         paged.pages.len()
     };
@@ -1361,13 +1361,174 @@ fn same_but_notes(new: &docs_layout::Page, old: &docs_layout::Page) -> bool {
 }
 
 /// About how many pages `doc` has when its first `cut` paragraphs take
-/// `pages` pages (by their share of its text).
-pub fn estimate_pages(doc: &Document, cut: usize, pages: usize) -> usize {
+/// the pages of `paged`: the paragraphs after `cut` fill pages as those
+/// before it did, by an estimate of each one's height (its lines at its
+/// font size and line spacing, its spacing, pictures and footnotes).
+/// Lines rather than characters, and spacing, keep a long contents list of
+/// short lines (often a document's first pages) from making it look
+/// hundreds of pages longer than it is.
+pub fn estimate_pages(doc: &Document, cut: usize, paged: &PagedDocument) -> usize {
+    use docs_engine::{Object, ResolvedLine};
     let paras = doc.paragraphs();
-    let len = |ps: &[docs_engine::Paragraph]| ps.iter().map(|p| p.text.len() + 40).sum::<usize>();
-    let laid = len(&paras[..cut.min(paras.len())]).max(1);
-    let all = len(paras);
-    (pages * all).div_ceil(laid).max(pages)
+    let cut = cut.min(paras.len());
+    let setup = paged.setup;
+    // Text width, pt (px at 96 dpi).
+    let width = ((setup.width - setup.margin_left - setup.margin_right) * 0.75).max(72.0);
+    // Size, line height and spacing per paragraph style (and table).
+    let mut looks: HashMap<(Option<String>, Option<u32>), (f32, f32, f32)> = HashMap::new();
+    let mut look = |p: &docs_engine::Paragraph| -> (f32, f32, f32) {
+        let direct = p.props.before.is_some() || p.props.after.is_some() || p.props.line.is_some();
+        let key = (p.props.style.clone(), p.cell.map(|c| c.table));
+        if !direct && let Some(l) = looks.get(&key) {
+            return *l;
+        }
+        let r = doc.resolve_para(p);
+        let size = doc.resolve_run(p, &Default::default()).size_pt.max(1.0);
+        let natural = size * 1.2;
+        let line = match r.line {
+            ResolvedLine::Multiple(m) => natural * m,
+            ResolvedLine::AtLeast(x) => natural.max(x),
+            ResolvedLine::Exact(x) => x,
+        };
+        let l = (size, line, r.space_before_pt + r.space_after_pt);
+        if !direct {
+            looks.insert(key, l);
+        }
+        l
+    };
+    // Footnotes: on average as tall as their text at 10 pt.
+    let notes: Vec<usize> = doc
+        .notes()
+        .iter()
+        .filter(|n| !n.separator && n.kind == NoteKind::Footnote)
+        .map(|n| {
+            n.doc
+                .paragraphs()
+                .iter()
+                .map(|p| p.text.chars().count())
+                .sum()
+        })
+        .collect();
+    let note_chars = notes.iter().sum::<usize>() as f32 / notes.len().max(1) as f32;
+    let est: Vec<EstPara> = paras
+        .iter()
+        .map(|p| {
+            let (size, line, spacing) = look(p);
+            let mut extra = if p.cell.is_some() { 0.0 } else { spacing };
+            let mut refs = 0usize;
+            for (_, o) in p.objects() {
+                match o {
+                    Object::Image(img) => extra += img.cy.max(0) as f32 / 12700.0,
+                    Object::Float(f) if f.inline => extra += f.at.cy.max(0) as f32 / 12700.0,
+                    Object::Float(f) if f.at.wrap != docs_engine::Wrap::None => {
+                        // Its area, as lines of text it takes the place of.
+                        let (w, h) = (
+                            f.at.cx.max(0) as f32 / 12700.0,
+                            f.at.cy.max(0) as f32 / 12700.0,
+                        );
+                        extra += h * (w / width).min(1.0);
+                    }
+                    _ => {
+                        refs += docs_engine::notes::reference_of(o)
+                            .is_some_and(|(k, _, _)| k == NoteKind::Footnote)
+                            as usize
+                    }
+                }
+            }
+            extra += refs as f32 * 12.0 * (note_chars / (ESTIMATE_PER_LINE * 1.1)).ceil().max(1.0);
+            EstPara {
+                chars: p.text.chars().count(),
+                cell: p.cell.map(|c| (c.table, c.row, c.cell)),
+                size,
+                line,
+                extra,
+            }
+        })
+        .collect();
+    // Characters per full line at 11 pt, from the paragraphs laid out that
+    // wrap (outside tables).
+    let (mut chars, mut lines) = (0.0f32, 0.0f32);
+    for ((p, e), l) in paras[..cut].iter().zip(&est).zip(&paged.layouts) {
+        let n = l.len();
+        if n >= 2 && p.cell.is_none() {
+            chars += e.chars as f32 * e.size / 11.0;
+            lines += n as f32 - 0.5;
+        }
+    }
+    let per_line = if lines >= 20.0 {
+        chars / lines
+    } else {
+        ESTIMATE_PER_LINE
+    };
+    estimate_from_heights(&est, cut, paged.pages.len(), per_line)
+}
+
+/// Characters in a full line of 11 pt text across a page, when the pages
+/// laid out don't tell.
+const ESTIMATE_PER_LINE: f32 = 95.0;
+
+/// One paragraph as [`estimate_from_heights`] sees it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EstPara {
+    /// Length in characters.
+    pub chars: usize,
+    /// Table, row and cell, in a table.
+    pub cell: Option<(u32, u32, u32)>,
+    /// Font size, pt (a line holds fewer characters of larger type).
+    pub size: f32,
+    /// A line's height, pt.
+    pub line: f32,
+    /// Height besides its lines (spacing, pictures, footnotes), pt.
+    pub extra: f32,
+}
+
+/// [`estimate_pages`] from paragraphs' estimated heights: those after
+/// `cut` fill pages as the first `cut` filled `pages`. A line holds
+/// `per_line` characters at 11 pt; a table row is as tall as its tallest
+/// cell (its cells share the line's width).
+pub fn estimate_from_heights(paras: &[EstPara], cut: usize, pages: usize, per_line: f32) -> usize {
+    let per_line = per_line.max(10.0);
+    let lines = |p: &EstPara, share: f32| {
+        let room = (per_line * 11.0 / p.size.max(1.0) / share).max(1.0);
+        (p.chars as f32 / room).ceil().max(1.0) * p.line
+    };
+    let height = |ps: &[EstPara]| -> f32 {
+        let mut sum = 0.0;
+        let mut i = 0;
+        while i < ps.len() {
+            let Some((t, r, _)) = ps[i].cell else {
+                sum += lines(&ps[i], 1.0) + ps[i].extra;
+                i += 1;
+                continue;
+            };
+            let start = i;
+            while i < ps.len() && matches!(ps[i].cell, Some((t2, r2, _)) if (t2, r2) == (t, r)) {
+                i += 1;
+            }
+            let row = &ps[start..i];
+            let mut cells: Vec<u32> = row.iter().filter_map(|p| p.cell.map(|c| c.2)).collect();
+            cells.dedup();
+            let share = cells.len().max(1) as f32;
+            let tallest = cells
+                .iter()
+                .map(|&c| {
+                    row.iter()
+                        .filter(|p| p.cell.map(|x| x.2) == Some(c))
+                        .map(|p| lines(p, share) + p.extra)
+                        .sum::<f32>()
+                })
+                .fold(0.0f32, f32::max);
+            sum += tallest;
+        }
+        sum
+    };
+    let cut = cut.min(paras.len());
+    let laid = height(&paras[..cut]);
+    if pages == 0 || laid <= 0.0 {
+        return pages;
+    }
+    let rest = height(&paras[cut..]);
+    pages + (rest * pages as f32 / laid).round() as usize
 }
 
 /// Every page's number as its section shows it (format, and the chapter

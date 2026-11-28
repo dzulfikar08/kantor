@@ -1556,7 +1556,6 @@ impl DocsView {
 
     /// Caret location for the status bar, e.g. `Page 2 of 5 · 1,234 words`.
     pub fn location(&self) -> String {
-        let pages = self.laid.boxes.tops.len().max(self.laid.paged.pages.len());
         let page = self
             .laid
             .caret(self.sel.head.para, self.sel.head.offset)
@@ -1565,7 +1564,11 @@ impl DocsView {
         let (start, end) = self.sel.ordered();
         let selected = (start != end).then(|| self.doc.stats_in(start, end));
         let counts = count_text(total, selected);
-        tf("Page {} of {} · {}", &[&page, &pages, &counts])
+        // While the background layout runs only the pages laid out so far
+        // are counted (the estimate the page list makes room for can be
+        // well off: it isn't shown).
+        let counting = self.bg_layout.is_some() && self.part.is_none();
+        location_text(page, self.laid.paged.pages.len(), counting, &counts)
     }
 
     /// Words and characters of the main document (kept until it changes:
@@ -2425,6 +2428,17 @@ fn opened_status(doc: &Document) -> String {
         )
     } else {
         tf("Opened {}", &[&doc.title()])
+    }
+}
+
+/// The status bar's `Page 2 of 5 · …`; while the pages are still being
+/// counted, the pages counted so far and "counting…".
+fn location_text(page: usize, pages: usize, counting: bool, counts: &str) -> String {
+    let pages = pages.max(page);
+    if counting {
+        tf("Page {} of {}, counting… · {}", &[&page, &pages, &counts])
+    } else {
+        tf("Page {} of {} · {}", &[&page, &pages, &counts])
     }
 }
 
@@ -3443,6 +3457,26 @@ mod tests {
         let (paras, _, _) = blocks::build(doc);
         let paged = docs_pdf::lay_out(doc, &mut engine).paged;
         (paras, paged)
+    }
+
+    /// While the rest of a long document is laid out, the status bar shows
+    /// the pages counted so far and that it's still counting (the estimate
+    /// the page list makes room for isn't shown).
+    #[std::prelude::v1::test]
+    fn status_bar_says_when_pages_are_still_counted() {
+        assert_eq!(
+            location_text(3, 12, true, "9 words"),
+            "Page 3 of 12, counting… · 9 words"
+        );
+        assert_eq!(
+            location_text(3, 1087, false, "9 words"),
+            "Page 3 of 1087 · 9 words"
+        );
+        // The caret's page is never past the count.
+        assert_eq!(
+            location_text(14, 12, true, "9 words"),
+            "Page 14 of 14, counting… · 9 words"
+        );
     }
 
     /// Enter and Tab in a popover's or the Header & Footer bar's text box
