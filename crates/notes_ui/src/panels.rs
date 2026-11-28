@@ -25,6 +25,9 @@ use notes_engine::{Merge, Selection};
 use crate::vault::{self, RenameUndo, VaultState};
 use crate::{Jump, NotesEvent, NotesView};
 
+/// The rename dialog's Rename button and Enter.
+type Submit = Rc<dyn Fn(&mut Window, &mut App)>;
+
 /// What the left panel shows.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LeftPanel {
@@ -542,7 +545,7 @@ impl NotesView {
             Ok(p) => rename_summary(&p),
             Err(e) => e,
         };
-        let submit: Rc<dyn Fn(&mut Window, &mut App)> = Rc::new({
+        let submit: Submit = Rc::new({
             let (view, input) = (view.clone(), input.clone());
             move |window, cx| {
                 let name = input.read(cx).value().to_string();
