@@ -119,17 +119,15 @@ impl Graph {
         self.charge(alpha);
         let g = self.forces.gravity * alpha;
         let keep = 1. - self.forces.velocity_decay;
-        for i in 0..self.pos.len() {
-            if self.fixed[i] {
-                self.vel[i] = [0., 0.];
+        for ((p, v), &fixed) in self.pos.iter_mut().zip(&mut self.vel).zip(&self.fixed) {
+            if fixed {
+                *v = [0., 0.];
                 continue;
             }
-            self.vel[i][0] -= self.pos[i][0] * g;
-            self.vel[i][1] -= self.pos[i][1] * g;
-            self.vel[i][0] *= keep;
-            self.vel[i][1] *= keep;
-            self.pos[i][0] += self.vel[i][0];
-            self.pos[i][1] += self.vel[i][1];
+            v[0] = (v[0] - p[0] * g) * keep;
+            v[1] = (v[1] - p[1] * g) * keep;
+            p[0] += v[0];
+            p[1] += v[1];
         }
         true
     }
@@ -145,8 +143,8 @@ impl Graph {
 
     fn links(&mut self, alpha: f32) {
         let d0 = self.forces.link_distance;
-        for k in 0..self.edges.len() {
-            let (s, t) = self.edges[k];
+        let edges = std::mem::take(&mut self.edges);
+        for (k, &(s, t)) in edges.iter().enumerate() {
             let (ds, dt) = (self.degree[s].max(1) as f32, self.degree[t].max(1) as f32);
             let strength = 1. / ds.min(dt);
             let bias = ds / (ds + dt);
@@ -164,6 +162,7 @@ impl Graph {
             self.vel[s][0] += fx * (1. - bias);
             self.vel[s][1] += fy * (1. - bias);
         }
+        self.edges = edges;
     }
 
     fn charge(&mut self, alpha: f32) {

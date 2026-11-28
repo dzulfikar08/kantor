@@ -975,7 +975,7 @@ impl NotesView {
             for (i, n) in s.index.notes.iter().enumerate() {
                 let parts: Vec<&str> = n.rel.split('/').collect();
                 let folders = &parts[..parts.len() - 1];
-                for d in 0..folders.len() {
+                for (d, name) in folders.iter().enumerate() {
                     let key = folders[..=d].join("/");
                     if emitted.get(d) != Some(&key) {
                         emitted.truncate(d);
@@ -984,7 +984,7 @@ impl NotesView {
                             items.push(Item::Folder {
                                 open: !self.collapsed.contains(&key),
                                 key,
-                                name: folders[d].to_owned(),
+                                name: (*name).to_owned(),
                                 depth: d,
                             });
                         }

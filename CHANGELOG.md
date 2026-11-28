@@ -9,6 +9,27 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+### Added
+
+- **Notes: a folder of notes as a vault.** Open a folder from the palette (Open Folder as Vault…) or with the Files
+  button on a note: the folder's notes are listed beside the note as a tree, and a folder with Obsidian's settings
+  opens as a vault by itself.
+  - `[[Wiki links]]`: `[[Note]]`, `[[Note|shown text]]`, `[[Note#Heading]]`. A click follows a link (Ctrl+click while
+    its line is being edited); a link to a note that doesn't exist yet is drawn faded and makes the note when
+    followed. Typing `[[` lists the vault's notes (and `Note#` its headings) to choose from.
+  - Backlinks: the notes that link to this one, with the lines they do it on, and the notes that name it without a
+    link.
+  - Renaming a note updates every link to it in the vault, changing only the link text in each file; the dialog says
+    how many notes change first, and Undo Rename puts it all back.
+  - Search in the vault (Ctrl+Shift+F) and a graph view (Ctrl+G): every note and link as a moving graph, drawn by
+    Kantor itself. Pan, zoom, drag notes, click one to open it, or show only the current note's neighbourhood.
+
+### Fixed
+
+- Notes: the caret blinks; italic text shows slanted when the interface font has no italic of its own.
+- Save as Word document keeps strikethrough in checked tasks, quotes and table cells, and formatting in quotes and
+  table cells. Make Slides puts the note's pictures and tables on slides.
+
 ## [0.28.1] - 2026-11-28
 
 ### Changed

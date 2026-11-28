@@ -472,7 +472,7 @@ impl NotesView {
     fn caret_visible(&self) -> bool {
         let ms = self.activity.elapsed().as_millis();
         let period = BLINK.as_millis().max(1);
-        ms < period || (ms / period) % 2 == 0
+        ms < period || (ms / period).is_multiple_of(2)
     }
 
     /// Typing, moving or clicking: the caret shows steadily for a moment.

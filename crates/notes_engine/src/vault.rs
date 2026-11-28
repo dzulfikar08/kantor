@@ -463,8 +463,7 @@ impl Vault {
     }
 
     fn sort_and_reindex(&mut self) {
-        self.notes
-            .sort_by(|a, b| a.rel.to_lowercase().cmp(&b.rel.to_lowercase()));
+        self.notes.sort_by_key(|a| a.rel.to_lowercase());
         self.by_stem.clear();
         for (i, n) in self.notes.iter().enumerate() {
             self.by_stem.entry(name_key(n.stem())).or_default().push(i);
@@ -723,7 +722,7 @@ impl Vault {
         }
         let q = query.trim().to_lowercase();
         let mut out: Vec<(u32, usize, Completion)> = Vec::new();
-        for (i, n) in self.notes.iter().enumerate() {
+        for n in &self.notes {
             if from_rel == Some(n.rel.as_str()) {
                 continue;
             }
@@ -757,7 +756,7 @@ impl Vault {
                 },
             ));
         }
-        out.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+        out.sort_by_key(|a| (a.0, a.1));
         out.into_iter().take(limit).map(|(_, _, c)| c).collect()
     }
 
