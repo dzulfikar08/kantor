@@ -33,6 +33,11 @@ Kantor includes code from these projects, under their own licences:
     crates/kantor_spell/dict/LICENSE-id_ID.txt. Modified by Kantor (encoding line,
     904 rare entries removed, 2026-11-13/14): see crates/kantor_spell/dict/README.md.
 
+* STIX Two Math (https://github.com/stipub/stixfonts), Copyright 2001-2021 The STIX Fonts
+  Project Authors, with Reserved Font Name "TM Math". SIL Open Font License 1.1, bundled
+  unmodified as crates/kantor_math/fonts/STIXTwoMath-Regular.ttf (the copy Google Fonts
+  distributes) to lay out equations. Licence text: crates/kantor_math/fonts/OFL.txt.
+
 Other dependencies are linked as crates; their licences are checked by cargo-deny (deny.toml).
 
 ----------------------------------------------------------------------------------------------
