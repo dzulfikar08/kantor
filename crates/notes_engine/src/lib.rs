@@ -8,14 +8,16 @@
 //! [`Editor`] holds the selection, the undo history and the editing
 //! commands. No GPUI here: `notes_ui` draws it.
 //!
-//! Later phases build on these pieces: [`parse::Parsed::links`] already
-//! carries `[[wiki links]]` (kind [`parse::LinkKind::Wiki`]) and the
-//! headings outline, for backlinks and a folder of notes.
+//! A folder of notes is a [`vault::Vault`]: the link index behind wiki
+//! links, backlinks, renames, search and completion; [`graph`] lays out its
+//! notes and links as a force-directed graph.
 
 pub mod buffer;
 pub mod editor;
+pub mod graph;
 pub mod parse;
 pub mod prefix;
+pub mod vault;
 
 pub use buffer::{Buffer, Eol, OpenError};
 pub use editor::{Editor, Merge, Selection};

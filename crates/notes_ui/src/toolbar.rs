@@ -34,6 +34,23 @@ fn tool(
         })
 }
 
+/// A tool that moves focus itself (to a search field).
+fn tool_keep_focus(
+    id: &'static str,
+    icon: Lucide,
+    (tip, keys): (&'static str, Option<&'static str>),
+    active: bool,
+    run: Run,
+    cx: &mut Context<NotesView>,
+) -> Button {
+    let view = cx.entity().downgrade();
+    icon_button(id, icon, active, cx)
+        .tip(tip, keys)
+        .on_click(move |_, window, cx| {
+            let _ = view.update(cx, |v, cx| run(v, window, cx));
+        })
+}
+
 fn separator(cx: &App) -> Div {
     div()
         .flex_none()
@@ -160,7 +177,51 @@ pub(crate) fn render(view: &NotesView, cx: &mut Context<NotesView>) -> Div {
                 cx,
             ));
     }
+    let files_on = view.left == crate::LeftPanel::Files && view.vault.is_some();
+    let search_on = view.left == crate::LeftPanel::Search && view.vault.is_some();
+    let links_on = view.show_backlinks && view.vault.is_some();
+    let graph_on = view.graph_open();
     bar.child(div().flex_1())
+        .child(tool(
+            "notes-files",
+            Lucide::PanelLeft,
+            (i18n::t("Files in the vault"), None),
+            files_on,
+            |v, _, cx| v.toggle_files(cx),
+            cx,
+        ))
+        .child(tool_keep_focus(
+            "notes-vault-search",
+            Lucide::Search,
+            (i18n::t("Search in the vault"), Some("ctrl-shift-f")),
+            search_on,
+            |v, w, cx| {
+                if v.left == crate::LeftPanel::Search {
+                    v.left = crate::LeftPanel::Hidden;
+                    cx.notify();
+                } else {
+                    v.open_search(w, cx)
+                }
+            },
+            cx,
+        ))
+        .child(tool(
+            "notes-backlinks",
+            Lucide::PanelRight,
+            (i18n::t("Backlinks"), None),
+            links_on,
+            |v, _, cx| v.toggle_backlinks(cx),
+            cx,
+        ))
+        .child(tool(
+            "notes-graph",
+            Lucide::Network,
+            (i18n::t("Graph view"), Some("ctrl-g")),
+            graph_on,
+            |v, _, cx| v.toggle_graph(false, cx),
+            cx,
+        ))
+        .child(separator(cx))
         .child(tool(
             "notes-source",
             Lucide::FileCode,

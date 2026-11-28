@@ -85,7 +85,7 @@ impl Frame {
                     let b = text.map.to_display(f.end.min(full.end).max(start) - start);
                     m.found.push((a..b, v.found_current == Some(k)));
                 }
-                if focused && v.mode != Mode::Reading && buf.line_of(head) == i {
+                if focused && v.caret_shown && v.mode != Mode::Reading && buf.line_of(head) == i {
                     m.caret = Some(text.map.to_display(head - start));
                 }
             }

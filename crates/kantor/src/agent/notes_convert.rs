@@ -29,47 +29,90 @@ pub fn title(parsed: &Parsed, fallback: &str) -> String {
 fn runs(buf: &Buffer, parsed: &Parsed, lines: Range<usize>) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     for (k, l) in lines.enumerate() {
-        let info = &parsed.lines[l];
         if k > 0 {
             push_run(&mut out, " ", Style::default());
         }
-        for v in &info.visible {
-            let mut cuts = vec![v.start, v.end];
-            for s in &info.spans {
-                cuts.extend([s.range.start, s.range.end]);
-            }
-            cuts.retain(|c| *c >= v.start && *c <= v.end);
-            cuts.sort_unstable();
-            cuts.dedup();
-            for w in cuts.windows(2) {
-                let (a, b) = (w[0], w[1]);
+        runs_into(&mut out, buf, parsed, l, None);
+    }
+    out
+}
+
+/// The runs of line `l` (only the bytes in `clip`, when given: a table
+/// cell), added to `out`.
+fn runs_into(
+    out: &mut Vec<Value>,
+    buf: &Buffer,
+    parsed: &Parsed,
+    l: usize,
+    clip: Option<&Range<usize>>,
+) {
+    let info = &parsed.lines[l];
+    for v in &info.visible {
+        let v = match clip {
+            Some(c) => {
+                let (a, b) = (v.start.max(c.start), v.end.min(c.end));
                 if a >= b {
                     continue;
                 }
-                let mut st = Style::default();
-                for s in &info.spans {
-                    if s.range.start <= a && b <= s.range.end {
-                        match s.kind {
-                            SpanKind::Strong => st.bold = true,
-                            SpanKind::Emphasis => st.italic = true,
-                            SpanKind::Strike => st.strike = true,
-                            SpanKind::Code => st.code = true,
-                            SpanKind::Link(i) => {
-                                if let Some(link) = parsed.links.get(i)
-                                    && link.kind == notes_engine::parse::LinkKind::Url
-                                {
-                                    st.link = Some(link.dest.clone());
-                                }
+                a..b
+            }
+            None => v.clone(),
+        };
+        let mut cuts = vec![v.start, v.end];
+        for s in &info.spans {
+            cuts.extend([s.range.start, s.range.end]);
+        }
+        cuts.retain(|c| *c >= v.start && *c <= v.end);
+        cuts.sort_unstable();
+        cuts.dedup();
+        for w in cuts.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            if a >= b {
+                continue;
+            }
+            let mut st = Style::default();
+            for s in &info.spans {
+                if s.range.start <= a && b <= s.range.end {
+                    match s.kind {
+                        SpanKind::Strong => st.bold = true,
+                        SpanKind::Emphasis => st.italic = true,
+                        SpanKind::Strike => st.strike = true,
+                        SpanKind::Code => st.code = true,
+                        SpanKind::Link(i) => {
+                            if let Some(link) = parsed.links.get(i)
+                                && link.kind == notes_engine::parse::LinkKind::Url
+                            {
+                                st.link = Some(link.dest.clone());
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
-                push_run(&mut out, buf.slice(a..b), st);
             }
+            push_run(out, buf.slice(a..b), st);
         }
     }
-    out
+}
+
+/// Struck through, as a checked task shows in the editor.
+fn strike_all(runs: &mut [Value]) {
+    for r in runs {
+        if let Value::Object(o) = r {
+            o.insert("strike".into(), true.into());
+        }
+    }
+}
+
+/// A cell's content: plain text, or runs when it has formatting.
+fn cell_value(runs: Vec<Value>) -> Value {
+    let plain_only = runs
+        .iter()
+        .all(|r| r.as_object().is_some_and(|o| o.len() == 1));
+    if plain_only {
+        Value::String(plain(&runs).trim().to_owned())
+    } else {
+        Value::Array(runs)
+    }
 }
 
 #[derive(Clone, Default, PartialEq)]
@@ -119,6 +162,25 @@ fn style_of(o: &serde_json::Map<String, Value>) -> Style {
         code: flag("code"),
         link: o.get("link").and_then(Value::as_str).map(str::to_owned),
     }
+}
+
+/// A table cell's text without formatting.
+fn table_cell_text(
+    buf: &Buffer,
+    parsed: &Parsed,
+    row: &notes_engine::parse::TableRow,
+    c: &Range<usize>,
+) -> String {
+    parsed.lines[row.line]
+        .visible
+        .iter()
+        .filter_map(|v| {
+            let (a, b) = (v.start.max(c.start), v.end.min(c.end));
+            (a < b).then(|| buf.slice(a..b))
+        })
+        .collect::<String>()
+        .trim()
+        .to_owned()
 }
 
 fn plain(runs: &[Value]) -> String {
@@ -284,27 +346,26 @@ pub fn docs_json(text: &str, fallback_title: &str, dir: &Path) -> Value {
             LineKind::TableRow { table, .. } | LineKind::TableDelimiter { table } => {
                 flush_list(&mut list, &mut blocks);
                 let t = &parsed.tables[*table];
-                let cell = |row: &notes_engine::parse::TableRow, c: &Range<usize>| -> String {
-                    parsed.lines[row.line]
-                        .visible
-                        .iter()
-                        .filter_map(|v| {
-                            let (a, b) = (v.start.max(c.start), v.end.min(c.end));
-                            (a < b).then(|| buf.slice(a..b))
-                        })
-                        .collect::<String>()
-                        .trim()
-                        .to_owned()
+                let cell = |row: &notes_engine::parse::TableRow, c: &Range<usize>| -> Value {
+                    let mut out = Vec::new();
+                    runs_into(&mut out, &buf, &parsed, row.line, Some(c));
+                    cell_value(out)
                 };
                 let mut rows = t.rows.iter();
+                // The header row is the table's own style (bold): plain text.
                 let header: Vec<String> = rows
                     .next()
-                    .map(|r| r.cells.iter().map(|c| cell(r, c)).collect())
-                    .unwrap_or_default();
-                let body: Vec<Vec<String>> = rows
                     .map(|r| {
-                        let mut v: Vec<String> = r.cells.iter().map(|c| cell(r, c)).collect();
-                        v.resize(header.len().max(v.len()), String::new());
+                        r.cells
+                            .iter()
+                            .map(|c| table_cell_text(&buf, &parsed, r, c))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let body: Vec<Vec<Value>> = rows
+                    .map(|r| {
+                        let mut v: Vec<Value> = r.cells.iter().map(|c| cell(r, c)).collect();
+                        v.resize(header.len().max(v.len()), Value::String(String::new()));
                         v
                     })
                     .collect();
@@ -332,6 +393,9 @@ pub fn docs_json(text: &str, fallback_title: &str, dir: &Path) -> Value {
                 let mut text = runs(&buf, &parsed, l..l + 1);
                 match &info.marker {
                     ListMarker::Task { checked, .. } => {
+                        if *checked {
+                            strike_all(&mut text);
+                        }
                         let mark = if *checked { "☑ " } else { "☐ " };
                         text.insert(0, json!({"text": mark}));
                     }
@@ -389,7 +453,7 @@ pub fn docs_json(text: &str, fallback_title: &str, dir: &Path) -> Value {
                     runs(&buf, &parsed, l..end)
                 };
                 if quote > 0 {
-                    blocks.push(json!({"type": "quote", "text": plain(&text)}));
+                    blocks.push(json!({"type": "quote", "text": text}));
                 } else {
                     blocks.push(json!({"type": "paragraph", "text": text}));
                 }
@@ -421,33 +485,69 @@ fn deepest(items: &mut [Item]) -> Option<&mut Item> {
     deepest(&mut last.children)
 }
 
+/// A slide being collected for [`slides_json`].
+#[derive(Default)]
+struct SlideDraft {
+    title: String,
+    bullets: Vec<Value>,
+    elements: Vec<Value>,
+}
+
+/// Where a picture goes on a slide under its title: the deck's content
+/// area (0.75 in margins, from 2.2 in down to 0.85 in above the bottom of
+/// a 16:9 slide), the picture fitted inside.
+const PICTURE_BOX: [&str; 4] = ["0.75in", "2.2in", "11.83in", "4.4in"];
+
 /// A slides deck for a note: a `# Title` first makes a cover; every other
 /// heading (and every `---`) starts a slide; paragraphs and list items
-/// are its bullets (nested items one level in).
-pub fn slides_json(text: &str, fallback_title: &str) -> Value {
+/// are its bullets (nested items one level in). Pictures alone on a line
+/// and tables get a slide of their own (or the heading's slide, while it
+/// has nothing else), fitted to the content area. `dir`: the note's
+/// folder, for pictures.
+pub fn slides_json(text: &str, fallback_title: &str, dir: &Path) -> Value {
     let buf = Buffer::new(text);
     let parsed = parse(&buf);
     let mut slides: Vec<Value> = Vec::new();
-    let mut current: Option<(String, Vec<Value>)> = None;
+    let mut current: Option<SlideDraft> = None;
     let mut cover_done = false;
     let note_title = title(&parsed, fallback_title);
-    let finish = |cur: &mut Option<(String, Vec<Value>)>, slides: &mut Vec<Value>| {
-        if let Some((title, bullets)) = cur.take()
-            && (!title.is_empty() || !bullets.is_empty())
+    let finish = |cur: &mut Option<SlideDraft>, slides: &mut Vec<Value>| {
+        if let Some(d) = cur.take()
+            && (!d.title.is_empty() || !d.bullets.is_empty() || !d.elements.is_empty())
         {
-            let title = if title.is_empty() {
+            let title = if d.title.is_empty() {
                 note_title.clone()
             } else {
-                title
+                d.title
             };
             let mut s = json!({"title": title});
-            if !bullets.is_empty() {
-                s["bullets"] = Value::Array(bullets);
+            if !d.bullets.is_empty() {
+                s["bullets"] = Value::Array(d.bullets);
+            }
+            if !d.elements.is_empty() {
+                s["elements"] = Value::Array(d.elements);
             }
             slides.push(s);
         }
     };
-    for l in 0..buf.line_count() {
+    // A picture or table: on the current slide while it is empty, else on
+    // a slide of its own under the same title.
+    let place = |cur: &mut Option<SlideDraft>, slides: &mut Vec<Value>, el: Value| {
+        let title = cur.as_ref().map(|d| d.title.clone()).unwrap_or_default();
+        if cur
+            .as_ref()
+            .is_some_and(|d| !d.bullets.is_empty() || !d.elements.is_empty())
+        {
+            finish(cur, slides);
+        }
+        let d = cur.get_or_insert_with(|| SlideDraft {
+            title,
+            ..SlideDraft::default()
+        });
+        d.elements.push(el);
+    };
+    let mut l = 0;
+    while l < buf.line_count() {
         let info = &parsed.lines[l];
         match &info.kind {
             LineKind::Heading(level) => {
@@ -455,20 +555,61 @@ pub fn slides_json(text: &str, fallback_title: &str) -> Value {
                 if *level == 1 && !cover_done && slides.is_empty() && current.is_none() {
                     slides.push(json!({"kind": "cover", "title": t}));
                     cover_done = true;
+                    l += 1;
                     continue;
                 }
                 if *level <= 2 || current.is_none() {
                     finish(&mut current, &mut slides);
-                    current = Some((t, Vec::new()));
-                } else if let Some((_, b)) = &mut current {
-                    b.push(json!({"text": t}));
+                    current = Some(SlideDraft {
+                        title: t,
+                        ..SlideDraft::default()
+                    });
+                } else if let Some(d) = &mut current {
+                    d.bullets.push(json!({"text": t}));
                 }
             }
             LineKind::Rule => finish(&mut current, &mut slides),
+            LineKind::TableRow { table, row: 0 } => {
+                let t = &parsed.tables[*table];
+                let width = t.rows.iter().map(|r| r.cells.len()).max().unwrap_or(0);
+                let rows: Vec<Value> = t
+                    .rows
+                    .iter()
+                    .map(|r| {
+                        let mut cells: Vec<Value> = r
+                            .cells
+                            .iter()
+                            .map(|c| Value::String(table_cell_text(&buf, &parsed, r, c)))
+                            .collect();
+                        cells.resize(width, Value::String(String::new()));
+                        Value::Array(cells)
+                    })
+                    .collect();
+                if width > 0 && !rows.is_empty() {
+                    place(
+                        &mut current,
+                        &mut slides,
+                        json!({"type": "table", "preset": "clean", "first_bold": false, "rows": rows}),
+                    );
+                }
+                l = t.lines.end.max(l + 1);
+                continue;
+            }
             LineKind::Paragraph => {
+                if let Some((path, alt)) = picture(&buf, &parsed, l, dir) {
+                    let [x, y, w, h] = PICTURE_BOX;
+                    let mut el = json!({"type": "picture", "path": path, "fit": "contain",
+                        "x": x, "y": y, "w": w, "h": h});
+                    if !alt.is_empty() {
+                        el["alt"] = alt.into();
+                    }
+                    place(&mut current, &mut slides, el);
+                    l += 1;
+                    continue;
+                }
                 let t = plain(&runs(&buf, &parsed, l..l + 1));
-                // Pictures aren't placed on slides (yet): their alt text
-                // isn't a bullet either.
+                // Other pictures (from the web, or a kind slides can't
+                // show): their alt text isn't a bullet either.
                 let only_picture = info.spans.iter().any(|s| {
                     matches!(s.kind, SpanKind::Image(_))
                         && info
@@ -477,6 +618,7 @@ pub fn slides_json(text: &str, fallback_title: &str) -> Value {
                             .all(|v| v.start >= s.range.start && v.end <= s.range.end)
                 });
                 if t.trim().is_empty() || only_picture {
+                    l += 1;
                     continue;
                 }
                 // A line continuing the paragraph above (no blank line
@@ -499,6 +641,7 @@ pub fn slides_json(text: &str, fallback_title: &str) -> Value {
                     && slides[0].get("subtitle").is_none()
                 {
                     slides[0]["subtitle"] = t.into();
+                    l += 1;
                     continue;
                 }
                 if current.is_none()
@@ -508,18 +651,32 @@ pub fn slides_json(text: &str, fallback_title: &str) -> Value {
                 {
                     st.push(' ');
                     st.push_str(&t);
+                    l += 1;
                     continue;
                 }
-                let cur = current.get_or_insert_with(|| (String::new(), Vec::new()));
+                // Text after a picture or table goes on a new slide.
+                if current.as_ref().is_some_and(|d| !d.elements.is_empty()) {
+                    let title = current
+                        .as_ref()
+                        .map(|d| d.title.clone())
+                        .unwrap_or_default();
+                    finish(&mut current, &mut slides);
+                    current = Some(SlideDraft {
+                        title,
+                        ..SlideDraft::default()
+                    });
+                }
+                let cur = current.get_or_insert_with(SlideDraft::default);
                 if continues
-                    && let Some(Value::Object(last)) = cur.1.last_mut()
+                    && let Some(Value::Object(last)) = cur.bullets.last_mut()
                     && let Some(Value::String(s)) = last.get_mut("text")
                 {
                     s.push(' ');
                     s.push_str(&t);
+                    l += 1;
                     continue;
                 }
-                cur.1.push(if level == 0 {
+                cur.bullets.push(if level == 0 {
                     json!({"text": t})
                 } else {
                     json!({"text": t, "level": level})
@@ -527,6 +684,7 @@ pub fn slides_json(text: &str, fallback_title: &str) -> Value {
             }
             _ => {}
         }
+        l += 1;
     }
     finish(&mut current, &mut slides);
     if slides.is_empty() {
@@ -552,7 +710,7 @@ pub fn to_pdf(text: &str, fallback_title: &str, dir: &Path) -> Result<Vec<u8>> {
 
 /// Build a `.pptx` from a note.
 pub fn to_pptx(text: &str, fallback_title: &str, dir: &Path) -> Result<Vec<u8>> {
-    let deck = slides_json(text, fallback_title);
+    let deck = slides_json(text, fallback_title, dir);
     let p = super::slides_author::build(&deck, Some(dir))?;
     p.to_bytes()
 }
@@ -604,7 +762,7 @@ mod tests {
 
     #[test]
     fn slides_split_at_headings() {
-        let j = slides_json(NOTE, "x");
+        let j = slides_json(NOTE, "x", Path::new("."));
         let slides = j["slides"].as_array().unwrap();
         assert_eq!(slides[0]["kind"], "cover");
         assert_eq!(slides[0]["title"], "Plan");
@@ -614,7 +772,11 @@ mod tests {
         assert_eq!(b[0]["text"], "one");
         assert_eq!(b[1]["level"], 1);
         assert_eq!(b[2]["text"], "☑ two");
-        let j = slides_json("# T\n\n## S\n\n> one\n> two\n\n![pic](p.png)\n", "x");
+        let j = slides_json(
+            "# T\n\n## S\n\n> one\n> two\n\n![pic](p.png)\n",
+            "x",
+            Path::new("."),
+        );
         assert_eq!(j["slides"][1]["bullets"], json!([{"text": "one two"}]));
     }
 
@@ -633,6 +795,47 @@ mod tests {
         assert_eq!(blocks[1]["alt"], "alt text");
         assert_eq!(blocks[2]["type"], "paragraph");
         assert!(to_docx(note, "x", dir.path()).is_ok());
+        // Slides: the picture on a slide of its own, fitted.
+        let deck = slides_json(
+            "# T\n\n## Look\n\n![alt text](a%20b.png)\n\n## Data\n\nSome text\n\n| a | b |\n|---|---|\n| 1 | **2** |\n",
+            "x",
+            dir.path(),
+        );
+        let slides = deck["slides"].as_array().unwrap();
+        assert_eq!(slides[1]["title"], "Look");
+        assert_eq!(slides[1]["elements"][0]["type"], "picture");
+        assert_eq!(slides[1]["elements"][0]["fit"], "contain");
+        assert_eq!(slides[2]["bullets"], json!([{"text": "Some text"}]));
+        assert_eq!(slides[3]["title"], "Data");
+        assert_eq!(
+            slides[3]["elements"][0]["rows"],
+            json!([["a", "b"], ["1", "2"]])
+        );
+        let note = "# T\n\n## Look\n\n![alt text](a%20b.png)\n\n| a | b |\n|---|---|\n| 1 | 2 |\n";
+        assert!(to_pptx(note, "x", dir.path()).unwrap().starts_with(b"PK"));
+    }
+
+    #[test]
+    fn word_keeps_strikethrough_in_tasks_quotes_and_cells() {
+        let note =
+            "- [x] done item\n\n> a ~~struck~~ quote\n\n| a | b |\n|---|---|\n| ~~x~~ | y |\n";
+        let j = docs_json(note, "x", Path::new("."));
+        let blocks = j["blocks"].as_array().unwrap();
+        assert_eq!(
+            blocks[0]["items"][0][1],
+            json!({"text": "done item", "strike": true})
+        );
+        assert_eq!(blocks[1]["type"], "quote");
+        assert_eq!(
+            blocks[1]["text"][1],
+            json!({"text": "struck", "strike": true})
+        );
+        assert_eq!(
+            blocks[2]["rows"][0][0],
+            json!([{"text": "x", "strike": true}])
+        );
+        assert_eq!(blocks[2]["rows"][0][1], "y");
+        assert!(to_docx(note, "x", Path::new(".")).is_ok());
     }
 
     #[test]
