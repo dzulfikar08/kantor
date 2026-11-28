@@ -1017,7 +1017,8 @@ impl Document {
     /// Insert a bibliography at the caret (Zotero's field, or Mendeley
     /// Desktop's in a Mendeley document), its entries rendered: one undo
     /// step. A bibliography in an empty paragraph takes the
-    /// `Bibliography` style when the document has it.
+    /// `Bibliography` style when the document has it, else a hanging
+    /// indent.
     pub fn insert_bibliography(
         &mut self,
         sel: Selection,
@@ -1053,8 +1054,15 @@ impl Document {
         };
         let p = &mut paras[at.para];
         let props = p.props_at(at.offset);
-        if block && p.text.is_empty() && self.styles.get("Bibliography").is_some() {
-            p.props.style = Some("Bibliography".into());
+        if block && p.text.is_empty() {
+            if self.styles.get("Bibliography").is_some() {
+                p.props.style = Some("Bibliography".into());
+            } else if p.props.indent.left.is_none() && p.props.indent.first.is_none() {
+                // A half-inch hanging indent, as Zotero's plug-ins give
+                // the entries (and `kantor docs build` does).
+                p.props.indent.left = Some(720);
+                p.props.indent.first = Some(-720);
+            }
         }
         let begin = Arc::new(complex_begin(instr, true));
         let mut b = Run::text(crate::model::OBJECT.len_utf8(), props.clone());
