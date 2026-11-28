@@ -636,7 +636,8 @@ fn opaque_elements_are_kept_byte_for_byte() {
         .objects()
         .map(|(_, o)| o.label().to_owned())
         .collect();
-    assert_eq!(labels, ["", "Budi", "3", "Drawing", "", "", "Equation", ""]);
+    // An equation is labelled with its LaTeX.
+    assert_eq!(labels, ["", "Budi", "3", "Drawing", "", "", "x²", ""]);
     // The DATE field's result is text between its marks.
     assert!(doc.paragraph(1).text.contains("7/11/2026"));
     // Deleting text around a bookmark keeps the bookmark (and the
