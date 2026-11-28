@@ -2023,7 +2023,7 @@ impl PlsView {
             v_flex()
                 .flex_none()
                 .w_full()
-                .when(self.show_results && !stale, |d| d.h(px(300.)))
+                .when(self.show_results && !stale, |d| d.h(px(260.)))
                 .bg(t_.chrome)
                 .border_t_1()
                 .border_color(t_.border)
@@ -2036,7 +2036,16 @@ impl PlsView {
         let t_ = tokens(cx);
         let view = cx.entity().downgrade();
         let n = table.columns.len();
-        let width = |j: usize| if j == 0 { px(150.) } else { px(86.) };
+        let width = |j: usize| if j == 0 { px(150.) } else { px(96.) };
+        // Number columns are right-aligned, text columns left.
+        let numeric: Vec<bool> = (0..n)
+            .map(|j| {
+                table
+                    .rows
+                    .iter()
+                    .any(|r| r.get(j).is_some_and(|c| c.value.is_some()))
+            })
+            .collect();
         let mut grid = v_flex()
             .border_1()
             .border_color(t_.border)
@@ -2052,7 +2061,7 @@ impl PlsView {
                     .truncate()
                     .text_size(FONT_SMALL)
                     .font_weight(FontWeight::SEMIBOLD)
-                    .when(j > 0, |d| d.text_right())
+                    .when(numeric[j], |d| d.text_right())
                     .child(c.clone()),
             );
         }
@@ -2067,7 +2076,7 @@ impl PlsView {
                         .py(SPACE_1)
                         .truncate()
                         .text_size(FONT_SMALL)
-                        .when(j > 0, |d| d.text_right())
+                        .when(cell.value.is_some(), |d| d.text_right())
                         .when(cell.flag, |d| {
                             d.text_color(t_.danger).font_weight(FontWeight::SEMIBOLD)
                         })
