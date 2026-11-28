@@ -318,7 +318,7 @@ impl SheetsView {
         if k >= views.len() {
             return;
         }
-        views.remove(k);
+        drop(views.remove(k));
         self.pls.shown = None;
         self.pls_store(window, cx);
         self.status = t("Model deleted").into();

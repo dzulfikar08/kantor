@@ -1636,7 +1636,7 @@ impl PlsView {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
             .on_mouse_move(cx.listener(Self::mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
-            .on_scroll_wheel(cx.listener(|this, ev: &ScrollWheelEvent, _, cx| {
+            .on_scroll(cx.listener(|this, ev: &ScrollEvent, _, cx| {
                 let d = ev.delta.pixel_delta(px(20.));
                 this.scroll = (
                     (this.scroll.0 + f64::from(f32::from(d.x))).min(0.0),
@@ -1933,9 +1933,7 @@ impl PlsView {
         let t_ = tokens(cx);
         let view = cx.entity().downgrade();
         let stale = self.results.is_some() && self.fresh_results().is_none();
-        if self.results.is_none() {
-            return None;
-        }
+        self.results.as_ref()?;
         let hide = view.clone();
         let insert = view.clone();
         let mut tabs = h_flex().gap(SPACE_2);

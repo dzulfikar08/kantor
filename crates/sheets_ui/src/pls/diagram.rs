@@ -696,7 +696,7 @@ impl Diagram {
                 let (Some(&f), Some(&t)) = (depth.get(&p.from), depth.get(&p.to)) else {
                     continue;
                 };
-                if t < f + 1 && f + 1 <= k {
+                if t <= f && f < k {
                     depth.insert(p.to.clone(), f + 1);
                     changed = true;
                 }
@@ -817,7 +817,7 @@ mod tests {
         assert!(!d.remove_path("IMAG", "CUSL"));
         assert!(d.delete_construct("Satisfaction"));
         assert!(d.model.paths.is_empty());
-        assert!(d.layout().positions.get("Satisfaction").is_none());
+        assert!(!d.layout().positions.contains_key("Satisfaction"));
     }
 
     #[std::prelude::v1::test]

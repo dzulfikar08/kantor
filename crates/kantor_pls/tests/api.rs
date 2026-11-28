@@ -184,8 +184,10 @@ fn bootstrap_reports_progress_and_stops() {
     };
     let progress = Progress::new();
     let r = estimate_with(&d, &mediation(), &opts, Some(&progress)).unwrap();
-    // 200 subsamples and a jackknife of the 150 rows for BCa.
-    assert_eq!(progress.get(), (350, 350));
+    // 200 subsamples and a jackknife of the complete rows for BCa.
+    let (done, total) = progress.get();
+    assert_eq!(done, total);
+    assert_eq!(total, 200 + r.n);
     // The same numbers as without progress.
     assert_eq!(
         r.bootstrap,
