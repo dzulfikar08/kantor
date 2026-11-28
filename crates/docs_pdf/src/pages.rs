@@ -1375,8 +1375,9 @@ pub fn estimate_pages(doc: &Document, cut: usize, paged: &PagedDocument) -> usiz
     // Text width, pt (px at 96 dpi).
     let width = ((setup.width - setup.margin_left - setup.margin_right) * 0.75).max(72.0);
     // Size, line height and spacing per paragraph style (and table).
-    let mut looks: HashMap<(Option<String>, Option<u32>), (f32, f32, f32)> = HashMap::new();
-    let mut look = |p: &docs_engine::Paragraph| -> (f32, f32, f32) {
+    type Look = (f32, f32, f32);
+    let mut looks: HashMap<(Option<String>, Option<u32>), Look> = HashMap::new();
+    let mut look = |p: &docs_engine::Paragraph| -> Look {
         let direct = p.props.before.is_some() || p.props.after.is_some() || p.props.line.is_some();
         let key = (p.props.style.clone(), p.cell.map(|c| c.table));
         if !direct && let Some(l) = looks.get(&key) {
