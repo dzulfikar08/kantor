@@ -3226,7 +3226,14 @@ impl Render for DocsView {
             .children(layout_button)
             .children(card_elements)
             .when(self.find.read(cx).is_open(), |el| {
-                el.child(self.find.clone())
+                // (Its Enter goes to the next match, not into the page.)
+                el.child(
+                    div()
+                        .key_context(POPOVER_CONTEXT)
+                        .absolute()
+                        .size_full()
+                        .child(self.find.clone()),
+                )
             })
             .context_menu({
                 let view = cx.entity().downgrade();
