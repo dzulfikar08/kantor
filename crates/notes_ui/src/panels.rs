@@ -448,9 +448,6 @@ impl NotesView {
         }
         let file = nv::note_file_name(name);
         let new_path = old_path.with_file_name(&file);
-        if new_path == old_path {
-            return Err(String::new());
-        }
         let same_file = new_path
             .to_string_lossy()
             .eq_ignore_ascii_case(&old_path.to_string_lossy());
@@ -565,9 +562,15 @@ impl NotesView {
                 _ => {}
             }
         });
-        input.update(cx, |i, cx| {
-            i.focus(window, cx);
-            i.select_all(window, cx);
+        // Focus the field once the dialog is up (opening it moves focus).
+        window.defer(cx, {
+            let input = input.clone();
+            move |window, cx| {
+                input.update(cx, |i, cx| {
+                    i.focus(window, cx);
+                    i.select_all(window, cx);
+                })
+            }
         });
         let title: SharedString = t("Rename note").into();
         window.open_dialog(cx, move |dialog, _, _| {
@@ -606,6 +609,8 @@ impl NotesView {
     /// Rename this note to `name` and update every link to it.
     pub fn do_rename(&mut self, name: &str, cx: &mut Context<Self>) {
         let plan = match self.plan_rename(name, cx) {
+            // The same name: nothing to do.
+            Ok(p) if p.new_path == p.old_path => return,
             Ok(p) => p,
             Err(e) => {
                 if !e.is_empty() {
