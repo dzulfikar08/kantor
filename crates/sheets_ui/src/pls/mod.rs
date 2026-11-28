@@ -26,7 +26,7 @@ pub mod diagram;
 pub mod labels;
 mod view;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use gpui_kit::component::Sizable as _;
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenuItem};
@@ -235,7 +235,7 @@ impl SheetsView {
         .detach();
     }
 
-    fn pls_open_file(&mut self, path: &PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+    fn pls_open_file(&mut self, path: &Path, window: &mut Window, cx: &mut Context<Self>) {
         let read = std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
             .and_then(|text| diagram::Diagram::from_json(&text));
