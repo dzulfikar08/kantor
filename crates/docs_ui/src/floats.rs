@@ -1245,10 +1245,6 @@ impl DocsView {
     ) -> HashMap<(usize, String), Arc<RenderImage>> {
         let mut out = HashMap::new();
         for fp in paint {
-            let owner = match fp.story {
-                Some(s) => self.doc.stories().get(s).map_or(&self.doc, |st| &st.doc),
-                None => &self.doc,
-            };
             for prim in &fp.prims {
                 if let FloatPrim::Blurred(b) = prim {
                     // A blurred shadow: its own picture.
@@ -1290,22 +1286,9 @@ impl DocsView {
                 else {
                     continue;
                 };
-                let base_key = format!("float{}:{}", fp.story.map_or(0, |s| s + 1), rel_id);
-                let img = match self.images.get(&base_key) {
-                    Some(i) => i.clone(),
-                    None => {
-                        let Some(bytes) = owner.image_bytes(rel_id) else {
-                            continue;
-                        };
-                        let Some((format, bytes)) = crate::screen_picture(bytes, cx) else {
-                            continue;
-                        };
-                        let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes));
-                        self.images.insert(base_key, i.clone());
-                        i
-                    }
-                };
-                let Some(data) = img.use_render_image(window, cx) else {
+                let Some((base_key, data)) =
+                    self.float_picture(fp.story, rel_id, *image, window, cx)
+                else {
                     continue;
                 };
                 let key = picture_key(rel_id, *rot, *flip, *image, *clip, shape.as_deref());
@@ -1314,7 +1297,10 @@ impl DocsView {
                     out.insert((story, key), data);
                     continue;
                 }
-                let turned = match self.turned_images.get(&key) {
+                // Cached under the decoded picture's key (made again when
+                // a sharper one replaces it).
+                let tk = picture_key(&base_key, *rot, *flip, *image, *clip, shape.as_deref());
+                let turned = match self.turned_images.get(&tk) {
                     Some(t) => t.clone(),
                     None => {
                         let cut = shape.as_deref();
@@ -1326,7 +1312,7 @@ impl DocsView {
                                 window.drop_image(old).ok();
                             }
                         }
-                        self.turned_images.insert(key.clone(), t.clone());
+                        self.turned_images.insert(tk, t.clone());
                         t
                     }
                 };
@@ -1334,6 +1320,95 @@ impl DocsView {
             }
         }
         out
+    }
+}
+
+impl DocsView {
+    /// The cache key and bytes of floating picture `rel_id` of story
+    /// `story` (a header or footer; `None` for the body, whose pictures
+    /// share the inline pictures' cache).
+    fn float_picture_source(
+        &self,
+        story: Option<usize>,
+        rel_id: &str,
+    ) -> (String, Option<Arc<[u8]>>) {
+        match story {
+            Some(s) => (
+                format!("float{}:{rel_id}", s + 1),
+                self.doc
+                    .stories()
+                    .get(s)
+                    .and_then(|st| st.doc.image_bytes(rel_id)),
+            ),
+            None => (rel_id.to_owned(), self.doc.image_bytes(rel_id)),
+        }
+    }
+
+    /// Floating picture `rel_id` of story `story` (a header or footer;
+    /// `None` for the body) drawn into `image` (page px, the whole
+    /// picture before its crop): its cache key and decoded image, at about
+    /// the size it's shown ([`DocsView::screen_picture_from`]); pictures
+    /// that aren't PNG or JPEG (metafiles) through GPUI as before.
+    fn float_picture(
+        &mut self,
+        story: Option<usize>,
+        rel_id: &str,
+        image: [f32; 4],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(String, Arc<RenderImage>)> {
+        let (key, bytes) = self.float_picture_source(story, rel_id);
+        let side = image[2].abs().max(image[3].abs());
+        if let Some(data) = self.screen_picture_from(&key, side, bytes.clone(), cx) {
+            return Some((key, data));
+        }
+        if self.picture_decoding(&key) {
+            return None;
+        }
+        let gkey = format!("gpui:{key}");
+        let img = match self.images.get(&gkey) {
+            Some(i) => i.clone(),
+            None => {
+                let (format, bytes) = crate::screen_picture(bytes?, cx)?;
+                let i = Arc::new(gpui_kit::Image::from_bytes(format, bytes));
+                self.images.insert(gkey, i.clone());
+                i
+            }
+        };
+        let data = img.use_render_image(window, cx)?;
+        Some((key, data))
+    }
+
+    /// Start decoding the floating pictures on `pages` (those just off
+    /// screen), so they're ready when they scroll into view.
+    pub(crate) fn prefetch_float_pictures(
+        &mut self,
+        pages: impl Iterator<Item = usize>,
+        cx: &mut Context<Self>,
+    ) {
+        let laid = self.laid.clone();
+        let mut want = Vec::new();
+        for page in pages {
+            for it in laid.floats.get(page).into_iter().flatten() {
+                let Some(f) = it.float(&self.doc) else {
+                    continue;
+                };
+                let prims = match &it.chart {
+                    Some(c) => c.prims.clone(),
+                    None => self.painter.prims(f, it.rect),
+                };
+                for prim in prims {
+                    if let FloatPrim::Picture { rel_id, image, .. } = prim {
+                        want.push((it.story, rel_id, image));
+                    }
+                }
+            }
+        }
+        for (story, rel_id, image) in want {
+            let (key, bytes) = self.float_picture_source(story, &rel_id);
+            let side = image[2].abs().max(image[3].abs());
+            self.screen_picture_from(&key, side, bytes, cx);
+        }
     }
 }
 
