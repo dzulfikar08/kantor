@@ -45,6 +45,18 @@ struct Bench {
 
 const PHASES: [&str; 4] = ["wheel scroll", "page down", "jump to end", "jump to middle"];
 
+/// The process's resident memory (kB; 0 where `/proc` isn't there).
+pub(crate) fn rss_kb() -> u64 {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|s| {
+            s.lines()
+                .find_map(|l| l.strip_prefix("VmRSS:"))
+                .and_then(|v| v.trim().trim_end_matches("kB").trim().parse().ok())
+        })
+        .unwrap_or(0)
+}
+
 fn stats(mut v: Vec<f64>) -> String {
     if v.is_empty() {
         return "no frames".into();
@@ -192,6 +204,17 @@ impl DocsView {
             b.last = Some(now);
             if b.phase >= PHASES.len() {
                 *slot = None;
+                // Memory once things have settled, and what's left after
+                // handing freed pages back.
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    let before = rss_kb();
+                    kantor_mem::release_free_memory();
+                    eprintln!(
+                        "[docs] bench memory 10 s after: rss {before} kB, {} kB after malloc_trim",
+                        rss_kb()
+                    );
+                });
                 return;
             }
         }

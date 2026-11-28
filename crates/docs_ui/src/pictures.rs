@@ -37,6 +37,14 @@ pub(crate) struct Pictures {
     /// Keys whose images were replaced: their turned and cut copies (in
     /// `turned_images`, keyed `key` or `key@…`) are made again.
     replaced: Vec<String>,
+    /// When the cache was last reported (`KANTOR_PERF`).
+    reported: Option<Instant>,
+}
+
+/// Bytes of a decoded image.
+fn image_bytes(img: &RenderImage) -> usize {
+    let s = img.size(0);
+    s.width.0.max(0) as usize * s.height.0.max(0) as usize * 4
 }
 
 /// `bytes` (PNG or JPEG) decoded with no side longer than `side` px (as
@@ -178,14 +186,50 @@ impl DocsView {
             p.ready.iter().map(|(k, r)| (r.used, k.clone())).collect();
         by_age.sort();
         let extra = p.ready.len() - MAX;
+        let mut dropped = false;
         for (t, k) in by_age.into_iter().take(extra) {
             if t.elapsed() < KEEP {
                 break;
             }
             if let Some(r) = p.ready.remove(&k) {
                 window.drop_image(r.img).ok();
+                dropped = true;
             }
         }
+        if dropped {
+            // The decodes ran on the background threads' heaps, which keep
+            // the freed pages otherwise.
+            kantor_mem::release_free_memory_soon(Duration::from_secs(2));
+        }
+    }
+
+    /// With `KANTOR_PERF`: the picture caches' sizes and the resident
+    /// memory, every few seconds while frames are drawn.
+    pub(crate) fn report_pictures(&mut self) {
+        if self.perf.is_none() {
+            return;
+        }
+        let p = &mut self.pictures;
+        if p.reported
+            .is_some_and(|t| t.elapsed() < Duration::from_secs(5))
+        {
+            return;
+        }
+        p.reported = Some(Instant::now());
+        let mb = |b: usize| b as f64 / (1024.0 * 1024.0);
+        let pics: usize = p.ready.values().map(|r| image_bytes(&r.img)).sum();
+        let turned: usize = self.turned_images.values().map(|i| image_bytes(i)).sum();
+        eprintln!(
+            "[docs] mem pictures {} ({:.1} MB, {} decoding), turned {} ({:.1} MB), gpui images {}, turned texts {}, rss {} kB",
+            p.ready.len(),
+            mb(pics),
+            p.loading.len(),
+            self.turned_images.len(),
+            mb(turned),
+            self.images.len(),
+            self.turned_texts.len(),
+            crate::perf::rss_kb()
+        );
     }
 }
 

@@ -3087,6 +3087,7 @@ impl Render for DocsView {
                 .chain(visible.end..(visible.end + 2).min(pages));
             self.prefetch_float_pictures(ahead, cx);
             self.trim_pictures(window);
+            self.report_pictures();
             images
         };
         let floats_span = docs_layout::perf::span("docs render: floats");
