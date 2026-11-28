@@ -50,11 +50,8 @@ jobs:
           # Linux builds run in AlmaLinux 9 (glibc 2.34): the binaries then run on Ubuntu
           # 22.04+, Debian 12+ and RHEL 9+, not only on what the runner has (24.04, glibc 2.39).
           # Thin LTO: the arm runner ran out of memory linking with fat LTO (2026-11-28).
-          - { arch: aarch64, os: ubuntu-24.04-arm, container: "almalinux:9", lto: thin }
+          # TEMPORARY (t3/docs-float-pictures benchmarks): Linux x86_64 only.
           - { arch: x86_64, os: ubuntu-24.04, container: "almalinux:9" }
-          - { arch: aarch64, os: macos-15, platform: macos }
-          - { arch: x86_64, os: windows-latest, platform: windows, winarch: x64 }
-          - { arch: aarch64, os: windows-11-arm, platform: windows, winarch: arm64 }
     runs-on: ${{ matrix.os }}
     # No container (empty) on macOS and Windows.
     container: ${{ matrix.container || '' }}
