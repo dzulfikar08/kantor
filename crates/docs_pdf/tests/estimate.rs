@@ -6,7 +6,7 @@
 use docs_engine::{Document, Selection};
 use docs_layout::Engine;
 use docs_pdf::LayoutCache;
-use docs_pdf::pages::{EstPara, estimate_from_heights};
+use docs_pdf::pages::{EstPara, estimate_from_heights, height_of};
 
 fn para(chars: usize, extra: f32) -> EstPara {
     EstPara {
@@ -18,14 +18,14 @@ fn para(chars: usize, extra: f32) -> EstPara {
     }
 }
 
-/// 320 one-line entries (14 pt line, 4 pt spacing) fill 8 pages: 720 pt a
-/// page. 3,000 paragraphs of 630 characters (7 lines at 90 a line, 10 pt
-/// spacing) are 108 pt each, 450 more pages.
+/// After 8 pages of one-line entries, 3,000 paragraphs of 630 characters
+/// (7 lines of 14 pt at 90 a line, 10 pt spacing: 108 pt each) at 720 pt a
+/// page are 450 more pages, however short the first pages' lines.
 #[test]
 fn short_lines_first_dont_inflate_the_estimate() {
     let mut paras = vec![para(20, 4.0); 320];
     paras.extend(std::iter::repeat_n(para(630, 10.0), 3000));
-    assert_eq!(estimate_from_heights(&paras, 320, 8, 90.0), 458);
+    assert_eq!(estimate_from_heights(&paras[320..], 8, 720.0, 90.0), 458);
     // By share of the text (as before), the same start said 845 pages.
     let chars = |ps: &[EstPara]| ps.iter().map(|p| p.chars + 40).sum::<usize>();
     let by_text = (8 * chars(&paras)).div_ceil(chars(&paras[..320]));
@@ -35,17 +35,24 @@ fn short_lines_first_dont_inflate_the_estimate() {
 /// A table row is as tall as its tallest cell, not all its cells.
 #[test]
 fn table_rows_count_once() {
-    let mut paras = vec![para(450, 0.0); 40]; // 5 lines each: 2,800 pt
+    let mut rows = Vec::new();
     for row in 0..200u32 {
         for cell in 0..4u32 {
-            paras.push(EstPara {
+            rows.push(EstPara {
                 cell: Some((0, row, cell)),
+                // The last cell has two paragraphs.
                 ..para(10, 0.0)
             });
+            if cell == 3 {
+                rows.push(EstPara {
+                    cell: Some((0, row, cell)),
+                    ..para(10, 0.0)
+                });
+            }
         }
     }
-    // 200 rows of one 14 pt line: as tall again as the first 40.
-    assert_eq!(estimate_from_heights(&paras, 40, 5, 90.0), 10);
+    assert_eq!(height_of(&rows, 90.0), 200.0 * 28.0);
+    assert_eq!(estimate_from_heights(&rows, 5, 560.0, 90.0), 15);
 }
 
 /// Whatever fonts are installed: laid out up to the end of a long list of

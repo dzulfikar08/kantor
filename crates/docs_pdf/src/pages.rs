@@ -1368,6 +1368,26 @@ fn same_but_notes(new: &docs_layout::Page, old: &docs_layout::Page) -> bool {
 /// short lines (often a document's first pages) from making it look
 /// hundreds of pages longer than it is.
 pub fn estimate_pages(doc: &Document, cut: usize, paged: &PagedDocument) -> usize {
+    estimate(doc, cut, paged).pages
+}
+
+/// What [`estimate_pages`] went by.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Estimate {
+    pub pages: usize,
+    /// Pages laid out in full (all but the last).
+    pub full: usize,
+    /// Characters a line holds at 11 pt.
+    pub per_line: f32,
+    /// The estimated height of the paragraphs from the last page laid out
+    /// on, pt.
+    pub rest: f32,
+    /// The room on a page for the body, pt.
+    pub room: f32,
+}
+
+/// [`estimate_pages`], with what it went by.
+pub fn estimate(doc: &Document, cut: usize, paged: &PagedDocument) -> Estimate {
     use docs_engine::{Object, ResolvedLine};
     let paras = doc.paragraphs();
     let cut = cut.min(paras.len());
@@ -1451,22 +1471,43 @@ pub fn estimate_pages(doc: &Document, cut: usize, paged: &PagedDocument) -> usiz
     let (mut chars, mut lines) = (0.0f32, 0.0f32);
     for ((p, e), l) in paras[..cut].iter().zip(&est).zip(&paged.layouts) {
         let n = l.len();
-        if n >= 2 && p.cell.is_none() {
+        if n >= 3 && p.cell.is_none() {
             chars += e.chars as f32 * e.size / 11.0;
             lines += n as f32 - 0.5;
         }
     }
-    let per_line = if lines >= 20.0 {
+    let per_line = if lines >= 30.0 {
         chars / lines
     } else {
         ESTIMATE_PER_LINE
     };
-    estimate_from_heights(&est, cut, paged.pages.len(), per_line)
+    // The pages laid out in full; the rest from where the last one starts,
+    // at the room a page has (less what page ends leave empty).
+    let full = paged.pages.len().saturating_sub(1);
+    let from = paged
+        .pages
+        .last()
+        .and_then(|pg| pg.lines.iter().find(|l| !l.repeat))
+        .map_or(cut, |l| l.para.min(cut));
+    let room = ((setup.height - setup.margin_top - setup.margin_bottom) * 0.75).max(72.0);
+    let rest = height_of(&est[from..], per_line);
+    Estimate {
+        pages: estimate_from_heights(&est[from..], full, room * ESTIMATE_FILL, per_line),
+        full,
+        per_line,
+        rest,
+        room,
+    }
 }
 
 /// Characters in a full line of 11 pt text across a page, when the pages
 /// laid out don't tell.
 const ESTIMATE_PER_LINE: f32 = 95.0;
+
+/// How much of a page's room text fills on average (the rest is left at
+/// page ends: lines kept together, a heading kept with the next
+/// paragraph, a picture that doesn't fit).
+const ESTIMATE_FILL: f32 = 0.95;
 
 /// One paragraph as [`estimate_from_heights`] sees it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -1483,53 +1524,52 @@ pub struct EstPara {
     pub extra: f32,
 }
 
-/// [`estimate_pages`] from paragraphs' estimated heights: those after
-/// `cut` fill pages as the first `cut` filled `pages`. A line holds
-/// `per_line` characters at 11 pt; a table row is as tall as its tallest
-/// cell (its cells share the line's width).
-pub fn estimate_from_heights(paras: &[EstPara], cut: usize, pages: usize, per_line: f32) -> usize {
+/// The estimated height of `paras` in pt: a line holds `per_line`
+/// characters at 11 pt; a table row is as tall as its tallest cell (its
+/// cells share the line's width).
+pub fn height_of(paras: &[EstPara], per_line: f32) -> f32 {
     let per_line = per_line.max(10.0);
     let lines = |p: &EstPara, share: f32| {
         let room = (per_line * 11.0 / p.size.max(1.0) / share).max(1.0);
         (p.chars as f32 / room).ceil().max(1.0) * p.line
     };
-    let height = |ps: &[EstPara]| -> f32 {
-        let mut sum = 0.0;
-        let mut i = 0;
-        while i < ps.len() {
-            let Some((t, r, _)) = ps[i].cell else {
-                sum += lines(&ps[i], 1.0) + ps[i].extra;
-                i += 1;
-                continue;
-            };
-            let start = i;
-            while i < ps.len() && matches!(ps[i].cell, Some((t2, r2, _)) if (t2, r2) == (t, r)) {
-                i += 1;
-            }
-            let row = &ps[start..i];
-            let mut cells: Vec<u32> = row.iter().filter_map(|p| p.cell.map(|c| c.2)).collect();
-            cells.dedup();
-            let share = cells.len().max(1) as f32;
-            let tallest = cells
-                .iter()
-                .map(|&c| {
-                    row.iter()
-                        .filter(|p| p.cell.map(|x| x.2) == Some(c))
-                        .map(|p| lines(p, share) + p.extra)
-                        .sum::<f32>()
-                })
-                .fold(0.0f32, f32::max);
-            sum += tallest;
+    let mut sum = 0.0;
+    let mut i = 0;
+    while i < paras.len() {
+        let Some((t, r, _)) = paras[i].cell else {
+            sum += lines(&paras[i], 1.0) + paras[i].extra;
+            i += 1;
+            continue;
+        };
+        let start = i;
+        while i < paras.len() && matches!(paras[i].cell, Some((t2, r2, _)) if (t2, r2) == (t, r)) {
+            i += 1;
         }
-        sum
-    };
-    let cut = cut.min(paras.len());
-    let laid = height(&paras[..cut]);
-    if pages == 0 || laid <= 0.0 {
-        return pages;
+        let row = &paras[start..i];
+        let mut cells: Vec<u32> = row.iter().filter_map(|p| p.cell.map(|c| c.2)).collect();
+        cells.dedup();
+        let share = cells.len().max(1) as f32;
+        let tallest = cells
+            .iter()
+            .map(|&c| {
+                row.iter()
+                    .filter(|p| p.cell.map(|x| x.2) == Some(c))
+                    .map(|p| lines(p, share) + p.extra)
+                    .sum::<f32>()
+            })
+            .fold(0.0f32, f32::max);
+        sum += tallest;
     }
-    let rest = height(&paras[cut..]);
-    pages + (rest * pages as f32 / laid).round() as usize
+    sum
+}
+
+/// [`estimate_pages`] from the paragraphs not on the `pages` laid out in
+/// full: as many more pages as their estimated height ([`height_of`])
+/// takes at `room` pt a page. Not the share of the text the first pages
+/// hold: a document's first pages (a title page, a long contents list of
+/// short lines) seldom fill pages as its body does.
+pub fn estimate_from_heights(paras: &[EstPara], pages: usize, room: f32, per_line: f32) -> usize {
+    pages + (height_of(paras, per_line) / room.max(1.0)).ceil() as usize
 }
 
 /// Every page's number as its section shows it (format, and the chapter
