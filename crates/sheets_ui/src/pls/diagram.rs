@@ -31,15 +31,17 @@ const FIRST_X: f64 = 280.0;
 const FIRST_Y: f64 = 190.0;
 /// Undo steps kept.
 const MAX_UNDO: usize = 200;
-/// From this many indicators on, a construct's indicators are staggered in
-/// two rows (or columns) so they don't make one long column.
+/// From this many indicators on, the indicators left or right of a
+/// construct are staggered in two columns so they don't make one tall
+/// column (above and below, a row is wide but stays readable: two rows
+/// would crowd the loadings where the links meet the ellipse).
 pub const STAGGER_FROM: usize = 8;
-/// Staggered: the step from one indicator to the next along the side, and
-/// the distance between the two rows (columns).
-const STAGGER_STEP_V: f64 = 18.0;
-const STAGGER_STEP_H: f64 = (IND_W + 12.0) / 2.0;
-const STAGGER_OUT_V: f64 = IND_W + 12.0;
-const STAGGER_OUT_H: f64 = IND_H + 14.0;
+/// Staggered: the step from one indicator to the next, the distance
+/// between the two columns, and the extra room before the inner column for
+/// the two columns' loadings.
+const STAGGER_STEP: f64 = 18.0;
+const STAGGER_OUT: f64 = IND_W + 12.0;
+const STAGGER_ROOM: f64 = 30.0;
 
 /// A rectangle (top-left corner, size).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -375,9 +377,9 @@ impl Diagram {
         self.layout().indicators.contains_key(indicator)
     }
 
-    /// Whether `c`'s indicators are laid out in two staggered rows.
-    fn staggered(c: &Construct) -> bool {
-        c.indicators.len() >= STAGGER_FROM
+    /// Whether `c`'s indicators are laid out in two staggered columns.
+    fn staggered(&self, c: &Construct) -> bool {
+        c.indicators.len() >= STAGGER_FROM && matches!(self.side(&c.name), Side::Left | Side::Right)
     }
 
     /// A construct's indicators and their boxes, in order: on its side, in
@@ -387,7 +389,7 @@ impl Diagram {
         let (cx, cy) = self.position(&c.name);
         let n = c.indicators.len() as f64;
         let side = self.side(&c.name);
-        let staggered = Self::staggered(c);
+        let staggered = self.staggered(c);
         let moved = &self.layout().indicators;
         c.indicators
             .iter()
@@ -407,12 +409,16 @@ impl Diagram {
                 let (x, y) = match side {
                     Side::Left | Side::Right => {
                         let (step, total) = if staggered {
-                            (STAGGER_STEP_V, (n - 1.0) * STAGGER_STEP_V + IND_H)
+                            (STAGGER_STEP, (n - 1.0) * STAGGER_STEP + IND_H)
                         } else {
                             (IND_H + IND_GAP, n * IND_H + (n - 1.0).max(0.0) * IND_GAP)
                         };
                         let y = cy - total / 2.0 + i * step;
-                        let out = if outer { STAGGER_OUT_V } else { 0.0 };
+                        let out = match (staggered, outer) {
+                            (false, _) => 0.0,
+                            (true, false) => STAGGER_ROOM,
+                            (true, true) => STAGGER_ROOM + STAGGER_OUT,
+                        };
                         let x = if side == Side::Left {
                             cx - RX - IND_DIST - IND_W - out
                         } else {
@@ -421,17 +427,13 @@ impl Diagram {
                         (x, y)
                     }
                     Side::Top | Side::Bottom => {
-                        let (step, total) = if staggered {
-                            (STAGGER_STEP_H, (n - 1.0) * STAGGER_STEP_H + IND_W)
-                        } else {
-                            (IND_W + IND_GAP, n * IND_W + (n - 1.0).max(0.0) * IND_GAP)
-                        };
+                        let (step, total) =
+                            (IND_W + IND_GAP, n * IND_W + (n - 1.0).max(0.0) * IND_GAP);
                         let x = cx - total / 2.0 + i * step;
-                        let out = if outer { STAGGER_OUT_H } else { 0.0 };
                         let y = if side == Side::Top {
-                            cy - RY - IND_DIST * 0.75 - IND_H - out
+                            cy - RY - IND_DIST * 0.75 - IND_H
                         } else {
-                            cy + RY + IND_DIST * 0.75 + out
+                            cy + RY + IND_DIST * 0.75
                         };
                         (x, y)
                     }
@@ -456,8 +458,9 @@ impl Diagram {
     }
 
     /// Where an indicator's loading goes on its link: the middle, or, in
-    /// staggered rows, near the box for the inner row and near the ellipse
-    /// for the outer one, so the two rows' numbers don't sit on each other.
+    /// staggered columns, near the box for the inner column and near the
+    /// ellipse for the outer one, so the two columns' numbers don't sit on
+    /// each other.
     pub fn loading_point(&self, c: &Construct, index: usize, rect: &Rect) -> (f64, f64) {
         let (a, b) = self.indicator_link(c, rect);
         let len = (b.0 - a.0).hypot(b.1 - a.1);
@@ -465,12 +468,12 @@ impl Diagram {
             .indicators
             .get(index)
             .is_some_and(|n| self.indicator_moved(n));
-        let t = if !Self::staggered(c) || moved || len < 60.0 {
+        let t = if !self.staggered(c) || moved || len < 60.0 {
             0.5
         } else if index.is_multiple_of(2) {
-            22.0 / len
+            24.0 / len
         } else {
-            1.0 - 22.0 / len
+            1.0 - 24.0 / len
         };
         (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
     }
@@ -890,6 +893,31 @@ impl Diagram {
                 );
             }
         }
+        // A path that skips a column (X → Y beside X → M → Y) would run
+        // through the constructs it passes: lift that column above the line,
+        // as mediators are usually drawn.
+        for (d, col) in columns.iter().enumerate() {
+            let x = FIRST_X + d as f64 * COL_STEP;
+            let crossed = self.model.paths.iter().any(|p| {
+                let (Some(&df), Some(&dt)) = (depth.get(&p.from), depth.get(&p.to)) else {
+                    return false;
+                };
+                if !(df < d && d < dt) {
+                    return false;
+                }
+                let (a, b) = (positions[&p.from], positions[&p.to]);
+                let t = (x - a[0]) / (b[0] - a[0]);
+                let y = a[1] + (b[1] - a[1]) * t;
+                col.iter().any(|n| (positions[n][1] - y).abs() < RY + 20.0)
+            });
+            if crossed {
+                for n in col {
+                    if let Some(p) = positions.get_mut(n) {
+                        p[1] -= ROW_STEP * 0.75;
+                    }
+                }
+            }
+        }
         self.layout_mut().positions = positions;
     }
 
@@ -1084,6 +1112,14 @@ mod tests {
         assert_eq!(d.undo.len(), steps);
         assert!(d.undo());
         assert_eq!(d.position("CUSL"), (5.0, 5.0));
+        // A mediator is lifted off the direct path it would sit on.
+        let mut m = three();
+        m.add_path("IMAG", "CUSA").unwrap();
+        m.add_path("CUSA", "CUSL").unwrap();
+        m.add_path("IMAG", "CUSL").unwrap();
+        m.auto_layout();
+        assert_eq!(m.position("IMAG").1, m.position("CUSL").1);
+        assert!(m.position("CUSA").1 < m.position("IMAG").1 - 2.0 * RY);
         // Indicators: left of sources, above middles, right of ends.
         assert_eq!(d.side("IMAG"), Side::Left);
         assert_eq!(d.side("CUSA"), Side::Top);
@@ -1154,14 +1190,19 @@ mod tests {
                 .reduce(|a, b| a.union(&b))
                 .unwrap();
             match side {
-                // Half of one column of ten (10 × 22 + 9 × 8 = 292).
-                Side::Left | Side::Right => assert!(all.h < 200.0, "{all:?}"),
-                Side::Top | Side::Bottom => assert!(all.w < 500.0, "{all:?}"),
+                // Half of one column of ten (10 × 22 + 9 × 8 = 292), and the
+                // two columns' loadings apart.
+                Side::Left | Side::Right => {
+                    assert!(all.h < 200.0, "{all:?}");
+                    let p0 = d.loading_point(&c, 0, &boxes[0].1);
+                    let p1 = d.loading_point(&c, 1, &boxes[1].1);
+                    assert!((p0.0 - p1.0).abs() > 45.0, "{side:?} {p0:?} {p1:?}");
+                }
+                // One row above or below.
+                Side::Top | Side::Bottom => {
+                    assert!(all.h < IND_H + 1.0, "{all:?}");
+                }
             }
-            // The two rows' loadings sit apart.
-            let p0 = d.loading_point(&c, 0, &boxes[0].1);
-            let p1 = d.loading_point(&c, 1, &boxes[1].1);
-            assert!((p0.0 - p1.0).abs() + (p0.1 - p1.1).abs() > 25.0, "{side:?}");
         }
         // Seven stay in one column.
         let mut d = three();

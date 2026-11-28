@@ -120,5 +120,12 @@ in an Xwayland server (`:33`) with throwaway config, state and data dirs, a priv
 and a fake file-chooser portal (`portal.py`) that answers the attach button with the CSV. It
 clicks by window coordinates (`take.sh`), so a layout change in the panel may need new ones.
 
+**Thesis section.** `#thesis` (before the downloads, nav "Thesis" / "Skripsi") covers PLS-SEM in
+Sheets with a screenshot and citations in Docs as text. Its pictures are `pls-*` (English UI) and
+`pls-id-*` (Indonesian UI, decimal commas): a mediation model (X → M → Y and X → Y, ten items on M)
+after a bootstrap, made-up survey data. They were captured from a CI build in a private Xwayland
+server with xdotool (the PLS-SEM tab has no MCP tool to set it up), then converted with the same
+sizes and formats as the other shots (`magick`, `avifenc`/`cwebp` as in `images.sh`).
+
 The site shows the dark captures to visitors whose system is dark and the light ones otherwise
 (`<picture>` with `prefers-color-scheme`).
