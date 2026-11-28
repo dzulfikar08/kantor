@@ -313,6 +313,10 @@ pub struct SheetsSettings {
     /// fills use them besides Excel's built-in day and month lists.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub custom_lists: Vec<String>,
+    /// The height of a PLS-SEM model tab's results pane (pixels), as the
+    /// user last dragged it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pls_results_height: Option<u32>,
 }
 
 impl Default for SheetsSettings {
@@ -320,6 +324,7 @@ impl Default for SheetsSettings {
         Self {
             web_formulas: true,
             custom_lists: Vec::new(),
+            pls_results_height: None,
         }
     }
 }
@@ -570,6 +575,7 @@ mod tests {
             sheets: SheetsSettings {
                 web_formulas: false,
                 custom_lists: vec!["Low, Medium, High".into()],
+                pls_results_height: Some(340),
             },
             pdf: PdfSettings {
                 online_signature_checks: false,

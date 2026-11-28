@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::model::{Model, Options};
 use crate::spec::Spec;
-use crate::{Data, Error, Missing, data};
+use crate::{Data, Missing, data};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -25,6 +25,11 @@ pub struct Finding {
     pub construct: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indicator: Option<String>,
+    /// The message's arguments in order, for front ends that word `check`
+    /// in their own language (numbers in English notation; not in the
+    /// JSON).
+    #[serde(skip)]
+    pub args: Vec<String>,
 }
 
 fn finding(level: Level, check: &'static str, message: String) -> Finding {
@@ -34,6 +39,14 @@ fn finding(level: Level, check: &'static str, message: String) -> Finding {
         message,
         construct: None,
         indicator: None,
+        args: Vec::new(),
+    }
+}
+
+impl Finding {
+    fn with_args(mut self, args: &[&str]) -> Self {
+        self.args = args.iter().map(|a| (*a).to_owned()).collect();
+        self
     }
 }
 
@@ -48,7 +61,8 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
                     Level::Error,
                     "missing_column",
                     format!("indicator {ind} of {} is not a column of the data", c.name),
-                );
+                )
+                .with_args(&[ind, &c.name]);
                 f.construct = Some(c.name.clone());
                 f.indicator = Some(ind.clone());
                 out.push(f);
@@ -62,15 +76,12 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
         Some(code) => data.clone().with_missing_code(code),
         None => data.clone(),
     };
-    let spec = match Spec::new(model, &data) {
+    let spec = match Spec::resolve(model, &data) {
         Ok(s) => s,
-        Err(e) => {
-            let (check, msg) = match e {
-                Error::Unsupported(m) => ("unsupported", m),
-                Error::Model(m) | Error::Data(m) | Error::Estimation(m) => ("model", m),
-                Error::Cancelled => ("model", "stopped".to_owned()),
-            };
-            out.push(finding(Level::Error, check, msg));
+        Err(p) => {
+            let mut f = finding(Level::Error, p.code.code, p.message);
+            f.args = p.code.args;
+            out.push(f);
             return out;
         }
     };
@@ -88,7 +99,12 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
                     spec.names[spec.ind_block[first]],
                     spec.names[spec.ind_block[i]]
                 ),
-            );
+            )
+            .with_args(&[
+                &spec.ind_names[i],
+                &spec.names[spec.ind_block[first]],
+                &spec.names[spec.ind_block[i]],
+            ]);
             f.indicator = Some(spec.ind_names[i].clone());
             out.push(f);
         }
@@ -114,35 +130,46 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
                         if m == 1 { "" } else { "s" },
                         share * 100.0
                     ),
-                );
+                )
+                .with_args(&[
+                    &spec.ind_names[i],
+                    &m.to_string(),
+                    &format!("{:.1}", share * 100.0),
+                ]);
                 f.indicator = Some(spec.ind_names[i].clone());
                 out.push(f);
             }
         }
         if opts.missing == Missing::Listwise {
             let dropped = data.rows() - kept.len();
-            out.push(finding(
-                if dropped * 10 > data.rows() {
-                    Level::Warning
-                } else {
-                    Level::Info
-                },
-                "listwise_deletion",
-                format!(
-                    "listwise deletion leaves out {dropped} of {} rows",
-                    data.rows()
-                ),
-            ));
+            out.push(
+                finding(
+                    if dropped * 10 > data.rows() {
+                        Level::Warning
+                    } else {
+                        Level::Info
+                    },
+                    "listwise_deletion",
+                    format!(
+                        "listwise deletion leaves out {dropped} of {} rows",
+                        data.rows()
+                    ),
+                )
+                .with_args(&[&dropped.to_string(), &data.rows().to_string()]),
+            );
         }
     }
     let n = kept.len();
     let p = spec.p();
     if n < 3 {
-        out.push(finding(
-            Level::Error,
-            "too_few_rows",
-            format!("{n} usable rows: too few to estimate the model"),
-        ));
+        out.push(
+            finding(
+                Level::Error,
+                "too_few_rows",
+                format!("{n} usable rows: too few to estimate the model"),
+            )
+            .with_args(&[&n.to_string()]),
+        );
         return out;
     }
     // Constant indicators.
@@ -153,7 +180,8 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
                 Level::Error,
                 "constant_indicator",
                 format!("{} has the same value in every row", spec.ind_names[i]),
-            );
+            )
+            .with_args(&[&spec.ind_names[i]]);
             f.indicator = Some(spec.ind_names[i].clone());
             out.push(f);
         }
@@ -182,7 +210,13 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
                 spec.names[at],
                 10 * most
             ),
-        );
+        )
+        .with_args(&[
+            &n.to_string(),
+            &most.to_string(),
+            &spec.names[at],
+            &(10 * most).to_string(),
+        ]);
         f.construct = Some(spec.names[at].clone());
         out.push(f);
     }
@@ -201,7 +235,8 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
                             "the indicators of {} are perfectly collinear (Mode B can't weight them)",
                             spec.names[j]
                         ),
-                    );
+                    )
+                    .with_args(&[&spec.names[j]]);
                     f.construct = Some(spec.names[j].clone());
                     out.push(f);
                 }
@@ -217,7 +252,12 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
                                     spec.names[j],
                                     inv[(r, r)]
                                 ),
-                            );
+                            )
+                            .with_args(&[
+                                &spec.ind_names[i],
+                                &spec.names[j],
+                                &format!("{:.2}", inv[(r, r)]),
+                            ]);
                             f.construct = Some(spec.names[j].clone());
                             f.indicator = Some(spec.ind_names[i].clone());
                             out.push(f);

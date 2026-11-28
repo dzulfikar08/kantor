@@ -78,8 +78,25 @@ out) or **mean replacement** (`missing: "mean"`, SmartPLS's default).
 
 `layout` (optional) is what the Sheets PLS-SEM editor keeps beside the
 model: `name`, `positions` (construct → `[x, y]`, the ellipse's centre),
-the data's `sheet` and `range`, and `one_tailed`. Estimation ignores it,
-so a model saved from Sheets runs here unchanged.
+the data's `sheet` and `range`, `one_tailed`, `sides` (construct → `left`,
+`right`, `top` or `bottom`: where its indicators are drawn, when the user
+chose; otherwise left of a construct nothing points to, right of one that
+points nowhere, above one in between) and `indicators` (indicator →
+`[dx, dy]`, the centre of a box the user dragged, measured from its
+construct's centre so it follows the construct). Indicators not in
+`indicators` are laid out on their construct's side, in two staggered rows
+from 8 indicators on. Estimation ignores `layout`, so a model saved from
+Sheets runs here unchanged.
+
+```json
+"layout": {
+  "name": "Model 1",
+  "positions": {"X": [280, 190], "M": [600, 430], "Y": [920, 190]},
+  "sheet": "survey", "range": "A1:V151",
+  "sides": {"M": "bottom"},
+  "indicators": {"X_1": [-190, -60]}
+}
+```
 
 `dimensions` and `higher_order` on a construct are reserved for
 higher-order constructs (repeated indicators, two-stage), a later phase:

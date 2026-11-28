@@ -1492,7 +1492,47 @@ Take the data (header row first) from the selection on the worksheet	Ambil data 
 Indicators · check or drag onto the diagram	Indikator · centang atau seret ke diagram
 Create construct	Buat konstruk
 Drag indicators here (or check them and press Create construct) to make a construct	Seret indikator ke sini (atau centang lalu tekan Buat konstruk) untuk membuat konstruk
-Shift+drag from one construct to another, or drag the ● of the selected one, to draw a path · Del removes · double-click renames	Shift+seret dari satu konstruk ke konstruk lain, atau seret ● pada konstruk terpilih, untuk menggambar jalur · Del menghapus · klik dua kali mengganti nama
+Shift+drag from one construct to another, or drag the ● of the selected one, to draw a path	Shift+seret dari satu konstruk ke konstruk lain, atau seret ● pada konstruk terpilih, untuk menggambar jalur
+Drag a construct or an indicator box to move it; right-click a construct to put its indicators on another side	Seret konstruk atau kotak indikator untuk memindahkannya; klik kanan konstruk untuk memindahkan indikatornya ke sisi lain
+Ctrl+wheel or pinch zooms; drag the background to pan	Ctrl+roda tetikus atau cubit untuk zoom; seret latar untuk menggeser tampilan
+Del removes the selection; double-click a construct to rename it	Del menghapus yang dipilih; klik dua kali konstruk untuk mengganti namanya
+Diagram	Diagram
+Indicators	Indikator
+Fit to view	Muat di layar
+Zoom out (Ctrl+wheel)	Perkecil (Ctrl+roda tetikus)
+Zoom in (Ctrl+wheel)	Perbesar (Ctrl+roda tetikus)
+Indicators on the left	Indikator di kiri
+Indicators on the right	Indikator di kanan
+Indicators above	Indikator di atas
+Indicators below	Indikator di bawah
+Indicators placed automatically	Indikator diatur otomatis
+Put moved indicators back	Kembalikan indikator yang dipindah
+Auto layout	Tata letak otomatis
+Indicator {} of {} is not a column of the data	Indikator {} pada {} bukan kolom data
+Indicator {} measures both {} and {} (only higher-order models repeat indicators)	Indikator {} mengukur {} sekaligus {} (indikator hanya diulang pada model orde tinggi)
+{} has {} missing values ({}% of rows)	{} punya {} data hilang ({}% baris)
+Deleting rows with missing values leaves out {} of {} rows	Menghapus baris berdata hilang membuang {} dari {} baris
+{} usable rows: too few to estimate the model	Hanya {} baris yang bisa dipakai: terlalu sedikit untuk mengestimasi model
+{} has the same value in every row	{} bernilai sama di semua baris
+{} rows is fewer than ten times the {} arrows pointing at {} ({} needed by the 10-times rule; a power analysis is the better guide)	{} baris kurang dari sepuluh kali {} panah yang menuju {} (aturan 10 kali meminta {}; analisis power lebih tepat sebagai acuan)
+The indicators of {} are perfectly collinear (Mode B can't weight them)	Indikator {} kolinear sempurna (Mode B tidak bisa memberi bobot)
+{} of formative {} has a VIF of {} (above 5: collinear)	{} pada konstruk formatif {} punya VIF {} (di atas 5: kolinear)
+The model has no constructs	Model belum punya konstruk
+A construct has no name	Ada konstruk tanpa nama
+Construct {} is defined twice	Konstruk {} didefinisikan dua kali
+{} is a higher-order construct; these aren't estimated yet	{} adalah konstruk orde tinggi; jenis ini belum bisa diestimasi
+Construct {} has no indicators	Konstruk {} belum punya indikator
+Indicator {} is listed twice in {}	Indikator {} tercantum dua kali di {}
+Path {} → {}: there is no construct {}	Jalur {} → {}: tidak ada konstruk {}
+Construct {} has a path to itself	Konstruk {} punya jalur ke dirinya sendiri
+Paths {} → {} and back make the model non-recursive	Jalur {} → {} dan sebaliknya membuat model tidak rekursif
+Construct {} has no structural paths: connect it to another construct	Konstruk {} belum punya jalur struktural: hubungkan ke konstruk lain
+The structural model has a cycle through {} (PLS-SEM needs a recursive model)	Model struktural membentuk putaran lewat {} (PLS-SEM butuh model rekursif)
+The algorithm did not converge in {} iterations	Algoritma tidak konvergen dalam {} iterasi
+rho_A of {} is above 1 (an inadmissible PLSc solution)	rho_A {} di atas 1 (solusi PLSc yang tidak layak)
+A corrected construct correlation is above 1 in absolute value (an inadmissible PLSc solution)	Ada korelasi konstruk terkoreksi yang nilai mutlaknya di atas 1 (solusi PLSc yang tidak layak)
+The consistent loading of {} is above 1 (a Heywood case)	Loading konsisten {} di atas 1 (kasus Heywood)
+{} of {} bootstrap subsamples could not be estimated and were left out	{} dari {} subsampel bootstrap tidak bisa diestimasi dan tidak diikutkan
 Formative	Formatif
 Mode A: the construct causes its indicators	Mode A: konstruk menyebabkan indikatornya
 Mode B: the indicators form the construct	Mode B: indikator membentuk konstruk

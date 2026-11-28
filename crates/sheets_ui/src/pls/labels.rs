@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use kantor_pls::{Estimate, Measurement, Results, WeightMode};
-use kantor_ui::i18n::{t, t_dyn, tk};
+use kantor_ui::i18n::{t, t_dyn, tf, tk};
 
 /// How numbers are written.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -45,6 +45,108 @@ impl Fmt {
     /// The p value of a bootstrap estimate, one- or two-tailed.
     pub fn p_of(&self, e: &Estimate) -> Option<f64> {
         if self.one_tailed { e.p_one_tailed } else { e.p }
+    }
+}
+
+/// A message of the engine (a check finding's `check` and `args`, or a
+/// result warning's code) in the interface language; `english` when the
+/// code is unknown. Numbers in the arguments get a decimal comma when
+/// `comma`.
+pub fn engine_message(code: &str, args: &[String], english: &str, comma: bool) -> String {
+    let a: Vec<String> = args
+        .iter()
+        .map(|s| {
+            if comma && s.contains('.') && s.parse::<f64>().is_ok() {
+                s.replace('.', ",")
+            } else {
+                s.clone()
+            }
+        })
+        .collect();
+    let n = |k: usize| a.get(k).map(String::as_str).unwrap_or("");
+    match (code, a.len()) {
+        // The model against the data (kantor_pls::check).
+        ("missing_column", 2) => tf(
+            "Indicator {} of {} is not a column of the data",
+            &[&n(0), &n(1)],
+        ),
+        ("shared_indicator", 3) => tf(
+            "Indicator {} measures both {} and {} (only higher-order models repeat indicators)",
+            &[&n(0), &n(1), &n(2)],
+        ),
+        ("missing_values", 3) => tf(
+            "{} has {} missing values ({}% of rows)",
+            &[&n(0), &n(1), &n(2)],
+        ),
+        ("listwise_deletion", 2) => tf(
+            "Deleting rows with missing values leaves out {} of {} rows",
+            &[&n(0), &n(1)],
+        ),
+        ("too_few_rows", 1) => tf("{} usable rows: too few to estimate the model", &[&n(0)]),
+        ("constant_indicator", 1) => tf("{} has the same value in every row", &[&n(0)]),
+        ("ten_times_rule", 4) => tf(
+            "{} rows is fewer than ten times the {} arrows pointing at {} ({} needed by the 10-times rule; a power analysis is the better guide)",
+            &[&n(0), &n(1), &n(2), &n(3)],
+        ),
+        ("collinear_block", 1) => tf(
+            "The indicators of {} are perfectly collinear (Mode B can't weight them)",
+            &[&n(0)],
+        ),
+        ("outer_vif", 3) => tf(
+            "{} of formative {} has a VIF of {} (above 5: collinear)",
+            &[&n(0), &n(1), &n(2)],
+        ),
+        // The model itself.
+        ("no_constructs", 0) => t("The model has no constructs").to_owned(),
+        ("unnamed_construct", 0) => t("A construct has no name").to_owned(),
+        ("duplicate_construct", 1) => tf("Construct {} is defined twice", &[&n(0)]),
+        ("higher_order", 1) => tf(
+            "{} is a higher-order construct; these aren't estimated yet",
+            &[&n(0)],
+        ),
+        ("no_indicators", 1) => tf("Construct {} has no indicators", &[&n(0)]),
+        ("duplicate_indicator", 2) => {
+            tf("Indicator {} is listed twice in {}", &[&n(0), &n(1)])
+        }
+        ("unknown_construct", 3) => tf(
+            "Path {} → {}: there is no construct {}",
+            &[&n(0), &n(1), &n(2)],
+        ),
+        ("self_path", 1) => tf("Construct {} has a path to itself", &[&n(0)]),
+        ("path_and_back", 2) => tf(
+            "Paths {} → {} and back make the model non-recursive",
+            &[&n(0), &n(1)],
+        ),
+        ("no_paths", 1) => tf(
+            "Construct {} has no structural paths: connect it to another construct",
+            &[&n(0)],
+        ),
+        ("cycle", 1) => tf(
+            "The structural model has a cycle through {} (PLS-SEM needs a recursive model)",
+            &[&n(0)],
+        ),
+        // Warnings in the results.
+        ("not_converged", 1) => tf(
+            "The algorithm did not converge in {} iterations",
+            &[&n(0)],
+        ),
+        ("rho_a_above_one", 1) => tf(
+            "rho_A of {} is above 1 (an inadmissible PLSc solution)",
+            &[&n(0)],
+        ),
+        ("correlation_above_one", 0) => t(
+            "A corrected construct correlation is above 1 in absolute value (an inadmissible PLSc solution)",
+        )
+        .to_owned(),
+        ("heywood_case", 1) => tf(
+            "The consistent loading of {} is above 1 (a Heywood case)",
+            &[&n(0)],
+        ),
+        ("bootstrap_failed", 2) => tf(
+            "{} of {} bootstrap subsamples could not be estimated and were left out",
+            &[&n(0), &n(1)],
+        ),
+        _ => english.to_owned(),
     }
 }
 
@@ -608,8 +710,14 @@ fn fit(r: &Results, f: &Fmt) -> Vec<ResultTable> {
     let mut out = vec![fit, info];
     if !r.warnings.is_empty() {
         let mut w = ResultTable::new(t("Warnings"), cols(&[tk("Warning")]));
-        for text in &r.warnings {
-            w.rows.push(vec![Cell::text(text.clone())]);
+        for (i, text) in r.warnings.iter().enumerate() {
+            let text = match r.warning_codes.get(i) {
+                Some(c) if r.warning_codes.len() == r.warnings.len() => {
+                    engine_message(c.code, &c.args, text, f.comma)
+                }
+                _ => text.clone(),
+            };
+            w.rows.push(vec![Cell::text(text)]);
         }
         out.push(w);
     }
@@ -732,6 +840,47 @@ mod tests {
             ..Default::default()
         };
         estimate(&data, &model, &opts).unwrap()
+    }
+
+    #[std::prelude::v1::test]
+    fn engine_messages_by_code() {
+        let args = vec!["Q1".to_owned(), "12".to_owned(), "8.5".to_owned()];
+        // English: the UI's own wording, the number as given.
+        assert_eq!(
+            engine_message("missing_values", &args, "x", false),
+            "Q1 has 12 missing values (8.5% of rows)"
+        );
+        assert_eq!(
+            engine_message("missing_values", &args, "x", true),
+            "Q1 has 12 missing values (8,5% of rows)"
+        );
+        // Unknown codes, or the wrong number of arguments: the engine's text.
+        assert_eq!(engine_message("new_check", &args, "as is", false), "as is");
+        assert_eq!(engine_message("no_paths", &[], "as is", false), "as is");
+        // Every code kantor_pls gives a finding has a wording here.
+        let d = kantor_pls::Data::new(
+            vec!["a".into(), "b".into()],
+            vec![
+                vec![1.0, 2.0],
+                vec![2.0, 1.0],
+                vec![3.0, 5.0],
+                vec![4.0, 3.0],
+            ],
+        )
+        .unwrap();
+        let m = Model {
+            constructs: vec![
+                Construct::reflective("A", &["a"]),
+                Construct::reflective("B", &["b"]),
+            ],
+            ..Default::default()
+        };
+        let f = kantor_pls::check(&d, &m, &Options::default());
+        assert_eq!(f[0].check, "no_paths");
+        assert_eq!(
+            engine_message(f[0].check, &f[0].args, &f[0].message, false),
+            "Construct A has no structural paths: connect it to another construct"
+        );
     }
 
     #[std::prelude::v1::test]

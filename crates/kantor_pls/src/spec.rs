@@ -4,7 +4,37 @@
 use std::collections::HashMap;
 
 use crate::model::{Measurement, Model, WeightMode};
-use crate::{Data, Error};
+use crate::{Code, Data, Error};
+
+/// Why a model can't be resolved: its code and arguments (see [`Code`])
+/// and the English message.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Problem {
+    pub code: Code,
+    pub message: String,
+    /// A later phase's feature (higher-order constructs).
+    pub unsupported: bool,
+}
+
+impl Problem {
+    fn new(code: &'static str, args: &[&str], message: String) -> Self {
+        Self {
+            code: Code::new(code, args),
+            message,
+            unsupported: false,
+        }
+    }
+}
+
+impl From<Problem> for Error {
+    fn from(p: Problem) -> Self {
+        if p.unsupported {
+            Error::Unsupported(p.message)
+        } else {
+            Error::Model(p.message)
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Spec {
@@ -38,32 +68,54 @@ impl Spec {
 
     /// Resolve `model` against `data`'s columns.
     pub fn new(model: &Model, data: &Data) -> Result<Spec, Error> {
+        Self::resolve(model, data).map_err(Error::from)
+    }
+
+    /// [`Spec::new`], with the problem's code.
+    pub fn resolve(model: &Model, data: &Data) -> Result<Spec, Problem> {
         let mut names = Vec::new();
         let mut index: HashMap<&str, usize> = HashMap::new();
         if model.constructs.is_empty() {
-            return Err(Error::Model("the model has no constructs".into()));
+            return Err(Problem::new(
+                "no_constructs",
+                &[],
+                "the model has no constructs".into(),
+            ));
         }
         for c in &model.constructs {
             if c.name.trim().is_empty() {
-                return Err(Error::Model("a construct has no name".into()));
+                return Err(Problem::new(
+                    "unnamed_construct",
+                    &[],
+                    "a construct has no name".into(),
+                ));
             }
             if index.insert(c.name.as_str(), names.len()).is_some() {
-                return Err(Error::Model(format!(
-                    "construct {} is defined twice",
-                    c.name
-                )));
+                return Err(Problem::new(
+                    "duplicate_construct",
+                    &[&c.name],
+                    format!("construct {} is defined twice", c.name),
+                ));
             }
             if !c.dimensions.is_empty() || c.higher_order.is_some() {
-                return Err(Error::Unsupported(format!(
-                    "{} is a higher-order construct; these aren't estimated yet",
-                    c.name
-                )));
+                return Err(Problem {
+                    unsupported: true,
+                    ..Problem::new(
+                        "higher_order",
+                        &[&c.name],
+                        format!(
+                            "{} is a higher-order construct; these aren't estimated yet",
+                            c.name
+                        ),
+                    )
+                });
             }
             if c.indicators.is_empty() {
-                return Err(Error::Model(format!(
-                    "construct {} has no indicators",
-                    c.name
-                )));
+                return Err(Problem::new(
+                    "no_indicators",
+                    &[&c.name],
+                    format!("construct {} has no indicators", c.name),
+                ));
             }
             names.push(c.name.clone());
         }
@@ -75,16 +127,18 @@ impl Spec {
             let mut b = Vec::new();
             for ind in &c.indicators {
                 let col = data.column(ind).ok_or_else(|| {
-                    Error::Model(format!(
-                        "indicator {ind} of {} is not a column of the data",
-                        c.name
-                    ))
+                    Problem::new(
+                        "missing_column",
+                        &[ind, &c.name],
+                        format!("indicator {ind} of {} is not a column of the data", c.name),
+                    )
                 })?;
                 if b.iter().any(|&i: &usize| ind_cols[i] == col) {
-                    return Err(Error::Model(format!(
-                        "indicator {ind} is listed twice in {}",
-                        c.name
-                    )));
+                    return Err(Problem::new(
+                        "duplicate_indicator",
+                        &[ind, &c.name],
+                        format!("indicator {ind} is listed twice in {}", c.name),
+                    ));
                 }
                 b.push(ind_names.len());
                 ind_names.push(ind.clone());
@@ -100,24 +154,33 @@ impl Spec {
         for p in &model.paths {
             let lookup = |n: &str| {
                 index.get(n).copied().ok_or_else(|| {
-                    Error::Model(format!("path {} -> {}: no construct {n}", p.from, p.to))
+                    Problem::new(
+                        "unknown_construct",
+                        &[&p.from, &p.to, n],
+                        format!("path {} -> {}: no construct {n}", p.from, p.to),
+                    )
                 })
             };
             let (f, t) = (lookup(&p.from)?, lookup(&p.to)?);
             if f == t {
-                return Err(Error::Model(format!(
-                    "path {} -> {} is a loop",
-                    p.from, p.to
-                )));
+                return Err(Problem::new(
+                    "self_path",
+                    &[&p.from],
+                    format!("path {} -> {} is a loop", p.from, p.to),
+                ));
             }
             if paths.contains(&(f, t)) {
                 continue;
             }
             if paths.contains(&(t, f)) {
-                return Err(Error::Model(format!(
-                    "paths {} -> {} and back make the model non-recursive",
-                    p.from, p.to
-                )));
+                return Err(Problem::new(
+                    "path_and_back",
+                    &[&p.from, &p.to],
+                    format!(
+                        "paths {} -> {} and back make the model non-recursive",
+                        p.from, p.to
+                    ),
+                ));
             }
             paths.push((f, t));
             preds[t].push(f);
@@ -125,10 +188,11 @@ impl Spec {
         }
         for j in 0..k {
             if preds[j].is_empty() && succs[j].is_empty() {
-                return Err(Error::Model(format!(
-                    "construct {} has no structural paths",
-                    names[j]
-                )));
+                return Err(Problem::new(
+                    "no_paths",
+                    &[&names[j]],
+                    format!("construct {} has no structural paths", names[j]),
+                ));
             }
         }
         // Causal order (Kahn): exogenous constructs first.
@@ -150,10 +214,14 @@ impl Spec {
                 .filter(|j| !order.contains(j))
                 .map(|j| names[j].as_str())
                 .collect();
-            return Err(Error::Model(format!(
-                "the structural model has a cycle through {} (PLS-SEM needs a recursive model)",
-                cyc.join(", ")
-            )));
+            let list = cyc.join(", ");
+            return Err(Problem::new(
+                "cycle",
+                &[&list],
+                format!(
+                    "the structural model has a cycle through {list} (PLS-SEM needs a recursive model)"
+                ),
+            ));
         }
         let mut chains = Vec::new();
         fn walk(j: usize, succs: &[Vec<usize>], cur: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {

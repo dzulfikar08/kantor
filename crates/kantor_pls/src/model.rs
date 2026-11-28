@@ -47,6 +47,25 @@ pub struct Layout {
     /// false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub one_tailed: bool,
+    /// Construct name → the side its indicators are drawn on (chosen by
+    /// the editor from the paths when absent).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub sides: BTreeMap<String, IndicatorSide>,
+    /// Indicator name → the centre of its box, `[dx, dy]` from its
+    /// construct's centre, for indicators the user moved (laid out on
+    /// their construct's side when absent).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub indicators: BTreeMap<String, [f64; 2]>,
+}
+
+/// Where a construct's indicators are drawn in the path diagram.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndicatorSide {
+    Left,
+    Right,
+    Top,
+    Bottom,
 }
 
 /// How a construct relates to its indicators.

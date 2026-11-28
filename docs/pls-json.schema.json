@@ -47,7 +47,17 @@
         },
         "sheet": {"type": "string", "description": "The data's sheet in the workbook"},
         "range": {"type": "string", "description": "The data's cells, header row first (A1:K251)"},
-        "one_tailed": {"type": "boolean", "description": "p values shown one-tailed (default two-tailed)"}
+        "one_tailed": {"type": "boolean", "description": "p values shown one-tailed (default two-tailed)"},
+        "sides": {
+          "type": "object",
+          "description": "Construct name → the side its indicators are drawn on (chosen from the paths when absent)",
+          "additionalProperties": {"enum": ["left", "right", "top", "bottom"]}
+        },
+        "indicators": {
+          "type": "object",
+          "description": "Indicator name → [dx, dy], the centre of a box the user moved, from its construct's centre (laid out on the construct's side when absent)",
+          "additionalProperties": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+        }
       }
     },
     "names": {

@@ -37,8 +37,8 @@ pub use check::{Finding, Level, check};
 pub use data::{Data, Missing};
 pub use fit::{Fit, FitMeasures};
 pub use model::{
-    Algorithm, Bootstrap, Construct, HigherOrder, Layout, Measurement, Model, Options, Path,
-    SignChanges, WeightMode, Weighting,
+    Algorithm, Bootstrap, Construct, HigherOrder, IndicatorSide, Layout, Measurement, Model,
+    Options, Path, SignChanges, WeightMode, Weighting,
 };
 pub use results::{
     ConstructResult, Effect, Effects, OuterResult, PathResult, Results, SpecificEffect, Table,
@@ -46,6 +46,25 @@ pub use results::{
 
 use linalg::Mat;
 use spec::Spec;
+
+/// A message's code and arguments, so a front end can word it in its own
+/// language: check findings ([`Finding::check`] with [`Finding::args`]) and
+/// result warnings ([`Results::warning_codes`]). The English text is kept
+/// beside it for the CLI, MCP and agent tools.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Code {
+    pub code: &'static str,
+    pub args: Vec<String>,
+}
+
+impl Code {
+    pub fn new(code: &'static str, args: &[&str]) -> Self {
+        Self {
+            code,
+            args: args.iter().map(|a| (*a).to_owned()).collect(),
+        }
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
@@ -159,11 +178,13 @@ pub fn estimate_with(
         .ok_or_else(|| Error::Data("the indicators' correlations can't be computed".into()))?;
     let core = core::estimate(&s, &spec, opts)?;
     let mut warnings = Vec::new();
+    let mut warning_codes = Vec::new();
     if !core.converged {
         warnings.push(format!(
             "the algorithm did not converge in {} iterations",
             core.iterations
         ));
+        warning_codes.push(Code::new("not_converged", &[&core.iterations.to_string()]));
     }
 
     // Measurement model.
@@ -253,6 +274,7 @@ pub fn estimate_with(
                     "rho_A of {} is above 1 (an inadmissible PLSc solution)",
                     c.name
                 ));
+                warning_codes.push(Code::new("rho_a_above_one", &[&c.name]));
             }
         }
         if core.cc.data.iter().any(|r| r.abs() > 1.0 + 1e-12) {
@@ -260,6 +282,7 @@ pub fn estimate_with(
                 "a corrected construct correlation is above 1 in absolute value (an inadmissible PLSc solution)"
                     .into(),
             );
+            warning_codes.push(Code::new("correlation_above_one", &[]));
         }
         if let Some(o) = outer
             .iter()
@@ -269,6 +292,7 @@ pub fn estimate_with(
                 "the consistent loading of {} is above 1 (a Heywood case)",
                 o.indicator
             ));
+            warning_codes.push(Code::new("heywood_case", &[&o.indicator]));
         }
     }
 
@@ -371,6 +395,10 @@ pub fn estimate_with(
             "{} of {} bootstrap subsamples could not be estimated and were left out",
             b.failed, b.samples
         ));
+        warning_codes.push(Code::new(
+            "bootstrap_failed",
+            &[&b.failed.to_string(), &b.samples.to_string()],
+        ));
     }
 
     Ok(Results {
@@ -394,6 +422,7 @@ pub fn estimate_with(
         fit,
         bootstrap,
         warnings,
+        warning_codes,
         scores,
     })
 }

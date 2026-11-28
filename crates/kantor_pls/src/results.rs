@@ -120,6 +120,9 @@ pub struct Results {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bootstrap: Option<BootstrapResults>,
     pub warnings: Vec<String>,
+    /// The warnings' codes, in the same order (not in the JSON).
+    #[serde(skip)]
+    pub warning_codes: Vec<crate::Code>,
     /// Construct scores (standardized), one row per estimated row: not in
     /// the JSON.
     #[serde(skip)]

@@ -10,6 +10,10 @@ use std::collections::{BTreeMap, HashSet};
 
 use kantor_pls::{Bootstrap, Construct, Layout, Measurement, Model, Options, Path};
 
+/// Where a construct's indicators are drawn (saved in the model's
+/// `layout.sides` when the user chose it).
+pub use kantor_pls::IndicatorSide as Side;
+
 /// Half the width and height of a construct's ellipse.
 pub const RX: f64 = 60.0;
 pub const RY: f64 = 30.0;
@@ -27,14 +31,15 @@ const FIRST_X: f64 = 280.0;
 const FIRST_Y: f64 = 190.0;
 /// Undo steps kept.
 const MAX_UNDO: usize = 200;
-
-/// Where a construct's indicators are drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Side {
-    Left,
-    Right,
-    Top,
-}
+/// From this many indicators on, a construct's indicators are staggered in
+/// two rows (or columns) so they don't make one long column.
+pub const STAGGER_FROM: usize = 8;
+/// Staggered: the step from one indicator to the next along the side, and
+/// the distance between the two rows (columns).
+const STAGGER_STEP_V: f64 = 18.0;
+const STAGGER_STEP_H: f64 = (IND_W + 12.0) / 2.0;
+const STAGGER_OUT_V: f64 = IND_W + 12.0;
+const STAGGER_OUT_H: f64 = IND_H + 14.0;
 
 /// A rectangle (top-left corner, size).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -52,6 +57,47 @@ impl Rect {
 
     pub fn center(&self) -> (f64, f64) {
         (self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
+
+    /// Whether the two rectangles come closer than `gap`.
+    pub fn overlaps(&self, o: &Rect, gap: f64) -> bool {
+        self.x < o.x + o.w + gap
+            && o.x < self.x + self.w + gap
+            && self.y < o.y + o.h + gap
+            && o.y < self.y + self.h + gap
+    }
+
+    /// The smallest rectangle holding both.
+    pub fn union(&self, o: &Rect) -> Rect {
+        let x = self.x.min(o.x);
+        let y = self.y.min(o.y);
+        Rect {
+            x,
+            y,
+            w: (self.x + self.w).max(o.x + o.w) - x,
+            h: (self.y + self.h).max(o.y + o.h) - y,
+        }
+    }
+
+    /// Where the line from the centre toward `toward` leaves the rectangle.
+    pub fn edge_point(&self, toward: (f64, f64)) -> (f64, f64) {
+        let (cx, cy) = self.center();
+        let (dx, dy) = (toward.0 - cx, toward.1 - cy);
+        let sx = if dx.abs() > 1e-9 {
+            self.w / 2.0 / dx.abs()
+        } else {
+            f64::INFINITY
+        };
+        let sy = if dy.abs() > 1e-9 {
+            self.h / 2.0 / dy.abs()
+        } else {
+            f64::INFINITY
+        };
+        let k = sx.min(sy);
+        if !k.is_finite() {
+            return (cx, cy);
+        }
+        (cx + dx * k, cy + dy * k)
     }
 }
 
@@ -297,9 +343,24 @@ impl Diagram {
         }
     }
 
-    /// Where a construct's indicators go: left of a construct nothing
-    /// points to, right of one that points nowhere, above one in between.
+    /// Where a construct's indicators go: the side the user chose, else
+    /// [`Diagram::auto_side`].
     pub fn side(&self, name: &str) -> Side {
+        self.layout()
+            .sides
+            .get(name)
+            .copied()
+            .unwrap_or_else(|| self.auto_side(name))
+    }
+
+    /// Whether the user chose the side of `name`'s indicators.
+    pub fn side_chosen(&self, name: &str) -> Option<Side> {
+        self.layout().sides.get(name).copied()
+    }
+
+    /// The side chosen from the paths: left of a construct nothing points
+    /// to, right of one that points nowhere, above one in between.
+    pub fn auto_side(&self, name: &str) -> Side {
         let into = self.model.paths.iter().any(|p| p.to == name);
         let out = self.model.paths.iter().any(|p| p.from == name);
         match (into, out) {
@@ -309,41 +370,77 @@ impl Diagram {
         }
     }
 
-    /// A construct's indicators and their boxes, in order.
+    /// Whether an indicator's box was moved by hand.
+    pub fn indicator_moved(&self, indicator: &str) -> bool {
+        self.layout().indicators.contains_key(indicator)
+    }
+
+    /// Whether `c`'s indicators are laid out in two staggered rows.
+    fn staggered(c: &Construct) -> bool {
+        c.indicators.len() >= STAGGER_FROM
+    }
+
+    /// A construct's indicators and their boxes, in order: on its side, in
+    /// one column (row), or two staggered ones from [`STAGGER_FROM`]
+    /// indicators on; boxes the user moved where they were put.
     pub fn indicator_boxes(&self, c: &Construct) -> Vec<(String, Rect)> {
         let (cx, cy) = self.position(&c.name);
         let n = c.indicators.len() as f64;
         let side = self.side(&c.name);
+        let staggered = Self::staggered(c);
+        let moved = &self.layout().indicators;
         c.indicators
             .iter()
             .enumerate()
             .map(|(i, name)| {
+                if let Some(off) = moved.get(name) {
+                    let rect = Rect {
+                        x: cx + off[0] - IND_W / 2.0,
+                        y: cy + off[1] - IND_H / 2.0,
+                        w: IND_W,
+                        h: IND_H,
+                    };
+                    return (name.clone(), rect);
+                }
+                let outer = staggered && i % 2 == 1;
                 let i = i as f64;
-                let rect = match side {
+                let (x, y) = match side {
                     Side::Left | Side::Right => {
-                        let total = n * IND_H + (n - 1.0).max(0.0) * IND_GAP;
-                        let y = cy - total / 2.0 + i * (IND_H + IND_GAP);
-                        let x = if side == Side::Left {
-                            cx - RX - IND_DIST - IND_W
+                        let (step, total) = if staggered {
+                            (STAGGER_STEP_V, (n - 1.0) * STAGGER_STEP_V + IND_H)
                         } else {
-                            cx + RX + IND_DIST
+                            (IND_H + IND_GAP, n * IND_H + (n - 1.0).max(0.0) * IND_GAP)
                         };
-                        Rect {
-                            x,
-                            y,
-                            w: IND_W,
-                            h: IND_H,
-                        }
+                        let y = cy - total / 2.0 + i * step;
+                        let out = if outer { STAGGER_OUT_V } else { 0.0 };
+                        let x = if side == Side::Left {
+                            cx - RX - IND_DIST - IND_W - out
+                        } else {
+                            cx + RX + IND_DIST + out
+                        };
+                        (x, y)
                     }
-                    Side::Top => {
-                        let total = n * IND_W + (n - 1.0).max(0.0) * IND_GAP;
-                        Rect {
-                            x: cx - total / 2.0 + i * (IND_W + IND_GAP),
-                            y: cy - RY - IND_DIST * 0.75 - IND_H,
-                            w: IND_W,
-                            h: IND_H,
-                        }
+                    Side::Top | Side::Bottom => {
+                        let (step, total) = if staggered {
+                            (STAGGER_STEP_H, (n - 1.0) * STAGGER_STEP_H + IND_W)
+                        } else {
+                            (IND_W + IND_GAP, n * IND_W + (n - 1.0).max(0.0) * IND_GAP)
+                        };
+                        let x = cx - total / 2.0 + i * step;
+                        let out = if outer { STAGGER_OUT_H } else { 0.0 };
+                        let y = if side == Side::Top {
+                            cy - RY - IND_DIST * 0.75 - IND_H - out
+                        } else {
+                            cy + RY + IND_DIST * 0.75 + out
+                        };
+                        (x, y)
                     }
+                };
+                let rect = Rect {
+                    x,
+                    y,
+                    w: IND_W,
+                    h: IND_H,
                 };
                 (name.clone(), rect)
             })
@@ -354,12 +451,28 @@ impl Diagram {
     /// `(box end, ellipse end)`.
     pub fn indicator_link(&self, c: &Construct, rect: &Rect) -> ((f64, f64), (f64, f64)) {
         let center = self.position(&c.name);
-        let anchor = match self.side(&c.name) {
-            Side::Left => (rect.x + rect.w, rect.y + rect.h / 2.0),
-            Side::Right => (rect.x, rect.y + rect.h / 2.0),
-            Side::Top => (rect.x + rect.w / 2.0, rect.y + rect.h),
-        };
+        let anchor = rect.edge_point(center);
         (anchor, ellipse_point(center, anchor))
+    }
+
+    /// Where an indicator's loading goes on its link: the middle, or, in
+    /// staggered rows, near the box for the inner row and near the ellipse
+    /// for the outer one, so the two rows' numbers don't sit on each other.
+    pub fn loading_point(&self, c: &Construct, index: usize, rect: &Rect) -> (f64, f64) {
+        let (a, b) = self.indicator_link(c, rect);
+        let len = (b.0 - a.0).hypot(b.1 - a.1);
+        let moved = c
+            .indicators
+            .get(index)
+            .is_some_and(|n| self.indicator_moved(n));
+        let t = if !Self::staggered(c) || moved || len < 60.0 {
+            0.5
+        } else if index % 2 == 0 {
+            22.0 / len
+        } else {
+            1.0 - 22.0 / len
+        };
+        (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
     }
 
     /// A path's arrow, from edge to edge of the two ellipses.
@@ -410,6 +523,31 @@ impl Diagram {
             }
         }
         (w + 80.0, h + 80.0)
+    }
+
+    /// The rectangle holding every construct and indicator (`None` for an
+    /// empty model).
+    pub fn bounds(&self) -> Option<Rect> {
+        let mut out: Option<Rect> = None;
+        let mut add = |r: Rect| {
+            out = Some(match out {
+                Some(o) => o.union(&r),
+                None => r,
+            });
+        };
+        for c in &self.model.constructs {
+            let (x, y) = self.position(&c.name);
+            add(Rect {
+                x: x - RX,
+                y: y - RY,
+                w: 2.0 * RX,
+                h: 2.0 * RY,
+            });
+            for (_, r) in self.indicator_boxes(c) {
+                add(r);
+            }
+        }
+        out
     }
 
     /// A place for a new construct, away from the others.
@@ -509,6 +647,12 @@ impl Diagram {
         for c in &mut self.model.constructs {
             c.indicators.retain(|i| !indicators.contains(i));
         }
+        // A box placed beside its old construct means nothing at the new
+        // one.
+        let l = self.layout_mut();
+        for i in indicators {
+            l.indicators.remove(i);
+        }
     }
 
     /// Move `indicators` to construct `name` (from wherever they were).
@@ -573,6 +717,9 @@ impl Diagram {
         if let Some(at) = l.positions.remove(old) {
             l.positions.insert(new.to_owned(), at);
         }
+        if let Some(side) = l.sides.remove(old) {
+            l.sides.insert(new.to_owned(), side);
+        }
         Ok(())
     }
 
@@ -597,9 +744,18 @@ impl Diagram {
             return false;
         }
         self.checkpoint();
+        let indicators = self
+            .construct(name)
+            .map(|c| c.indicators.clone())
+            .unwrap_or_default();
         self.model.constructs.retain(|c| c.name != name);
         self.model.paths.retain(|p| p.from != name && p.to != name);
-        self.layout_mut().positions.remove(name);
+        let l = self.layout_mut();
+        l.positions.remove(name);
+        l.sides.remove(name);
+        for i in &indicators {
+            l.indicators.remove(i);
+        }
         true
     }
 
@@ -638,8 +794,66 @@ impl Diagram {
         if self.construct(name).is_some() {
             self.layout_mut()
                 .positions
-                .insert(name.to_owned(), [at.0.max(0.0), at.1.max(0.0)]);
+                .insert(name.to_owned(), [at.0, at.1]);
         }
+    }
+
+    /// Put an indicator's box centre at `at` (kept relative to its
+    /// construct, so it follows the construct; no undo step, like
+    /// [`Diagram::move_construct`]).
+    pub fn move_indicator(&mut self, indicator: &str, at: (f64, f64)) {
+        let Some(c) = self.construct_of(indicator).map(str::to_owned) else {
+            return;
+        };
+        let (cx, cy) = self.position(&c);
+        self.layout_mut()
+            .indicators
+            .insert(indicator.to_owned(), [at.0 - cx, at.1 - cy]);
+    }
+
+    /// Draw `name`'s indicators on `side` (`None`: chosen from the paths),
+    /// laid out again (one undo step). Returns whether anything changed.
+    pub fn set_side(&mut self, name: &str, side: Option<Side>) -> bool {
+        let Some(c) = self.construct(name) else {
+            return false;
+        };
+        let inds = c.indicators.clone();
+        let any_moved = inds.iter().any(|i| self.indicator_moved(i));
+        if self.side_chosen(name) == side && !any_moved {
+            return false;
+        }
+        self.checkpoint();
+        let l = self.layout_mut();
+        match side {
+            Some(s) => {
+                l.sides.insert(name.to_owned(), s);
+            }
+            None => {
+                l.sides.remove(name);
+            }
+        }
+        for i in &inds {
+            l.indicators.remove(i);
+        }
+        true
+    }
+
+    /// Put the boxes of `name`'s indicators the user moved back on its side
+    /// (one undo step). Returns whether any moved.
+    pub fn reset_indicators(&mut self, name: &str) -> bool {
+        let Some(c) = self.construct(name) else {
+            return false;
+        };
+        let inds = c.indicators.clone();
+        if !inds.iter().any(|i| self.indicator_moved(i)) {
+            return false;
+        }
+        self.checkpoint();
+        let l = self.layout_mut();
+        for i in &inds {
+            l.indicators.remove(i);
+        }
+        true
     }
 
     /// Lay the constructs out left to right by path depth (one undo
@@ -902,7 +1116,7 @@ mod tests {
             Some(Hit::Indicator("IMAG2".into()))
         );
         let (a, b) = d.indicator_link(&c, &boxes[0].1);
-        assert_eq!(a.0, boxes[0].1.x + IND_W);
+        assert!((a.0 - (boxes[0].1.x + IND_W)).abs() < 1e-9);
         assert!(((b.0 - 300.0) / RX).powi(2) + ((b.1 - 200.0) / RY).powi(2) - 1.0 < 1e-9);
         let [l, r] = arrow_head((0.0, 0.0), (10.0, 0.0), 10.0);
         assert_eq!(l.0, 0.0);
@@ -913,16 +1127,118 @@ mod tests {
     }
 
     #[std::prelude::v1::test]
+    fn many_indicators_are_staggered_without_overlaps() {
+        let mut d = Diagram::new("M", "Data", "A1:Z100");
+        let names: Vec<String> = (1..=10).map(|i| format!("Q{i}")).collect();
+        d.create_construct(&names, Some((400.0, 300.0))).unwrap();
+        let c = d.construct("Q").unwrap().clone();
+        for side in [Side::Left, Side::Right, Side::Top, Side::Bottom] {
+            d.set_side("Q", Some(side));
+            let boxes = d.indicator_boxes(&c);
+            for (i, (_, a)) in boxes.iter().enumerate() {
+                for (_, b) in &boxes[i + 1..] {
+                    assert!(!a.overlaps(b, 4.0), "{side:?}: {a:?} {b:?}");
+                }
+                // Clear of the ellipse's box.
+                let e = Rect {
+                    x: 400.0 - RX,
+                    y: 300.0 - RY,
+                    w: 2.0 * RX,
+                    h: 2.0 * RY,
+                };
+                assert!(!a.overlaps(&e, 10.0), "{side:?}: {a:?}");
+            }
+            let all = boxes
+                .iter()
+                .map(|(_, r)| *r)
+                .reduce(|a, b| a.union(&b))
+                .unwrap();
+            match side {
+                // Half of one column of ten (10 × 22 + 9 × 8 = 292).
+                Side::Left | Side::Right => assert!(all.h < 200.0, "{all:?}"),
+                Side::Top | Side::Bottom => assert!(all.w < 500.0, "{all:?}"),
+            }
+            // The two rows' loadings sit apart.
+            let p0 = d.loading_point(&c, 0, &boxes[0].1);
+            let p1 = d.loading_point(&c, 1, &boxes[1].1);
+            assert!((p0.0 - p1.0).abs() + (p0.1 - p1.1).abs() > 25.0, "{side:?}");
+        }
+        // Seven stay in one column.
+        let mut d = three();
+        d.create_construct(&s(&["a1", "a2", "a3", "a4", "a5", "a6", "a7"]), None)
+            .unwrap();
+        let c = d.construct("a").unwrap().clone();
+        let xs: HashSet<i64> = d
+            .indicator_boxes(&c)
+            .iter()
+            .map(|(_, r)| r.x as i64)
+            .collect();
+        assert_eq!(xs.len(), 1);
+    }
+
+    #[std::prelude::v1::test]
+    fn indicators_move_and_change_sides() {
+        let mut d = three();
+        d.add_path("IMAG", "CUSA").unwrap();
+        d.move_construct("IMAG", (300.0, 200.0));
+        assert_eq!(d.side("IMAG"), Side::Left);
+        assert!(d.set_side("IMAG", Some(Side::Bottom)));
+        assert!(!d.set_side("IMAG", Some(Side::Bottom)));
+        let c = d.construct("IMAG").unwrap().clone();
+        let boxes = d.indicator_boxes(&c);
+        assert!(boxes.iter().all(|(_, r)| r.y > 200.0 + RY));
+        // A moved box keeps its place against its construct.
+        d.checkpoint();
+        d.move_indicator("IMAG1", (100.0, 100.0));
+        assert!(d.indicator_moved("IMAG1"));
+        let r = d.indicator_boxes(&c)[0].1;
+        assert_eq!(r.center(), (100.0, 100.0));
+        d.move_construct("IMAG", (350.0, 260.0));
+        let r = d.indicator_boxes(&c)[0].1;
+        assert_eq!(r.center(), (150.0, 160.0));
+        // Its link leaves the box on the side facing the construct.
+        let (a, _) = d.indicator_link(&c, &r);
+        assert!((a.1 - (r.y + r.h)).abs() < 1e-9);
+        // Renames keep the side; resets and new sides drop moved boxes.
+        d.rename("IMAG", "Image").unwrap();
+        assert_eq!(d.side_chosen("Image"), Some(Side::Bottom));
+        assert!(d.reset_indicators("Image"));
+        assert!(!d.indicator_moved("IMAG1"));
+        assert!(!d.reset_indicators("Image"));
+        d.move_indicator("IMAG2", (0.0, 0.0));
+        assert!(d.set_side("Image", None));
+        assert!(!d.indicator_moved("IMAG2"));
+        assert_eq!(d.side("Image"), Side::Left);
+        // Moving an indicator to another construct forgets its place.
+        d.move_indicator("IMAG2", (0.0, 0.0));
+        d.add_indicators("CUSA", &s(&["IMAG2"])).unwrap();
+        assert!(!d.indicator_moved("IMAG2"));
+        // Undo brings the side back.
+        d.set_side("CUSA", Some(Side::Right));
+        assert!(d.undo());
+        assert_eq!(d.side_chosen("CUSA"), None);
+        let b = d.bounds().unwrap();
+        let (w, h) = d.extent();
+        assert!(b.x + b.w <= w && b.y + b.h <= h);
+        assert_eq!(Diagram::new("x", "s", "A1").bounds(), None);
+    }
+
+    #[std::prelude::v1::test]
     fn json_round_trip_keeps_the_layout() {
         let mut d = three();
         d.add_path("IMAG", "CUSA").unwrap();
         d.set_measurement("CUSL", Measurement::Composite);
         d.set_one_tailed(true);
         d.move_construct("IMAG", (111.0, 222.0));
+        d.set_side("CUSA", Some(Side::Bottom));
+        d.move_indicator("CUSL1", (500.0, 90.0));
         let text = d.to_json();
         let back = Diagram::from_json(&text).unwrap();
         assert_eq!(back.model, d.model);
         assert_eq!(back.position("IMAG"), (111.0, 222.0));
+        assert_eq!(back.side_chosen("CUSA"), Some(Side::Bottom));
+        assert!(back.indicator_moved("CUSL1"));
+        assert!(text.contains("\"sides\"") && text.contains("\"bottom\""));
         assert!(back.one_tailed());
         assert_eq!(back.data_ref(), (Some("Data"), Some("A1:H101")));
         assert_eq!(back.name(), "Model 1");

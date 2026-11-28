@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use kantor_pls::{
-    Algorithm, Bootstrap, Construct, Data, Error, Layout, Level, Model, Options, Path as PathSpec,
-    Progress, SignChanges, WeightMode, check, estimate, estimate_with,
+    Algorithm, Bootstrap, Construct, Data, Error, IndicatorSide, Layout, Level, Model, Options,
+    Path as PathSpec, Progress, SignChanges, WeightMode, check, estimate, estimate_with,
 };
 
 fn data(name: &str) -> Data {
@@ -212,6 +212,10 @@ fn layout_round_trips_and_is_ignored() {
         sheet: Some("Data".into()),
         range: Some("A1:L151".into()),
         one_tailed: true,
+        sides: [("X".to_owned(), IndicatorSide::Bottom)]
+            .into_iter()
+            .collect(),
+        indicators: [("x1".to_owned(), [-150.0, 40.0])].into_iter().collect(),
     });
     let text = serde_json::to_string(&m).unwrap();
     let back: Model = serde_json::from_str(&text).unwrap();

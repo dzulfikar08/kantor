@@ -2,6 +2,7 @@
 //! left, the path diagram in the middle, the selection and the settings on
 //! the right, the results below. See the module docs of [`super`].
 
+use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -15,7 +16,7 @@ use gpui_kit::component::{
     checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState},
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     v_flex,
 };
 use gpui_kit::prelude::*;
@@ -24,7 +25,7 @@ use kantor_pls::{Algorithm, Measurement, Missing, Model, Options, Progress, Resu
 use kantor_ui::i18n::{self, t, tf};
 use kantor_ui::{metrics::*, tokens};
 
-use super::diagram::{self, Diagram, EditError, Hit, IND_H, IND_W, RX, RY};
+use super::diagram::{self, Diagram, EditError, Hit, IND_H, IND_W, RX, RY, Side};
 use super::labels::{self, Fmt, ResultTable, Section};
 use super::{PlsHooks, data};
 use crate::SheetsView;
@@ -53,6 +54,12 @@ enum CanvasDrag {
     /// Moving a construct (`grab`: pointer minus centre; `moved` once it
     /// did, when its undo step was recorded).
     Move {
+        name: String,
+        grab: (f64, f64),
+        moved: bool,
+    },
+    /// Moving an indicator's box (`grab`: pointer minus the box centre).
+    MoveIndicator {
         name: String,
         grab: (f64, f64),
         moved: bool,
@@ -93,6 +100,19 @@ impl Render for DragChip {
     }
 }
 
+/// The diagram's zoom range and the step of the zoom buttons.
+const MIN_ZOOM: f64 = 0.25;
+const MAX_ZOOM: f64 = 3.0;
+const ZOOM_STEP: f64 = 1.2;
+/// Room kept around the diagram by Fit to view (the loadings' labels
+/// stick out of the boxes' rectangle).
+const FIT_PAD: f64 = 28.0;
+/// The results pane's height: default and smallest; the canvas keeps at
+/// least `MIN_CANVAS`.
+const RESULTS_H: f32 = 300.0;
+const MIN_RESULTS_H: f32 = 120.0;
+const MIN_CANVAS: f32 = 160.0;
+
 /// One shape the canvas paints, in canvas coordinates.
 enum Prim {
     Line {
@@ -125,8 +145,20 @@ pub struct PlsView {
     checked: BTreeSet<String>,
     selection: Option<Hit>,
     drag: Option<CanvasDrag>,
+    /// The canvas's offset (pixels) and scale: a diagram point `p` is drawn
+    /// at `p * zoom + scroll`.
     scroll: (f64, f64),
-    bounds: Rc<std::cell::Cell<Bounds<Pixels>>>,
+    zoom: f64,
+    bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// Fit to view waits for the canvas's size (the first paint, or the
+    /// results pane appearing).
+    fit_pending: Rc<Cell<bool>>,
+    /// The canvas size the last fit was for, until a paint confirms it.
+    fitted: Rc<Cell<Option<Size<Pixels>>>>,
+    /// The results pane's height, and its drag (pointer y and height at
+    /// the start).
+    results_h: f32,
+    resizing: Option<(f32, f32)>,
     focus: FocusHandle,
     name_input: Entity<InputState>,
     rename_input: Entity<InputState>,
@@ -201,7 +233,15 @@ impl PlsView {
             selection: None,
             drag: None,
             scroll: (0.0, 0.0),
-            bounds: Rc::new(std::cell::Cell::new(Bounds::default())),
+            zoom: 1.0,
+            bounds: Rc::new(Cell::new(Bounds::default())),
+            fit_pending: Rc::new(Cell::new(true)),
+            fitted: Rc::new(Cell::new(None)),
+            results_h: kantor_core::settings::Settings::load()
+                .sheets
+                .pls_results_height
+                .map_or(RESULTS_H, |h| (h as f32).max(MIN_RESULTS_H)),
+            resizing: None,
             focus: cx.focus_handle(),
             name_input,
             rename_input,
@@ -386,9 +426,71 @@ impl PlsView {
 
     fn auto_layout(&mut self, cx: &mut Context<Self>) {
         if self.diagram.auto_layout() {
-            self.scroll = (0.0, 0.0);
             self.changed(cx);
         }
+        self.request_fit(cx);
+    }
+
+    fn set_side(&mut self, name: &str, side: Option<Side>, cx: &mut Context<Self>) {
+        if self.diagram.set_side(name, side) {
+            self.changed(cx);
+        }
+    }
+
+    fn reset_indicators(&mut self, name: &str, cx: &mut Context<Self>) {
+        if self.diagram.reset_indicators(name) {
+            self.changed(cx);
+        }
+    }
+
+    // ---------------------------------------------------- zoom and fit
+
+    /// Fit the diagram to the canvas once its size is known.
+    fn request_fit(&mut self, cx: &mut Context<Self>) {
+        self.fit_pending.set(true);
+        cx.notify();
+    }
+
+    /// Scale and centre the diagram in the canvas (at most 100 %).
+    fn fit_now(&mut self, size: Size<Pixels>) {
+        let (w, h) = (
+            f64::from(f32::from(size.width)),
+            f64::from(f32::from(size.height)),
+        );
+        let Some(b) = self.diagram.bounds() else {
+            self.zoom = 1.0;
+            self.scroll = (0.0, 0.0);
+            return;
+        };
+        let z = ((w - 2.0 * FIT_PAD) / b.w.max(1.0))
+            .min((h - 2.0 * FIT_PAD) / b.h.max(1.0))
+            .clamp(MIN_ZOOM, 1.0);
+        self.zoom = z;
+        self.scroll = ((w - b.w * z) / 2.0 - b.x * z, (h - b.h * z) / 2.0 - b.y * z);
+    }
+
+    /// Zoom by `factor` keeping the diagram point under `anchor` (a window
+    /// point; the canvas's centre when `None`) where it is.
+    fn zoom_by(&mut self, factor: f64, anchor: Option<Point<Pixels>>, cx: &mut Context<Self>) {
+        let b = self.bounds.get();
+        let anchor = anchor.unwrap_or_else(|| b.center());
+        let before = self.to_diagram(anchor);
+        let z = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        if (z - self.zoom).abs() < 1e-9 {
+            return;
+        }
+        self.zoom = z;
+        let (ax, ay) = (
+            f64::from(f32::from(anchor.x - b.origin.x)),
+            f64::from(f32::from(anchor.y - b.origin.y)),
+        );
+        self.scroll = (ax - before.0 * z, ay - before.1 * z);
+        cx.notify();
+    }
+
+    fn zoom_reset(&mut self, cx: &mut Context<Self>) {
+        let z = 1.0 / self.zoom;
+        self.zoom_by(z, None, cx);
     }
 
     fn apply_name(&mut self, _: &mut Window, cx: &mut Context<Self>) {
@@ -486,8 +588,8 @@ impl PlsView {
     fn to_diagram(&self, p: Point<Pixels>) -> (f64, f64) {
         let b = self.bounds.get();
         (
-            f64::from(f32::from(p.x - b.origin.x)) - self.scroll.0,
-            f64::from(f32::from(p.y - b.origin.y)) - self.scroll.1,
+            (f64::from(f32::from(p.x - b.origin.x)) - self.scroll.0) / self.zoom,
+            (f64::from(f32::from(p.y - b.origin.y)) - self.scroll.1) / self.zoom,
         )
     }
 
@@ -504,7 +606,7 @@ impl PlsView {
         // The selected construct's handle starts a path.
         if let Some(Hit::Construct(sel)) = &self.selection {
             let h = self.handle_of(sel);
-            if (p.0 - h.0).hypot(p.1 - h.1) <= 9.0 {
+            if (p.0 - h.0).hypot(p.1 - h.1) * self.zoom <= 9.0 {
                 self.drag = Some(CanvasDrag::Connect {
                     from: sel.clone(),
                     to: p,
@@ -535,6 +637,23 @@ impl PlsView {
                     moved: false,
                 });
             }
+            Some(Hit::Indicator(name)) => {
+                let center = self.diagram.construct_of(name).and_then(|c| {
+                    let c = self.diagram.construct(c)?;
+                    self.diagram
+                        .indicator_boxes(c)
+                        .into_iter()
+                        .find(|(n, _)| n == name)
+                        .map(|(_, r)| r.center())
+                });
+                if let Some(c) = center {
+                    self.drag = Some(CanvasDrag::MoveIndicator {
+                        name: name.clone(),
+                        grab: (p.0 - c.0, p.1 - c.1),
+                        moved: false,
+                    });
+                }
+            }
             None => {
                 self.drag = Some(CanvasDrag::Pan {
                     start: (
@@ -544,7 +663,7 @@ impl PlsView {
                     scroll: self.scroll,
                 });
             }
-            _ => {}
+            Some(Hit::Path(..)) => {}
         }
         self.select(hit, window, cx);
     }
@@ -565,6 +684,16 @@ impl PlsView {
                 self.diagram.move_construct(&name, at);
                 cx.notify();
             }
+            Some(CanvasDrag::MoveIndicator { name, grab, moved }) => {
+                if !*moved {
+                    self.diagram.checkpoint();
+                    *moved = true;
+                }
+                let at = (p.0 - grab.0, p.1 - grab.1);
+                let name = name.clone();
+                self.diagram.move_indicator(&name, at);
+                cx.notify();
+            }
             Some(CanvasDrag::Connect { to, .. }) => {
                 *to = p;
                 cx.notify();
@@ -574,10 +703,7 @@ impl PlsView {
                     f64::from(f32::from(ev.position.x)),
                     f64::from(f32::from(ev.position.y)),
                 );
-                self.scroll = (
-                    (scroll.0 + x - start.0).min(0.0),
-                    (scroll.1 + y - start.1).min(0.0),
-                );
+                self.scroll = (scroll.0 + x - start.0, scroll.1 + y - start.1);
                 cx.notify();
             }
             None => {}
@@ -589,7 +715,8 @@ impl PlsView {
             return;
         };
         match drag {
-            CanvasDrag::Move { moved: true, .. } => self.changed(cx),
+            CanvasDrag::Move { moved: true, .. }
+            | CanvasDrag::MoveIndicator { moved: true, .. } => self.changed(cx),
             CanvasDrag::Connect { from, .. } => {
                 let p = self.to_diagram(ev.position);
                 if let Some(Hit::Construct(to)) = self.diagram.hit(p)
@@ -618,6 +745,9 @@ impl PlsView {
                 self.drag = None;
                 self.select(None, window, cx);
             }
+            "=" | "+" if cmd => self.zoom_by(ZOOM_STEP, None, cx),
+            "-" if cmd => self.zoom_by(1.0 / ZOOM_STEP, None, cx),
+            "0" if cmd => self.zoom_reset(cx),
             "z" if cmd && k.modifiers.shift => self.redo(window, cx),
             "z" if cmd => self.undo(window, cx),
             "y" if cmd => self.redo(window, cx),
@@ -672,10 +802,11 @@ impl PlsView {
         }
         model.options = None;
         let findings = kantor_pls::check(&loaded.data, &model, &opts);
-        let errors: Vec<&str> = findings
+        let comma = self.fmt().comma;
+        let errors: Vec<String> = findings
             .iter()
             .filter(|f| f.level == kantor_pls::Level::Error)
-            .map(|f| f.message.as_str())
+            .map(|f| labels::engine_message(f.check, &f.args, &f.message, comma))
             .collect();
         if !errors.is_empty() {
             self.say(
@@ -787,6 +918,11 @@ impl PlsView {
                     )
                 };
                 let warn = !r.warnings.is_empty();
+                // The first results bring the results pane: fit the diagram
+                // to the smaller canvas.
+                if self.results.is_none() {
+                    self.request_fit(cx);
+                }
                 self.results = Some(Arc::new(r));
                 self.show_results = true;
                 if warn {
@@ -1139,6 +1275,40 @@ impl PlsView {
                     .on_click(v(|this, _, cx| this.auto_layout(cx))),
             )
             .child(
+                Button::new("pls-fit")
+                    .small()
+                    .ghost()
+                    .icon(Lucide::Maximize)
+                    .tooltip(t("Fit to view"))
+                    .on_click(v(|this, _, cx| this.request_fit(cx))),
+            )
+            .child(
+                Button::new("pls-zoom-out")
+                    .small()
+                    .ghost()
+                    .icon(Lucide::ZoomOut)
+                    .tooltip(t("Zoom out (Ctrl+wheel)"))
+                    .disabled(self.zoom <= MIN_ZOOM + 1e-9)
+                    .on_click(v(|this, _, cx| this.zoom_by(1.0 / ZOOM_STEP, None, cx))),
+            )
+            .child(
+                Button::new("pls-zoom-reset")
+                    .small()
+                    .ghost()
+                    .label(format!("{:.0}%", self.zoom * 100.0))
+                    .tooltip(t("Zoom to 100%"))
+                    .on_click(v(|this, _, cx| this.zoom_reset(cx))),
+            )
+            .child(
+                Button::new("pls-zoom-in")
+                    .small()
+                    .ghost()
+                    .icon(Lucide::ZoomIn)
+                    .tooltip(t("Zoom in (Ctrl+wheel)"))
+                    .disabled(self.zoom >= MAX_ZOOM - 1e-9)
+                    .on_click(v(|this, _, cx| this.zoom_by(ZOOM_STEP, None, cx))),
+            )
+            .child(
                 Button::new("pls-undo")
                     .small()
                     .ghost()
@@ -1341,35 +1511,45 @@ impl PlsView {
     fn scene(&self, t_: &kantor_ui::Tokens) -> (Vec<Prim>, Vec<AnyElement>) {
         let d = &self.diagram;
         let (sx, sy) = self.scroll;
-        let at = |p: (f64, f64)| ((p.0 + sx) as f32, (p.1 + sy) as f32);
+        let z = self.zoom;
+        let zf = z as f32;
+        let at = |p: (f64, f64)| ((p.0 * z + sx) as f32, (p.1 * z + sy) as f32);
         let fresh = self.fresh_results();
         let shown = fresh.map(|r| labels::diagram_labels(r, &self.fmt()));
         let mut prims = Vec::new();
         let mut texts: Vec<AnyElement> = Vec::new();
+        let caption = FONT_CAPTION * zf;
         let chip = |x: f32, y: f32, text: String, color: Hsla, bg: Hsla| {
             div()
                 .absolute()
-                .left(px(x - 40.))
-                .top(px(y - 9.))
-                .w(px(80.))
+                .left(px(x - 50. * zf))
+                .top(px(y - 9. * zf))
+                .w(px(100. * zf))
                 .flex()
                 .justify_center()
                 .child(
                     div()
-                        .px(SPACE_2)
+                        .px(SPACE_2 * zf)
                         .rounded(RADIUS_SM)
                         .bg(bg)
-                        .text_size(FONT_CAPTION)
+                        .text_size(caption)
                         .text_color(color)
                         .child(text),
                 )
                 .into_any_element()
         };
-        // Indicator links and boxes.
-        for c in &d.model.constructs {
+        // Indicator links first, so the boxes of a staggered second row
+        // cover the links running behind them.
+        let boxes: Vec<(&kantor_pls::Construct, Vec<(String, diagram::Rect)>)> = d
+            .model
+            .constructs
+            .iter()
+            .map(|c| (c, d.indicator_boxes(c)))
+            .collect();
+        for (c, list) in &boxes {
             let formative = c.measurement == Measurement::Composite;
-            for (name, r) in d.indicator_boxes(c) {
-                let (a, b) = d.indicator_link(c, &r);
+            for (_, r) in list {
+                let (a, b) = d.indicator_link(c, r);
                 // Reflective: the construct points to its indicators;
                 // formative: the indicators point to the construct.
                 let (from, to) = if formative { (a, b) } else { (b, a) };
@@ -1386,11 +1566,17 @@ impl PlsView {
                     fill: Some(t_.fg_dim),
                     stroke: None,
                 });
+            }
+        }
+        for (c, list) in &boxes {
+            for (k, (name, r)) in list.iter().enumerate() {
                 let selected = self.selection == Some(Hit::Indicator(name.clone()));
+                let (x, y) = at((r.x, r.y));
                 let moved = diagram::Rect {
-                    x: r.x + sx,
-                    y: r.y + sy,
-                    ..r
+                    x: f64::from(x),
+                    y: f64::from(y),
+                    w: r.w * z,
+                    h: r.h * z,
                 };
                 prims.push(Prim::Rect {
                     r: moved,
@@ -1405,22 +1591,21 @@ impl PlsView {
                 texts.push(
                     div()
                         .absolute()
-                        .left(px(moved.x as f32))
-                        .top(px(moved.y as f32))
-                        .w(px(IND_W as f32))
-                        .h(px(IND_H as f32))
+                        .left(px(x))
+                        .top(px(y))
+                        .w(px(IND_W as f32 * zf))
+                        .h(px(IND_H as f32 * zf))
                         .flex()
                         .items_center()
                         .justify_center()
-                        .px(SPACE_1)
-                        .text_size(FONT_CAPTION)
+                        .px(SPACE_1 * zf)
+                        .text_size(caption)
                         .text_color(t_.fg)
                         .child(div().truncate().child(name.clone()))
                         .into_any_element(),
                 );
-                if let Some((text, low)) = shown.as_ref().and_then(|s| s.outer.get(&name)) {
-                    let m = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
-                    let (x, y) = at(m);
+                if let Some((text, low)) = shown.as_ref().and_then(|s| s.outer.get(name)) {
+                    let (x, y) = at(d.loading_point(c, k, r));
                     texts.push(chip(
                         x,
                         y,
@@ -1494,27 +1679,22 @@ impl PlsView {
                     .absolute()
                     .left(px(x))
                     .top(px(y))
-                    .w(px(2.0 * RX as f32))
-                    .h(px(2.0 * RY as f32))
+                    .w(px(2.0 * RX as f32 * zf))
+                    .h(px(2.0 * RY as f32 * zf))
                     .items_center()
                     .justify_center()
-                    .px(SPACE_4)
+                    .px(SPACE_4 * zf)
                     .child(
                         div()
                             .max_w_full()
                             .truncate()
-                            .text_size(FONT_SMALL)
+                            .text_size(FONT_SMALL * zf)
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(t_.fg)
                             .child(c.name.clone()),
                     )
                     .when_some(r2, |d, r2| {
-                        d.child(
-                            div()
-                                .text_size(FONT_CAPTION)
-                                .text_color(t_.fg_muted)
-                                .child(r2),
-                        )
+                        d.child(div().text_size(caption).text_color(t_.fg_muted).child(r2))
                     })
                     .into_any_element(),
             );
@@ -1545,14 +1725,29 @@ impl PlsView {
         (prims, texts)
     }
 
-    fn render_canvas(&self, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn render_canvas(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let t_ = tokens(cx);
         let (prims, texts) = self.scene(&t_);
         let bounds = self.bounds.clone();
+        let pending = self.fit_pending.clone();
+        let fitted = self.fitted.clone();
         let empty = self.diagram.model.constructs.is_empty();
         let accent = t_.accent;
+        let menu_view = cx.entity().downgrade();
         let painter = canvas(
-            move |b, _, _| bounds.set(b),
+            move |b, window, _| {
+                bounds.set(b);
+                // Fit to view needs this size: draw again, fitted (and once
+                // more if the size changed after the fit).
+                if pending.get() {
+                    window.refresh();
+                } else if let Some(size) = fitted.take()
+                    && size != b.size
+                {
+                    pending.set(true);
+                    window.refresh();
+                }
+            },
             move |b, _, window, _| {
                 let o = b.origin;
                 let pt = |(x, y): (f32, f32)| point(o.x + px(x), o.y + px(y));
@@ -1638,29 +1833,114 @@ impl PlsView {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::mouse_up))
             .on_scroll(cx.listener(|this, ev: &ScrollEvent, _, cx| {
                 let d = ev.delta.pixel_delta(px(20.));
+                if ev.modifiers.control || ev.modifiers.platform {
+                    // Ctrl+wheel zooms around the pointer.
+                    let dy = f64::from(f32::from(d.y));
+                    if dy.abs() > 0.01 {
+                        let factor = (dy / 120.0).exp().clamp(0.5, 2.0);
+                        this.zoom_by(factor, Some(ev.position), cx);
+                    }
+                    return;
+                }
                 this.scroll = (
-                    (this.scroll.0 + f64::from(f32::from(d.x))).min(0.0),
-                    (this.scroll.1 + f64::from(f32::from(d.y))).min(0.0),
+                    this.scroll.0 + f64::from(f32::from(d.x)),
+                    this.scroll.1 + f64::from(f32::from(d.y)),
                 );
                 cx.notify();
+            }))
+            .on_pinch(cx.listener(|this, ev: &PinchEvent, _, cx| {
+                this.zoom_by(f64::from(1.0 + ev.delta), Some(ev.position), cx);
             }))
             .drag_over::<IndicatorDrag>(move |s, _, _, _| s.border_2().border_color(accent))
             .on_drop(cx.listener(|this, d: &IndicatorDrag, w, cx| this.drop_indicators(d, w, cx)))
             .child(painter)
             .children(texts)
-            .child(
-                div()
-                    .absolute()
-                    .left(SPACE_4)
-                    .bottom(SPACE_3)
-                    .text_size(FONT_CAPTION)
-                    .text_color(t_.fg_dim)
-                    .child(if empty {
-                        t("Drag indicators here (or check them and press Create construct) to make a construct")
-                    } else {
-                        t("Shift+drag from one construct to another, or drag the ● of the selected one, to draw a path · Del removes · double-click renames")
+            .when(empty, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .p(SPACE_8)
+                        .child(
+                            div()
+                                .max_w(px(360.))
+                                .text_center()
+                                .text_size(FONT_SMALL)
+                                .text_color(t_.fg_dim)
+                                .child(t(
+                                    "Drag indicators here (or check them and press Create construct) to make a construct",
+                                )),
+                        ),
+                )
+            })
+            .context_menu(move |menu, window, cx| {
+                let Some(v) = menu_view.upgrade() else {
+                    return menu;
+                };
+                let target = {
+                    let this = v.read(cx);
+                    let p = this.to_diagram(window.mouse_position());
+                    match this.diagram.hit(p) {
+                        Some(Hit::Construct(n)) => Some(n),
+                        Some(Hit::Indicator(i)) => {
+                            this.diagram.construct_of(&i).map(str::to_owned)
+                        }
+                        _ => None,
+                    }
+                };
+                let mut menu = menu;
+                if let Some(name) = target {
+                    let (chosen, moved) = {
+                        let this = v.read(cx);
+                        let moved = this.diagram.construct(&name).is_some_and(|c| {
+                            c.indicators.iter().any(|i| this.diagram.indicator_moved(i))
+                        });
+                        (this.diagram.side_chosen(&name), moved)
+                    };
+                    let sides: [(&str, Option<Side>); 5] = [
+                        (t("Indicators on the left"), Some(Side::Left)),
+                        (t("Indicators on the right"), Some(Side::Right)),
+                        (t("Indicators above"), Some(Side::Top)),
+                        (t("Indicators below"), Some(Side::Bottom)),
+                        (t("Indicators placed automatically"), None),
+                    ];
+                    for (label, side) in sides {
+                        let v = v.downgrade();
+                        let n = name.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(label)
+                                .checked(chosen == side && !moved)
+                                .on_click(move |_, _, cx| {
+                                    let _ = v.update(cx, |this, cx| this.set_side(&n, side, cx));
+                                }),
+                        );
+                    }
+                    let v2 = v.downgrade();
+                    let n = name.clone();
+                    menu = menu.separator().item(
+                        PopupMenuItem::new(t("Put moved indicators back"))
+                            .disabled(!moved)
+                            .on_click(move |_, _, cx| {
+                                let _ = v2.update(cx, |this, cx| this.reset_indicators(&n, cx));
+                            }),
+                    );
+                    menu = menu.separator();
+                }
+                let (fit, layout) = (v.downgrade(), v.downgrade());
+                menu.item(
+                    PopupMenuItem::new(t("Fit to view")).on_click(move |_, _, cx| {
+                        let _ = fit.update(cx, |this, cx| this.request_fit(cx));
                     }),
-            )
+                )
+                .item(PopupMenuItem::new(t("Auto layout")).on_click(
+                    move |_, _, cx| {
+                        let _ = layout.update(cx, |this, cx| this.auto_layout(cx));
+                    },
+                ))
+            })
     }
 
     fn render_side(&self, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -1718,6 +1998,36 @@ impl PlsView {
                                 t("Mode B: the indicators form the construct")
                             },
                         ));
+                    // Where its indicators are drawn.
+                    let chosen = self.diagram.side_chosen(name);
+                    let mut sides = h_flex().gap(SPACE_1).flex_wrap();
+                    let options: [(&str, Option<Side>); 5] = [
+                        (t("Auto"), None),
+                        (t("Left"), Some(Side::Left)),
+                        (t("Right"), Some(Side::Right)),
+                        (t("Above"), Some(Side::Top)),
+                        (t("Below"), Some(Side::Bottom)),
+                    ];
+                    for (k, (label, which)) in options.into_iter().enumerate() {
+                        let v = view.clone();
+                        let n = name.clone();
+                        sides = sides.child(seg_button(
+                            ("pls-side", k),
+                            label,
+                            chosen == which,
+                            move |_, cx| {
+                                let _ = v.update(cx, |this, cx| this.set_side(&n, which, cx));
+                            },
+                        ));
+                    }
+                    side = side
+                        .child(
+                            div()
+                                .text_size(FONT_SMALL)
+                                .text_color(t_.fg_muted)
+                                .child(t("Indicators")),
+                        )
+                        .child(sides);
                     for (i, ind) in c.indicators.iter().enumerate() {
                         let v = view.clone();
                         let ind2 = ind.clone();
@@ -1804,12 +2114,42 @@ impl PlsView {
                             }),
                     );
             }
-            None => {}
+            None => {
+                // How to edit, here rather than over the diagram.
+                let tips = [
+                    t(
+                        "Shift+drag from one construct to another, or drag the ● of the selected one, to draw a path",
+                    ),
+                    t(
+                        "Drag a construct or an indicator box to move it; right-click a construct to put its indicators on another side",
+                    ),
+                    t("Ctrl+wheel or pinch zooms; drag the background to pan"),
+                    t("Del removes the selection; double-click a construct to rename it"),
+                ];
+                side = side.child(kantor_ui::components::section_label(t("Diagram"), cx));
+                for tip in tips {
+                    side = side.child(
+                        div()
+                            .text_size(FONT_CAPTION)
+                            .text_color(t_.fg_dim)
+                            .child(tip),
+                    );
+                }
+            }
         }
         // The settings.
         let o = self.diagram.options();
         let boot = o.bootstrap.clone().unwrap_or_default();
         let one_tailed = self.diagram.one_tailed();
+        // The significance levels with the locale's decimal separator.
+        let comma = self.fmt().comma;
+        let level = |s: &str| {
+            if comma {
+                s.replace('.', ",")
+            } else {
+                s.to_owned()
+            }
+        };
         let opt = |id: &'static str, label: &str, on: bool, f: fn(&mut Options)| -> Button {
             let v = view.clone();
             seg_button(id, label, on, move |_, cx| {
@@ -1891,19 +2231,19 @@ impl PlsView {
                     .gap(SPACE_2)
                     .child(opt(
                         "pls-a01",
-                        "0.01",
+                        &level("0.01"),
                         (boot.alpha - 0.01).abs() < 1e-9,
                         |o| o.bootstrap.get_or_insert_with(Default::default).alpha = 0.01,
                     ))
                     .child(opt(
                         "pls-a05",
-                        "0.05",
+                        &level("0.05"),
                         (boot.alpha - 0.05).abs() < 1e-9,
                         |o| o.bootstrap.get_or_insert_with(Default::default).alpha = 0.05,
                     ))
                     .child(opt(
                         "pls-a10",
-                        "0.10",
+                        &level("0.10"),
                         (boot.alpha - 0.10).abs() < 1e-9,
                         |o| o.bootstrap.get_or_insert_with(Default::default).alpha = 0.10,
                     )),
@@ -2019,16 +2359,34 @@ impl PlsView {
                 body = body.child(self.render_table(k, table, cx));
             }
         }
+        let open = self.show_results && !stale;
+        // The handle between the diagram and the results: drag to resize.
+        let handle = div()
+            .id("pls-results-resize")
+            .absolute()
+            .top(px(-3.))
+            .left_0()
+            .right_0()
+            .h(px(6.))
+            .cursor_row_resize()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, ev: &MouseDownEvent, _, cx| {
+                    this.resizing = Some((f32::from(ev.position.y), this.results_h));
+                    cx.stop_propagation();
+                }),
+            );
         Some(
             v_flex()
+                .relative()
                 .flex_none()
                 .w_full()
-                .when(self.show_results && !stale, |d| d.h(px(260.)))
+                .when(open, |d| d.h(px(self.results_h)))
                 .bg(t_.chrome)
                 .border_t_1()
                 .border_color(t_.border)
                 .child(header)
-                .when(self.show_results && !stale, |d| d.child(body)),
+                .when(open, |d| d.child(body).child(handle)),
         )
     }
 
@@ -2125,9 +2483,54 @@ impl PlsView {
     }
 }
 
+impl PlsView {
+    fn resize_move(&mut self, ev: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        let Some((y0, h0)) = self.resizing else {
+            return;
+        };
+        if ev.pressed_button != Some(MouseButton::Left) {
+            self.resize_end(cx);
+            return;
+        }
+        let canvas = f32::from(self.bounds.get().size.height);
+        let max = (self.results_h + canvas - MIN_CANVAS).max(MIN_RESULTS_H);
+        let h = (h0 + y0 - f32::from(ev.position.y)).clamp(MIN_RESULTS_H, max);
+        if (h - self.results_h).abs() >= 0.5 {
+            self.results_h = h;
+            cx.notify();
+        }
+    }
+
+    /// The resize ended: remember the height for the next model tabs.
+    fn resize_end(&mut self, cx: &mut Context<Self>) {
+        if self.resizing.take().is_none() {
+            return;
+        }
+        let h = self.results_h.round() as u32;
+        cx.background_spawn(async move {
+            let mut s = kantor_core::settings::Settings::load();
+            if s.sheets.pls_results_height != Some(h) {
+                s.sheets.pls_results_height = Some(h);
+                if let Err(e) = s.save() {
+                    log::error!("saving settings: {e:#}");
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+}
+
 impl Render for PlsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t_ = tokens(cx);
+        // A fit asked for once the canvas has a size.
+        let b = self.bounds.get();
+        if self.fit_pending.get() && b.size.width > px(1.) && b.size.height > px(1.) {
+            self.fit_pending.set(false);
+            self.fit_now(b.size);
+            self.fitted.set(Some(b.size));
+        }
         let status = (!self.status.is_empty()).then(|| {
             div()
                 .flex_none()
@@ -2144,10 +2547,16 @@ impl Render for PlsView {
                 .child(self.status.clone())
         });
         v_flex()
+            .id("pls-view")
             .size_full()
             .bg(t_.bg)
             .text_color(t_.fg)
             .text_size(FONT_BODY)
+            .on_mouse_move(cx.listener(Self::resize_move))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseUpEvent, _, cx| this.resize_end(cx)),
+            )
             .child(self.render_bar(cx))
             .children(status)
             .child(
