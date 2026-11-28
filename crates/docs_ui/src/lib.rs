@@ -2166,6 +2166,7 @@ impl DocsView {
                 let side = o.whole[2].max(o.whole[3]);
                 if let Some(data) = self.screen_picture_of(&img.rel_id, side, cx) {
                     if shown {
+                        let full = self.picture_full_size(&img.rel_id);
                         let pic = floats::inline_pic(
                             &self.painter,
                             &mut self.turned_images,
@@ -2173,6 +2174,7 @@ impl DocsView {
                             &img,
                             o.whole,
                             data,
+                            full,
                             window,
                         );
                         out.insert((o.para, o.index), pic);
@@ -2204,6 +2206,7 @@ impl DocsView {
                         &img,
                         o.whole,
                         data,
+                        None,
                         window,
                     );
                     out.insert((o.para, o.index), pic);
@@ -2239,7 +2242,6 @@ impl DocsView {
                 }))
                 .collect();
             for l in stories {
-                let story = l.doc(&self.doc);
                 for o in l.paged.objects(0) {
                     if o.kind != ObjectKind::Image {
                         continue;
@@ -2251,10 +2253,30 @@ impl DocsView {
                     };
                     let img = img.clone();
                     let key = format!("hf{}:{}", l.key(), img.rel_id);
+                    let side = o.whole[2].max(o.whole[3]);
+                    let bytes = l.doc(&self.doc).image_bytes(&img.rel_id);
+                    if let Some(data) = self.screen_picture_from(&key, side, bytes.clone(), cx) {
+                        let full = self.picture_full_size(&key);
+                        let pic = floats::inline_pic(
+                            &self.painter,
+                            &mut self.turned_images,
+                            &key,
+                            &img,
+                            o.whole,
+                            data,
+                            full,
+                            window,
+                        );
+                        out.insert((l.key(), o.para, o.index), pic);
+                        continue;
+                    }
+                    if self.picture_decoding(&key) {
+                        continue;
+                    }
                     let image = match self.images.get(&key) {
                         Some(i) => i.clone(),
                         None => {
-                            let Some(bytes) = story.image_bytes(&img.rel_id) else {
+                            let Some(bytes) = bytes else {
                                 continue;
                             };
                             let Some((format, bytes)) = screen_picture(bytes, cx) else {
@@ -2273,6 +2295,7 @@ impl DocsView {
                             &img,
                             o.whole,
                             data,
+                            None,
                             window,
                         );
                         out.insert((l.key(), o.para, o.index), pic);
@@ -3063,7 +3086,14 @@ impl Render for DocsView {
         let images = {
             let _s = docs_layout::perf::span("docs render: pictures");
             let images = self.visible_images(window, cx);
-            self.trim_pictures(window);
+            // Floating pictures just off screen decoded ahead too.
+            let pages = self.laid.paged.pages.len();
+            let visible = self.geometry().visible_pages(pages);
+            let ahead = (visible.start.saturating_sub(2)..visible.start)
+                .chain(visible.end..(visible.end + 2).min(pages));
+            self.prefetch_float_pictures(ahead, cx);
+            self.trim_pictures(window, cx);
+            self.report_pictures();
             images
         };
         let floats_span = docs_layout::perf::span("docs render: floats");
