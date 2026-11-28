@@ -9,6 +9,34 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.28.1] - 2026-11-28
+
+### Changed
+
+- **Long documents in Docs are fast.** Measured on three generated 1,100-page documents (a contract with sections
+  and cross-references, a thesis with 540 pictures and 1,251 footnotes, a reviewed file with about 2,700 tracked
+  changes and 964 comments):
+  - Typing: a key shows in 7–47 ms, down from 0.4–5 s. Only the paragraph being edited is laid out again.
+  - Enter, joining paragraphs, paste and undo: 35–60 ms, down from 0.25–6 s. Pages before the edit are reused, and
+    laying out stops as soon as the pages match the old ones again. Paragraphs with footnotes, floating objects,
+    tracked table rows or text a `STYLEREF` header shows take the same quick path.
+  - Opening: the first page shows in under 1.2 s (the thesis took up to 13 s). The rest is laid out in the background
+    on several threads; meanwhile the status bar says "of N, counting…", the pages you scroll to are laid out first,
+    and pages not ready yet show as outlines.
+  - Scrolling: 8–23 ms of work per frame, down from 210–490 ms. Pictures are decoded in the background at the size
+    they're shown, ahead of scrolling.
+  - Find searches long documents in the background: 15–25 ms per key typed, with results filling in after.
+  - Save writes in the background, and a long reviewed document no longer takes ~45 s (a pass in the .docx writer
+    went from quadratic to linear). Recovery copies are written in the background too.
+  - Word counts, spelling, review marks, comments and highlights are kept between keystrokes or limited to the
+    visible pages instead of being worked out for the whole document on every key or frame.
+- Privacy policy: a section on Google Drive and OneDrive (what Kantor can reach, the sign-in token, removing access),
+  also at <https://kantor.paparanai.id/privacy/>.
+
+### Fixed
+
+- Docs: pressing Enter in the Find bar no longer also splits the paragraph at the selected match.
+
 ## [0.28.0] - 2026-11-28
 
 ### Added
@@ -2612,7 +2640,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.28.0...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.28.1...HEAD
+[0.28.1]: https://github.com/dzulfikar08/kantor/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/dzulfikar08/kantor/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/dzulfikar08/kantor/compare/v0.26.2...v0.27.0
 [0.26.2]: https://github.com/dzulfikar08/kantor/compare/v0.26.1...v0.26.2
