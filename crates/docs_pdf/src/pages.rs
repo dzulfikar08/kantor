@@ -1504,10 +1504,12 @@ pub fn estimate(doc: &Document, cut: usize, paged: &PagedDocument) -> Estimate {
 /// laid out don't tell.
 const ESTIMATE_PER_LINE: f32 = 95.0;
 
-/// How much of a page's room text fills on average (the rest is left at
-/// page ends: lines kept together, a heading kept with the next
-/// paragraph, a picture that doesn't fit).
-const ESTIMATE_FILL: f32 = 0.95;
+/// How much of a page's room the estimated heights fill on average. Page
+/// ends left empty (lines kept together, a heading kept with the next
+/// paragraph, a picture that doesn't fit) about make up for the estimate's
+/// own excess (it rounds every paragraph up to whole lines): on three
+/// generated 1,100-page documents (tools/bigdoc) 1.0 came within -2 to +9 %.
+const ESTIMATE_FILL: f32 = 1.0;
 
 /// One paragraph as [`estimate_from_heights`] sees it.
 #[derive(Clone, Copy, Debug, PartialEq)]
