@@ -247,6 +247,7 @@ export const en = {
   footSource: "Source code",
   footChangelog: "Changelog",
   footLicense: "AGPL-3.0 licence",
+  footPrivacy: "Privacy",
   footBy: "by",
 };
 
@@ -493,5 +494,6 @@ export const id = {
   footSource: "Kode sumber",
   footChangelog: "Catatan perubahan",
   footLicense: "Lisensi AGPL-3.0",
+  footPrivacy: "Privasi",
   footBy: "oleh",
 };

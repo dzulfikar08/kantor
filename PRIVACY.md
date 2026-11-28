@@ -38,6 +38,32 @@ your documents anywhere. It talks to the network in only these cases:
    `settings.toml`. `kantor pdf verify` goes online only with `--online`.
 5. **Cloud drives, only the ones you add.** Files you open from a WebDAV account go to and from
    that server.
+6. **Google Drive and Microsoft OneDrive, only if you sign in.** When you add one of these accounts
+   in *Cloud Accounts*, you sign in in your own browser, with Google or Microsoft, never with
+   Kantor. Kantor then talks to Google or Microsoft directly from your computer. There is no Kantor
+   server in between, and nothing goes to the Kantor project.
+   - **What Kantor can reach.** On Google Drive it asks only for the `drive.file` permission: the
+     files and folders Kantor created or that you opened with it, not the rest of your Drive. On
+     OneDrive it asks for `Files.ReadWrite`: your own OneDrive. With both it also gets your name and
+     email address, which *Cloud Accounts* shows so you can tell accounts apart.
+   - **What it does with it.** Lists folders, opens the files you choose, saves your edits back
+     (when cloud autosave is on, a few seconds after you stop typing; turn it off with
+     `[cloud] autosave = false` in `settings.toml`) and creates the files and folders you ask for.
+     Nothing else: Kantor doesn't read other files, doesn't keep copies anywhere but your computer,
+     doesn't show ads, doesn't sell or share the data, and doesn't use it to train AI models.
+   - **AI features.** If you turned on an AI provider and run an AI command on a document you
+     opened from Drive or OneDrive, that command sends what it needs to the provider you chose, as
+     in point 2. Nothing is sent to an AI provider unless you run such a command.
+   - **Sign-in token.** Google or Microsoft gives Kantor a token so you stay signed in. It is kept
+     in your system's keychain (or, where there is none, in a file only your user account can
+     read) and is sent only back to Google or Microsoft.
+   - **Removing access.** Removing the account in *Cloud Accounts* deletes the token from your
+     computer and, for Google, revokes it. You can also revoke Kantor's access at any time at
+     <https://myaccount.google.com/permissions> or <https://account.live.com/consent/Manage>
+     (work and school accounts: <https://myapps.microsoft.com>).
+   - Kantor's use and transfer of information received from Google APIs adheres to the
+     [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy),
+     including the Limited Use requirements.
 
 The update server (Cloudflare Pages and GitHub) may keep standard request logs (IP address,
 time, User-Agent) under their own policies. The Kantor project doesn't collect or keep them.
