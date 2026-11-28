@@ -15,8 +15,9 @@ use gpui_kit::*;
 use crate::DocsView;
 
 /// Decoded pictures kept at most (more are let go, least recently shown
-/// first, once not shown for [`KEEP`]).
-const MAX: usize = 48;
+/// first, once not shown for [`KEEP`]): a screen and the pages decoded
+/// ahead seldom have more than a dozen.
+const MAX: usize = 24;
 const KEEP: Duration = Duration::from_secs(8);
 
 /// A decoded picture: its image, the longest side it was decoded for
@@ -39,6 +40,10 @@ pub(crate) struct Pictures {
     replaced: Vec<String>,
     /// When the cache was last reported (`KANTOR_PERF`).
     reported: Option<Instant>,
+    /// A frame is asked for once the pictures over [`MAX`] may be let go
+    /// (a view that stopped scrolling draws no frames, and only a frame
+    /// can give images back to the window).
+    wake: bool,
 }
 
 /// Bytes of a decoded image.
@@ -59,7 +64,8 @@ fn decode(bytes: &[u8], side: u32) -> Option<(Arc<RenderImage>, u32)> {
             ((w as f32 * scale).round() as u32).max(1),
             ((h as f32 * scale).round() as u32).max(1),
         );
-        image::imageops::thumbnail(&img.to_rgba8(), tw, th)
+        // Straight from the decoded pixels (no full-size RGBA copy).
+        image::imageops::thumbnail(&img, tw, th)
     } else {
         img.to_rgba8()
     };
@@ -154,7 +160,7 @@ impl DocsView {
 
     /// Let go of decoded pictures not shown for a while (beyond the most
     /// recent [`MAX`]), and of those replaced by sharper ones.
-    pub(crate) fn trim_pictures(&mut self, window: &mut Window) {
+    pub(crate) fn trim_pictures(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let p = &mut self.pictures;
         for img in p.retired.drain(..) {
             window.drop_image(img).ok();
@@ -200,6 +206,19 @@ impl DocsView {
             // The decodes ran on the background threads' heaps, which keep
             // the freed pages otherwise.
             kantor_mem::release_free_memory_soon(Duration::from_secs(2));
+        }
+        if p.ready.len() > MAX && !p.wake {
+            p.wake = true;
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(KEEP + Duration::from_millis(500))
+                    .await;
+                let _ = this.update(cx, |this, cx| {
+                    this.pictures.wake = false;
+                    cx.notify();
+                });
+            })
+            .detach();
         }
     }
 

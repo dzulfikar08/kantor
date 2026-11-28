@@ -3086,7 +3086,7 @@ impl Render for DocsView {
             let ahead = (visible.start.saturating_sub(2)..visible.start)
                 .chain(visible.end..(visible.end + 2).min(pages));
             self.prefetch_float_pictures(ahead, cx);
-            self.trim_pictures(window);
+            self.trim_pictures(window, cx);
             self.report_pictures();
             images
         };
