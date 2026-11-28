@@ -30,6 +30,9 @@ slides_engine.workspace = true
 slides_scene.workspace = true
 slides_ui.workspace = true
 sheets_pdf.workspace = true
+# PLS-SEM: the engine behind Data ▸ PLS-SEM… and the model's JSON.
+kantor_pls.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

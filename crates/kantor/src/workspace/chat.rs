@@ -78,6 +78,20 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Open the panel with `prompt` typed and `files` attached, for the
+    /// user to send (a PLS-SEM model's Explain results).
+    pub(super) fn chat_prefill(
+        &mut self,
+        prompt: &str,
+        files: &[std::path::PathBuf],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.set_chat_open(true, window, cx);
+        let panel = self.chat_panel(window, cx);
+        panel.update(cx, |p, cx| p.prefill(prompt, files.to_vec(), window, cx));
+    }
+
     /// The docked panel and its resize handle, when open.
     pub(super) fn render_chat_dock(&self, cx: &mut Context<Self>) -> Option<Div> {
         if !self.ui.chat_open {

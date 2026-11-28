@@ -65,6 +65,7 @@ mod move_chart_ui;
 pub mod page_setup;
 pub mod pivot;
 mod pivot_cards;
+pub mod pls;
 mod point;
 mod popup_list;
 mod print;
@@ -1616,6 +1617,8 @@ pub struct SheetsView {
     /// `Workbook::chart_sheet_name`), and what has focus while it shows.
     chart_tab: Option<usize>,
     chart_focus: FocusHandle,
+    /// The workbook's PLS-SEM model tabs (see [`pls`]).
+    pls: pls::PlsTabs,
     /// A sheet tab dialog (Rename, Delete, Move or Copy, Tab Color,
     /// Unhide; see [`sheet_tab_ui`]).
     tab_dialog: Option<sheet_tab_ui::TabDialog>,
@@ -1694,6 +1697,7 @@ impl SheetsView {
             opening: None,
             busy_focus: cx.focus_handle(),
             chart_tab: None,
+            pls: Default::default(),
             tab_dialog: None,
             move_chart: None,
             insert_slicer: None,
@@ -2556,7 +2560,8 @@ impl SheetsView {
     /// A sheet tab was clicked. While a formula is pointing, the edit goes on
     /// (see [`point`]); any other edit is committed first.
     pub(crate) fn select_sheet(&mut self, sheet: u32, window: &mut Window, cx: &mut Context<Self>) {
-        if self.chart_tab.take().is_some() && self.editing.is_none() {
+        let left_pls = self.leave_pls();
+        if (self.chart_tab.take().is_some() || left_pls) && self.editing.is_none() {
             self.status = i18n::t("Ready").into();
             self.show_sheet(sheet, cx);
             self.load_selected_into_formula(window, cx);
@@ -2589,6 +2594,7 @@ impl SheetsView {
         if self.editing.is_some() {
             self.commit_edit(None, window, cx);
         }
+        self.leave_pls();
         // Its chart is selected, as in Excel: the Chart panel edits it.
         self.drawings.borrow_mut().selected = self.chart_sheet_chart(k, cx);
         self.chart_tab = Some(k);
@@ -2953,12 +2959,14 @@ impl SheetsView {
         };
         let count = tabs.len();
         let add_view = cx.entity().downgrade();
+        let pls_shown = self.pls.shown;
+        let pls_tabs = self.render_pls_tabs(cx);
         h_flex()
             .gap(SPACE_1)
             .children(tabs.into_iter().enumerate().map(|(i, (tab, name, color))| {
                 let view = cx.entity().downgrade();
                 let menu_view = view.clone();
-                let selected = tab == active;
+                let selected = tab == active && pls_shown.is_none();
                 let id = match tab {
                     Tab::Sheet(ix) => ElementId::from(("sheet-tab", ix as usize)),
                     Tab::Chart(k) => ElementId::from(("chart-sheet-tab", k)),
@@ -3031,6 +3039,7 @@ impl SheetsView {
                     })
                     .into_any_element()
             }))
+            .children(pls_tabs)
             // Insert Worksheet, after the sheet shown (Excel's + button).
             .child(
                 Button::new("sheet-tab-add")
@@ -3104,6 +3113,9 @@ impl Render for SheetsView {
         if self.opening.is_none() {
             self.bench_step(window, cx);
         }
+        self.pls_ensure(window, cx);
+        let pls_view = self.shown_pls();
+        let grid_shown = chart_sheet.is_none() && pls_view.is_none();
         self.apply_pending_chart(window, cx);
         self.sync_web_soon(window, cx);
         let web_bar = self.render_web_bar(cx);
@@ -3156,7 +3168,10 @@ impl Render for SheetsView {
                         .children(chart_panel),
                 )
             })
-            .when(chart_sheet.is_none(), |root| {
+            .when_some(pls_view, |root, v| {
+                root.child(div().flex_1().min_h_0().w_full().child(v))
+            })
+            .when(grid_shown, |root| {
                 root.child({
                     let style = self.active_style(cx);
                     let merged = {
@@ -3179,7 +3194,7 @@ impl Render for SheetsView {
             // Workbooks with macros: disabled until Enable Content (see `vba_ui`).
             .children(macro_bar)
             // Formula bar: name box + input
-            .when(chart_sheet.is_none(), |root| {
+            .when(grid_shown, |root| {
                 root.child(
                     h_flex()
                         .flex_none()

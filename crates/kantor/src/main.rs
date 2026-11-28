@@ -199,6 +199,10 @@ fn main() {
         kantor_ui::perf::watch_main_thread(cx);
         kantor_ui::find_bar::init(cx);
         sheets_ui::init(cx);
+        cx.set_global(sheets_ui::pls::PlsHooks {
+            write: agent::pls::write_for_ui,
+            summary: agent::pls::summary_text,
+        });
         docs_ui::init(cx);
         slides_ui::init(cx);
         pdf_ui::init(cx);

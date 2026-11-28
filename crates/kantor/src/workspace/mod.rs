@@ -323,6 +323,9 @@ impl Workspace {
                 cx.subscribe_in(e, window, move |ws, _, event, window, cx| match event {
                     sheets_ui::SheetsEvent::Close => ws.remove_doc(id, window, cx),
                     sheets_ui::SheetsEvent::Notice(text) => ws.notice(text.clone(), cx),
+                    sheets_ui::SheetsEvent::ExplainPls { prompt, files } => {
+                        ws.chat_prefill(prompt, files, window, cx)
+                    }
                     other => ws.sheets_macro_event(id, other, window, cx),
                 }),
             ],

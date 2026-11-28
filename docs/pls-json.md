@@ -76,6 +76,11 @@ out) or **mean replacement** (`missing: "mean"`, SmartPLS's default).
 | `missing_value` | none | a number meaning missing (`-99`) |
 | `bootstrap` | none | `{samples: 5000, seed: 1, alpha: 0.05, bca: true, sign_changes: "none"}` |
 
+`layout` (optional) is what the Sheets PLS-SEM editor keeps beside the
+model: `name`, `positions` (construct → `[x, y]`, the ellipse's centre),
+the data's `sheet` and `range`, and `one_tailed`. Estimation ignores it,
+so a model saved from Sheets runs here unchanged.
+
 `dimensions` and `higher_order` on a construct are reserved for
 higher-order constructs (repeated indicators, two-stage), a later phase:
 models with them are refused for now.

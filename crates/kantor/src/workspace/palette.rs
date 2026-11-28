@@ -1109,6 +1109,20 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.insert_pivot_doc(w, cx)),
     },
     Command {
+        title: tk("PLS-SEM…"),
+        detail: tk(
+            "Sheets · structural equation model (SmartPLS) on the selected survey data: path diagram, bootstrap, report",
+        ),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.pls_new_doc(w, cx)),
+    },
+    Command {
+        title: tk("Open PLS-SEM Model…"),
+        detail: tk("Sheets · open a PLS-SEM model saved as .json beside this workbook's data"),
+        keys: "",
+        run: |ws, window, cx| ws.with_sheets(window, cx, |v, w, cx| v.pls_open_model_doc(w, cx)),
+    },
+    Command {
         title: tk("PivotTable Fields"),
         detail: tk("Sheets · show or hide the field list of the PivotTable at the active cell"),
         keys: "",

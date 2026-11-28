@@ -9,34 +9,12 @@ use std::path::Path;
 
 use anyhow::{Context as _, Result, bail};
 use kantor_pls::{
-    Algorithm, Bootstrap, Data, Estimate, Measurement, Model, Options, Results, SignChanges,
-    Weighting,
+    Algorithm, Bootstrap, Estimate, Measurement, Model, Options, Results, SignChanges, Weighting,
 };
 use serde_json::{Map, Value, json};
 use sheets_engine::Workbook;
 
-/// The data read from a file: the table and what was noticed on the way.
-pub struct Loaded {
-    pub data: Data,
-    pub sheet: String,
-    /// The cells read, `A1:K251`.
-    pub range: String,
-    /// Columns with text in them (read as missing values): name → count.
-    pub text_cells: Vec<(String, usize)>,
-}
-
-fn col_name(mut c: u32) -> String {
-    let mut s = Vec::new();
-    loop {
-        s.push(b'A' + (c % 26) as u8);
-        if c < 26 {
-            break;
-        }
-        c = c / 26 - 1;
-    }
-    s.reverse();
-    String::from_utf8(s).unwrap_or_default()
-}
+pub use sheets_ui::pls::data::Loaded;
 
 /// Read `path` (.xlsx, .xls, .xlsb, .ods, .csv, .tsv): the first row of
 /// `range` (default: the sheet's used area) names the columns, the rows
@@ -72,59 +50,13 @@ pub fn read_data(path: &Path, sheet: Option<&str>, range: Option<&str>) -> Resul
     if rows == 0 || bottom <= top {
         bail!("the data needs a header row and at least one row below it");
     }
-    let mut names: Vec<String> = Vec::new();
-    for c in left..=right {
-        let mut name = book.display_value(index, top, c).trim().to_owned();
-        if name.is_empty() {
-            name = col_name(c);
-        }
-        if names.iter().any(|n| n.eq_ignore_ascii_case(&name)) {
-            bail!("two columns are called {name}: column names must differ");
-        }
-        names.push(name);
-    }
-    let mut text = vec![0usize; names.len()];
-    let mut out = Vec::new();
-    for r in top + 1..=bottom {
-        let mut row = Vec::with_capacity(names.len());
-        let mut empty = true;
-        for (j, c) in (left..=right).enumerate() {
-            match book.number_at(index, r, c) {
-                Some((n, _)) => {
-                    empty = false;
-                    row.push(n);
-                }
-                None => {
-                    if !book.display_value(index, r, c).trim().is_empty() {
-                        text[j] += 1;
-                        empty = false;
-                    }
-                    row.push(f64::NAN);
-                }
-            }
-        }
-        if !empty {
-            out.push(row);
-        }
-    }
-    let text_cells = names
-        .iter()
-        .zip(&text)
-        .filter(|(_, n)| **n > 0)
-        .map(|(c, n)| (c.clone(), *n))
-        .collect();
-    Ok(Loaded {
-        data: Data::new(names, out).map_err(|e| anyhow::anyhow!("{e}"))?,
-        sheet: book.sheet_names()[index as usize].clone(),
-        range: format!(
-            "{}{}:{}{}",
-            col_name(left),
-            top + 1,
-            col_name(right),
-            bottom + 1
-        ),
-        text_cells,
-    })
+    let range = sheets_engine::CellRange {
+        top,
+        left,
+        bottom,
+        right,
+    };
+    sheets_ui::pls::data::read(&book, index, range)
 }
 
 /// `sheet`: a name, or a number from 1.
@@ -906,7 +838,7 @@ pub fn results_book(r: &Results, w: &Words) -> Value {
     let mut sheets = Vec::new();
     let sheet = |name: &str, header: Vec<Value>, rows: Vec<Vec<Value>>| -> Value {
         let ncols = header.len().max(1) as u32;
-        let last = col_name(ncols - 1);
+        let last = sheets_ui::pls::data::col_name(ncols - 1);
         let last_row = rows.len() + 1;
         let mut all = vec![Value::Array(header)];
         all.extend(rows.into_iter().map(Value::Array));
@@ -1237,6 +1169,17 @@ pub fn write_output(r: &Results, path: &Path, words: &Words, title: Option<&str>
         ),
     };
     crate::cli::slides::write_file(path, &bytes)
+}
+
+/// The Sheets PLS-SEM tab's Export: the report (`.docx`, Indonesian when
+/// `id`) or the results workbook (`.xlsx`).
+pub fn write_for_ui(r: &Results, path: &Path, id: bool) -> Result<()> {
+    write_output(r, path, &Words { id }, None)
+}
+
+/// The summary as text, for the Sheets tab's Explain results.
+pub fn summary_text(r: &Results) -> String {
+    serde_json::to_string_pretty(&summary(r)).unwrap_or_default()
 }
 
 #[cfg(test)]

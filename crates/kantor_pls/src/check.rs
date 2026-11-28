@@ -68,6 +68,7 @@ pub fn check(data: &Data, model: &Model, opts: &Options) -> Vec<Finding> {
             let (check, msg) = match e {
                 Error::Unsupported(m) => ("unsupported", m),
                 Error::Model(m) | Error::Data(m) | Error::Estimation(m) => ("model", m),
+                Error::Cancelled => ("model", "stopped".to_owned()),
             };
             out.push(finding(Level::Error, check, msg));
             return out;
