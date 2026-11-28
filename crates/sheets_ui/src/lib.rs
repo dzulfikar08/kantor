@@ -2800,10 +2800,37 @@ impl SheetsView {
             self.save_as(&SaveAs, window, cx);
             return;
         };
+        // A CSV (or .ods, .xls…) would leave the PLS-SEM models out: save
+        // as a workbook that keeps them instead.
+        if self.drops_pls_models(&target, cx) {
+            self.status =
+                i18n::t("This file type can't keep PLS-SEM models: save the workbook as .xlsx")
+                    .into();
+            cx.notify();
+            self.save_as_task(window, cx).detach();
+            return;
+        }
         if self.ask_before_overwrite(&target, window, cx) {
             return;
         }
         self.start_save(target, false, window, cx);
+    }
+
+    /// The workbook has PLS-SEM models and `path`'s format can't hold them
+    /// (only .xlsx and .xlsm keep their custom XML part).
+    pub(crate) fn drops_pls_models(&self, path: &std::path::Path, cx: &App) -> bool {
+        let keeps = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("xlsx") || e.eq_ignore_ascii_case("xlsm"));
+        !keeps
+            && self
+                .table
+                .read(cx)
+                .delegate()
+                .book
+                .pls_models()
+                .is_ok_and(|m| !m.is_empty())
     }
 
     fn save_as(&mut self, _: &SaveAs, window: &mut Window, cx: &mut Context<Self>) {
@@ -2851,6 +2878,9 @@ impl SheetsView {
         else {
             return self.save_as_task(window, cx);
         };
+        if self.drops_pls_models(&target, cx) {
+            return self.save_as_task(window, cx);
+        }
         match self.start_save(target, false, window, cx) {
             Some(done) => cx.background_spawn(async move { matches!(done.await, Ok(Ok(true))) }),
             None => Task::ready(false),
@@ -2875,11 +2905,18 @@ impl SheetsView {
                 .map(|p| p.to_path_buf())
                 .or_else(kantor_core::dirs::user_home_dir)
                 .unwrap_or_else(|| PathBuf::from("."));
-            let name = if book.source_path().is_none() {
+            let mut name = if book.source_path().is_none() {
                 self.name(book)
             } else {
                 book.suggested_file_name()
             };
+            // Offer a workbook that keeps the PLS-SEM models.
+            if self.drops_pls_models(std::path::Path::new(&name), cx) {
+                name = std::path::Path::new(&name)
+                    .with_extension("xlsx")
+                    .to_string_lossy()
+                    .into_owned();
+            }
             (dir, name)
         };
         let path = cx.prompt_for_new_path(&dir, Some(&name));
