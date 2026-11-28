@@ -262,6 +262,8 @@ fn defs() -> Value {
     let mut run = obj(json!({
         "text": {"type": "string", "description": "A new line is a line break in the paragraph."},
         "field": {"type": "string", "enum": ["slide_number"], "description": "A field PowerPoint keeps up to date (text optional)."},
+        "math": {"type": "string", "description": "LaTeX math, e.g. \\frac{a}{b}: a PowerPoint equation (Office Math)."},
+        "display": {"type": "boolean", "description": "With math: display style (limits above and below)."},
     }));
     run.extend(style_props());
     run.insert("style".into(), style_ref());
@@ -347,7 +349,7 @@ fn defs() -> Value {
             ],
         },
         "text": {
-            "description": "A string (a new line starts a paragraph), or paragraphs: strings or {text | runs, align, bullet, level, line_spacing, space_before, space_after, font, size, bold, italic, underline, strike, color}.",
+            "description": "A string (a new line starts a paragraph; $…$ and $$…$$ are LaTeX equations), or paragraphs: strings or {text | runs, align, bullet, level, line_spacing, space_before, space_after, font, size, bold, italic, underline, strike, color}.",
             "anyOf": [
                 {"type": "string"},
                 {"type": "array", "items": r("paragraph")},

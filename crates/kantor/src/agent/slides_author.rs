@@ -643,6 +643,8 @@ const PARA_KEYS: &[&str] = &[
 const RUN_KEYS: &[&str] = &[
     "text",
     "field",
+    "math",
+    "display",
     "font",
     "size",
     "bold",
@@ -665,23 +667,94 @@ fn clean(text: &str) -> Result<String> {
         .collect())
 }
 
+/// An equation run from LaTeX: its OMML (`a14:m`) and its linear text.
+fn math_run(latex: &str, display: bool, style: &RunStyle) -> Result<RunSpec> {
+    let eq = kantor_math::latex::parse(latex, display)
+        .map_err(|e| anyhow::anyhow!("the equation `{latex}` isn't LaTeX Kantor reads: {e}"))?;
+    let mut eq = eq;
+    eq.display = display;
+    Ok(RunSpec {
+        text: kantor_math::linear::write(&eq),
+        style: style.clone(),
+        field: None,
+        math: Some(kantor_math::omml::write(
+            &eq,
+            &kantor_math::omml::WriteOptions::drawing(),
+        )),
+    })
+}
+
+/// A string's runs: its text, with `$…$` (inline) and `$$…$$` (display)
+/// LaTeX as equations. Pandoc's rule keeps prices as text: no space inside
+/// the dollars, no digit right after the closing one; `\$` is a dollar.
+fn text_runs(t: &str, style: &RunStyle) -> Result<Vec<RunSpec>> {
+    let chars: Vec<char> = t.chars().collect();
+    let mut out = Vec::new();
+    let mut buf = String::new();
+    let mut i = 0;
+    let text = |buf: &mut String, out: &mut Vec<RunSpec>| {
+        if !buf.is_empty() {
+            out.push(RunSpec {
+                text: std::mem::take(buf),
+                style: style.clone(),
+                field: None,
+                math: None,
+            });
+        }
+    };
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '\\' && chars.get(i + 1) == Some(&'$') {
+            buf.push('$');
+            i += 2;
+            continue;
+        }
+        if c == '$' {
+            let display = chars.get(i + 1) == Some(&'$');
+            let open = if display { i + 2 } else { i + 1 };
+            let starts = chars
+                .get(open)
+                .is_some_and(|n| !n.is_whitespace() && *n != '$');
+            let end = (open..chars.len()).find(|&k| {
+                chars[k] == '$'
+                    && chars[k - 1] != '\\'
+                    && (!display || chars.get(k + 1) == Some(&'$'))
+            });
+            if starts && let Some(end) = end {
+                let closes = !chars[end - 1].is_whitespace()
+                    && (display || !chars.get(end + 1).is_some_and(|d| d.is_ascii_digit()));
+                if closes {
+                    text(&mut buf, &mut out);
+                    let latex: String = chars[open..end].iter().collect();
+                    out.push(math_run(&latex, display, style)?);
+                    i = end + if display { 2 } else { 1 };
+                    continue;
+                }
+            }
+        }
+        buf.push(c);
+        i += 1;
+    }
+    text(&mut buf, &mut out);
+    if out.is_empty() {
+        out.push(RunSpec {
+            text: String::new(),
+            style: style.clone(),
+            field: None,
+            math: None,
+        });
+    }
+    Ok(out)
+}
+
 /// The paragraphs of `v`: a string (a new line starts a paragraph) or an
 /// array of paragraphs (strings or objects with `text` or `runs`).
 fn paragraphs(v: &Value, defaults: &ParaDefaults, cx: &Ctx) -> Result<Vec<ParaSpec>> {
     let plain = |text: &str, d: &ParaDefaults, style: RunStyle| -> Result<Vec<ParaSpec>> {
-        Ok(clean(text)?
+        clean(text)?
             .split('\n')
-            .map(|l| {
-                d.para(
-                    vec![RunSpec {
-                        text: l.to_owned(),
-                        style: style.clone(),
-                        field: None,
-                    }],
-                    style.clone(),
-                )
-            })
-            .collect())
+            .map(|l| Ok(d.para(text_runs(l, &style)?, style.clone())))
+            .collect()
     };
     match v {
         Value::String(s) => plain(s, defaults, RunStyle::default()),
@@ -697,11 +770,7 @@ fn paragraphs(v: &Value, defaults: &ParaDefaults, cx: &Ctx) -> Result<Vec<ParaSp
                     Value::String(s) => {
                         // One paragraph each; a new line inside is a line break.
                         out.push(defaults.para(
-                            vec![RunSpec {
-                                text: clean(s)?,
-                                style: RunStyle::default(),
-                                field: None,
-                            }],
+                            text_runs(&clean(s)?, &RunStyle::default())?,
                             RunStyle::default(),
                         ));
                     }
@@ -713,22 +782,24 @@ fn paragraphs(v: &Value, defaults: &ParaDefaults, cx: &Ctx) -> Result<Vec<ParaSp
                             (Some(_), Some(_)) => {
                                 bail!("a paragraph has `text` or `runs`, not both")
                             }
-                            (Some(Value::String(t)), None) => vec![RunSpec {
-                                text: clean(t)?,
-                                style: style.clone(),
-                                field: None,
-                            }],
+                            (Some(Value::String(t)), None) => text_runs(&clean(t)?, &style)?,
                             (Some(_), None) => bail!("a paragraph's `text` must be a string"),
                             (None, Some(Value::Array(runs))) => runs
                                 .iter()
                                 .map(|r| match r {
-                                    Value::String(t) => Ok(RunSpec {
+                                    Value::String(t) => Ok(vec![RunSpec {
                                         text: clean(t)?,
                                         style: style.clone(),
                                         field: None,
-                                    }),
+                                        math: None,
+                                    }]),
                                     _ => {
                                         let ro = object(r, "a run", RUN_KEYS)?;
+                                        if let Some(latex) = opt_str(ro, "math")? {
+                                            let display = opt_bool(ro, "display")?.unwrap_or(false);
+                                            let st = style.over(&run_style(ro)?);
+                                            return Ok(vec![math_run(latex, display, &st)?]);
+                                        }
                                         let fld = opt_str(ro, "field")?.map(field).transpose()?;
                                         let text = match (opt_str(ro, "text")?, fld) {
                                             (Some(t), _) => clean(t)?,
@@ -737,14 +808,18 @@ fn paragraphs(v: &Value, defaults: &ParaDefaults, cx: &Ctx) -> Result<Vec<ParaSp
                                                 .map_or_else(|| "#".to_owned(), |n| n.to_string()),
                                             (None, None) => bail!("a run needs `text`"),
                                         };
-                                        Ok(RunSpec {
+                                        Ok(vec![RunSpec {
                                             text,
                                             style: style.over(&run_style(ro)?),
                                             field: fld.map(str::to_owned),
-                                        })
+                                            math: None,
+                                        }])
                                     }
                                 })
-                                .collect::<Result<_>>()?,
+                                .collect::<Result<Vec<Vec<RunSpec>>>>()?
+                                .into_iter()
+                                .flatten()
+                                .collect(),
                             (None, Some(_)) => bail!("`runs` must be an array"),
                             (None, None) => Vec::new(),
                         };

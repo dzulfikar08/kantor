@@ -67,6 +67,15 @@ pub fn shown(doc: &Document, i: usize) -> String {
                 Some(Object::Float(f)) if matches!(f.kind, FloatKind::Picture { .. }) => {
                     piece.push_str("[picture]")
                 }
+                // Equations as LaTeX, as the docs JSON writes them.
+                Some(o @ Object::Opaque(op)) if docs_engine::equation::is_equation(o) => {
+                    let latex = kantor_math::omml_to_latex(&op.xml).unwrap_or_default();
+                    if docs_engine::model::element_name(&op.xml) == "oMathPara" {
+                        piece.push_str(&format!("$${latex}$$"));
+                    } else {
+                        piece.push_str(&format!("${latex}$"));
+                    }
+                }
                 Some(Object::Opaque(o)) if !o.label.is_empty() => {
                     piece.push('[');
                     piece.push_str(&o.label);

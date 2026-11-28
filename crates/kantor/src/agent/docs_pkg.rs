@@ -18,6 +18,7 @@ pub const NS_WP: &str = "http://schemas.openxmlformats.org/drawingml/2006/wordpr
 pub const NS_WPS: &str = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape";
 pub const NS_MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 pub const NS_W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
+pub const NS_M: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
 
 const REL: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/";
 pub const REL_PKG: &str = "http://schemas.openxmlformats.org/package/2006/relationships";

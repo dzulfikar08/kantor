@@ -21,8 +21,8 @@ use super::docs_look::{
     opt_bool, opt_str, page_spec, split_unit, twips,
 };
 use super::docs_pkg::{
-    CT_APP, CT_CHART, CT_CORE, CT_MAIN, CT_THEME, CT_XLSX, NS_A, NS_C, NS_MC, NS_PIC, NS_R, NS_W,
-    NS_W14, NS_WP, NS_WPS, Pkg, XML_DECL, esc, max_attr, rel_type, relative, wml_type,
+    CT_APP, CT_CHART, CT_CORE, CT_MAIN, CT_THEME, CT_XLSX, NS_A, NS_C, NS_M, NS_MC, NS_PIC, NS_R,
+    NS_W, NS_W14, NS_WP, NS_WPS, Pkg, XML_DECL, esc, max_attr, rel_type, relative, wml_type,
 };
 
 /// Blocks one document (or one insert) may have.
@@ -58,6 +58,7 @@ pub const BLOCK_TYPES: &[&str] = &[
     "chart",
     "callout",
     "quote",
+    "equation",
     "page_break",
     "section",
     "toc",
@@ -123,6 +124,44 @@ const PICTURE_KEYS: &[&str] = &[
 const CHART_DOC_KEYS: &[&str] = &["type", "width", "height", "alt", "caption", "id", "align"];
 const CALLOUT_KEYS: &[&str] = &["type", "title", "text", "fill", "bar"];
 const QUOTE_KEYS: &[&str] = &["type", "text", "source"];
+const EQUATION_KEYS: &[&str] = &["type", "latex", "display", "number", "id"];
+
+/// Office Math for LaTeX: an inline (`m:oMath`) or display (`m:oMathPara`)
+/// equation; a display equation with `number` gets Word's equation
+/// number (`#(n)` in an equation array, at the right margin).
+pub(crate) fn math_xml(latex: &str, display: bool, number: Option<&str>) -> Result<String> {
+    use kantor_math::{Node, Run};
+    let mut eq = kantor_math::latex::parse(latex, display)
+        .map_err(|e| anyhow!("the equation `{latex}` isn't LaTeX Kantor reads: {e}"))?;
+    eq.display = display;
+    if let Some(n) = number.map(str::trim).filter(|n| !n.is_empty())
+        && display
+        && let Some(line) = eq.lines.first_mut()
+    {
+        let n = if n.starts_with('(') {
+            n.to_owned()
+        } else {
+            format!("({n})")
+        };
+        let num = Node::Text(Run::new(format!("#{n}")));
+        match line.as_mut_slice() {
+            [Node::EqArray { rows }] => {
+                if let Some(last) = rows.last_mut() {
+                    last.push(num);
+                }
+            }
+            _ => {
+                let mut row = std::mem::take(line);
+                row.push(num);
+                *line = vec![Node::EqArray { rows: vec![row] }];
+            }
+        }
+    }
+    Ok(kantor_math::omml::write(
+        &eq,
+        &kantor_math::omml::WriteOptions::word(),
+    ))
+}
 const SECTION_KEYS: &[&str] = &[
     "type",
     "orientation",
@@ -887,6 +926,9 @@ impl<'a> Writer<'a> {
                     let rpr = fmt.xml();
                     x.push_str(&self.field(instr, result, &rpr));
                 }
+                Piece::Math { latex, display } => {
+                    x.push_str(&math_xml(latex, *display, None)?);
+                }
             }
         }
         Ok(x)
@@ -987,6 +1029,14 @@ impl<'a> Writer<'a> {
             "picture" => self.picture(o),
             "chart" => self.chart(o),
             "callout" => self.callout(o),
+            "equation" => {
+                object(&Value::Object(o.clone()), "an equation", EQUATION_KEYS)?;
+                let latex = opt_str(o, "latex")?.context("an equation needs `latex`")?;
+                let display = opt_bool(o, "display")?.unwrap_or(true);
+                let x = math_xml(latex, display, opt_str(o, "number")?)?;
+                self.para(None, ParaFmt::default(), x);
+                Ok(())
+            }
             "quote" => {
                 object(&Value::Object(o.clone()), "a quote", QUOTE_KEYS)?;
                 let text = get(o, "text").context("a quote needs `text`")?;
@@ -2166,7 +2216,7 @@ impl<'a> Writer<'a> {
         };
         let root = if kind == "header" { "hdr" } else { "ftr" };
         let xml = format!(
-            "{XML_DECL}<w:{root} xmlns:w=\"{NS_W}\" xmlns:r=\"{NS_R}\"><w:p><w:pPr><w:pStyle w:val=\"{style}\"/>{tabs}</w:pPr>{p}</w:p></w:{root}>"
+            "{XML_DECL}<w:{root} xmlns:w=\"{NS_W}\" xmlns:r=\"{NS_R}\" xmlns:m=\"{NS_M}\"><w:p><w:pPr><w:pStyle w:val=\"{style}\"/>{tabs}</w:pPr>{p}</w:p></w:{root}>"
         );
         let part = self.pkg.free_name(&format!("word/{kind}"), "xml");
         self.pkg.set_text(&part, xml);
@@ -2476,7 +2526,7 @@ fn app_xml(p: &Props) -> String {
 /// The `<w:document …>` start tag of new documents.
 pub fn document_root() -> String {
     format!(
-        "<w:document xmlns:mc=\"{NS_MC}\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:r=\"{NS_R}\" \
+        "<w:document xmlns:mc=\"{NS_MC}\" xmlns:m=\"{NS_M}\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" xmlns:r=\"{NS_R}\" \
          xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:wp=\"{NS_WP}\" xmlns:w=\"{NS_W}\" xmlns:w14=\"{NS_W14}\" \
          xmlns:wps=\"{NS_WPS}\" xmlns:a=\"{NS_A}\" xmlns:pic=\"{NS_PIC}\" xmlns:c=\"{NS_C}\" mc:Ignorable=\"w14\">"
     )
@@ -2491,7 +2541,7 @@ pub fn footnotes_xml(notes: &[String]) -> String {
         )
     };
     format!(
-        "{XML_DECL}<w:footnotes xmlns:w=\"{NS_W}\" xmlns:r=\"{NS_R}\">{}{}{}</w:footnotes>",
+        "{XML_DECL}<w:footnotes xmlns:w=\"{NS_W}\" xmlns:r=\"{NS_R}\" xmlns:m=\"{NS_M}\">{}{}{}</w:footnotes>",
         sep("separator", -1, "separator"),
         sep("continuationSeparator", 0, "continuationSeparator"),
         notes.concat()

@@ -130,7 +130,14 @@ Every element has a `type` and optionally a `name`.
 `text` is a string (each line a paragraph) or a list of paragraphs. A
 paragraph is a string or
 `{"text" | "runs", "align", "level", "bullet", "line_spacing", "space_before", "space_after", ...formatting}`;
-a run is a string or `{"text", "font", "size", "bold", "italic", "underline", "strike", "color", "caps", "letter_spacing", "field"}`.
+a run is a string or `{"text", "font", "size", "bold", "italic", "underline", "strike", "color", "caps", "letter_spacing", "field"}`,
+or an equation `{"math": "\\frac{a}{b}", "display": true}` (LaTeX).
+In strings, `$…$` and `$$…$$` are LaTeX equations too (no space just inside
+the dollars, no digit after the closing one; `\$` is a dollar). Equations
+are written as PowerPoint writes them (`a14:m` Office Math with the linear
+form as a fallback run), so PowerPoint edits them; Kantor draws them and
+edits them with Insert Equation. The LaTeX Kantor reads is listed in
+[docs-json.md](docs-json.md#equations).
 `caps: true` writes the text in capitals (and marks it all caps for
 PowerPoint); `letter_spacing` is character spacing in points (PowerPoint
 and LibreOffice show it; Kantor's own drawing doesn't yet). A run with

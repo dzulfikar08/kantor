@@ -120,6 +120,7 @@ markdown:
 | `{ref:id}` | a cross-reference to the heading, figure or table with that `id` |
 | `{ref:id:page}` / `:text` / `:number` / `:label` / `:full` | its page, its words, its number, "Figure 2", "Figure 2: caption" |
 | `\n` | a line break |
+| `$E = mc^2$`, `$$\sum_{i=1}^{n} x_i$$` | an equation from LaTeX, inline or display (below) |
 | `\*`, `\[`, `\{` | the character itself |
 
 A cross-reference is a REF (or PAGEREF) field: Word keeps it right when
@@ -131,8 +132,39 @@ A run is a string or an object: `text`, `bold`, `italic`, `underline`,
 `strike`, `caps`, `small_caps`, `color`, `highlight`, `size`, `font`,
 `style` (a character style: `Strong`, `Emphasis`, `Code`, or your own),
 `superscript`, `subscript`, `code`, `link`, `footnote`, `ref` with `show`,
-or `field` (any Word field instruction, e.g. `DATE \@ "d MMMM yyyy"`) with
+`math` (LaTeX) with `display`, or `field` (any Word field instruction, e.g. `DATE \@ "d MMMM yyyy"`) with
 `result`. Prefer styles to run formatting: `check` counts direct formatting.
+
+## Equations
+
+Equations are written in LaTeX and saved as Word equations (Office Math,
+`m:oMath` / `m:oMathPara`), so Word opens them as editable equations and
+Kantor draws them with real math layout. Three ways in:
+
+- in text: `$…$` inline, `$$…$$` display (Pandoc's rule keeps prices as
+  text: no space just inside the dollars and no digit right after the
+  closing one, so "$40 and $95" stays text; `\$` is a dollar);
+- a run: `{"math": "\\frac{a}{b}", "display": false}`;
+- a block: `{"type": "equation", "latex": "...", "number": "1"}`.
+
+```json
+{"type": "equation", "latex": "Y = \\beta_0 + \\beta_1 X_1 + \\varepsilon", "number": "3.1"}
+```
+
+What Kantor reads: fractions (`\frac`, `\dfrac`, `\tfrac`, `\sfrac`,
+`\binom`), scripts and primes, `\sqrt[n]{}`, big operators with limits
+(`\sum`, `\prod`, `\int`, `\iint`, `\oint`, `\bigcup`…, `\limits`,
+`\nolimits`), `\left…\middle…\right` and paired brackets, `matrix`,
+`pmatrix`, `bmatrix`, `Bmatrix`, `vmatrix`, `Vmatrix`, `cases`,
+`aligned`/`align`/`gather`/`split` (`&` and `\\`), `\tag{}`, accents
+(`\hat`, `\bar`, `\vec`, `\dot`, `\ddot`, `\tilde`, `\widehat`…),
+`\overline`, `\underline`, `\overbrace`/`\underbrace` with labels,
+`\overset`, `\underset`, `\stackrel`, `\prescript`, `\boxed`, `\phantom`,
+functions (`\sin`, `\log`, `\lim`, `\max`, `\operatorname{}`), `\text{}`,
+`\mathrm`, `\mathbf`, `\boldsymbol`, `\mathit`, `\mathcal`, `\mathfrak`,
+`\mathbb`, `\mathsf`, `\mathtt`, Greek letters, operators, relations,
+arrows and spacing (`\,` `\;` `\quad`). Anything else is an error naming
+the command. `kantor docs list --text` shows equations as `$…$` / `$$…$$`.
 
 ## Blocks
 
@@ -177,6 +209,9 @@ or a shorthand: `{"h1": "…"}` to `{"h4": "…"}`, `{"p": "…"}`,
   `{"bullets": […]}`), `fill`, `bar`. A tinted box with a bar down the left
   (a one-cell table, so it reads the same everywhere).
 - **quote**: `text`, `source`.
+- **equation**: `latex`, `display` (default `true`), `number` (`"3.1"` shows
+  as (3.1) at the right margin, Word's equation numbering), `id`. See
+  [Equations](#equations).
 - **page_break**: the next block starts a new page.
 - **section**: a new section from here: `orientation`, `size`, `margins`,
   `header`, `footer`, `page_numbers` (`{"start", "format"}`), `columns`,

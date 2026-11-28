@@ -322,6 +322,9 @@ pub struct RunSpec {
     /// A field (`a:fld/@type`, e.g. `slidenum`) showing `text` until
     /// PowerPoint updates it.
     pub field: Option<String>,
+    /// An equation: its OMML (`m:oMathPara` / `m:oMath` with `xmlns:m`),
+    /// written as `a14:m` with `text` (its linear form) as the fallback.
+    pub math: Option<String>,
 }
 
 /// The `a:fld/@id` of fields Kantor writes (one id per field type is what
@@ -514,6 +517,21 @@ fn write_para(out: &mut String, p: &ParaSpec, base: &RunStyle) {
     }
     for r in &p.runs {
         let style = base.over(&r.style);
+        if let Some(m) = &r.math {
+            out.push_str(
+                "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\">\
+                 <mc:Choice xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\" Requires=\"a14\"><a14:m>",
+            );
+            out.push_str(m);
+            out.push_str("</a14:m></mc:Choice><mc:Fallback><a:r>");
+            style.write(out, "a:rPr");
+            let _ = write!(
+                out,
+                "<a:t>{}</a:t></a:r></mc:Fallback></mc:AlternateContent>",
+                esc(&r.text.replace('\n', " "))
+            );
+            continue;
+        }
         if let Some(f) = &r.field {
             let _ = write!(out, "<a:fld id=\"{FIELD_ID}\" type=\"{}\">", esc_attr(f));
             style.write(out, "a:rPr");
@@ -1431,6 +1449,7 @@ mod tests {
                                     ..RunStyle::default()
                                 },
                                 field: None,
+                                math: None,
                             },
                             RunSpec {
                                 text: "simple".into(),
@@ -1440,6 +1459,7 @@ mod tests {
                                     ..RunStyle::default()
                                 },
                                 field: None,
+                                math: None,
                             },
                         ],
                         align: Some(Align::Center),
@@ -1529,6 +1549,7 @@ mod tests {
                 t.paras[0].runs.push(RunSpec {
                     text: "7".into(),
                     field: Some("slidenum".into()),
+                    math: None,
                     ..RunSpec::default()
                 });
             }

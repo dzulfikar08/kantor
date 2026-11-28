@@ -889,6 +889,14 @@
               ],
               "description": "A field PowerPoint keeps up to date (text optional)."
             },
+            "math": {
+              "type": "string",
+              "description": "LaTeX math, e.g. \\frac{a}{b}: a PowerPoint equation (Office Math)."
+            },
+            "display": {
+              "type": "boolean",
+              "description": "With math: display style (limits above and below)."
+            },
             "font": {
               "type": "string",
               "description": "Typeface, e.g. \"Inter\" (default: the theme's body font)."
@@ -1043,7 +1051,7 @@
       ]
     },
     "text": {
-      "description": "A string (a new line starts a paragraph), or paragraphs: strings or {text | runs, align, bullet, level, line_spacing, space_before, space_after, font, size, bold, italic, underline, strike, color}.",
+      "description": "A string (a new line starts a paragraph; $…$ and $$…$$ are LaTeX equations), or paragraphs: strings or {text | runs, align, bullet, level, line_spacing, space_before, space_after, font, size, bold, italic, underline, strike, color}.",
       "anyOf": [
         {
           "type": "string"

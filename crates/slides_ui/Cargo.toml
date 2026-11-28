@@ -11,6 +11,7 @@ anyhow.workspace = true
 # The presenter view's wall clock.
 chrono = { workspace = true, features = ["clock"] }
 docs_engine.workspace = true
+kantor_math.workspace = true
 docs_layout.workspace = true
 # Shares Docs' parley engine and fontique → GPUI font bridge (ADR 0001).
 docs_ui.workspace = true

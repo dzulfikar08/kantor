@@ -32,6 +32,9 @@ pub enum Piece {
         result: String,
         fmt: RunFmt,
     },
+    /// An equation from LaTeX (`$…$` inline, `$$…$$` display): written as
+    /// Office Math.
+    Math { latex: String, display: bool },
 }
 
 /// Keys of a run object.
@@ -57,6 +60,8 @@ pub const RUN_KEYS: &[&str] = &[
     "show",
     "field",
     "result",
+    "math",
+    "display",
 ];
 
 /// Ways a cross-reference shows its target.
@@ -133,7 +138,7 @@ pub fn markdown(s: &str, base: &RunFmt, mono: &str, notes: bool) -> Vec<Piece> {
     while i < chars.len() {
         let c = chars[i];
         let next = chars.get(i + 1).copied();
-        if c == '\\' && next.is_some_and(|n| "\\*`[]{}()_".contains(n)) {
+        if c == '\\' && next.is_some_and(|n| "\\*`[]{}()_$".contains(n)) {
             buf.push(chars[i + 1]);
             i += 2;
             continue;
@@ -192,6 +197,30 @@ pub fn markdown(s: &str, base: &RunFmt, mono: &str, notes: bool) -> Vec<Piece> {
                     flush(&mut buf, &mut out, m);
                     m.italic = true;
                     i += 1;
+                    continue;
+                }
+            }
+        }
+        // `$$…$$` display math, `$…$` inline math (Pandoc's rule: no space
+        // inside the dollars, no digit right after the closing one, so
+        // "$40 and $95" stays text).
+        if c == '$' {
+            let display = next == Some('$');
+            let open = if display { i + 2 } else { i + 1 };
+            let pat = if display { "$$" } else { "$" };
+            let starts = chars
+                .get(open)
+                .is_some_and(|n| !n.is_whitespace() && *n != '$');
+            if starts && let Some(end) = find(&chars, open, pat) {
+                let closes = !chars[end - 1].is_whitespace()
+                    && (display || !chars.get(end + 1).is_some_and(|d| d.is_ascii_digit()));
+                if closes {
+                    flush(&mut buf, &mut out, m);
+                    out.push(Piece::Math {
+                        latex: chars[open..end].iter().collect(),
+                        display,
+                    });
+                    i = end + pat.len();
                     continue;
                 }
             }
@@ -338,6 +367,15 @@ fn run(o: &Map<String, Value>, look: &Look, base: &RunFmt, out: &mut Vec<Piece>)
             fmt: f.clone(),
         });
     }
+    if let Some(latex) = opt_str(o, "math")? {
+        let display = opt_bool(o, "display")?.unwrap_or(false);
+        kantor_math::latex::parse(latex, display)
+            .map_err(|e| anyhow::anyhow!("the equation `{latex}` isn't LaTeX Kantor reads: {e}"))?;
+        out.push(Piece::Math {
+            latex: latex.to_owned(),
+            display,
+        });
+    }
     if let Some(n) = get(o, "footnote") {
         let note = match n {
             Value::String(s) => markdown(s, &RunFmt::default(), &look.font("mono"), false),
@@ -428,6 +466,13 @@ pub fn plain(pieces: &[Piece]) -> String {
             Piece::Field { result, .. } => result.clone(),
             Piece::Ref { id, .. } => format!("[{id}]"),
             Piece::Note(_) => String::new(),
+            Piece::Math { latex, display } => {
+                if *display {
+                    format!("$${latex}$$")
+                } else {
+                    format!("${latex}$")
+                }
+            }
         })
         .collect()
 }
@@ -537,5 +582,42 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[std::prelude::v1::test]
+    fn markdown_math() {
+        let b = RunFmt::default();
+        let p = markdown("Energy $E=mc^2$ and $$\\sum_i x_i$$.", &b, "Mono", true);
+        let maths: Vec<(String, bool)> = p
+            .iter()
+            .filter_map(|q| match q {
+                Piece::Math { latex, display } => Some((latex.clone(), *display)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            maths,
+            [
+                ("E=mc^2".to_owned(), false),
+                ("\\sum_i x_i".to_owned(), true)
+            ]
+        );
+        // Prices stay text.
+        let p = markdown("From $40 to $95, or \\$5.", &b, "Mono", true);
+        assert!(p.iter().all(|q| matches!(q, Piece::Text { .. })));
+        assert_eq!(plain(&p), "From $40 to $95, or $5.");
+    }
+
+    #[std::prelude::v1::test]
+    fn numbered_equations_are_word_equation_arrays() {
+        let x = super::super::docs_author::math_xml("E=mc^2", true, Some("3.1")).unwrap();
+        assert!(x.starts_with("<m:oMathPara>"), "{x}");
+        assert!(x.contains("<m:eqArr>") && x.contains("#(3.1)"), "{x}");
+        let eq = kantor_math::omml::parse(&x).unwrap();
+        assert_eq!(
+            kantor_math::latex::write(&eq),
+            "\\begin{aligned}E=mc^2 \\tag{3.1}\\end{aligned}"
+        );
+        assert!(super::super::docs_author::math_xml("\\frac{a}", true, None).is_err());
     }
 }

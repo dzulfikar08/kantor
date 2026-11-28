@@ -30,7 +30,7 @@ fn color() -> Value {
 
 fn text() -> Value {
     json!({
-        "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}; \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result}.",
+        "description": "Paragraph text: a string with light markdown (**bold**, *italic*, `code`, [text](url), [^footnote], {ref:id}, {ref:id:page}, $inline math$, $$display math$$ (LaTeX); \\ escapes; \\n is a line break), or a list of runs: strings and {text, bold, italic, underline, strike, caps, small_caps, color, highlight, size, font, style, superscript, subscript, code, link, footnote, ref, show, field, result, math, display}.",
         "anyOf": [{"type": "string"}, {"type": "array", "items": {"anyOf": [{"type": "string"}, r("run")]}}]
     })
 }
@@ -52,7 +52,9 @@ fn run() -> Value {
             "ref": {"type": "string", "description": "A cross-reference to the heading, figure or table with this id (a REF / PAGEREF field)."},
             "show": {"type": "string", "enum": ["number", "text", "page", "label", "full"], "description": "number: the heading's number (2.3); text: its words; page: its page; label: \"Figure 2\"; full: \"Figure 2: caption\". Default: number for numbered headings, text for others, label for figures and tables."},
             "field": {"type": "string", "description": "A Word field instruction, e.g. DATE \\@ \"d MMMM yyyy\"."},
-            "result": {"type": "string", "description": "What the field shows until updated."}
+            "result": {"type": "string", "description": "What the field shows until updated."},
+            "math": {"type": "string", "description": "LaTeX math, e.g. \\frac{a}{b}: a Word equation (Office Math), inline unless display."},
+            "display": {"type": "boolean", "description": "With math: a display equation on a line of its own."}
         }
     })
 }
@@ -251,6 +253,19 @@ fn blocks_defs() -> Vec<(&'static str, Value)> {
                 "A quotation in the Quote style, with its source below.",
                 json!({"text": text(), "source": {"type": "string"}}),
                 &["text"],
+            ),
+        ),
+        (
+            "equation",
+            block_of(
+                "equation",
+                "A display equation from LaTeX, saved as a Word equation (editable in Word); number puts Word's equation number at the right margin.",
+                json!({
+            "latex": {"type": "string", "description": "LaTeX math (amsmath environments too): \\frac, \\sqrt, \\sum, \\int, matrices, cases, aligned."},
+            "display": {"type": "boolean", "default": true, "description": "false: an inline equation in a paragraph of its own."},
+            "number": {"type": "string", "description": "Equation number, e.g. \"1\" or \"3.2\" (shown as (1))."},
+            "id": id.clone()}),
+                &["latex"],
             ),
         ),
         (
