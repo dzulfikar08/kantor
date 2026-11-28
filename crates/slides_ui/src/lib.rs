@@ -25,6 +25,7 @@ extern crate gpui_kit as gpui;
 
 mod agent;
 mod draw;
+mod equation;
 // The scene painter, shared with Sheets (charts and pictures on worksheets).
 pub use draw::{Painted, Painter, View as SceneView, paint_items};
 mod find;
@@ -377,6 +378,8 @@ pub struct SlidesView {
     paint_menu_closed: Option<std::time::Instant>,
     /// The table / chart data editor.
     object_editor: Option<object_editor::ObjectEditor>,
+    /// The Insert Equation popover.
+    equation: Option<equation::SlidesEquation>,
     /// The print layout chosen last (Ctrl+P repeats it).
     print_layout: slides_pdf::PrintLayout,
     /// Spell checking in the edited text box.
@@ -481,6 +484,7 @@ impl SlidesView {
             paint_menu: None,
             paint_menu_closed: None,
             object_editor: None,
+            equation: None,
             print_layout: slides_pdf::PrintLayout::Slides,
             spell: spell::SpellState::default(),
         }
@@ -2170,6 +2174,11 @@ impl SlidesView {
                     self.open_object_editor(i, kind, window, cx);
                     return;
                 }
+                // A shape with an equation: the equation editor.
+                if ev.click_count >= 2 && self.pres.equation_in(target).is_some() {
+                    self.insert_equation_doc(window, cx);
+                    return;
+                }
                 if ev.click_count >= 2 {
                     let pos = self.text_hit(target, p);
                     self.begin_editing(target, pos, cx);
@@ -2937,6 +2946,7 @@ impl Render for SlidesView {
             .children(self.render_banner(&t))
             .children(self.render_paint_menu(cx))
             .children(self.render_object_editor(cx))
+            .children(self.render_equation())
             .child(
                 h_flex().flex_1().min_h_0().child(strip).child(
                     v_flex()

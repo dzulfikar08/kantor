@@ -79,7 +79,9 @@ fn omml_round_trips() {
 fn omml_is_well_formed_and_in_schema_order() {
     let a = latex::parse(SAMPLES[6], true).unwrap();
     let xml = omml::write(&a, &omml::WriteOptions::drawing());
-    let doc = roxmltree::Document::parse(&xml).expect("well-formed with its own xmlns:m");
+    let wrapped =
+        format!("<r xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\">{xml}</r>");
+    let doc = roxmltree::Document::parse(&wrapped).expect("well-formed with its own xmlns:m");
     let nary = doc
         .descendants()
         .find(|n| n.tag_name().name() == "nary")
@@ -187,7 +189,7 @@ fn structures_take_room() {
     let sub = s
         .glyphs
         .iter()
-        .find(|g| &s.text[g.cluster.clone()] == "i")
+        .find(|g| &s.text[g.cluster.clone()] == "𝑖")
         .unwrap();
     assert!(sup.y < 0.0 && sub.y > 0.0);
     // Radicals draw a rule over their body.

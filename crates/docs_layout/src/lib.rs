@@ -4240,7 +4240,7 @@ fn leader_rects(
 }
 
 /// The math font as parley font data (one blob, so renderers cache it once).
-fn math_font() -> FontData {
+pub fn math_font() -> FontData {
     static FONT: std::sync::OnceLock<FontData> = std::sync::OnceLock::new();
     FONT.get_or_init(|| FontData::new(kantor_math::BUNDLED_FONT.to_vec().into(), 0))
         .clone()

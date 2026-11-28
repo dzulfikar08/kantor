@@ -885,18 +885,39 @@ pub(crate) fn write_rpr(out: &mut String, tag: &str, p: &RunProps) {
 pub(crate) fn write_para(out: &mut String, p: &TextPara) {
     out.push_str("<a:p>");
     write_ppr(out, &p.props);
+    let math_at = |i: usize| p.maths.iter().find(|(r, _)| r.start <= i && i < r.end);
     for (range, run) in p.run_ranges() {
-        let text = &p.text[range];
-        for (i, seg) in text.split(LINE_BREAK).enumerate() {
-            if i > 0 {
-                out.push_str("<a:br>");
-                write_rpr(out, "a:rPr", &run.props);
-                out.push_str("</a:br>");
+        let mut pos = range.start;
+        while pos < range.end {
+            // An equation: written once, where its text starts.
+            if let Some((mr, xml)) = math_at(pos) {
+                if pos == mr.start {
+                    write_math(out, xml, &p.text[mr.clone()], &run.props);
+                }
+                pos = mr.end.min(range.end);
+                continue;
             }
-            if !seg.is_empty() {
-                out.push_str("<a:r>");
-                write_rpr(out, "a:rPr", &run.props);
-                let _ = write!(out, "<a:t>{}</a:t></a:r>", esc(seg));
+            let next = p
+                .maths
+                .iter()
+                .map(|(r, _)| r.start)
+                .filter(|&s| s > pos)
+                .min()
+                .unwrap_or(range.end)
+                .min(range.end);
+            let text = &p.text[pos..next];
+            pos = next;
+            for (i, seg) in text.split(LINE_BREAK).enumerate() {
+                if i > 0 {
+                    out.push_str("<a:br>");
+                    write_rpr(out, "a:rPr", &run.props);
+                    out.push_str("</a:br>");
+                }
+                if !seg.is_empty() {
+                    out.push_str("<a:r>");
+                    write_rpr(out, "a:rPr", &run.props);
+                    let _ = write!(out, "<a:t>{}</a:t></a:r>", esc(seg));
+                }
             }
         }
     }
@@ -908,6 +929,34 @@ pub(crate) fn write_para(out: &mut String, p: &TextPara) {
         None => {}
     }
     out.push_str("</a:p>");
+}
+
+/// An equation as PowerPoint writes it: `a14:m` for Office 2010 and
+/// later, its linear text as a run for older readers.
+fn write_math(out: &mut String, xml: &str, linear: &str, props: &RunProps) {
+    out.push_str(
+        "<mc:AlternateContent xmlns:mc=\"http://schemas.openxmlformats.org/markup-compatibility/2006\">\
+         <mc:Choice xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\" Requires=\"a14\"><a14:m>",
+    );
+    let xml = xml.trim();
+    if xml.contains("xmlns:m=") {
+        out.push_str(xml);
+    } else {
+        // The prefix declared on an ancestor in the file it came from.
+        let name_end = xml
+            .find(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .unwrap_or(xml.len());
+        out.push_str(&xml[..name_end]);
+        let _ = write!(out, " xmlns:m=\"{}\"", kantor_math::omml::NS_M);
+        out.push_str(&xml[name_end..]);
+    }
+    out.push_str("</a14:m></mc:Choice><mc:Fallback><a:r>");
+    write_rpr(out, "a:rPr", props);
+    let _ = write!(
+        out,
+        "<a:t>{}</a:t></a:r></mc:Fallback></mc:AlternateContent>",
+        esc(linear)
+    );
 }
 
 /// The bullet element of a paragraph.

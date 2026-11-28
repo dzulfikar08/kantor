@@ -3680,11 +3680,13 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
     if root.ends_with("/>") {
         root.replace_range(root.len() - 2.., ">");
     }
+    let body = body_xml(doc);
+    crate::equation::declare_math_ns(&mut root, &body);
     let mut xml = String::with_capacity(4096);
     xml.push_str(XML_DECL);
     xml.push_str(&root);
     xml.push_str("<w:body>");
-    xml.push_str(&body_xml(doc));
+    xml.push_str(&body);
     match doc.body_sect.as_ref().or(pkg.sect_pr.as_ref()) {
         // Only pgSz/pgMar attributes that differ change; the rest is verbatim.
         Some(s) => xml.push_str(&crate::page::update_sect_pr(s, &doc.page)),
@@ -3751,7 +3753,9 @@ fn write_into(doc: &Document, pkg: &Package) -> anyhow::Result<Vec<u8>> {
             HfKind::Header => "</w:hdr>",
             HfKind::Footer => "</w:ftr>",
         };
-        let part = format!("{XML_DECL}{root}{}{close}", body_xml(&st.doc)).into_bytes();
+        let hf_body = body_xml(&st.doc);
+        crate::equation::declare_math_ns(&mut root, &hf_body);
+        let part = format!("{XML_DECL}{root}{hf_body}{close}").into_bytes();
         if st.new || !pkg.has_part(&st.part) {
             add.push((st.part.clone(), part));
             // A copy of another part (a mail merge's header per record)

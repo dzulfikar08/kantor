@@ -327,18 +327,21 @@ pub(crate) fn write_notes(
     if root.ends_with("/>") {
         root.replace_range(root.len() - 2.., ">");
     }
-    out.push_str(&root);
     let el = kind.element();
+    let mut items = String::new();
     for n in notes.iter().filter(|n| n.kind == kind) {
         match &n.xml {
-            Some(x) => out.push_str(x),
+            Some(x) => items.push_str(x),
             None => {
-                out.push_str(&format!("<w:{el} w:id=\"{}\">", xml::escape(&n.id)));
-                out.push_str(&body(&n.doc));
-                out.push_str(&format!("</w:{el}>"));
+                items.push_str(&format!("<w:{el} w:id=\"{}\">", xml::escape(&n.id)));
+                items.push_str(&body(&n.doc));
+                items.push_str(&format!("</w:{el}>"));
             }
         }
     }
+    crate::equation::declare_math_ns(&mut root, &items);
+    out.push_str(&root);
+    out.push_str(&items);
     out.push_str(&format!("</w:{}>", kind.root()));
     out
 }

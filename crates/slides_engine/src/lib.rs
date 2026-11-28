@@ -19,6 +19,7 @@ pub mod chart_edit;
 pub mod clip;
 pub mod display_text;
 pub mod edit;
+pub mod equation;
 pub mod fill;
 pub mod find;
 pub mod frame;

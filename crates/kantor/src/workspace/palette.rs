@@ -1505,6 +1505,12 @@ pub(super) const COMMANDS: &[Command] = &[
         run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.open_field_dialog_doc(w, cx)),
     },
     Command {
+        title: tk("Insert Equation"),
+        detail: tk("Docs · LaTeX or a/b, saved as a Word equation; double-click one to edit it"),
+        keys: "Alt =",
+        run: |ws, window, cx| ws.with_docs(window, cx, |v, w, cx| v.open_equation_doc(w, cx)),
+    },
+    Command {
         title: tk("Mailings (Mail Merge)"),
         detail: tk("Docs · letters, certificates and labels filled in from a workbook or CSV file"),
         keys: "",
@@ -2443,6 +2449,12 @@ pub(super) const COMMANDS: &[Command] = &[
         detail: "Slides",
         keys: "",
         run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.insert_text_box_doc(w, cx)),
+    },
+    Command {
+        title: tk("Insert Equation"),
+        detail: tk("Slides · LaTeX or a/b in a new text box, saved as a PowerPoint equation"),
+        keys: "",
+        run: |ws, window, cx| ws.with_slides(window, cx, |v, w, cx| v.insert_equation_doc(w, cx)),
     },
     Command {
         title: tk("Insert Rectangle"),

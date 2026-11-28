@@ -7721,6 +7721,7 @@ dependencies = [
  "flate2",
  "kantor_core",
  "kantor_crypt",
+ "kantor_math",
  "kantor_metafile",
  "kantor_ooxml",
  "roxmltree 0.21.2",

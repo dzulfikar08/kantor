@@ -232,7 +232,7 @@ impl Presentation {
         })
     }
 
-    fn add_shape(&mut self, slide: usize, mut shape: Shape) -> anyhow::Result<usize> {
+    pub(crate) fn add_shape(&mut self, slide: usize, mut shape: Shape) -> anyhow::Result<usize> {
         self.record(Kind::Other, None, Focus::slide(slide), false, |p| {
             let s = p.slide_mut(slide)?;
             shape.id = s.next_shape_id();
@@ -243,7 +243,7 @@ impl Presentation {
         })
     }
 
-    fn centered(&self, cx: Emu, cy: Emu) -> Xfrm {
+    pub(crate) fn centered(&self, cx: Emu, cy: Emu) -> Xfrm {
         Xfrm::new((self.size.cx - cx) / 2, (self.size.cy - cy) / 2, cx, cy)
     }
 

@@ -21,6 +21,7 @@ pub mod columns;
 mod comment_thread;
 mod document;
 pub mod docx;
+pub mod equation;
 mod edit;
 mod field_calc;
 mod field_edit;

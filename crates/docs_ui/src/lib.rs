@@ -23,6 +23,7 @@ mod agent;
 mod ai;
 mod code_inline;
 mod columns_menu;
+mod equation;
 mod field_menu;
 mod fields;
 mod find;
@@ -65,6 +66,7 @@ use kantor_ui::tokens::Elevation;
 use kantor_ui::{Tokens, metrics::*, tokens};
 
 pub use docs_engine::{MarginPreset, Orientation, PageGeometry, PaperSize};
+pub use equation::{EquationDialog, EquationEvent};
 pub use font_bridge::FontBridge;
 pub use mailings::{DocsEvent, Finish as MergeFinish};
 pub use ruler::{ruler_visible, set_ruler_visible, toggle_ruler};
@@ -156,6 +158,7 @@ actions!(
         ToggleFieldCode,
         InsertFieldChars,
         InsertColumnBreak,
+        InsertEquation,
         PopoverKey,
         ZoomIn,
         ZoomOut,
@@ -237,6 +240,8 @@ fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("shift-tab", PopoverKey, Some(POPOVER_CONTEXT)),
         KeyBinding::new("alt-f9", ToggleFieldCodes, c),
         KeyBinding::new("shift-f9", ToggleFieldCode, c),
+        // Word's Insert ▸ Equation.
+        KeyBinding::new("alt-=", InsertEquation, c),
         KeyBinding::new(kantor_ui::keys::primary("ctrl-f9"), InsertFieldChars, c),
         KeyBinding::new(
             kantor_ui::keys::primary("ctrl-shift-enter"),
@@ -594,6 +599,8 @@ pub struct DocsView {
     part: Option<part::PartSession>,
     /// The field code, Insert Field, Bookmark or Cross-reference popover.
     field_menu: Option<field_menu::FieldMenu>,
+    /// The Insert Equation popover.
+    equation: Option<equation::DocsEquation>,
     /// The Mailings bar (mail merge), when shown.
     mailings: Option<mailings::Mailings>,
     /// `KANTOR_PERF` timings (see [`perf`]).
@@ -719,6 +726,7 @@ impl DocsView {
             painter,
             part: None,
             field_menu: None,
+            equation: None,
             mailings: None,
             perf,
             review_memo: RefCell::default(),
@@ -2040,6 +2048,11 @@ impl DocsView {
             self.typing_props = None;
             self.marked = None;
             self.dragging = false;
+            // A double-click on an equation opens it in the editor.
+            if ev.click_count == 2 && o.kind == ObjectKind::Math {
+                self.open_equation_doc(window, cx);
+                return;
+            }
             // A picture dragged from here moves in the text (Word's drag
             // and drop of an object in line).
             if ev.click_count == 1 && matches!(o.kind, ObjectKind::Image | ObjectKind::Drawing) {
@@ -3421,6 +3434,7 @@ impl Render for DocsView {
             ToggleFieldCode => |this, _w, cx| this.toggle_field_code_doc(cx),
             InsertFieldChars => |this, w, cx| this.new_field_code_doc(w, cx),
             InsertColumnBreak => |this, w, cx| this.insert_column_break_doc(w, cx),
+            InsertEquation => |this, w, cx| this.open_equation_doc(w, cx),
             Redo => |this, w, cx| this.redo_doc(w, cx),
             ZoomIn => |this, _w, cx| this.zoom_by(ZOOM_STEP, cx),
             ZoomOut => |this, _w, cx| this.zoom_by(1.0 / ZOOM_STEP, cx),
@@ -3450,6 +3464,7 @@ impl Render for DocsView {
             .children(self.render_split_menu(cx))
             .children(self.render_text_box_menu(cx))
             .children(self.render_field_menu(cx))
+            .children(self.render_equation())
             .children(self.render_recipients(cx))
             .children(self.render_address_dialog(cx))
     }
