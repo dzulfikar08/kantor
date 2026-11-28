@@ -1043,7 +1043,7 @@ pub(crate) fn lay_out_body(
                 .pages
                 .iter()
                 .zip(&laid.paged.pages)
-                .position(|(a, b)| a != b)
+                .position(|(a, b)| !same_but_notes(a, b))
                 .unwrap_or(paged.pages.len().min(laid.paged.pages.len()));
             edit_page.min(differ)
         }
@@ -1058,6 +1058,12 @@ pub(crate) fn lay_out_body(
         let (at, j) = taken?;
         (pi >= at).then(|| (pi - at + j, true))
     };
+    // Those pages as they were (their notes' separator lines included).
+    if let Some(laid) = last {
+        for pi in 0..unmoved {
+            paged.pages[pi] = laid.paged.pages[pi].clone();
+        }
+    }
     if docs_layout::perf::enabled() && prev.is_some() {
         eprintln!(
             "[perf] docs reuse: known {:?}, from block {:?} of {}, pages taken {:?}, unmoved {unmoved}, of {}",
@@ -1332,6 +1338,26 @@ fn changed_note_paras(
     out.sort_unstable();
     out.dedup();
     out
+}
+
+/// Page `new` (before its notes are placed) is `old` (after): the same
+/// but for the lines placing notes added to `old`.
+fn same_but_notes(new: &docs_layout::Page, old: &docs_layout::Page) -> bool {
+    new.lines == old.lines
+        && new.notes == old.notes
+        && new.notes_height == old.notes_height
+        && new.setup == old.setup
+        && new.section == old.section
+        && new.number == old.number
+        && new.floats == old.floats
+        && new.note_parts == old.note_parts
+        && new.continued == old.continued
+        && new.gaps == old.gaps
+        && new.fixed == old.fixed
+        && new.columns == old.columns
+        && new.note_columns == old.note_columns
+        && old.rules.len() >= new.rules.len()
+        && old.rules[..new.rules.len()] == new.rules[..]
 }
 
 /// About how many pages `doc` has when its first `cut` paragraphs take
