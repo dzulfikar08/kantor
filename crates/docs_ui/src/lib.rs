@@ -35,6 +35,8 @@ mod mailings_address;
 mod note_menu;
 mod page_menu;
 mod part;
+mod perf;
+mod pictures;
 mod review;
 mod ruler;
 mod spell;
@@ -45,7 +47,6 @@ pub mod turned_text;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
-use std::hash::{Hash as _, Hasher as _};
 use std::ops::Range;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -54,9 +55,7 @@ use std::sync::Arc;
 use docs_engine::{
     Align, Document, ListKind, OBJECT, Object, Position, RunProps, Selection, TableEdit, Toggle,
 };
-use docs_layout::{
-    Engine, ObjectKind, PageSetup, PagedDocument, ParaLayout, PlacedObject, RunSource,
-};
+use docs_layout::{Engine, ObjectKind, PageSetup, PagedDocument, PlacedObject, RunSource};
 use gpui_kit::component::menu::ContextMenuExt as _;
 use gpui_kit::component::v_flex;
 use gpui_kit::prelude::*;
@@ -340,7 +339,7 @@ pub struct DocInfo {
 /// bridge samples), each page's header and footer, and where pages sit.
 struct Laid {
     paged: PagedDocument,
-    texts: Vec<String>,
+    texts: Arc<Vec<String>>,
     furniture: Vec<Vec<docs_pdf::Placed>>,
     /// Per page: its floating objects (back to front).
     floats: Vec<Vec<docs_pdf::FloatItem>>,
@@ -350,6 +349,20 @@ struct Laid {
     /// Where the header, footer or note being edited is drawn (`None`:
     /// the body is edited). See [`part`].
     part: Option<Vec<part::Piece>>,
+}
+
+impl Laid {
+    fn empty() -> Self {
+        Self {
+            paged: PagedDocument::paginate(&[], Vec::new(), PageSetup::a4()),
+            texts: Arc::default(),
+            furniture: Vec::new(),
+            floats: Vec::new(),
+            strikes: Arc::default(),
+            boxes: Rc::default(),
+            part: None,
+        }
+    }
 }
 
 /// Page sizes and their stacking: page `i`'s top is `tops[i]` in document
@@ -373,15 +386,24 @@ impl PageBoxes {
         Self { tops, sizes, max_w }
     }
 
+    #[cfg(test)]
     fn of(paged: &PagedDocument) -> Self {
-        Self::new(
-            (0..paged.pages.len())
-                .map(|i| {
-                    let s = paged.page_setup(i);
-                    (s.width, s.height)
-                })
-                .collect(),
-        )
+        Self::with_estimate(paged, None)
+    }
+
+    /// [`Self::of`], with room for `estimate` pages in all (pages not laid
+    /// out yet: the last one's size) while a long document is laid out.
+    fn with_estimate(paged: &PagedDocument, estimate: Option<usize>) -> Self {
+        let mut sizes: Vec<(f32, f32)> = (0..paged.pages.len())
+            .map(|i| {
+                let s = paged.page_setup(i);
+                (s.width, s.height)
+            })
+            .collect();
+        if let (Some(n), Some(&last)) = (estimate, sizes.last()) {
+            sizes.resize(n.max(sizes.len()), last);
+        }
+        Self::new(sizes)
     }
 }
 
@@ -500,9 +522,12 @@ pub struct DocsView {
     /// IME composition: byte range in the caret's paragraph.
     marked: Option<Range<usize>>,
     laid: Rc<Laid>,
-    cache: HashMap<u64, Arc<ParaLayout>>,
+    cache: docs_pdf::LayoutCache,
     /// Decoded-on-demand pictures by relationship id.
     images: HashMap<String, Arc<gpui_kit::Image>>,
+    /// The body's PNG and JPEG pictures, decoded in the background at the
+    /// size they're shown (see [`pictures`]).
+    pictures: pictures::Pictures,
     /// Turned floating pictures, by [`floats::picture_key`].
     turned_images: HashMap<String, Arc<RenderImage>>,
     /// Turned text boxes' text (see [`floats::TurnedCache`]).
@@ -552,6 +577,10 @@ pub struct DocsView {
     find: Entity<kantor_ui::find_bar::FindBar>,
     found: find::Found,
     found_current: Option<usize>,
+    /// A search going on in the background (long documents), and where to
+    /// go once it's done.
+    find_task: Option<Task<()>>,
+    find_go: Option<(Position, bool)>,
     _find_sub: Subscription,
     /// Spell checking as you type.
     spell: spell::SpellState,
@@ -567,35 +596,38 @@ pub struct DocsView {
     field_menu: Option<field_menu::FieldMenu>,
     /// The Mailings bar (mail merge), when shown.
     mailings: Option<mailings::Mailings>,
+    /// `KANTOR_PERF` timings (see [`perf`]).
+    perf: Option<Rc<perf::Perf>>,
+    /// The body's tracked changes and comment anchors (see
+    /// [`review::ReviewMemo`]).
+    review_memo: RefCell<review::ReviewMemo>,
+    /// A long document's layout being made in the background (see
+    /// [`DocsView::first_layout`]); meanwhile only its start is laid out.
+    bg_layout: Option<Task<()>>,
+    /// A save being written in the background (see [`DocsView::save_with`]).
+    saving: Option<Task<()>>,
+    /// The document (instance, revision) `laid`'s paragraph texts are of.
+    texts_at: Option<(u64, u64)>,
+    /// While the background layout runs: how many paragraphs the first
+    /// pages are laid out from (more when scrolled further).
+    prefix_paras: usize,
+    /// The main document's words and characters (see [`DocsView::counts`]).
+    counts: Cell<Option<Counts>>,
 }
 
-/// Cache key: everything that affects shaping and line breaking.
-fn layout_key(p: &docs_layout::Paragraph, width: f32) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    p.text.hash(&mut h);
-    p.family.hash(&mut h);
-    p.size_pt.to_bits().hash(&mut h);
-    format!("{:?}", p.line_height).hash(&mut h);
-    (p.align as u8).hash(&mut h);
-    width.to_bits().hash(&mut h);
-    for v in [p.indent_left_pt, p.indent_right_pt, p.first_line_pt] {
-        v.to_bits().hash(&mut h);
-    }
-    format!("{:?}{:?}{:?}{:?}", p.marker, p.objects, p.tabs, p.hidden).hash(&mut h);
-    p.default_tab.to_bits().hash(&mut h);
-    p.decimal.hash(&mut h);
-    for s in &p.spans {
-        s.range.hash(&mut h);
-        (s.bold, s.italic, s.underline).hash(&mut h);
-        s.size_pt.map(f32::to_bits).hash(&mut h);
-        s.color.hash(&mut h);
-        s.family.hash(&mut h);
-    }
-    h.finish()
-}
+/// A document's words and characters, and the revision, instance and
+/// length they were counted at.
+type Counts = ((u64, u64, usize), usize, usize);
+
+/// Documents with at least this many paragraphs are laid out in the
+/// background on opening, their first pages shown at once.
+const BACKGROUND_PARAS: usize = 2500;
+/// About how many paragraphs those first pages are laid out from.
+const PREFIX_PARAS: usize = 400;
 
 impl DocsView {
     pub fn new(path: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let perf = perf::Perf::new();
         // A protected file's password, checked by the workspace before this
         // tab opened (kantor_ui::office_password).
         let open = |p: &std::path::Path| {
@@ -612,26 +644,30 @@ impl DocsView {
             }
             None => (Document::new(), String::new()),
         };
-        Self::with_document(doc, status, window, cx)
+        if let Some(p) = &perf {
+            p.opened("read");
+        }
+        Self::with_document(doc, status, perf, window, cx)
     }
 
     /// A pane showing a document restored from a recovery copy (see
     /// `kantor_core::recovery`), unsaved.
     pub fn new_recovered(doc: Document, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let status = tf("Restored unsaved changes to {}", &[&doc.title()]);
-        Self::with_document(doc, status, window, cx)
+        Self::with_document(doc, status, perf::Perf::new(), window, cx)
     }
 
     fn with_document(
         mut doc: Document,
         status: String,
+        perf: Option<Rc<perf::Perf>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         doc.set_author(&kantor_core::settings::Settings::load().author_name());
         let (engine, bridge) = shared(cx);
         let focus = cx.focus_handle();
-        let doc_for_painter = doc.clone();
+        let painter = Rc::new(docs_pdf::floats::Painter::new(&doc));
         let (find, find_sub) = find::new_bar(window, cx);
         let mut this = Self {
             doc,
@@ -641,17 +677,10 @@ impl DocsView {
             goal_x: None,
             typing_props: None,
             marked: None,
-            laid: Rc::new(Laid {
-                paged: PagedDocument::paginate(&[], Vec::new(), PageSetup::a4()),
-                texts: Vec::new(),
-                furniture: Vec::new(),
-                floats: Vec::new(),
-                strikes: Arc::default(),
-                boxes: Rc::default(),
-                part: None,
-            }),
-            cache: HashMap::new(),
+            laid: Rc::new(Laid::empty()),
+            cache: docs_pdf::LayoutCache::default(),
             images: HashMap::new(),
+            pictures: pictures::Pictures::default(),
             turned_images: HashMap::new(),
             turned_texts: HashMap::new(),
             table_picker: None,
@@ -680,45 +709,137 @@ impl DocsView {
             find,
             found: Rc::default(),
             found_current: None,
+            find_task: None,
+            find_go: None,
             _find_sub: find_sub,
             spell: spell::SpellState::default(),
             float_sel: None,
             float_drag: None,
             text_box_edit: None,
-            painter: Rc::new(docs_pdf::floats::Painter::new(&doc_for_painter)),
+            painter,
             part: None,
             field_menu: None,
             mailings: None,
+            perf,
+            review_memo: RefCell::default(),
+            bg_layout: None,
+            saving: None,
+            texts_at: None,
+            prefix_paras: PREFIX_PARAS,
+            counts: Cell::default(),
         };
-        this.relayout();
+        this.first_layout(cx);
         this.refresh_spelling(cx);
         this
     }
 
     // ── layout ─────────────────────────────────────────────────────────────
 
+    /// The first layout of a document just opened. A long one shows its
+    /// first pages at once ([`docs_pdf::LayoutCache::relayout_prefix`])
+    /// and is laid out whole in the background, its paragraphs shaped on
+    /// several threads; the page count is final when that's done
+    /// ([`Self::install_background`]).
+    fn first_layout(&mut self, cx: &mut Context<Self>) {
+        if self.doc.len() < BACKGROUND_PARAS
+            || std::env::var_os("KANTOR_DOCS_SYNC_LAYOUT").is_some()
+        {
+            self.relayout();
+            if let Some(p) = &self.perf {
+                p.opened("layout");
+                p.pages_final(self.laid.paged.pages.len());
+            }
+            return;
+        }
+        let doc = self.doc.clone();
+        let fonts = {
+            let mut engine = self.engine.borrow_mut();
+            engine.fonts.source_cache.make_shared();
+            engine.fonts.clone()
+        };
+        let task = cx.background_spawn(async move {
+            let _t = docs_layout::perf::span("docs background layout");
+            docs_pdf::cache::lay_out_parallel(&doc, &fonts)
+        });
+        self.bg_layout = Some(cx.spawn(async move |this, cx| {
+            let bg = task.await;
+            let _ = this.update(cx, |this, cx| this.install_background(bg, cx));
+        }));
+        // Meanwhile: the first pages.
+        self.relayout();
+        if let Some(p) = &self.perf {
+            p.opened("layout (first pages)");
+        }
+    }
+
+    /// While the background layout runs: when the view shows pages past
+    /// those laid out, lay the start of the document out further (to
+    /// about half of it; further on the whole layout is moments away, the
+    /// pages show their outline meanwhile).
+    fn lay_out_pages_shown(&mut self) {
+        if self.bg_layout.is_none() || self.part.is_some() {
+            return;
+        }
+        let g = self.geometry();
+        let laid = self.laid.paged.pages.len();
+        let shown = g.visible_pages(g.boxes.tops.len());
+        if shown.end <= laid || laid == 0 {
+            return;
+        }
+        let n = self.doc.len();
+        let est = g.boxes.tops.len().max(1);
+        let want = ((shown.end + 2) * n).div_ceil(est) + PREFIX_PARAS / 2;
+        if want > n / 2 || want <= self.prefix_paras {
+            return;
+        }
+        let _t = docs_layout::perf::span("docs lay out further");
+        self.prefix_paras = want;
+        self.relayout();
+    }
+
+    /// The background layout is done: show all of it (or, after edits
+    /// made meanwhile, lay out again with its paragraph layouts).
+    fn install_background(&mut self, bg: docs_pdf::cache::Background, cx: &mut Context<Self>) {
+        self.bg_layout = None;
+        let laid = if self.part.is_none() {
+            self.cache.install(&self.doc, bg)
+        } else {
+            let _ = self.cache.install(&self.doc, bg);
+            None
+        };
+        match laid {
+            Some(laid) => {
+                let texts = self
+                    .doc
+                    .paragraphs()
+                    .iter()
+                    .map(|p| p.text.clone())
+                    .collect();
+                self.texts_at = Some((self.doc.instance(), self.doc.revision()));
+                self.set_laid(laid, texts);
+            }
+            None => self.relayout(),
+        }
+        if let Some(p) = &self.perf {
+            p.pages_final(self.laid.paged.pages.len());
+        }
+        // The first pages' layout and the background's copy are gone.
+        kantor_mem::release_free_memory_soon(std::time::Duration::from_secs(2));
+        self.clamp_scroll();
+        cx.notify();
+    }
+
     /// Lay out the document again, reusing cached paragraph layouts.
     fn relayout(&mut self) {
+        let _t = docs_layout::perf::span("docs relayout");
         let mut engine = self.engine.borrow_mut();
-        let mut fresh = HashMap::with_capacity(self.doc.len());
-        let cache = &self.cache;
-        let mut lay = |doc: &Document| {
-            docs_pdf::lay_out_with(doc, &mut |p, width| {
-                let key = layout_key(p, width);
-                let layout = match cache.get(&key).or_else(|| fresh.get(&key)) {
-                    Some(l) => l.clone(),
-                    None => Arc::new(engine.layout_paragraph(p, width)),
-                };
-                fresh.insert(key, layout.clone());
-                layout
-            })
-        };
         // A part being edited goes back into the main document while it
         // is laid out.
         let (laid, texts) = match &mut self.part {
             Some(s) => {
+                let mut pass = self.cache.pass(&mut engine);
                 s.main.swap_part(&s.edit, &mut self.doc);
-                let mut laid = lay(&s.main);
+                let mut laid = pass.lay_out(&s.main);
                 // A "Resize shape to fit text" box that grew (or shrank) as
                 // it is typed in: the text around it wraps around its new
                 // size now, not only when the box is left.
@@ -728,32 +849,90 @@ impl DocsView {
                 {
                     let cy = (it.rect[3] * docs_engine::object::EMU_PER_PX).round() as i64;
                     if s.main.fit_text_box_live(b, cy) {
-                        laid = lay(&s.main);
+                        laid = pass.lay_out(&s.main);
                     }
                 }
                 s.main.swap_part(&s.edit, &mut self.doc);
+                pass.finish();
                 let texts = s.main.paragraphs().iter().map(|p| p.text.clone()).collect();
                 (laid, texts)
             }
             None => {
-                let laid = lay(&self.doc);
-                let texts = self
-                    .doc
-                    .paragraphs()
-                    .iter()
-                    .map(|p| p.text.clone())
-                    .collect();
+                // The last layout goes back to the cache: a one-paragraph
+                // edit updates it instead of laying everything out again.
+                let old = std::mem::replace(&mut self.laid, Rc::new(Laid::empty()));
+                let (prev, mut texts) = match Rc::try_unwrap(old) {
+                    Ok(l) => (
+                        Some(docs_pdf::Layout {
+                            paged: l.paged,
+                            furniture: l.furniture,
+                            floats: l.floats,
+                            strikes: l.strikes,
+                        }),
+                        // (A copy when a search in the background has it.)
+                        Arc::try_unwrap(l.texts).unwrap_or_else(|t| t.as_ref().clone()),
+                    ),
+                    Err(_) => (None, Vec::new()),
+                };
+                let laid = if self.bg_layout.is_some() {
+                    // The whole document is being laid out in the
+                    // background: its start (to past the caret and the
+                    // pages scrolled to) for now.
+                    let limit = PREFIX_PARAS
+                        .max(self.sel.head.para + PREFIX_PARAS / 2)
+                        .max(self.prefix_paras);
+                    self.cache.relayout_prefix(&self.doc, &mut engine, limit)
+                } else {
+                    self.cache.relayout(&self.doc, &mut engine, prev)
+                };
+                // The texts were of the document as last laid out: one edit
+                // since changes only the paragraphs it made.
+                let doc = &self.doc;
+                let edit = doc.last_splice().filter(|sp| {
+                    self.texts_at == Some((doc.instance(), sp.revision.wrapping_sub(1)))
+                        && texts.len() + sp.inserted == doc.len() + sp.removed
+                        && sp.start + sp.removed <= texts.len()
+                });
+                match (self.cache.outcome, edit) {
+                    (docs_pdf::cache::Outcome::Quick { para }, _) if texts.len() == doc.len() => {
+                        texts[para] = doc.paragraph(para).text.clone();
+                    }
+                    (_, Some(sp)) => {
+                        let new = doc.paragraphs()[sp.start..sp.start + sp.inserted]
+                            .iter()
+                            .map(|p| p.text.clone());
+                        texts.splice(sp.start..sp.start + sp.removed, new);
+                    }
+                    _ => {
+                        let _t = docs_layout::perf::span("docs relayout texts");
+                        texts = self
+                            .doc
+                            .paragraphs()
+                            .iter()
+                            .map(|p| p.text.clone())
+                            .collect();
+                    }
+                }
+                self.texts_at = Some((self.doc.instance(), self.doc.revision()));
                 (laid, texts)
             }
         };
-        drop(lay);
-        self.cache = fresh;
+        if self.part.is_some() {
+            self.texts_at = None;
+        }
         drop(engine);
-        let boxes = Rc::new(PageBoxes::of(&laid.paged));
+        self.set_laid(laid, texts);
+    }
+
+    /// Show `laid` (`texts`: the paragraphs' text, for painting).
+    fn set_laid(&mut self, laid: docs_pdf::Layout, texts: Vec<String>) {
+        // While the rest is laid out: the pages it should have.
+        let estimate = self.bg_layout.as_ref().and(self.cache.estimate);
+        let boxes = Rc::new(PageBoxes::with_estimate(&laid.paged, estimate));
         let part = self.part_pieces(&laid.furniture, &laid.floats);
         self.laid = Rc::new(Laid {
             paged: laid.paged,
-            texts,
+            texts: Arc::new(texts),
             furniture: laid.furniture,
             floats: laid.floats,
             strikes: laid.strikes,
@@ -822,12 +1001,17 @@ impl DocsView {
             self.refresh_merge_view();
         }
         self.relayout();
+        let t = docs_layout::perf::span("docs find after edit");
         self.refresh_find(cx);
+        drop(t);
+        let t = docs_layout::perf::span("docs spelling after edit");
         self.refresh_spelling(cx);
+        drop(t);
         self.spell.typing = true;
         self.reveal_caret.set(true);
         self.status = SharedString::default();
         if self.title(cx) != was_dirty_title {
+            let _t = docs_layout::perf::span("docs title after edit");
             self.update_title(window, cx);
         }
         cx.notify();
@@ -1303,6 +1487,33 @@ impl DocsView {
         (doc.to_docx_bytes(), doc.unsupported_content().to_vec())
     }
 
+    /// [`Self::recovery_bytes`] made later, away from the UI thread: a
+    /// copy of the document now, written as `.docx` by the closure (a long
+    /// document takes a second or more to write).
+    #[allow(clippy::type_complexity)]
+    pub fn recovery_build(
+        &self,
+        _: &App,
+    ) -> (
+        Box<dyn FnOnce() -> anyhow::Result<Vec<u8>> + Send>,
+        Vec<String>,
+    ) {
+        let t = docs_layout::perf::span("docs recovery copy of the document");
+        let doc = self.whole_doc().into_owned();
+        drop(t);
+        let unsupported = doc.unsupported_content().to_vec();
+        (
+            Box::new(move || {
+                let bytes = doc.to_docx_bytes();
+                drop(doc);
+                // The copy was big: give its memory back.
+                kantor_mem::release_free_memory_soon(std::time::Duration::from_secs(1));
+                bytes
+            }),
+            unsupported,
+        )
+    }
+
     /// Whether autosave may save it: it has a file it can be saved to
     /// as is, unchanged on disk by others.
     pub fn can_autosave(&self, _: &App) -> bool {
@@ -1345,20 +1556,55 @@ impl DocsView {
 
     /// Caret location for the status bar, e.g. `Page 2 of 5 · 1,234 words`.
     pub fn location(&self) -> String {
-        let pages = self.laid.paged.pages.len();
         let page = self
             .laid
             .caret(self.sel.head.para, self.sel.head.offset)
             .map_or(1, |c| c.page + 1);
-        let main = self.main_doc();
-        let total = (main.word_count(), main.char_count());
+        let total = self.counts();
         let (start, end) = self.sel.ordered();
         let selected = (start != end).then(|| self.doc.stats_in(start, end));
         let counts = count_text(total, selected);
-        tf("Page {} of {} · {}", &[&page, &pages, &counts])
+        // While the background layout runs only the pages laid out so far
+        // are counted (the estimate the page list makes room for can be
+        // well off: it isn't shown).
+        let counting = self.bg_layout.is_some() && self.part.is_none();
+        location_text(page, self.laid.paged.pages.len(), counting, &counts)
+    }
+
+    /// Words and characters of the main document (kept until it changes:
+    /// the inspector asks on every frame).
+    fn counts(&self) -> (usize, usize) {
+        let main = self.main_doc();
+        let key = (main.revision(), main.instance(), main.len());
+        let last = self.counts.get();
+        if let Some((k, w, c)) = last
+            && k == key
+        {
+            return (w, c);
+        }
+        // One edit since: count what it replaced and what it made.
+        let one = main
+            .last_splice()
+            .filter(|sp| sp.old.len() == sp.removed && sp.start + sp.inserted <= main.len());
+        let counted = match (last, one) {
+            (Some((k, w, c)), Some(sp)) if k.0 + 1 == key.0 && k.1 == key.1 => {
+                let new = &main.paragraphs()[sp.start..sp.start + sp.inserted];
+                let sum = |ps: &[docs_engine::Paragraph]| {
+                    ps.iter()
+                        .fold((0, 0), |(w, c), p| (w + p.word_count(), c + p.char_count()))
+                };
+                let (ow, oc) = sum(&sp.old);
+                let (nw, nc) = sum(new);
+                ((w + nw).saturating_sub(ow), (c + nc).saturating_sub(oc))
+            }
+            _ => (main.word_count(), main.char_count()),
+        };
+        self.counts.set(Some((key, counted.0, counted.1)));
+        counted
     }
 
     pub fn info(&self) -> DocInfo {
+        let (words, chars) = self.counts();
         let main = self.main_doc();
         let p = self.doc.paragraph(self.sel.head.para);
         let style = p
@@ -1372,9 +1618,9 @@ impl DocsView {
             name: self.name(),
             path: main.source_path().map(|p| p.to_path_buf()),
             dirty: self.dirty(),
-            pages: self.laid.paged.pages.len(),
-            words: main.word_count(),
-            chars: main.char_count(),
+            pages: self.laid.boxes.tops.len().max(self.laid.paged.pages.len()),
+            words,
+            chars,
             paragraphs: main.len(),
             style,
             font: format!("{} {} pt", r.font, r.size_pt),
@@ -1386,14 +1632,24 @@ impl DocsView {
     // ── saving ─────────────────────────────────────────────────────────────
 
     pub fn save_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.save(&Save, window, cx);
+        self.save_with(false, window, cx);
     }
 
     pub fn save_doc_as(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.save_as(&SaveAs, window, cx);
     }
 
+    /// Ctrl+S: a long document is written in the background.
     fn save(&mut self, _: &Save, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(p) = &self.perf {
+            p.input("action Save");
+        }
+        self.save_with(true, window, cx);
+    }
+
+    /// Save; `background`: a long document is written away from the UI
+    /// thread (the document is copied, edits go on meanwhile).
+    fn save_with(&mut self, background: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.main_doc().needs_save_as() {
             self.save_as_task(window, cx).detach();
             return;
@@ -1410,7 +1666,7 @@ impl DocsView {
                     let _ = view.update(cx, |this, cx| match choice {
                         kantor_ui::disk_guard::Overwrite::Replace => {
                             this.disk_guard = None;
-                            this.save(&Save, window, cx);
+                            this.save_with(background, window, cx);
                         }
                         kantor_ui::disk_guard::Overwrite::SaveAs => {
                             this.save_as(&SaveAs, window, cx)
@@ -1420,8 +1676,59 @@ impl DocsView {
             );
             return;
         }
+        if self.saving.is_some() {
+            // One save at a time: this one waits for it, then saves (sync).
+            return self.after_background_save(window, cx);
+        }
+        if background && self.part.is_none() && self.doc.len() >= BACKGROUND_PARAS {
+            let job = {
+                let _t = docs_layout::perf::span("docs save (copy)");
+                self.doc.begin_save()
+            };
+            match job {
+                Ok(job) => {
+                    self.status = t("Saving…").into();
+                    let task = cx.background_spawn(async move {
+                        let _t = docs_layout::perf::span("docs save (background)");
+                        job.run()
+                    });
+                    self.saving = Some(cx.spawn_in(window, async move |this, cx| {
+                        let done = task.await;
+                        let _ = this.update_in(cx, |this, window, cx| {
+                            this.saving = None;
+                            let result = this.doc.finish_save(done);
+                            this.after_save(result, window, cx);
+                            // The document's copy written is gone.
+                            kantor_mem::release_free_memory_soon(std::time::Duration::from_secs(1));
+                        });
+                    }));
+                    cx.notify();
+                }
+                Err(e) => self.after_save(Err(e), window, cx),
+            }
+            return;
+        }
+        let t = docs_layout::perf::span("docs save");
         let result = self.save_whole(window, cx, |doc| doc.save());
+        drop(t);
         self.after_save(result, window, cx);
+    }
+
+    /// Save asked while a background save is going: wait for it, then save
+    /// on the UI thread (what changed since).
+    fn after_background_save(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(running) = self.saving.take() else {
+            return;
+        };
+        self.saving = Some(cx.spawn_in(window, async move |this, cx| {
+            running.await;
+            let _ = this.update_in(cx, |this, window, cx| {
+                this.saving = None;
+                if this.dirty() {
+                    this.save_with(false, window, cx);
+                }
+            });
+        }));
     }
 
     /// Run a save on the whole document: a header, footer or note being
@@ -1452,7 +1759,18 @@ impl DocsView {
         if self.doc.needs_save_as() {
             return self.save_as_task(window, cx);
         }
-        self.save(&Save, window, cx);
+        // A background save going on: after it, save what changed since.
+        if let Some(running) = self.saving.take() {
+            return cx.spawn_in(window, async move |this, cx| {
+                running.await;
+                this.update_in(cx, |this, window, cx| {
+                    this.save_with(false, window, cx);
+                    !this.doc.is_dirty()
+                })
+                .unwrap_or(false)
+            });
+        }
+        self.save_with(false, window, cx);
         Task::ready(!self.doc.is_dirty())
     }
 
@@ -1799,6 +2117,9 @@ impl DocsView {
     }
 
     fn on_scroll(&mut self, ev: &ScrollEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(p) = &self.perf {
+            p.input("wheel");
+        }
         let delta = ev.delta.pixel_delta(window.line_height());
         if ev.modifiers.control || ev.modifiers.platform {
             let dy = f32::from(delta.y);
@@ -1829,7 +2150,11 @@ impl DocsView {
         let laid = self.laid.clone();
         let paged = &laid.paged;
         let g = self.geometry();
-        for page in g.visible_pages(paged.pages.len()) {
+        let visible = g.visible_pages(paged.pages.len());
+        // Two pages either side decoded ahead (not drawn).
+        let ahead = visible.start.saturating_sub(2)..(visible.end + 2).min(paged.pages.len());
+        for page in ahead {
+            let shown = visible.contains(&page);
             for o in paged.objects(page) {
                 if o.kind != ObjectKind::Image {
                     continue;
@@ -1838,6 +2163,25 @@ impl DocsView {
                     continue;
                 };
                 let img = img.clone();
+                let side = o.whole[2].max(o.whole[3]);
+                if let Some(data) = self.screen_picture_of(&img.rel_id, side, cx) {
+                    if shown {
+                        let pic = floats::inline_pic(
+                            &self.painter,
+                            &mut self.turned_images,
+                            &img.rel_id,
+                            &img,
+                            o.whole,
+                            data,
+                            window,
+                        );
+                        out.insert((o.para, o.index), pic);
+                    }
+                    continue;
+                }
+                if self.picture_decoding(&img.rel_id) || !shown {
+                    continue;
+                }
                 let image = match self.images.get(&img.rel_id) {
                     Some(i) => i.clone(),
                     None => {
@@ -2087,6 +2431,17 @@ fn opened_status(doc: &Document) -> String {
     }
 }
 
+/// The status bar's `Page 2 of 5 · …`; while the pages are still being
+/// counted, the pages counted so far and "counting…".
+fn location_text(page: usize, pages: usize, counting: bool, counts: &str) -> String {
+    let pages = pages.max(page);
+    if counting {
+        tf("Page {} of {}, counting… · {}", &[&page, &pages, &counts])
+    } else {
+        tf("Page {} of {} · {}", &[&page, &pages, &counts])
+    }
+}
+
 /// `1,234 words · 6,789 characters`, or for a selection
 /// `12 of 1,234 words · 60 characters`.
 fn count_text(total: (usize, usize), selected: Option<(usize, usize)>) -> String {
@@ -2133,7 +2488,13 @@ fn layout_color(c: docs_layout::Rgba) -> Hsla {
 
 macro_rules! listeners {
     ($el:expr, $cx:expr, [$($action:ident => |$this:ident, $window:ident, $c:ident| $body:expr),* $(,)?]) => {
-        $el$(.on_action($cx.listener(|$this: &mut DocsView, _: &$action, $window: &mut Window, $c: &mut Context<DocsView>| { $body; })))*
+        $el$(.on_action($cx.listener(|$this: &mut DocsView, _: &$action, $window: &mut Window, $c: &mut Context<DocsView>| {
+            // KANTOR_PERF: the action's time to the frame showing it.
+            if let Some(p) = &$this.perf {
+                p.input(concat!("action ", stringify!($action)));
+            }
+            $body;
+        })))*
     };
 }
 
@@ -2284,8 +2645,20 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
     window.paint_quad(fill(bounds, f.t.desk));
     let (start, end) = f.sel.ordered();
     let laid = &f.laid;
+    // Only what the visible pages show (a long document can have a
+    // selection, find matches or comments all through it).
+    let visible = g.visible_pages(paged.pages.len());
+    let shown = if laid.editing_part() {
+        Some((0, usize::MAX))
+    } else {
+        paged.paras_on(visible.clone())
+    };
     let selection = if start != end {
-        laid.selection_rects((start.para, start.offset), (end.para, end.offset))
+        laid.selection_rects_on(
+            (start.para, start.offset),
+            (end.para, end.offset),
+            visible.clone(),
+        )
     } else {
         Vec::new()
     };
@@ -2293,11 +2666,11 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
     let editing_hf = f.editing_hf;
     let body_ink = if editing_hf.is_some() { 0.45 } else { 1.0 };
     // Find matches: all of them light, the current one stronger.
-    let visible = g.visible_pages(paged.pages.len());
     let found: Vec<(usize, [f32; 4], bool)> = f
         .found
         .iter()
         .enumerate()
+        .filter(|(_, (p, _))| shown.is_some_and(|(lo, hi)| *p >= lo && *p <= hi))
         .flat_map(|(i, (p, r))| {
             laid.selection_rects((*p, r.start), (*p, r.end))
                 .into_iter()
@@ -2319,6 +2692,29 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
         )
     };
     window.with_content_mask(Some(ContentMask { bounds }), |window| {
+        // Pages not laid out yet (a long document just opened): paper
+        // with the outline of text, until they are.
+        for page in g.visible_pages(g.boxes.tops.len()) {
+            if page < paged.pages.len() {
+                continue;
+            }
+            let (page_w, page_h) = g.page_size(page);
+            let pb = rect(page, [0., 0., page_w, page_h]);
+            window.paint_drop_shadows(pb, Corners::default(), &shadow);
+            window.paint_quad(fill(pb, f.t.paper));
+            let (left, top, width) = (page_w * 0.12, page_h * 0.1, page_w * 0.76);
+            let mut y = top;
+            let mut k = 0usize;
+            while y < page_h * 0.88 {
+                let w = if k % 7 == 6 { width * 0.55 } else { width };
+                window.paint_quad(fill(
+                    rect(page, [left, y, w, 6.0]),
+                    f.t.paper_ink.opacity(0.06),
+                ));
+                y += 18.0;
+                k += 1;
+            }
+        }
         for page in g.visible_pages(paged.pages.len()) {
             let (page_w, page_h) = g.page_size(page);
             let pb = rect(page, [0., 0., page_w, page_h]);
@@ -2357,7 +2753,11 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             floats::paint_floats(f, &g, page, true, window, &mut text_box);
             // Merge fields: Word's grey shading.
             for (a, b) in &f.merge_marks {
-                let rects = paged.selection_rects((a.para, a.offset), (b.para, b.offset));
+                let rects = paged.selection_rects_on(
+                    (a.para, a.offset),
+                    (b.para, b.offset),
+                    page..page + 1,
+                );
                 for (p, r) in rects {
                     if p == page {
                         window.paint_quad(fill(rect(page, r), hsla(0.0, 0.0, 0.5, 0.25)));
@@ -2374,7 +2774,9 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             }
             // Commented text: a soft highlight, stronger for the active one.
             for (a, b, active) in &f.comment_ranges {
-                for (p, r) in paged.selection_rects((a.para, a.offset), (b.para, b.offset)) {
+                for (p, r) in
+                    paged.selection_rects_on((a.para, a.offset), (b.para, b.offset), page..page + 1)
+                {
                     if p == page {
                         let c = hsla(0.13, 0.95, 0.55, if *active { 0.45 } else { 0.25 });
                         window.paint_quad(fill(rect(page, r), c));
@@ -2645,15 +3047,26 @@ fn viewport_needs_render(old: Bounds<Pixels>, new: Bounds<Pixels>) -> bool {
 
 impl Render for DocsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let _render = docs_layout::perf::span("docs render");
+        let start = docs_layout::perf::span("docs render: start");
+        self.lay_out_pages_shown();
+        self.perf_bench_step(window);
         let t = tokens(cx);
         if self.reveal_caret.get() && self.viewport.get().size.height > px(0.) {
             self.reveal_caret.set(false);
             self.scroll_to_caret();
         }
+        drop(start);
         // Pictures, floating objects and comments come from the whole
         // document (a part being edited put back for a moment).
         let swapped = self.whole_in();
-        let images = self.visible_images(window, cx);
+        let images = {
+            let _s = docs_layout::perf::span("docs render: pictures");
+            let images = self.visible_images(window, cx);
+            self.trim_pictures(window);
+            images
+        };
+        let floats_span = docs_layout::perf::span("docs render: floats");
         let mut turned = std::mem::take(&mut self.turned_texts);
         let float_paint = floats::float_paint(
             &self.doc,
@@ -2667,15 +3080,30 @@ impl Render for DocsView {
             window.drop_image(img).ok();
         }
         let float_images = self.visible_float_images(&float_paint, window, cx);
+        drop(floats_span);
+        let button_span = docs_layout::perf::span("docs render: layout button");
         let float_sel = self.float_sel_rect();
         let layout_button = self.render_layout_button(cx);
-        let hf_images = self.visible_hf_images(window, cx);
+        drop(button_span);
+        let hf_images = {
+            let _s = docs_layout::perf::span("docs render: header pictures");
+            self.visible_hf_images(window, cx)
+        };
+        let review_span = docs_layout::perf::span("docs render: review");
         let cards = self.comment_cards();
         let (sa, sb) = self.body_sel().ordered();
         let comment_ranges = if self.markup_visible() {
-            self.doc
-                .comment_anchors()
-                .into_iter()
+            // On the visible pages.
+            let shown = self
+                .laid
+                .paged
+                .paras_on(self.geometry().visible_pages(self.laid.paged.pages.len()));
+            self.doc_comment_anchors()
+                .iter()
+                .filter(|(_, a)| {
+                    self.part.is_some()
+                        || shown.is_some_and(|(lo, hi)| a.end.para >= lo && a.start.para <= hi)
+                })
                 .map(|(_, a)| (a.start, a.end, a.start <= sb && a.end >= sa))
                 .collect()
         } else {
@@ -2697,9 +3125,11 @@ impl Render for DocsView {
             .collect();
         let card_elements = self.render_cards(&cards, cx);
         let change_bars = self.change_bars();
+        drop(review_span);
         if swapped {
             self.whole_out();
         }
+        let _rest = docs_layout::perf::span("docs render: rest");
         if kantor_ui::spelling::enabled(cx) != self.spell.is_on()
             || (self.spell.is_on() && self.spell.flags.len() != self.doc.len())
         {
@@ -2778,6 +3208,7 @@ impl Render for DocsView {
         };
         let viewport = self.viewport.clone();
         let entity = cx.entity().downgrade();
+        let perf = self.perf.clone();
         let page = canvas(
             move |bounds, _, cx| {
                 let old = viewport.replace(bounds);
@@ -2785,7 +3216,14 @@ impl Render for DocsView {
                     let _ = entity.update(cx, |_, cx| cx.notify());
                 }
             },
-            move |bounds, _, window, cx| paint_frame(&frame, bounds, window, cx),
+            move |bounds, _, window, cx| {
+                let t = docs_layout::perf::span("docs paint");
+                paint_frame(&frame, bounds, window, cx);
+                drop(t);
+                if let Some(p) = &perf {
+                    p.painted(frame.laid.paged.pages.len());
+                }
+            },
         )
         .size_full();
 
@@ -2811,7 +3249,14 @@ impl Render for DocsView {
             .children(layout_button)
             .children(card_elements)
             .when(self.find.read(cx).is_open(), |el| {
-                el.child(self.find.clone())
+                // (Its Enter goes to the next match, not into the page.)
+                el.child(
+                    div()
+                        .key_context(POPOVER_CONTEXT)
+                        .absolute()
+                        .size_full()
+                        .child(self.find.clone()),
+                )
             })
             .context_menu({
                 let view = cx.entity().downgrade();
@@ -2820,6 +3265,18 @@ impl Render for DocsView {
 
         let root = v_flex()
             .key_context(KEY_CONTEXT)
+            .when_some(self.perf.clone(), |el, p| {
+                el.capture_key_down(move |ev: &KeyDownEvent, _, _| {
+                    let k = &ev.keystroke;
+                    let m = k.modifiers;
+                    p.input(format!(
+                        "key {}{}{}",
+                        if m.control { "ctrl-" } else { "" },
+                        if m.shift { "shift-" } else { "" },
+                        k.key
+                    ))
+                })
+            })
             .track_focus(&self.focus)
             .size_full()
             .bg(t.bg)
@@ -3011,6 +3468,26 @@ mod tests {
         (paras, paged)
     }
 
+    /// While the rest of a long document is laid out, the status bar shows
+    /// the pages counted so far and that it's still counting (the estimate
+    /// the page list makes room for isn't shown).
+    #[std::prelude::v1::test]
+    fn status_bar_says_when_pages_are_still_counted() {
+        assert_eq!(
+            location_text(3, 12, true, "9 words"),
+            "Page 3 of 12, counting… · 9 words"
+        );
+        assert_eq!(
+            location_text(3, 1087, false, "9 words"),
+            "Page 3 of 1087 · 9 words"
+        );
+        // The caret's page is never past the count.
+        assert_eq!(
+            location_text(14, 12, true, "9 words"),
+            "Page 14 of 14, counting… · 9 words"
+        );
+    }
+
     /// Enter and Tab in a popover's or the Header & Footer bar's text box
     /// stay there: they used to split the paragraph at the caret too.
     #[std::prelude::v1::test]
@@ -3070,6 +3547,7 @@ mod tests {
         assert!(paras[1].spans.iter().any(|s| s.bold));
         assert!(!paged.glyph_runs(0).is_empty());
         let w = paged.setup.content_width();
+        use docs_pdf::cache::layout_key;
         assert_eq!(layout_key(&paras[1], w), layout_key(&paras[1].clone(), w));
         assert_ne!(layout_key(&paras[0], w), layout_key(&paras[1], w));
         assert_ne!(layout_key(&paras[1], w), layout_key(&paras[1], w + 1.0));

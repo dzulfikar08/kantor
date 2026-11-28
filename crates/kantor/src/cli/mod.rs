@@ -4,6 +4,7 @@
 pub mod agent;
 pub mod convert;
 pub mod docs;
+mod docs_bench;
 pub mod merge;
 pub mod pdf;
 pub mod render_png;

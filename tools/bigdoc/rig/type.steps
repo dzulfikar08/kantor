@@ -1,0 +1,43 @@
+settle
+mem
+click 800 600
+settle
+mark page1
+key ctrl+Home
+settle
+type 300 Quick brown fox
+settle
+mark find
+key ctrl+f
+settle
+type 300 MIDPOINTMARK
+settle
+key Return
+settle
+key Escape
+settle
+mark middle
+type 300 Quick brown fox
+settle
+mark jumpend
+key ctrl+End
+settle
+mark end
+type 300 Quick brown fox
+settle
+mark jumphome
+key ctrl+Home
+settle
+mark pagedown
+keys 15 Next 300
+settle
+mark enter
+keys 5 Return 500
+settle
+keys 5 BackSpace 500
+settle
+mark save
+key ctrl+s
+settle
+mark done
+mem

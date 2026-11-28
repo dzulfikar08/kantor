@@ -239,6 +239,20 @@ fn style_refs_in_headers_follow_the_page_and_the_index_has_headings() {
     );
     assert_eq!(header(&laid, 2), "Chapter: Beta chapter");
     assert_eq!(header(&laid, 3), "Chapter: Beta chapter");
+    // The per-page lookup the layout uses gives what the field search does.
+    for st in doc.stories() {
+        let story = st.doc.paragraphs();
+        let refs = docs_engine::StyleRefs::new(&doc, story);
+        for first in 0..=doc.len() {
+            for last in first.saturating_sub(1)..=(first + 3).min(doc.len()) {
+                assert_eq!(
+                    refs.results(&doc, (first, last)),
+                    docs_engine::style_ref_results(&doc, story, (first, last)),
+                    "paragraphs {first}..={last}"
+                );
+            }
+        }
+    }
     // The header itself keeps its saved result.
     let story = doc.stories()[laid.furniture[0][0].layout.story]
         .doc

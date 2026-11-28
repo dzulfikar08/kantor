@@ -352,7 +352,9 @@ fn body_with_notes(
     sections: &[Section],
     cache: &mut NoteCache,
     layout: &mut LayoutFn,
-) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
+    cut: usize,
+    prior: Option<build::Prior>,
+) -> build::Built {
     let marks = Marks {
         refs: refs
             .iter()
@@ -364,8 +366,13 @@ fn body_with_notes(
         codes: doc.field_codes().cloned(),
         merge: doc.merge_view().cloned(),
     };
-    let (mut lps, widths, blocks) = build::build_marked(doc, &marks);
+    let mut built = build::build_body(doc, &marks, cut, prior);
+    let lps = &mut built.lps;
     for r in refs.iter().filter(|r| r.kind == NoteKind::Footnote) {
+        // Paragraphs not built again have their notes.
+        if !built.fresh.get(r.pos.para).copied().unwrap_or(true) {
+            continue;
+        }
         let Some(i) = doc.note_index(r.kind, &r.id) else {
             continue;
         };
@@ -421,7 +428,7 @@ fn body_with_notes(
             });
         }
     }
-    (lps, widths, blocks)
+    built
 }
 
 /// Where a laid-out note may break across pages: its lines' bottoms, then
@@ -480,7 +487,10 @@ fn with_endnotes(
     let last = sections.len().saturating_sub(1);
     // Section whose end each endnote goes to.
     let target = |r: &NoteRef| {
-        if doc.note_props(NoteKind::Endnote, r.section).section_end {
+        if doc
+            .note_props_in(sections, NoteKind::Endnote, r.section)
+            .section_end
+        {
             r.section.min(last)
         } else {
             last
@@ -564,14 +574,22 @@ pub fn section_columns(s: &Section) -> Vec<(f32, f32)> {
 
 /// Footnote numbers restarted on each page (sections set to "each page"),
 /// from where the references landed.
-fn renumber_per_page(doc: &Document, refs: &[NoteRef], paged: &PagedDocument) -> Vec<NoteRef> {
+fn renumber_per_page(
+    doc: &Document,
+    sections: &[Section],
+    refs: &[NoteRef],
+    paged: &PagedDocument,
+) -> Vec<NoteRef> {
     let mut out = refs.to_vec();
     let mut count: HashMap<usize, u32> = HashMap::new();
+    let mut props_of: HashMap<usize, docs_engine::NoteProps> = HashMap::new();
     for r in &mut out {
         if r.kind != NoteKind::Footnote || r.label.is_empty() {
             continue;
         }
-        let props = doc.note_props(r.kind, r.section);
+        let props = *props_of
+            .entry(r.section)
+            .or_insert_with(|| doc.note_props_in(sections, r.kind, r.section));
         if props.restart != NoteRestart::EachPage {
             continue;
         }
@@ -594,18 +612,305 @@ fn separator(x: f32, y: f32, width: f32) -> RuleRect {
 /// Lay a document out on pages: sections, headers and footers, footnotes
 /// and endnotes.
 pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
-    let sections = doc.sections();
-    let mut refs = doc.note_refs();
-    let mut notes_cache: NoteCache = HashMap::new();
-    let (mut lps, mut widths, mut blocks) =
-        body_with_notes(doc, &refs, &sections, &mut notes_cache, layout);
-    let mut layouts: Vec<Arc<ParaLayout>> = lps
+    lay_out_body(doc, layout, None, None, None).0
+}
+
+/// Lays out the body's layout paragraphs at their widths all at once (on
+/// several threads, say) instead of one by one.
+pub(crate) type BatchFn<'a> =
+    dyn FnMut(&[docs_layout::Paragraph], &[f32]) -> Vec<Arc<ParaLayout>> + 'a;
+
+/// The body paragraphs as [`lay_out_body`] paginated them: each one's
+/// column width and its layout before pagination.
+pub(crate) struct Body {
+    pub widths: Vec<f32>,
+    pub shaped: Vec<Arc<ParaLayout>>,
+    /// The layout paragraphs, blocks and sections paginated.
+    pub lps: Arc<Vec<docs_layout::Paragraph>>,
+    pub blocks: Vec<Block>,
+    pub flows: Vec<SectionFlow>,
+    /// The headers' and footers' `STYLEREF` fields (one per story).
+    pub style_refs: Vec<docs_engine::StyleRefs>,
+    /// Each paragraph's list marker, the note references, and what each
+    /// page's header and footer show (to build and lay out only what an
+    /// edit changes next time).
+    pub markers: Vec<Option<String>>,
+    pub refs: Vec<NoteRef>,
+    pub furn_keys: Vec<FurnKey>,
+    /// The width (twips) each table in `blocks` was built for.
+    pub table_widths: Vec<u32>,
+}
+
+/// What a page's header and footer show and where: two pages with the
+/// same key get the same ones.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FurnKey {
+    stories: (Option<usize>, Option<usize>),
+    label: String,
+    number: u32,
+    total: usize,
+    section_pages: usize,
+    setup: PageSetup,
+    dists: (u32, u32),
+    refs: (Vec<String>, Vec<String>),
+}
+
+/// The last layout of the body, to take what an edit didn't change from:
+/// its pages, and its body (whose paragraphs, layouts and markers a known
+/// edit takes over).
+pub(crate) struct Prev<'a> {
+    pub laid: &'a Layout,
+    pub body: &'a mut Body,
+    /// The edit since, when it's known: `.1` paragraphs from `.0` on
+    /// became `.2`.
+    pub splice: Option<(usize, usize, usize)>,
+}
+
+/// Where a new pagination of the body can take pages from the last one
+/// (see [`docs_layout::Reuse`]): the blocks at the end that are the old
+/// ones (their paragraphs shifted), laid out the same.
+#[allow(clippy::too_many_arguments)]
+fn reuse_of<'a>(
+    old_paged: &'a PagedDocument,
+    old: &Body,
+    known: Option<(usize, usize)>,
+    lps: &[docs_layout::Paragraph],
+    layouts: &[Arc<ParaLayout>],
+    blocks: &[Block],
+    flows: &[SectionFlow],
+) -> Option<docs_layout::Reuse<'a>> {
+    if flows.len() != old.flows.len() {
+        return None;
+    }
+    // The paragraphs the same at the end: known (built incrementally:
+    // `.0` on, of `.1` before), or found by comparing.
+    let (first_same, old_len) = match known {
+        Some(k) => k,
+        None => {
+            if old.lps.len() != old.shaped.len() {
+                return None;
+            }
+            let same = lps
+                .iter()
+                .zip(layouts)
+                .rev()
+                .zip(old.lps.iter().zip(&old.shaped).rev())
+                .take_while(|((p, l), (q, m))| Arc::ptr_eq(l, m) && p == q)
+                .count();
+            (lps.len() - same, old.lps.len())
+        }
+    };
+    let d = lps.len() as isize - old_len as isize;
+    let shifted = |i: usize| i as isize - d;
+    let para_ok = |i: usize, j: usize| i >= first_same && shifted(i) == j as isize;
+    let cells_ok = |a: &docs_layout::TableBlock, b: &docs_layout::TableBlock| {
+        a.x == b.x
+            && a.columns == b.columns
+            && a.padding == b.padding
+            && a.rows.len() == b.rows.len()
+            && a.rows.iter().zip(&b.rows).all(|(r, q)| {
+                r.min_height == q.min_height
+                    && (r.exact, r.header, r.cant_split, r.keep_next)
+                        == (q.exact, q.header, q.cant_split, q.keep_next)
+                    && r.cells.len() == q.cells.len()
+                    && r.cells.iter().zip(&q.cells).all(|(c, e)| {
+                        (c.col, c.span, c.merge, c.borders, c.fill)
+                            == (e.col, e.span, e.merge, e.borders, e.fill)
+                            && c.paras.len() == e.paras.len()
+                            && (c.paras.is_empty() || para_ok(c.paras.start, e.paras.start))
+                    })
+            })
+    };
+    // Blocks the same at the end.
+    let db = blocks.len() as isize - old.blocks.len() as isize;
+    let same_blocks = blocks
         .iter()
-        .zip(&widths)
-        .map(|(p, &w)| layout(p, w))
-        .collect();
+        .rev()
+        .zip(old.blocks.iter().rev())
+        .take_while(|(a, b)| match (a, b) {
+            (Block::Para(i), Block::Para(j)) => para_ok(*i, *j),
+            (Block::Table(a), Block::Table(b)) => cells_ok(a, b),
+            (Block::Gap(a), Block::Gap(b)) => a == b,
+            _ => false,
+        })
+        .count();
+    let from_block = blocks.len() - same_blocks;
+    // The same sections, those starting in the same blocks moved along.
+    for (a, b) in flows.iter().zip(&old.flows) {
+        let moved = if a.first_block >= from_block && a.first_block > 0 {
+            a.first_block as isize - db == b.first_block as isize
+        } else {
+            a.first_block == b.first_block
+        };
+        if !moved
+            || a.setup != b.setup
+            || a.first_setup != b.first_setup
+            || a.even_setup != b.even_setup
+            || a.start != b.start
+            || a.restart != b.restart
+            || a.columns != b.columns
+            || a.sep != b.sep
+        {
+            return None;
+        }
+    }
+    let renumber = flows.iter().all(|f| {
+        f.even_setup.is_none() && !matches!(f.start, SectionBreak::EvenPage | SectionBreak::OddPage)
+    });
+    Some(docs_layout::Reuse {
+        old: old_paged,
+        from_block,
+        block_shift: db,
+        para_shift: d,
+        renumber,
+        from_para: first_same,
+    })
+}
+
+/// [`lay_out_with`], and the body paragraphs' widths and layouts. With
+/// `limit`, only about the first `limit` paragraphs are laid out (the
+/// start of a long document, shown while the rest is laid out: the
+/// others get an empty layout and no place on a page). `batch` lays out
+/// the body's paragraphs (else `layout`, one at a time).
+pub(crate) fn lay_out_body(
+    doc: &Document,
+    layout: &mut LayoutFn,
+    limit: Option<usize>,
+    batch: Option<&mut BatchFn>,
+    prev: Option<Prev>,
+) -> (Layout, Body) {
+    use docs_layout::perf::span;
+    let _all = span("docs lay_out_with");
+    let t = span("docs sections+refs");
+    let mut sections = doc.sections();
+    let mut refs = doc.note_refs();
+    let cut = limit.map_or(doc.len(), |l| l.min(doc.len()));
+    if cut < doc.len() {
+        // Notes of the paragraphs laid out; no endnotes yet.
+        refs.retain(|r| r.pos.para < cut && r.kind == NoteKind::Footnote);
+        sections.retain(|s| s.paras.start < cut || s.paras.start == 0);
+    }
+    drop(t);
+    let mut prev = prev;
+    // Footnotes numbered per page (renumbered from the layout below).
+    let per_page = (0..sections.len()).any(|si| {
+        refs.iter()
+            .any(|r| r.kind == NoteKind::Footnote && r.section == si)
+            && doc.note_props_in(&sections, NoteKind::Footnote, si).restart == NoteRestart::EachPage
+    });
+    // After a known edit: what it didn't touch is built and laid out as
+    // before (see build::build_body).
+    let incremental = prev.as_mut().and_then(|p| {
+        let (start, removed, inserted) = p.splice?;
+        let b = &mut *p.body;
+        let old_len = b.lps.len();
+        let ok = cut == doc.len()
+            && !per_page
+            && doc.field_codes().is_none()
+            && doc.merge_view().is_none()
+            && old_len + inserted == doc.len() + removed
+            && b.shaped.len() == old_len
+            && b.markers.len() == old_len
+            && b.widths.len() == old_len
+            && start + removed <= old_len;
+        if !ok {
+            return None;
+        }
+        let dirty = changed_note_paras(&b.refs, &refs, (start, removed, inserted));
+        let lps = match Arc::try_unwrap(std::mem::take(&mut b.lps)) {
+            Ok(v) => v,
+            Err(shared) => shared.as_ref().clone(),
+        };
+        let prior = build::Prior {
+            lps,
+            markers: std::mem::take(&mut b.markers),
+            widths: std::mem::take(&mut b.widths),
+            start,
+            removed,
+            inserted,
+            dirty,
+            tables: b
+                .blocks
+                .iter()
+                .filter_map(|blk| match blk {
+                    Block::Table(t) => Some(t.clone()),
+                    _ => None,
+                })
+                .zip(b.table_widths.iter().copied())
+                .collect(),
+            old: doc
+                .last_splice()
+                .filter(|sp| {
+                    (sp.start, sp.removed, sp.inserted) == (start, removed, inserted)
+                        && sp.old.len() == removed
+                })
+                .map(|sp| sp.old.clone()),
+        };
+        Some((
+            prior,
+            std::mem::take(&mut b.shaped),
+            (start, removed, inserted),
+            old_len,
+        ))
+    });
+    let mut notes_cache: NoteCache = HashMap::new();
+    let t = span("docs build body");
+    let (prior, old_shaped, splice, old_len) = match incremental {
+        Some((p, s, sp, n)) => (Some(p), Some(s), Some(sp), Some(n)),
+        None => (None, None, None, None),
+    };
+    let built = body_with_notes(doc, &refs, &sections, &mut notes_cache, layout, cut, prior);
+    let build::Built {
+        mut lps,
+        mut widths,
+        mut blocks,
+        markers,
+        fresh,
+        table_widths,
+    } = built;
+    drop(t);
+    let t = span("docs shape body");
+    let mut layouts: Vec<Arc<ParaLayout>> = match (old_shaped, splice) {
+        // The old layouts where the paragraphs weren't built again.
+        (Some(mut old), Some((start, removed, inserted))) => {
+            let tail = old.split_off(start + removed);
+            old.truncate(start);
+            for k in start..start + inserted {
+                old.push(layout(&lps[k], widths[k]));
+            }
+            old.extend(tail);
+            for (k, _) in fresh.iter().enumerate().filter(|(_, f)| **f) {
+                if !(start..start + inserted).contains(&k) {
+                    old[k] = layout(&lps[k], widths[k]);
+                }
+            }
+            old
+        }
+        _ => match batch {
+            Some(batch) => batch(&lps, &widths),
+            None => lps
+                .iter()
+                .zip(&widths)
+                .map(|(p, &w)| layout(p, w))
+                .collect(),
+        },
+    };
+    // From here on every paragraph is as before (shifted).
+    let known_same = old_len.map(|n| {
+        let last_fresh = fresh.iter().rposition(|f| *f).map_or(0, |k| k + 1);
+        let (start, _, inserted) = splice.unwrap_or_default();
+        (last_fresh.max(start + inserted).min(lps.len()), n)
+    });
+    drop(t);
+    // Paragraphs not laid out yet: an empty layout each (no lines placed).
+    if layouts.len() < doc.len() {
+        let empty = layout(&docs_layout::Paragraph::new(String::new()), 100.0);
+        layouts.resize(doc.len(), empty);
+        widths.resize(doc.len(), 100.0);
+    }
 
     // Header/footer heights (with placeholder numbers) push the text in.
+    let t = span("docs sections setup");
     let mut heights: HashMap<(usize, u32), f32> = HashMap::new();
     let mut height_of = |story: Option<usize>, width: f32, layout: &mut LayoutFn| -> f32 {
         let Some(i) = story else { return 0.0 };
@@ -658,7 +963,9 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         });
         stories.push(st);
     }
-    let (gapped, gap_flows) = with_endnotes(
+    drop(t);
+    let t = span("docs endnotes");
+    let (mut gapped, mut gap_flows) = with_endnotes(
         doc,
         &refs,
         &sections,
@@ -667,25 +974,44 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         &mut notes_cache,
         layout,
     );
-    let mut paged = PagedDocument::paginate_sections(&lps, layouts.clone(), &gapped, &gap_flows);
+    drop(t);
+    let t = span("docs paginate");
+    // After an edit: the pages after it that come out the same are taken
+    // from the last layout (see docs_layout::Reuse).
+    let reuse = prev.as_ref().and_then(|p| {
+        let _t = span("docs compare with last layout");
+        reuse_of(
+            &p.laid.paged,
+            p.body,
+            known_same,
+            &lps,
+            &layouts,
+            &gapped,
+            &gap_flows,
+        )
+    });
+    let mut paged =
+        PagedDocument::paginate_reusing(&lps, layouts.clone(), &gapped, &gap_flows, reuse.as_ref());
+    drop(t);
     // Footnotes numbered per page: renumber where they landed and lay out
     // again (the numbers' widths can move text).
-    let per_page = refs.iter().any(|r| {
-        r.kind == NoteKind::Footnote
-            && doc.note_props(r.kind, r.section).restart == NoteRestart::EachPage
-    });
     if per_page {
-        let renumbered = renumber_per_page(doc, &refs, &paged);
+        let renumbered = renumber_per_page(doc, &sections, &refs, &paged);
         if renumbered != refs {
             refs = renumbered;
-            (lps, widths, blocks) =
-                body_with_notes(doc, &refs, &sections, &mut notes_cache, layout);
+            let b = body_with_notes(doc, &refs, &sections, &mut notes_cache, layout, cut, None);
+            (lps, widths, blocks) = (b.lps, b.widths, b.blocks);
             layouts = lps
                 .iter()
                 .zip(&widths)
                 .map(|(p, &w)| layout(p, w))
                 .collect();
-            let (gapped, gap_flows) = with_endnotes(
+            if layouts.len() < doc.len() {
+                let empty = layout(&docs_layout::Paragraph::new(String::new()), 100.0);
+                layouts.resize(doc.len(), empty);
+                widths.resize(doc.len(), 100.0);
+            }
+            (gapped, gap_flows) = with_endnotes(
                 doc,
                 &refs,
                 &sections,
@@ -694,18 +1020,109 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
                 &mut notes_cache,
                 layout,
             );
-            paged = PagedDocument::paginate_sections(&lps, layouts, &gapped, &gap_flows);
+            paged = PagedDocument::paginate_sections(&lps, layouts.clone(), &gapped, &gap_flows);
         }
     }
-    let notes = place_notes(doc, &refs, &sections, &mut paged, &mut notes_cache, layout);
+    // Pages as in the last layout: before the first page the edit
+    // changed (not moved), and from where pages were taken from it (see
+    // docs_layout::Reuse; paragraphs moved by `shift`).
+    let last = prev.as_ref().map(|p| p.laid);
+    let shift = old_len.map_or(0, |n| lps.len() as isize - n as isize);
+    let taken = paged.reused().filter(|_| last.is_some());
+    let moved_from = reuse.as_ref().map_or(0, |r| r.from_para);
+    let unmoved = match (last, splice) {
+        (Some(laid), Some((start, _, _))) => {
+            // Not past the page the edit starts on (text changes there
+            // needn't move lines), nor past where the pages differ.
+            let first = fresh.iter().position(|f| *f).unwrap_or(start).min(start);
+            let edit_page = laid
+                .paged
+                .caret(first.saturating_sub(1), 0)
+                .map_or(0, |c| c.page);
+            let differ = paged
+                .pages
+                .iter()
+                .zip(&laid.paged.pages)
+                .position(|(a, b)| !same_but_notes(a, b))
+                .unwrap_or(paged.pages.len().min(laid.paged.pages.len()));
+            edit_page.min(differ)
+        }
+        _ => 0,
+    };
+    // A page's counterpart in the last layout, and whether paragraphs
+    // moved since.
+    let old_of = |pi: usize| -> Option<(usize, bool)> {
+        if pi < unmoved {
+            return Some((pi, false));
+        }
+        let (at, j) = taken?;
+        (pi >= at).then(|| (pi - at + j, true))
+    };
+    // Those pages as they were (their notes' separator lines included).
+    if let Some(laid) = last {
+        for pi in 0..unmoved {
+            paged.pages[pi] = laid.paged.pages[pi].clone();
+        }
+    }
+    if docs_layout::perf::enabled() && prev.is_some() {
+        eprintln!(
+            "[perf] docs reuse: known {:?}, from block {:?} of {}, pages taken {:?}, unmoved {unmoved}, of {}",
+            known_same,
+            reuse.as_ref().map(|r| r.from_block),
+            gapped.len(),
+            taken,
+            paged.pages.len()
+        );
+    }
+    let t = span("docs place notes");
+    let mut notes = place_notes(
+        doc,
+        &refs,
+        &sections,
+        &mut paged,
+        &mut notes_cache,
+        layout,
+        &|pi| old_of(pi).is_some(),
+    );
+    if let Some(laid) = last {
+        // Their notes as they were.
+        for (pi, out) in notes.iter_mut().enumerate() {
+            if let Some((o, _)) = old_of(pi) {
+                *out = laid
+                    .furniture
+                    .get(o)
+                    .into_iter()
+                    .flatten()
+                    .filter(|p| p.layout.story == usize::MAX)
+                    .cloned()
+                    .collect();
+            }
+        }
+    }
+    drop(t);
+    let t = span("docs headers+footers");
+    let lps = Arc::new(lps);
     let strikes = if lps.iter().any(|p| !p.strikes.is_empty()) {
-        Arc::new(lps)
+        lps.clone()
     } else {
         Arc::default()
     };
+    // Each header's and footer's STYLEREF fields (once: the long body is
+    // searched for each).
+    let style_refs: Vec<docs_engine::StyleRefs> = doc
+        .stories()
+        .iter()
+        .map(|st| docs_engine::StyleRefs::new(doc, st.doc.paragraphs()))
+        .collect();
 
-    // Each page's header and footer, numbers filled in.
-    let total = paged.pages.len().to_string();
+    // Each page's header and footer, numbers filled in (laying out the
+    // start of a document: the number of pages it should have).
+    let total = if cut < doc.len() {
+        estimate_pages(doc, cut, &paged)
+    } else {
+        paged.pages.len()
+    };
+    let total_text = total.to_string();
     let mut in_section: HashMap<usize, usize> = HashMap::new();
     for page in &paged.pages {
         *in_section.entry(page.section).or_default() += 1;
@@ -729,8 +1146,12 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         last_para = range.1;
         on_page.push(range);
     }
+    let t2 = span("docs page labels");
     let labels = page_labels(doc, &sections, &paged);
+    drop(t2);
+    let old_keys = prev.as_ref().map(|p| &p.body.furn_keys);
     let mut furniture = Vec::with_capacity(paged.pages.len());
+    let mut furn_keys = Vec::with_capacity(paged.pages.len());
     for (pi, page) in paged.pages.iter().enumerate() {
         let si = page.section.min(sections.len() - 1);
         let props = &sections[si].props;
@@ -743,19 +1164,49 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         } else {
             st.default
         };
-        let number = labels[pi].clone();
+        let section_pages = in_section.get(&page.section).copied().unwrap_or(1);
+        let refs_of = |story: Option<usize>| {
+            story
+                .and_then(|i| style_refs.get(i))
+                .map(|r| r.results(doc, on_page[pi]))
+                .unwrap_or_default()
+        };
+        let key = FurnKey {
+            stories: (h, f),
+            label: labels[pi].clone(),
+            number: page.number,
+            total,
+            section_pages,
+            setup: page.setup,
+            dists: (props.header_dist, props.footer_dist),
+            refs: (refs_of(h), refs_of(f)),
+        };
+        // The same header and footer as its counterpart in the last
+        // layout: those (and its notes).
+        if let (Some(laid), Some(keys), Some((o, _))) = (last, old_keys, old_of(pi))
+            && keys.get(o) == Some(&key)
+            && let Some(old) = laid.furniture.get(o)
+        {
+            let mut placed: Vec<Placed> = old
+                .iter()
+                .filter(|p| p.layout.story != usize::MAX)
+                .cloned()
+                .collect();
+            placed.extend(notes.get(pi).into_iter().flatten().cloned());
+            furniture.push(placed);
+            furn_keys.push(key);
+            continue;
+        }
+        let number = key.label.clone();
         let setup = page.setup;
         let width = setup.content_width();
         let mut placed = Vec::new();
-        for (kind, story) in [(HfKind::Header, h), (HfKind::Footer, f)] {
+        for (kind, story, refs) in [
+            (HfKind::Header, h, &key.refs.0),
+            (HfKind::Footer, f, &key.refs.1),
+        ] {
             let Some(i) = story else { continue };
-            let section_pages = in_section
-                .get(&page.section)
-                .copied()
-                .unwrap_or(1)
-                .to_string();
-            let refs =
-                docs_engine::style_ref_results(doc, doc.stories()[i].doc.paragraphs(), on_page[pi]);
+            let section_pages = section_pages.to_string();
             let l = cache
                 .entry((
                     i,
@@ -769,8 +1220,8 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
                         doc,
                         i,
                         width,
-                        (&number, &total, &section_pages),
-                        &refs,
+                        (&number, &total_text, &section_pages),
+                        refs,
                         layout,
                     ))
                 })
@@ -789,14 +1240,338 @@ pub fn lay_out_with(doc: &Document, layout: &mut LayoutFn) -> Layout {
         }
         placed.extend(notes.get(pi).into_iter().flatten().cloned());
         furniture.push(placed);
+        furn_keys.push(key);
     }
-    let floats = place_floats(doc, &paged, &furniture, layout);
-    Layout {
-        paged,
-        furniture,
-        floats,
-        strikes,
+    drop(t);
+    let t = span("docs place floats");
+    // Floating objects of pages as before, with the same header and
+    // footer (header objects follow the page number).
+    let same_page = |pi: usize| -> Option<(usize, bool)> {
+        let (o, moved) = old_of(pi)?;
+        let keys = old_keys?;
+        (keys.get(o) == furn_keys.get(pi)).then_some((o, moved))
+    };
+    let mut floats = place_floats(doc, &paged, &furniture, layout, &|pi| {
+        same_page(pi).is_some_and(|(o, _)| last.is_some_and(|l| o < l.floats.len()))
+    });
+    if let Some(laid) = last {
+        for (pi, items) in floats.iter_mut().enumerate() {
+            let Some((o, moved)) = same_page(pi) else {
+                continue;
+            };
+            let Some(old) = laid.floats.get(o) else {
+                continue;
+            };
+            *items = old.clone();
+            if moved {
+                // (Paragraphs before the edit didn't move.)
+                for it in items.iter_mut().filter(|it| {
+                    it.story.is_none() && it.para as isize + shift >= moved_from as isize
+                }) {
+                    it.para = (it.para as isize + shift).max(0) as usize;
+                }
+            }
+        }
     }
+    drop(t);
+    (
+        Layout {
+            paged,
+            furniture,
+            floats,
+            strikes,
+        },
+        Body {
+            widths,
+            shaped: layouts,
+            lps,
+            blocks: gapped,
+            flows: gap_flows,
+            style_refs,
+            markers,
+            refs,
+            furn_keys,
+            table_widths,
+        },
+    )
+}
+
+/// Paragraphs (new numbering) whose footnote and endnote references
+/// changed besides those an edit (`removed` paragraphs from `start` on
+/// became `inserted`) touched: their numbers, say.
+fn changed_note_paras(
+    old: &[NoteRef],
+    new: &[NoteRef],
+    (start, removed, inserted): (usize, usize, usize),
+) -> Vec<usize> {
+    use std::collections::HashSet;
+    type Mark<'a> = (usize, usize, NoteKind, &'a str, &'a str);
+    let moved = |para: usize| {
+        if para < start {
+            Some(para)
+        } else if para >= start + removed {
+            Some(para - removed + inserted)
+        } else {
+            None
+        }
+    };
+    let before: HashSet<Mark> = old
+        .iter()
+        .filter_map(|r| {
+            let para = moved(r.pos.para)?;
+            Some((para, r.pos.offset, r.kind, r.id.as_str(), r.label.as_str()))
+        })
+        .collect();
+    let after: HashSet<Mark> = new
+        .iter()
+        .map(|r| {
+            (
+                r.pos.para,
+                r.pos.offset,
+                r.kind,
+                r.id.as_str(),
+                r.label.as_str(),
+            )
+        })
+        .collect();
+    let mut out: Vec<usize> = before.symmetric_difference(&after).map(|m| m.0).collect();
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// Page `new` (before its notes are placed) is `old` (after): the same
+/// but for the lines placing notes added to `old`.
+fn same_but_notes(new: &docs_layout::Page, old: &docs_layout::Page) -> bool {
+    new.lines == old.lines
+        && new.notes == old.notes
+        && new.notes_height == old.notes_height
+        && new.setup == old.setup
+        && new.section == old.section
+        && new.number == old.number
+        && new.floats == old.floats
+        && new.note_parts == old.note_parts
+        && new.continued == old.continued
+        && new.gaps == old.gaps
+        && new.fixed == old.fixed
+        && new.columns == old.columns
+        && new.note_columns == old.note_columns
+        && old.rules.len() >= new.rules.len()
+        && old.rules[..new.rules.len()] == new.rules[..]
+}
+
+/// About how many pages `doc` has when its first `cut` paragraphs take
+/// the pages of `paged`: the paragraphs after `cut` fill pages as those
+/// before it did, by an estimate of each one's height (its lines at its
+/// font size and line spacing, its spacing, pictures and footnotes).
+/// Lines rather than characters, and spacing, keep a long contents list of
+/// short lines (often a document's first pages) from making it look
+/// hundreds of pages longer than it is.
+pub fn estimate_pages(doc: &Document, cut: usize, paged: &PagedDocument) -> usize {
+    estimate(doc, cut, paged).pages
+}
+
+/// What [`estimate_pages`] went by.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Estimate {
+    pub pages: usize,
+    /// Pages laid out in full (all but the last).
+    pub full: usize,
+    /// Characters a line holds at 11 pt.
+    pub per_line: f32,
+    /// The estimated height of the paragraphs from the last page laid out
+    /// on, pt.
+    pub rest: f32,
+    /// The room on a page for the body, pt.
+    pub room: f32,
+}
+
+/// [`estimate_pages`], with what it went by.
+pub fn estimate(doc: &Document, cut: usize, paged: &PagedDocument) -> Estimate {
+    use docs_engine::{Object, ResolvedLine};
+    let paras = doc.paragraphs();
+    let cut = cut.min(paras.len());
+    let setup = paged.setup;
+    // Text width, pt (px at 96 dpi).
+    let width = ((setup.width - setup.margin_left - setup.margin_right) * 0.75).max(72.0);
+    // Size, line height and spacing per paragraph style (and table).
+    type Look = (f32, f32, f32);
+    let mut looks: HashMap<(Option<String>, Option<u32>), Look> = HashMap::new();
+    let mut look = |p: &docs_engine::Paragraph| -> Look {
+        let direct = p.props.before.is_some() || p.props.after.is_some() || p.props.line.is_some();
+        let key = (p.props.style.clone(), p.cell.map(|c| c.table));
+        if !direct && let Some(l) = looks.get(&key) {
+            return *l;
+        }
+        let r = doc.resolve_para(p);
+        let size = doc.resolve_run(p, &Default::default()).size_pt.max(1.0);
+        let natural = size * 1.2;
+        let line = match r.line {
+            ResolvedLine::Multiple(m) => natural * m,
+            ResolvedLine::AtLeast(x) => natural.max(x),
+            ResolvedLine::Exact(x) => x,
+        };
+        let l = (size, line, r.space_before_pt + r.space_after_pt);
+        if !direct {
+            looks.insert(key, l);
+        }
+        l
+    };
+    // Footnotes: on average as tall as their text at 10 pt.
+    let notes: Vec<usize> = doc
+        .notes()
+        .iter()
+        .filter(|n| !n.separator && n.kind == NoteKind::Footnote)
+        .map(|n| {
+            n.doc
+                .paragraphs()
+                .iter()
+                .map(|p| p.text.chars().count())
+                .sum()
+        })
+        .collect();
+    let note_chars = notes.iter().sum::<usize>() as f32 / notes.len().max(1) as f32;
+    let est: Vec<EstPara> = paras
+        .iter()
+        .map(|p| {
+            let (size, line, spacing) = look(p);
+            let mut extra = if p.cell.is_some() { 0.0 } else { spacing };
+            let mut refs = 0usize;
+            for (_, o) in p.objects() {
+                match o {
+                    Object::Image(img) => extra += img.cy.max(0) as f32 / 12700.0,
+                    Object::Float(f) if f.inline => extra += f.at.cy.max(0) as f32 / 12700.0,
+                    Object::Float(f) if f.at.wrap != docs_engine::Wrap::None => {
+                        // Its area, as lines of text it takes the place of.
+                        let (w, h) = (
+                            f.at.cx.max(0) as f32 / 12700.0,
+                            f.at.cy.max(0) as f32 / 12700.0,
+                        );
+                        extra += h * (w / width).min(1.0);
+                    }
+                    _ => {
+                        refs += docs_engine::notes::reference_of(o)
+                            .is_some_and(|(k, _, _)| k == NoteKind::Footnote)
+                            as usize
+                    }
+                }
+            }
+            extra += refs as f32 * 12.0 * (note_chars / (ESTIMATE_PER_LINE * 1.1)).ceil().max(1.0);
+            EstPara {
+                chars: p.text.chars().count(),
+                cell: p.cell.map(|c| (c.table, c.row, c.cell)),
+                size,
+                line,
+                extra,
+            }
+        })
+        .collect();
+    // Characters per full line at 11 pt, from the paragraphs laid out that
+    // wrap (outside tables).
+    let (mut chars, mut lines) = (0.0f32, 0.0f32);
+    for ((p, e), l) in paras[..cut].iter().zip(&est).zip(&paged.layouts) {
+        let n = l.len();
+        if n >= 3 && p.cell.is_none() {
+            chars += e.chars as f32 * e.size / 11.0;
+            lines += n as f32 - 0.5;
+        }
+    }
+    let per_line = if lines >= 30.0 {
+        chars / lines
+    } else {
+        ESTIMATE_PER_LINE
+    };
+    // The pages laid out in full; the rest from where the last one starts,
+    // at the room a page has (less what page ends leave empty).
+    let full = paged.pages.len().saturating_sub(1);
+    let from = paged
+        .pages
+        .last()
+        .and_then(|pg| pg.lines.iter().find(|l| !l.repeat))
+        .map_or(cut, |l| l.para.min(cut));
+    let room = ((setup.height - setup.margin_top - setup.margin_bottom) * 0.75).max(72.0);
+    let rest = height_of(&est[from..], per_line);
+    Estimate {
+        pages: estimate_from_heights(&est[from..], full, room * ESTIMATE_FILL, per_line),
+        full,
+        per_line,
+        rest,
+        room,
+    }
+}
+
+/// Characters in a full line of 11 pt text across a page, when the pages
+/// laid out don't tell.
+const ESTIMATE_PER_LINE: f32 = 95.0;
+
+/// How much of a page's room the estimated heights fill on average. Page
+/// ends left empty (lines kept together, a heading kept with the next
+/// paragraph, a picture that doesn't fit) about make up for the estimate's
+/// own excess (it rounds every paragraph up to whole lines): on three
+/// generated 1,100-page documents (tools/bigdoc) 1.0 came within -2 to +9 %.
+const ESTIMATE_FILL: f32 = 1.0;
+
+/// One paragraph as [`estimate_from_heights`] sees it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EstPara {
+    /// Length in characters.
+    pub chars: usize,
+    /// Table, row and cell, in a table.
+    pub cell: Option<(u32, u32, u32)>,
+    /// Font size, pt (a line holds fewer characters of larger type).
+    pub size: f32,
+    /// A line's height, pt.
+    pub line: f32,
+    /// Height besides its lines (spacing, pictures, footnotes), pt.
+    pub extra: f32,
+}
+
+/// The estimated height of `paras` in pt: a line holds `per_line`
+/// characters at 11 pt; a table row is as tall as its tallest cell (its
+/// cells share the line's width).
+pub fn height_of(paras: &[EstPara], per_line: f32) -> f32 {
+    let per_line = per_line.max(10.0);
+    let lines = |p: &EstPara, share: f32| {
+        let room = (per_line * 11.0 / p.size.max(1.0) / share).max(1.0);
+        (p.chars as f32 / room).ceil().max(1.0) * p.line
+    };
+    let mut sum = 0.0;
+    let mut i = 0;
+    while i < paras.len() {
+        let Some((t, r, _)) = paras[i].cell else {
+            sum += lines(&paras[i], 1.0) + paras[i].extra;
+            i += 1;
+            continue;
+        };
+        let start = i;
+        while i < paras.len() && matches!(paras[i].cell, Some((t2, r2, _)) if (t2, r2) == (t, r)) {
+            i += 1;
+        }
+        let row = &paras[start..i];
+        let mut cells: Vec<u32> = row.iter().filter_map(|p| p.cell.map(|c| c.2)).collect();
+        cells.dedup();
+        let share = cells.len().max(1) as f32;
+        let tallest = cells
+            .iter()
+            .map(|&c| {
+                row.iter()
+                    .filter(|p| p.cell.map(|x| x.2) == Some(c))
+                    .map(|p| lines(p, share) + p.extra)
+                    .sum::<f32>()
+            })
+            .fold(0.0f32, f32::max);
+        sum += tallest;
+    }
+    sum
+}
+
+/// [`estimate_pages`] from the paragraphs not on the `pages` laid out in
+/// full: as many more pages as their estimated height ([`height_of`])
+/// takes at `room` pt a page. Not the share of the text the first pages
+/// hold: a document's first pages (a title page, a long contents list of
+/// short lines) seldom fill pages as its body does.
+pub fn estimate_from_heights(paras: &[EstPara], pages: usize, room: f32, per_line: f32) -> usize {
+    pages + (height_of(paras, per_line) / room.max(1.0)).ceil() as usize
 }
 
 /// Every page's number as its section shows it (format, and the chapter
@@ -924,10 +1699,16 @@ fn place_floats(
     paged: &PagedDocument,
     furniture: &[Vec<Placed>],
     layout: &mut LayoutFn,
+    skip: &dyn Fn(usize) -> bool,
 ) -> Vec<Vec<FloatItem>> {
     let mut out = Vec::with_capacity(paged.pages.len());
     let painter = floats::Painter::new(doc);
     for (pi, page) in paged.pages.iter().enumerate() {
+        // The caller has these.
+        if skip(pi) {
+            out.push(Vec::new());
+            continue;
+        }
         let mut items = Vec::new();
         for pf in &page.floats {
             if let Some(it) = float_item(doc, (None, pf.para, pf.index), pf.rect, &painter, layout)
@@ -1028,6 +1809,7 @@ fn place_notes(
     paged: &mut PagedDocument,
     cache: &mut NoteCache,
     layout: &mut LayoutFn,
+    skip: &dyn Fn(usize) -> bool,
 ) -> Vec<Vec<Placed>> {
     let mut out: Vec<Vec<Placed>> = vec![Vec::new(); paged.pages.len()];
     let find = |para: usize, index: usize| {
@@ -1036,6 +1818,10 @@ fn place_notes(
         })
     };
     for (pi, page) in paged.pages.iter_mut().enumerate() {
+        // Pages as in the last layout have theirs placed already.
+        if skip(pi) {
+            continue;
+        }
         // Each column's notes under it (the whole text width without
         // columns).
         let columns = std::mem::take(&mut page.note_columns);

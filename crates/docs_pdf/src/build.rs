@@ -807,6 +807,65 @@ pub fn build_marked(
     doc: &Document,
     marks: &Marks,
 ) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
+    build_marked_upto(doc, marks, doc.len())
+}
+
+/// [`build_marked`] for the first `cut` paragraphs (the start of a long
+/// document, shown while the rest is laid out); a table the cut falls in
+/// is built whole.
+pub fn build_marked_upto(
+    doc: &Document,
+    marks: &Marks,
+    cut: usize,
+) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
+    let b = build_body(doc, marks, cut, None);
+    (b.lps, b.widths, b.blocks)
+}
+
+/// What the body was built from before an edit, to build only what the
+/// edit changed ([`build_body`]).
+pub struct Prior {
+    /// The layout paragraphs, their list markers and widths as built.
+    pub lps: Vec<docs_layout::Paragraph>,
+    pub markers: Vec<Option<String>>,
+    pub widths: Vec<f32>,
+    /// The edit: `removed` paragraphs from `start` on became `inserted`.
+    pub start: usize,
+    pub removed: usize,
+    pub inserted: usize,
+    /// Other paragraphs (new numbering) to build again (their footnote
+    /// numbers changed, say).
+    pub dirty: Vec<usize>,
+    /// The paragraphs the edit replaced, when known.
+    pub old: Option<Vec<docs_engine::Paragraph>>,
+    /// The tables built, with the width (twips) each was built for.
+    pub tables: Vec<(TableBlock, u32)>,
+}
+
+/// The body's layout paragraphs, widths and blocks, each paragraph's list
+/// marker, and which paragraphs were built (not taken from a [`Prior`]).
+pub struct Built {
+    pub lps: Vec<docs_layout::Paragraph>,
+    pub widths: Vec<f32>,
+    pub blocks: Vec<Block>,
+    /// The width (twips) each table in `blocks` was built for, in order.
+    pub table_widths: Vec<u32>,
+    pub markers: Vec<Option<String>>,
+    pub fresh: Vec<bool>,
+}
+
+/// [`build_marked_upto`], building again only what changed since `prior`
+/// (the marks must show no field codes or merge values then).
+pub fn build_body(doc: &Document, marks: &Marks, cut: usize, prior: Option<Prior>) -> Built {
+    let paras = doc.paragraphs();
+    let mut cut = cut.min(paras.len());
+    while cut > 0
+        && cut < paras.len()
+        && paras[cut].cell.is_some()
+        && paras[cut].cell.map(|c| c.table) == paras[cut - 1].cell.map(|c| c.table)
+    {
+        cut += 1;
+    }
     let sections = doc.sections();
     let widths: Vec<u32> = sections
         .iter()
@@ -826,7 +885,7 @@ pub fn build_marked(
             .position(|s| i < s.paras.end)
             .unwrap_or(sections.len() - 1)
     };
-    build_with(doc, doc.paragraphs(), &|i| widths[section_of(i)], marks)
+    build_with_prior(doc, &paras[..cut], &|i| widths[section_of(i)], marks, prior)
 }
 
 /// [`build`] over `paras` (the document's paragraphs, or a header's with
@@ -838,15 +897,96 @@ pub fn build_with(
     content_tw: &dyn Fn(usize) -> u32,
     marks: &Marks,
 ) -> (Vec<docs_layout::Paragraph>, Vec<f32>, Vec<Block>) {
-    let markers = doc.list_markers();
+    let b = build_with_prior(doc, paras, content_tw, marks, None);
+    (b.lps, b.widths, b.blocks)
+}
+
+fn build_with_prior(
+    doc: &Document,
+    paras: &[docs_engine::Paragraph],
+    content_tw: &dyn Fn(usize) -> u32,
+    marks: &Marks,
+    prior: Option<Prior>,
+) -> Built {
+    // List numbers: as before when the edit neither removed nor made a
+    // numbered paragraph (no list counts on), else counted again.
+    let unnumbered =
+        |ps: &[docs_engine::Paragraph]| ps.iter().all(|p| doc.styles.effective_num(p).is_none());
+    let markers = match &prior {
+        Some(p)
+            if p.markers.len() + p.inserted == paras.len() + p.removed
+                && p.start + p.inserted <= paras.len()
+                && p.old
+                    .as_deref()
+                    .is_some_and(|old| old.len() == p.removed && unnumbered(old))
+                && unnumbered(&paras[p.start..p.start + p.inserted]) =>
+        {
+            let mut m = p.markers.clone();
+            m.splice(p.start..p.start + p.removed, (0..p.inserted).map(|_| None));
+            m
+        }
+        _ => doc.list_markers(),
+    };
     let mut widths: Vec<f32> = (0..paras.len()).map(|i| tw(content_tw(i))).collect();
+    // Tables built before (by first paragraph, with the width they were
+    // built for), for an edit outside them.
+    let old_tables = prior.as_ref().map(|p| {
+        let tables: HashMap<usize, (&TableBlock, u32)> = p
+            .tables
+            .iter()
+            .filter_map(|(tb, w)| Some((first_para(tb)?, (tb, *w))))
+            .collect();
+        (tables, (p.start, p.removed, p.inserted))
+    });
+    let old_tables = old_tables.as_ref().map(|(t, s)| (t, *s));
     let mut blocks = Vec::new();
+    let mut table_widths = Vec::new();
     let mut i = 0;
+    // Tables met so far: a table's range starts at its first paragraph
+    // (found going on from here, not by searching from the start).
+    let mut seen = std::collections::HashSet::new();
     while i < paras.len() {
         let table = paras[i].cell.map(|c| c.table);
-        match table.map(|id| (id, table_range(paras, id))) {
+        let range_of = |id: u32| {
+            if seen.contains(&id) {
+                table_range(paras, id)
+            } else {
+                let len = paras[i..]
+                    .iter()
+                    .take_while(|p| p.cell.is_some_and(|c| c.table == id))
+                    .count();
+                i..i + len
+            }
+        };
+        let found = table.map(|id| (id, range_of(id)));
+        if let Some(id) = table {
+            seen.insert(id);
+        }
+        match found {
             Some((id, range)) if range.start == i && !range.is_empty() => {
-                match table_block(doc, paras, id, range.clone(), content_tw(i)) {
+                // A table the edit didn't touch: as built before.
+                let kept = old_tables.and_then(|(tables, (start, removed, inserted))| {
+                    let (a, b) = (range.start, range.end);
+                    let old_start = if b <= start {
+                        a
+                    } else if a >= start + inserted {
+                        a - inserted + removed
+                    } else {
+                        return None;
+                    };
+                    let (tb, w) = tables.get(&old_start)?;
+                    (*w == content_tw(i))
+                        .then(|| shifted_table(tb, a as isize - old_start as isize))
+                });
+                let kept = kept.filter(|tb| {
+                    tb.rows
+                        .iter()
+                        .flat_map(|r| &r.cells)
+                        .map(|c| c.paras.end)
+                        .max()
+                        .is_some_and(|end| end == range.end)
+                });
+                match kept.or_else(|| table_block(doc, paras, id, range.clone(), content_tw(i))) {
                     Some(tb) => {
                         for row in &tb.rows {
                             for cell in &row.cells {
@@ -856,6 +996,7 @@ pub fn build_with(
                                 }
                             }
                         }
+                        table_widths.push(content_tw(i));
                         blocks.push(Block::Table(tb));
                         i = range.end;
                     }
@@ -872,23 +1013,78 @@ pub fn build_with(
             }
         }
     }
-    let mut out: Vec<docs_layout::Paragraph> = paras
-        .iter()
-        .enumerate()
-        .map(|(k, p)| {
-            let marker = markers.get(k).and_then(|m| m.as_deref());
-            layout_paragraph(doc, p, marker, widths[k], marks)
-        })
-        .collect();
+    let n = paras.len();
+    // After an edit: the paragraphs it didn't touch as they were built
+    // (the same marker, width and neighbours' styles), the others again.
+    let prior = prior.filter(|p| {
+        marks.merge.is_none()
+            && marks.codes.is_none()
+            && p.lps.len() + p.inserted == n + p.removed
+            && p.markers.len() == p.lps.len()
+            && p.widths.len() == p.lps.len()
+            && p.start + p.removed <= p.lps.len()
+    });
+    let (mut out, fresh) = match prior {
+        Some(mut p) => {
+            let (a, b) = (p.start, p.start + p.removed);
+            let blank = || docs_layout::Paragraph::new(String::new());
+            p.lps.splice(a..b, (0..p.inserted).map(|_| blank()));
+            p.markers.splice(a..b, (0..p.inserted).map(|_| None));
+            p.widths.splice(a..b, (0..p.inserted).map(|_| f32::NAN));
+            let mut fresh = vec![false; n];
+            let end = (a + p.inserted).min(n);
+            for f in &mut fresh[a.saturating_sub(1)..(end + 1).min(n)] {
+                *f = true;
+            }
+            for &k in &p.dirty {
+                if let Some(f) = fresh.get_mut(k) {
+                    *f = true;
+                }
+            }
+            for k in 0..n {
+                if p.markers[k] != markers[k] || p.widths[k].to_bits() != widths[k].to_bits() {
+                    fresh[k] = true;
+                }
+            }
+            (p.lps, fresh)
+        }
+        None => (Vec::new(), vec![true; n]),
+    };
+    let todo: Vec<usize> = (0..n).filter(|&k| fresh[k]).collect();
+    // On several threads for a long document.
+    // (With whether it has contextual spacing: resolving a paragraph's
+    // style is most of the work.)
+    let built: Vec<(docs_layout::Paragraph, bool)> = crate::par::map(todo.len(), &|j| {
+        let k = todo[j];
+        let marker = markers.get(k).and_then(|m| m.as_deref());
+        (
+            layout_paragraph(doc, &paras[k], marker, widths[k], marks),
+            doc.resolve_para(&paras[k]).contextual,
+        )
+    });
+    let mut contextual = vec![false; n];
+    if out.is_empty() {
+        out = Vec::with_capacity(n);
+        for (lp, c) in built {
+            contextual[out.len()] = c;
+            out.push(lp);
+        }
+    } else {
+        for (&k, (lp, c)) in todo.iter().zip(built) {
+            out[k] = lp;
+            contextual[k] = c;
+        }
+    }
     if let Some(values) = &marks.merge {
         show_merge_values(paras, &mut out, values, marks.codes.as_deref());
     }
     if let Some(view) = &marks.codes {
         show_codes(paras, &mut out, view);
     }
-    // Contextual spacing: no space between paragraphs of the same style.
-    for k in 0..paras.len() {
-        if !doc.resolve_para(&paras[k]).contextual {
+    // Contextual spacing: no space between paragraphs of the same style
+    // (those just built: the others have theirs).
+    for &k in &todo {
+        if !contextual[k] {
             continue;
         }
         let same = |j: usize| {
@@ -903,7 +1099,34 @@ pub fn build_with(
             out[k].space_after_pt = 0.0;
         }
     }
-    (out, widths, blocks)
+    Built {
+        lps: out,
+        widths,
+        blocks,
+        table_widths,
+        markers,
+        fresh,
+    }
+}
+
+/// A table's first paragraph.
+fn first_para(tb: &TableBlock) -> Option<usize> {
+    tb.rows
+        .iter()
+        .flat_map(|r| &r.cells)
+        .filter(|c| !c.paras.is_empty())
+        .map(|c| c.paras.start)
+        .min()
+}
+
+/// `tb` with its paragraphs `by` further on.
+fn shifted_table(tb: &TableBlock, by: isize) -> TableBlock {
+    let mut tb = tb.clone();
+    for c in tb.rows.iter_mut().flat_map(|r| &mut r.cells) {
+        let at = |k: usize| (k as isize + by).max(0) as usize;
+        c.paras = at(c.paras.start)..at(c.paras.end);
+    }
+    tb
 }
 
 /// Paragraph index range of table `id` in `paras`.

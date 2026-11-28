@@ -88,8 +88,11 @@ struct Command {
     hf: Option<Box<(HfState, HfState)>>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct History {
+    /// Which document's history this is: new for every new history (a
+    /// clone keeps it), so callers can tell documents apart.
+    instance: u64,
     undo: Vec<Command>,
     redo: Vec<Command>,
     next_id: u64,
@@ -100,6 +103,57 @@ struct History {
     sealed: bool,
     /// Counts edits, undos and redos (see [`Document::revision`]).
     changes: u64,
+    /// What the last edit, undo or redo did to the paragraphs.
+    splice: Option<Splice>,
+}
+
+/// What one edit, undo or redo did to the paragraphs (see
+/// [`Document::last_splice`]): `removed` paragraphs from `start` on were
+/// replaced by `inserted` ones.
+#[derive(Clone, Debug)]
+pub struct Splice {
+    /// The [`Document::revision`] it made.
+    pub revision: u64,
+    pub start: usize,
+    pub removed: usize,
+    pub inserted: usize,
+    /// It also changed tables, the page setup or headers and footers.
+    pub side: bool,
+    /// The paragraphs it replaced (empty when more than two).
+    pub old: Vec<Paragraph>,
+}
+
+impl Splice {
+    fn of(revision: u64, start: usize, old: &[Paragraph], inserted: usize, side: bool) -> Self {
+        Self {
+            revision,
+            start,
+            removed: old.len(),
+            inserted,
+            side,
+            old: if old.len() <= 2 {
+                old.to_vec()
+            } else {
+                Vec::new()
+            },
+        }
+    }
+}
+
+impl Default for History {
+    fn default() -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        Self {
+            instance: NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            undo: Vec::new(),
+            redo: Vec::new(),
+            next_id: 0,
+            saved: None,
+            sealed: false,
+            changes: 0,
+            splice: None,
+        }
+    }
 }
 
 impl History {
@@ -111,6 +165,13 @@ impl History {
     /// same word of typing or deleting.
     fn push(&mut self, mut cmd: Command, word_boundary: bool) {
         self.changes += 1;
+        self.splice = Some(Splice::of(
+            self.changes,
+            cmd.start,
+            &cmd.old,
+            cmd.new.len(),
+            cmd.tables.is_some() || cmd.page.is_some() || cmd.hf.is_some(),
+        ));
         self.redo.clear();
         let sealed = std::mem::take(&mut self.sealed);
         if let Some(last) = self.undo.last_mut()
@@ -552,6 +613,22 @@ impl Document {
         self.history.changes
     }
 
+    /// Tells this document (and its clones) from others: with
+    /// [`Self::revision`], whether a layout is of this document as it is.
+    pub fn instance(&self) -> u64 {
+        self.history.instance
+    }
+
+    /// What the edit, undo or redo that made the current [`Self::revision`]
+    /// did to the paragraphs; `None` when the revision came from
+    /// something else (or nothing was edited yet).
+    pub fn last_splice(&self) -> Option<&Splice> {
+        self.history
+            .splice
+            .as_ref()
+            .filter(|s| s.revision == self.history.changes)
+    }
+
     /// Forget the file (and any import source): the document is untitled.
     pub(crate) fn set_path_none(&mut self) {
         self.path = None;
@@ -762,22 +839,11 @@ impl Document {
     }
 
     pub fn word_count(&self) -> usize {
-        self.paragraphs
-            .iter()
-            .map(|p| {
-                p.text
-                    .split_whitespace()
-                    .filter(|w| w.chars().any(|c| c != OBJECT))
-                    .count()
-            })
-            .sum()
+        self.paragraphs.iter().map(Paragraph::word_count).sum()
     }
 
     pub fn char_count(&self) -> usize {
-        self.paragraphs
-            .iter()
-            .map(|p| p.text.chars().filter(|&c| c != OBJECT).count())
-            .sum()
+        self.paragraphs.iter().map(Paragraph::char_count).sum()
     }
 
     /// Clamp a position into the document (and onto a char boundary).
@@ -1457,6 +1523,13 @@ impl Document {
     pub fn undo(&mut self) -> Option<Selection> {
         let cmd = self.history.undo.pop()?;
         self.history.changes += 1;
+        self.history.splice = Some(Splice::of(
+            self.history.changes,
+            cmd.start,
+            &cmd.new,
+            cmd.old.len(),
+            cmd.tables.is_some() || cmd.page.is_some() || cmd.hf.is_some(),
+        ));
         self.paragraphs.splice(
             cmd.start..cmd.start + cmd.new.len(),
             cmd.old.iter().cloned(),
@@ -1478,6 +1551,13 @@ impl Document {
     pub fn redo(&mut self) -> Option<Selection> {
         let cmd = self.history.redo.pop()?;
         self.history.changes += 1;
+        self.history.splice = Some(Splice::of(
+            self.history.changes,
+            cmd.start,
+            &cmd.old,
+            cmd.new.len(),
+            cmd.tables.is_some() || cmd.page.is_some() || cmd.hf.is_some(),
+        ));
         self.paragraphs.splice(
             cmd.start..cmd.start + cmd.old.len(),
             cmd.new.iter().cloned(),
@@ -1512,6 +1592,71 @@ impl Document {
             );
         }
         self.write(&path)
+    }
+
+    /// Start a save away from the UI thread: the same checks as
+    /// [`Self::save`], and a copy of the document to write
+    /// ([`SaveJob::run`], then [`Self::finish_save`] here).
+    pub fn begin_save(&self) -> anyhow::Result<SaveJob> {
+        let Some(path) = self.path.clone() else {
+            anyhow::bail!("This document has no file yet; use Save As");
+        };
+        if self.has_unsupported_content() {
+            anyhow::bail!(
+                "{} has content Kantor can't keep ({}); use Save As to write a new file",
+                self.title(),
+                self.unsupported.join(", ")
+            );
+        }
+        Ok(SaveJob {
+            doc: self.clone(),
+            path,
+            revision: self.revision(),
+            lists: (
+                self.numbering.added_abstracts.len(),
+                self.numbering.added_nums.len(),
+            ),
+        })
+    }
+
+    /// A [`SaveJob`] is done: the written file becomes this document's
+    /// template for the next save, as after [`Self::save`]. Edits made
+    /// while it was written stay unsaved.
+    pub fn finish_save(&mut self, done: SavedJob) -> anyhow::Result<()> {
+        done.result?;
+        let saved = done.doc;
+        let Some(pkg) = saved.package else {
+            anyhow::bail!("the saved file wasn't read back");
+        };
+        if self.revision() == done.revision && self.stories.len() == saved.stories.len() {
+            // Nothing changed meanwhile: just as a save here leaves it.
+            self.new_media = saved.new_media;
+            self.numbering.added_abstracts = saved.numbering.added_abstracts;
+            self.numbering.added_nums = saved.numbering.added_nums;
+            self.comments_modified = saved.comments_modified;
+            for (st, was) in self.stories.iter_mut().zip(&saved.stories) {
+                st.modified = was.modified;
+                st.new = was.new;
+            }
+            self.body_sect = saved.body_sect;
+        } else {
+            // What was written is in the package now; later changes are
+            // written next time.
+            self.new_media.retain(|m| !pkg.has_rel(&m.rel_id));
+            let (a, n) = done.lists;
+            let a = a.min(self.numbering.added_abstracts.len());
+            self.numbering.added_abstracts.drain(..a);
+            let n = n.min(self.numbering.added_nums.len());
+            self.numbering.added_nums.drain(..n);
+            for st in &mut self.stories {
+                if pkg.has_part(&st.part) {
+                    st.new = false;
+                }
+            }
+        }
+        self.package = Some(pkg);
+        self.history.saved = saved.history.saved;
+        Ok(())
     }
 
     /// Save to `path` and make it this document's file. Refuses to write over
@@ -1578,6 +1723,37 @@ impl Document {
         self.history.saved = self.history.top();
         Ok(())
     }
+}
+
+/// A save being written away from the UI thread ([`Document::begin_save`]).
+pub struct SaveJob {
+    doc: Document,
+    path: PathBuf,
+    revision: u64,
+    /// The list definitions added since the last save, as many as there
+    /// were then.
+    lists: (usize, usize),
+}
+
+impl SaveJob {
+    /// Write the file (slow for a long document: run it in the background).
+    pub fn run(mut self) -> SavedJob {
+        let result = self.doc.write(&self.path);
+        SavedJob {
+            doc: self.doc,
+            result,
+            revision: self.revision,
+            lists: self.lists,
+        }
+    }
+}
+
+/// A [`SaveJob`] written, for [`Document::finish_save`].
+pub struct SavedJob {
+    doc: Document,
+    result: anyhow::Result<()>,
+    revision: u64,
+    lists: (usize, usize),
 }
 
 fn same_file(a: &Path, b: &Path) -> bool {

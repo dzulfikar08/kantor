@@ -1525,6 +1525,113 @@ pub fn style_ref_results(
         .collect()
 }
 
+/// [`style_ref_results`] for every page of one header or footer: its
+/// fields and the body paragraphs each could show are found once, then
+/// each page is a lookup (a long document has thousands of pages).
+pub struct StyleRefs {
+    /// Per `STYLEREF` field: it, and the body paragraphs in its style
+    /// with text (ascending; `None` when it names no style).
+    fields: Vec<(Instr, Option<Vec<usize>>)>,
+    /// The body's list numbers, when a field shows one (`\n`, `\r`, `\w`).
+    markers: Option<Vec<Option<String>>>,
+    len: usize,
+}
+
+impl StyleRefs {
+    pub fn new(doc: &Document, story: &[Paragraph]) -> Self {
+        let fields: Vec<Instr> = spans(story)
+            .iter()
+            .map(|s| Instr::parse(&s.instr))
+            .filter(|i| i.kind == "STYLEREF")
+            .collect();
+        let body = doc.paragraphs();
+        let markers = fields
+            .iter()
+            .any(|i| i.has("n") || i.has("r") || i.has("w"))
+            .then(|| doc.list_markers_of(body));
+        let fields = fields
+            .into_iter()
+            .map(|i| {
+                let found = i.args.first().map(|want| {
+                    (0..body.len())
+                        .filter(|&k| {
+                            style_ref_matches(doc, want, &body[k])
+                                && !crate::field_calc::para_text(&body[k]).is_empty()
+                        })
+                        .collect()
+                });
+                (i, found)
+            })
+            .collect();
+        Self {
+            fields,
+            markers,
+            len: body.len(),
+        }
+    }
+
+    /// The story has no `STYLEREF` fields.
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    /// Whether body paragraph `p` is in a style some field shows.
+    pub fn shows(&self, doc: &Document, p: &Paragraph) -> bool {
+        self.fields.iter().any(|(i, _)| {
+            i.args
+                .first()
+                .is_some_and(|want| style_ref_matches(doc, want, p))
+        })
+    }
+
+    /// [`style_ref_results`] for the page showing body paragraphs
+    /// `first..=last`.
+    pub fn results(&self, doc: &Document, (first, last): (usize, usize)) -> Vec<String> {
+        let n = self.len;
+        let (first, last) = (
+            first.min(n.saturating_sub(1)),
+            last.min(n.saturating_sub(1)),
+        );
+        let body = doc.paragraphs();
+        self.fields
+            .iter()
+            .map(|(i, found)| {
+                let Some(found) = found else {
+                    return String::new();
+                };
+                // On the page (the first, or the last with \l), else the
+                // nearest before it, else the first after it.
+                let from = found.partition_point(|&k| k < first);
+                let to = found.partition_point(|&k| k <= last);
+                let on_page = if from < to {
+                    Some(if i.has("l") {
+                        found[to - 1]
+                    } else {
+                        found[from]
+                    })
+                } else {
+                    None
+                };
+                let k = on_page
+                    .or_else(|| from.checked_sub(1).map(|j| found[j]))
+                    .or_else(|| found.get(to).copied());
+                let Some(k) = k else {
+                    return "Error! No text of specified style in document.".into();
+                };
+                if i.has("n") || i.has("r") || i.has("w") {
+                    let m = self
+                        .markers
+                        .as_ref()
+                        .and_then(|m| m.get(k).cloned().flatten())
+                        .unwrap_or_default();
+                    return m.trim().trim_end_matches(['.', ')']).to_owned();
+                }
+                i.cased(&crate::field_calc::para_text(&body[k]))
+            })
+            .collect()
+    }
+}
+
 /// `story` with its `STYLEREF` fields' results set to `results` (from
 /// [`style_ref_results`], in the same order).
 pub fn with_style_ref_results(story: &[Paragraph], results: &[String]) -> Vec<Paragraph> {

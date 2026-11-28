@@ -385,10 +385,20 @@ impl Document {
     /// Numbering of `kind` in section `si`: settings.xml's, then the
     /// section's own `w:footnotePr` / `w:endnotePr`.
     pub fn note_props(&self, kind: NoteKind, si: usize) -> NoteProps {
+        self.note_props_in(&self.sections(), kind, si)
+    }
+
+    /// [`Self::note_props`] with the document's sections already found
+    /// (finding them goes through every paragraph).
+    pub fn note_props_in(
+        &self,
+        sections: &[crate::section::Section],
+        kind: NoteKind,
+        si: usize,
+    ) -> NoteProps {
         let mut p = self.note_settings[kind.index()];
-        let sections = self.sections();
         if si < sections.len() {
-            let sect = self.sect_xml(&sections, si);
+            let sect = self.sect_xml(sections, si);
             if let Some(el) = xml::parse(&sect)
                 && let Some(c) = el.child(&format!("{}Pr", kind.element()))
             {
