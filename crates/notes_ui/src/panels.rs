@@ -68,7 +68,11 @@ pub(crate) fn snippet(text: &str, range: Range<usize>, max: usize) -> (String, R
     while e < line.len() && !line.is_char_boundary(e) {
         e += 1;
     }
-    let pre = if line[..s].trim().is_empty() { "" } else { "…" };
+    let pre = if line[..s].trim().is_empty() {
+        ""
+    } else {
+        "…"
+    };
     let post = if e < line.len() { "…" } else { "" };
     let out = format!("{pre}{}{post}", &line[s..e]);
     let o = pre.len();
