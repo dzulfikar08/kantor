@@ -1039,6 +1039,8 @@ impl<'a> Ctx<'a> {
         let (bw, basc, bdesc) = (base.w, base.asc, base.desc);
         let (left, right) = (base.left, base.right);
         let single = base.glyphs.len() <= 1 && base.rules.is_empty();
+        // A big operator (moved to the axis) takes the drops as a box does.
+        let base_large = base.large_op;
         let mut b = B {
             w: bw,
             asc: basc,
@@ -1048,7 +1050,7 @@ impl<'a> Ctx<'a> {
         b.append(base, 0.0, 0.0);
         let after = self.c(st, |c| c.space_after_script(), 0.05);
         // Single characters take no baseline drop (TeX).
-        let drop = !single;
+        let drop = !single || base_large;
         let mut sup_shift = 0.0;
         let mut sub_shift = 0.0;
         if let Some(sp) = &sup {

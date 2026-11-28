@@ -2831,8 +2831,9 @@ fn paint_frame(f: &Frame, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut 
             }
             // Pictures and placeholders.
             for o in paged.objects(page) {
-                // Inline SmartArt is drawn with the floating objects.
-                if o.kind == ObjectKind::Drawing {
+                // Inline SmartArt is drawn with the floating objects;
+                // equations are glyph runs and rules.
+                if matches!(o.kind, ObjectKind::Drawing | ObjectKind::Math) {
                     continue;
                 }
                 let b = rect(page, o.rect);
