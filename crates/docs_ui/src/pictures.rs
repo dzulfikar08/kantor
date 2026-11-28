@@ -18,7 +18,21 @@ use crate::DocsView;
 /// first, once not shown for [`KEEP`]): a screen and the pages decoded
 /// ahead seldom have more than a dozen.
 const MAX: usize = 24;
-const KEEP: Duration = Duration::from_secs(8);
+const KEEP: Duration = Duration::from_secs(4);
+/// Pictures decoded at once (each needs its full-size pixels for a
+/// moment: many at once while scrolling fast swelled the heap).
+const RUNNING: usize = 2;
+/// A waiting picture not asked for again within this long has scrolled
+/// out of view: it isn't decoded (asked again, it waits again).
+const STALE: Duration = Duration::from_secs(1);
+
+/// A picture waiting to be decoded.
+struct Job {
+    key: String,
+    bytes: Arc<[u8]>,
+    side: u32,
+    asked: Instant,
+}
 
 /// A decoded picture: its image, the longest side it was decoded for
 /// (`u32::MAX` when it's at its own size) and when it was last shown.
@@ -31,7 +45,11 @@ struct Ready {
 #[derive(Default)]
 pub(crate) struct Pictures {
     ready: HashMap<String, Ready>,
+    /// Being decoded or waiting to be.
     loading: HashSet<String>,
+    /// Waiting, the most recently asked for decoded first.
+    queue: Vec<Job>,
+    running: usize,
     /// Images replaced by sharper ones, given back to the window on the
     /// next trim.
     retired: Vec<Arc<RenderImage>>,
@@ -44,6 +62,15 @@ pub(crate) struct Pictures {
     /// (a view that stopped scrolling draws no frames, and only a frame
     /// can give images back to the window).
     wake: bool,
+}
+
+impl Pictures {
+    /// Waiting picture `key` was asked for again (it's still in view).
+    fn asked(&mut self, key: &str) {
+        if let Some(j) = self.queue.iter_mut().find(|j| j.key == key) {
+            j.asked = Instant::now();
+        }
+    }
 }
 
 /// Bytes of a decoded image.
@@ -105,17 +132,26 @@ impl DocsView {
     ) -> Option<Arc<RenderImage>> {
         // Sharp at 200 % (zoom or a HiDPI screen).
         let side = (box_px * 2.0).ceil().max(64.0) as u32;
-        let shown = match self.pictures.ready.get_mut(key) {
+        let p = &mut self.pictures;
+        let shown = match p.ready.get_mut(key) {
             Some(r) => {
                 r.used = Instant::now();
-                if r.side >= side || self.pictures.loading.contains(key) {
-                    return Some(r.img.clone());
+                let (img, sharp) = (r.img.clone(), r.side >= side);
+                if sharp {
+                    return Some(img);
+                }
+                if p.loading.contains(key) {
+                    p.asked(key);
+                    return Some(img);
                 }
                 // Shown larger than it was decoded for: this one until
                 // the sharper one is ready.
-                Some(r.img.clone())
+                Some(img)
             }
-            None if self.pictures.loading.contains(key) => return None,
+            None if p.loading.contains(key) => {
+                p.asked(key);
+                return None;
+            }
             None => None,
         };
         let Some(bytes) = bytes.filter(|b| {
@@ -128,28 +164,61 @@ impl DocsView {
         };
         let key = key.to_owned();
         self.pictures.loading.insert(key.clone());
-        let task = cx.background_spawn(async move { decode(&bytes, side) });
-        cx.spawn(async move |this, cx| {
-            let img = task.await;
-            let _ = this.update(cx, |this, cx| {
-                let p = &mut this.pictures;
-                p.loading.remove(&key);
-                if let Some((img, side)) = img {
-                    let new = Ready {
-                        img,
-                        side,
-                        used: Instant::now(),
-                    };
-                    if let Some(old) = p.ready.insert(key.clone(), new) {
-                        p.retired.push(old.img);
-                        p.replaced.push(key);
-                    }
-                    cx.notify();
-                }
-            });
-        })
-        .detach();
+        self.pictures.queue.push(Job {
+            key,
+            bytes,
+            side,
+            asked: Instant::now(),
+        });
+        self.run_decodes(cx);
         shown
+    }
+
+    /// Start decoding waiting pictures, up to [`RUNNING`] at once.
+    fn run_decodes(&mut self, cx: &mut Context<Self>) {
+        let p = &mut self.pictures;
+        let loading = &mut p.loading;
+        p.queue.retain(|j| {
+            let keep = j.asked.elapsed() < STALE;
+            if !keep {
+                loading.remove(&j.key);
+            }
+            keep
+        });
+        while p.running < RUNNING {
+            let Some(next) = (0..p.queue.len()).max_by_key(|&i| p.queue[i].asked) else {
+                break;
+            };
+            let Job {
+                key, bytes, side, ..
+            } = p.queue.swap_remove(next);
+            p.running += 1;
+            let task = cx.background_spawn(async move { decode(&bytes, side) });
+            cx.spawn(async move |this, cx| {
+                let img = task.await;
+                let _ = this.update(cx, |this, cx| {
+                    let p = &mut this.pictures;
+                    p.running -= 1;
+                    p.loading.remove(&key);
+                    if let Some((img, side)) = img {
+                        let new = Ready {
+                            img,
+                            side,
+                            used: Instant::now(),
+                        };
+                        if let Some(old) = p.ready.insert(key.clone(), new) {
+                            p.retired.push(old.img);
+                            p.replaced.push(key);
+                        }
+                    }
+                    // Also when it failed: pictures still in view that
+                    // waited too long are asked for again by the frame.
+                    cx.notify();
+                    this.run_decodes(cx);
+                });
+            })
+            .detach();
+        }
     }
 
     /// Whether picture `key` is decoded by [`Self::screen_picture_from`]
