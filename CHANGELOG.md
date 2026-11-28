@@ -9,6 +9,8 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
 
 ## [Unreleased]
 
+## [0.29.0] - 2026-11-28
+
 ### Added
 
 - **Notes: a folder of notes as a vault.** Open a folder from the palette (Open Folder as Vault…) or with the Files
@@ -23,6 +25,13 @@ that GitHub Release's notes, so every `v*` tag needs a `## [x.y.z]` heading here
     how many notes change first, and Undo Rename puts it all back.
   - Search in the vault (Ctrl+Shift+F) and a graph view (Ctrl+G): every note and link as a moving graph, drawn by
     Kantor itself. Pan, zoom, drag notes, click one to open it, or show only the current note's neighbourhood.
+
+### Changed
+
+- Docs: floating pictures, pictures in headers, footers and text boxes are decoded in the background at the
+  size they're shown, like other pictures, and pictures far from the screen are let go even after scrolling stops.
+  Scrolling the whole 1,100-page thesis now settles at about 720 MB, down from 1.1 GB. Printing and PDF export still
+  use the full pictures.
 
 ### Fixed
 
@@ -2661,7 +2670,8 @@ and on Asahi's 16K-page kernel).
 - Not yet verified on the M1 Air: fractional scale 1.6, fcitx5 composition, memory use
   with a 10k-cell sheet, Hyprland's close-window path for the unsaved-changes prompt.
 
-[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.28.1...HEAD
+[Unreleased]: https://github.com/dzulfikar08/kantor/compare/v0.29.0...HEAD
+[0.29.0]: https://github.com/dzulfikar08/kantor/compare/v0.28.1...v0.29.0
 [0.28.1]: https://github.com/dzulfikar08/kantor/compare/v0.28.0...v0.28.1
 [0.28.0]: https://github.com/dzulfikar08/kantor/compare/v0.27.0...v0.28.0
 [0.27.0]: https://github.com/dzulfikar08/kantor/compare/v0.26.2...v0.27.0
