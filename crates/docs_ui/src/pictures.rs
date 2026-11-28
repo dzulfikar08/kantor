@@ -24,7 +24,9 @@ const KEEP: Duration = Duration::from_secs(4);
 const RUNNING: usize = 2;
 /// A waiting picture not asked for again within this long has scrolled
 /// out of view: it isn't decoded (asked again, it waits again).
-const STALE: Duration = Duration::from_secs(1);
+/// (Frames ask for what they show every frame; a view drawing no frames
+/// draws one when a decode finishes, which asks again.)
+const STALE: Duration = Duration::from_millis(250);
 
 /// Pictures with at most this many pixels are never made smaller (1 MB
 /// decoded).
