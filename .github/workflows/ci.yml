@@ -103,6 +103,23 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace --no-fail-fast
 
+  # TEMPORARY (t3/equations): cost of Typst math layout and MiTeX vs a baseline.
+  eq-measure:
+    name: equation engine cost
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: build and measure
+        run: |
+          curl -sfL -o /tmp/math.ttf https://raw.githubusercontent.com/google/fonts/main/ofl/stixtwomath/STIXTwoMath-Regular.ttf
+          cd tools/eq-measure
+          for p in base mitexm typstm; do
+            (cd $p && cargo fetch -q && echo "$p crates: $(cargo tree -e normal --prefix none | sed 's/ (\*)//' | sort -u | wc -l)" \
+              && /usr/bin/time -f "$p release build: %e s, %M KB max RSS" cargo build --release -q \
+              && echo "$p size: $(stat -c %s target/release/$p) bytes" && ./target/release/$p /tmp/math.ttf)
+          done
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-24.04
